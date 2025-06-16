@@ -6,6 +6,62 @@ First off, thank you for considering contributing to Story UI! It's people like 
 
 By participating in this project, you are expected to uphold our Code of Conduct: be respectful, inclusive, and constructive in all interactions.
 
+## Commit Message Guidelines
+
+We use [Conventional Commits](https://www.conventionalcommits.org/) to automate our release process. All commit messages must follow this format:
+
+```
+<type>(<scope>): <subject>
+```
+
+### Using Commitizen (Recommended)
+
+The easiest way to create properly formatted commits is to use our interactive commit tool:
+
+```bash
+npm run commit
+# or
+git cz
+```
+
+This will guide you through creating a properly formatted commit message.
+
+### Manual Commit Format
+
+If you prefer to write commits manually, follow this format:
+
+```bash
+# Examples
+git commit -m "feat(cli): add new init command options"
+git commit -m "fix(mcp): resolve memory leak in story generation"
+git commit -m "docs: update README with new examples"
+```
+
+#### Types
+- `feat`: New feature
+- `fix`: Bug fix
+- `docs`: Documentation only changes
+- `style`: Code style changes (formatting, missing semicolons, etc.)
+- `refactor`: Code changes that neither fix bugs nor add features
+- `perf`: Performance improvements
+- `test`: Adding or updating tests
+- `chore`: Changes to build process or auxiliary tools
+- `ci`: Changes to CI configuration files and scripts
+
+#### Scopes
+- `cli`: CLI commands
+- `mcp`: MCP server
+- `ui`: Story UI panel
+- `generator`: Story generation logic
+- `config`: Configuration
+- `ci`: CI/CD pipeline
+- `deps`: Dependencies
+- `docs`: Documentation
+
+### Commit Validation
+
+All commits are automatically validated by commitlint. If your commit message doesn't follow the convention, it will be rejected with a helpful error message.
+
 ## How Can I Contribute?
 
 ### Reporting Bugs
@@ -35,7 +91,8 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
 4. Run `npm run build` to ensure everything compiles
 5. Test your changes thoroughly
 6. Update documentation if needed
-7. Submit a pull request
+7. Create commits using `npm run commit`
+8. Submit a pull request
 
 ## Development Setup
 
@@ -52,6 +109,9 @@ npm run build
 
 # Run in development mode
 npm run dev
+
+# Create a commit
+npm run commit
 ```
 
 ## Project Structure
@@ -82,6 +142,22 @@ Before submitting a PR:
 2. Test story generation with various prompts
 3. Verify the setup process works smoothly
 4. Ensure TypeScript compilation succeeds
+5. Make sure all commits follow the conventional format
+
+## Release Process
+
+Releases are automated using semantic-release. When you merge a PR to `main`:
+
+1. Commits are analyzed to determine the version bump
+2. Version is updated in package.json
+3. CHANGELOG.md is updated
+4. A GitHub release is created
+5. The package is published to npm
+
+Your commit messages directly control the versioning:
+- `fix:` triggers a patch release (1.0.1 → 1.0.2)
+- `feat:` triggers a minor release (1.0.1 → 1.1.0)
+- `feat!:` or `BREAKING CHANGE:` triggers a major release (1.0.1 → 2.0.0)
 
 ## Questions?
 
