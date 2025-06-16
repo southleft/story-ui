@@ -497,8 +497,35 @@ yarn start
 
 MIT License - see LICENSE file for details.
 
+## Publishing to npm
+
+To publish Story UI to npm:
+
+```bash
+# Make sure you're logged in to npm
+npm login
+
+# Build the project
+npm run build
+
+# Publish to npm
+npm publish
+```
+
+For pre-release versions:
+
+```bash
+# Beta release
+npm version 1.0.1-beta.0
+npm publish --tag beta
+
+# Alpha release
+npm version 1.0.1-alpha.0
+npm publish --tag alpha
+```
+
 ## Support
 
-- 📖 [Documentation](https://story-ui.dev)
-- 🐛 [Issues](https://github.com/your-org/story-ui/issues)
-- 💬 [Discussions](https://github.com/your-org/story-ui/discussions)
+- 📖 [Documentation](https://github.com/southleft/story-ui#readme)
+- 🐛 [Issues](https://github.com/southleft/story-ui/issues)
+- 💬 [Discussions](https://github.com/southleft/story-ui/discussions)
