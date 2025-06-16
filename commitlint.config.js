@@ -29,10 +29,12 @@ export default {
         'ci',
         'deps',
         'docs',
+        'release',  // For semantic-release commits
       ],
     ],
     'subject-case': [2, 'never', ['sentence-case', 'start-case', 'pascal-case', 'upper-case']],
     'subject-full-stop': [2, 'never', '.'],
     'header-max-length': [2, 'always', 100],
+    'body-max-line-length': [0, 'always', 100],  // Disable for semantic-release changelog
   },
 };
