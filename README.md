@@ -1,5 +1,8 @@
 # Story UI - AI-Powered Storybook Story Generator
 
+[![npm version](https://img.shields.io/npm/v/@tpitre/story-ui.svg)](https://www.npmjs.com/package/@tpitre/story-ui)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 Story UI is a flexible, AI-powered tool that generates Storybook stories for any React component library. It uses Claude AI to understand natural language prompts and create accurate, multi-column layouts using your existing components.
 
 ## Features
