@@ -499,30 +499,50 @@ MIT License - see LICENSE file for details.
 
 ## Publishing to npm
 
-To publish Story UI to npm:
+Story UI uses [Semantic Release](https://semantic-release.gitbook.io/semantic-release/) for automated versioning and publishing.
+
+### Automated Releases
+
+When you push to the `main` branch, GitHub Actions automatically:
+1. Analyzes commit messages to determine version bump
+2. Updates version in package.json
+3. Generates/updates CHANGELOG.md
+4. Creates a GitHub release
+5. Publishes to npm
+
+### Commit Convention
+
+Follow the [Conventional Commits](https://www.conventionalcommits.org/) format:
 
 ```bash
-# Make sure you're logged in to npm
-npm login
+# Features (minor version bump)
+git commit -m "feat: add dark mode support"
 
-# Build the project
-npm run build
+# Bug fixes (patch version bump)
+git commit -m "fix: resolve TypeScript error in CLI"
 
-# Publish to npm
-npm publish
+# Breaking changes (major version bump)
+git commit -m "feat!: redesign configuration API"
 ```
 
-For pre-release versions:
+See [COMMIT_CONVENTION.md](./COMMIT_CONVENTION.md) for detailed guidelines.
+
+### Manual Release (if needed)
 
 ```bash
-# Beta release
-npm version 1.0.1-beta.0
-npm publish --tag beta
+# Dry run to see what would be released
+npm run release:dry-run
 
-# Alpha release
-npm version 1.0.1-alpha.0
-npm publish --tag alpha
+# Manual release (not recommended - use automated releases)
+npm run release
 ```
+
+### Setup Requirements
+
+For automated releases to work, you need to add an NPM_TOKEN secret to your GitHub repository:
+1. Generate an npm token: `npm token create`
+2. Add it to GitHub: Settings → Secrets → Actions → New repository secret
+3. Name: `NPM_TOKEN`, Value: your npm token
 
 ## Support
 

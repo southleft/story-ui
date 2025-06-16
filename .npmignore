@@ -11,6 +11,7 @@ tsconfig.json
 story-ui.config.ts
 story-ui.config.loader.ts
 story-ui.config.js
+.releaserc
 
 # Development files
 node_modules/
@@ -22,6 +23,7 @@ package-lock.json
 # Git
 .git/
 .gitignore
+.github/
 
 # IDE
 .vscode/
@@ -47,3 +49,7 @@ __tests__/
 docs/
 *.md
 !README.md
+!LICENSE
+
+# Scripts
+scripts/
