@@ -1,0 +1,219 @@
+import fs from 'fs';
+import path from 'path';
+import { StoryUIConfig } from '../story-ui.config.js';
+
+/**
+ * Manages .gitignore entries for Story UI generated content
+ */
+export class GitignoreManager {
+  private config: StoryUIConfig;
+  private projectRoot: string;
+
+  constructor(config: StoryUIConfig, projectRoot: string = process.cwd()) {
+    this.config = config;
+    this.projectRoot = projectRoot;
+  }
+
+  /**
+   * Ensures the generated stories directory is added to .gitignore
+   */
+  ensureGeneratedDirectoryIgnored(): void {
+    const gitignorePath = path.join(this.projectRoot, '.gitignore');
+    const generatedPath = this.getRelativeGeneratedPath();
+
+    if (!generatedPath) {
+      console.warn('Could not determine relative path for generated stories directory');
+      return;
+    }
+
+    // Create .gitignore if it doesn't exist
+    if (!fs.existsSync(gitignorePath)) {
+      this.createGitignore(gitignorePath, generatedPath);
+      return;
+    }
+
+    // Check if the path is already ignored
+    const gitignoreContent = fs.readFileSync(gitignorePath, 'utf-8');
+    if (this.isPathIgnored(gitignoreContent, generatedPath)) {
+      console.log(`✅ Generated stories directory already ignored: ${generatedPath}`);
+      return;
+    }
+
+    // Add the ignore rule
+    this.addIgnoreRule(gitignorePath, generatedPath);
+  }
+
+  /**
+   * Gets the relative path from project root to generated stories directory
+   */
+  private getRelativeGeneratedPath(): string | null {
+    try {
+      const absoluteGeneratedPath = path.resolve(this.config.generatedStoriesPath);
+      const absoluteProjectRoot = path.resolve(this.projectRoot);
+
+      // Get relative path from project root to generated directory
+      let relativePath = path.relative(absoluteProjectRoot, absoluteGeneratedPath);
+
+      // Normalize path separators for cross-platform compatibility
+      relativePath = relativePath.replace(/\\/g, '/');
+
+      // Ensure it starts with ./ if it's a relative path
+      if (!relativePath.startsWith('../') && !relativePath.startsWith('/')) {
+        relativePath = './' + relativePath;
+      }
+
+      return relativePath;
+    } catch (error) {
+      console.error('Error calculating relative path:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Creates a new .gitignore file with Story UI section
+   */
+  private createGitignore(gitignorePath: string, generatedPath: string): void {
+    const content = this.generateGitignoreSection(generatedPath);
+    fs.writeFileSync(gitignorePath, content);
+    console.log(`✅ Created .gitignore with Story UI generated directory: ${generatedPath}`);
+  }
+
+  /**
+   * Checks if the generated path is already ignored
+   */
+  private isPathIgnored(gitignoreContent: string, generatedPath: string): boolean {
+    const lines = gitignoreContent.split('\n').map(line => line.trim());
+
+    // Check for exact match or parent directory match
+    const pathVariations = [
+      generatedPath,
+      generatedPath.replace(/^\.\//, ''),
+      generatedPath + '/',
+      generatedPath.replace(/^\.\//, '') + '/',
+      generatedPath + '/**',
+      generatedPath.replace(/^\.\//, '') + '/**'
+    ];
+
+    return pathVariations.some(variation =>
+      lines.includes(variation) ||
+      lines.includes(variation.replace(/\/$/, ''))
+    );
+  }
+
+  /**
+   * Adds ignore rule to existing .gitignore
+   */
+  private addIgnoreRule(gitignorePath: string, generatedPath: string): void {
+    const existingContent = fs.readFileSync(gitignorePath, 'utf-8');
+    const newSection = this.generateGitignoreSection(generatedPath);
+
+    // Add with proper spacing
+    const separator = existingContent.endsWith('\n') ? '\n' : '\n\n';
+    const updatedContent = existingContent + separator + newSection;
+
+    fs.writeFileSync(gitignorePath, updatedContent);
+    console.log(`✅ Added Story UI generated directory to .gitignore: ${generatedPath}`);
+  }
+
+  /**
+   * Generates the gitignore section for Story UI
+   */
+  private generateGitignoreSection(generatedPath: string): string {
+    return `# Story UI - AI Generated Stories (ephemeral, not for version control)
+# These are temporary stories for testing layouts and should not be committed
+${generatedPath}/
+${generatedPath}/**`;
+  }
+
+  /**
+   * Creates the generated directory if it doesn't exist
+   */
+  ensureGeneratedDirectoryExists(): void {
+    const generatedDir = this.config.generatedStoriesPath;
+
+    if (!fs.existsSync(generatedDir)) {
+      fs.mkdirSync(generatedDir, { recursive: true });
+      console.log(`✅ Created generated stories directory: ${generatedDir}`);
+
+      // Create a README to explain the purpose
+      this.createGeneratedDirectoryReadme(generatedDir);
+    }
+  }
+
+  /**
+   * Creates a README in the generated directory explaining its purpose
+   */
+  private createGeneratedDirectoryReadme(generatedDir: string): void {
+    const readmePath = path.join(generatedDir, 'README.md');
+    const readmeContent = `# AI Generated Stories
+
+This directory contains stories generated by Story UI for testing and iteration purposes.
+
+## ⚠️ Important Notes
+
+- **These stories are ephemeral** - they are meant for testing layouts and sharing with stakeholders
+- **Do not commit these files** - they are automatically ignored by git
+- **Stories are regenerated** - feel free to delete and regenerate as needed
+
+## Purpose
+
+These stories are designed for:
+- 🎨 **Layout Testing** - Test different component arrangements
+- 👥 **Stakeholder Review** - Share layouts with product owners, designers, and project managers
+- 🔄 **Rapid Iteration** - Quickly generate and modify layouts
+- 📱 **Design Validation** - Validate designs before implementation
+
+## Usage
+
+Stories in this directory will appear in Storybook under the "${this.config.storyPrefix}" section.
+
+Generated by [Story UI](https://github.com/your-org/story-ui) - AI-powered Storybook story generator.
+`;
+
+    fs.writeFileSync(readmePath, readmeContent);
+    console.log(`✅ Created README in generated directory`);
+  }
+
+  /**
+   * Cleans up old generated stories (optional utility)
+   */
+  cleanupOldStories(maxAge: number = 7 * 24 * 60 * 60 * 1000): void { // 7 days default
+    const generatedDir = this.config.generatedStoriesPath;
+
+    if (!fs.existsSync(generatedDir)) {
+      return;
+    }
+
+    const files = fs.readdirSync(generatedDir);
+    const now = Date.now();
+    let cleanedCount = 0;
+
+    for (const file of files) {
+      if (!file.endsWith('.stories.tsx')) {
+        continue;
+      }
+
+      const filePath = path.join(generatedDir, file);
+      const stats = fs.statSync(filePath);
+      const age = now - stats.mtime.getTime();
+
+      if (age > maxAge) {
+        fs.unlinkSync(filePath);
+        cleanedCount++;
+      }
+    }
+
+    if (cleanedCount > 0) {
+      console.log(`🧹 Cleaned up ${cleanedCount} old generated stories`);
+    }
+  }
+}
+
+/**
+ * Convenience function to set up gitignore for Story UI
+ */
+export function setupGitignoreForStoryUI(config: StoryUIConfig, projectRoot?: string): void {
+  const manager = new GitignoreManager(config, projectRoot);
+  manager.ensureGeneratedDirectoryExists();
+  manager.ensureGeneratedDirectoryIgnored();
+}
