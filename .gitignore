@@ -1,4 +1,29 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Environment variables
 .env
+.env.local
+
+# Build output
+dist/
+
+# IDE
+.vscode/
+.idea/
+*.sublime-*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
 # Story UI - AI Generated Stories (ephemeral, not for version control)
 # These are temporary stories for testing layouts and should not be committed

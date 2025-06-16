@@ -19,9 +19,9 @@ Story UI is a flexible, AI-powered tool that generates Storybook stories for any
 ### 1. Installation
 
 ```bash
-npm install story-ui --save-dev
+npm install @tpitre/story-ui --save-dev
 # or
-yarn add -D story-ui
+yarn add -D @tpitre/story-ui
 ```
 
 ### 2. Run Setup

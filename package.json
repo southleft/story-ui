@@ -1,5 +1,5 @@
 {
-  "name": "story-ui",
+  "name": "@tpitre/story-ui",
   "version": "1.0.0",
   "description": "AI-powered Storybook story generator for any React component library",
   "type": "module",
@@ -60,6 +60,8 @@
     "@types/express": "^4.17.21",
     "@types/node": "^20.4.2",
     "@types/inquirer": "^9.0.0",
+    "@types/cors": "^2.8.17",
+    "@types/node-fetch": "^2.6.12",
     "ts-node": "^10.9.2",
     "typescript": "^5.2.2"
   },
