@@ -18,7 +18,7 @@ export async function claudeProxy(req: Request, res: Response) {
       },
       body: JSON.stringify({
         model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514',
-        max_tokens: 1024,
+        max_tokens: 4096,
         messages: [{ role: 'user', content: prompt }],
       }),
     });

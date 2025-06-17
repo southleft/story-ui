@@ -1,3 +1,11 @@
+# Unreleased
+
+### Bug Fixes
+- **generator:** Fixed AI response truncation by increasing max_tokens from 1024 to 4096
+- **validation:** Enhanced JSX closing tag detection and automatic fixing for truncated responses
+- **validation:** Added intelligent truncation detection and recovery mechanisms
+- **validation:** Improved handling of missing braces and incomplete code structures
+
 # [1.5.0](https://github.com/southleft/story-ui/compare/v1.4.0...v1.5.0) (2025-06-17)
 
 

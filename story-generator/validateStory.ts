@@ -127,6 +127,11 @@ function performSemanticChecks(sourceFile: ts.SourceFile): string[] {
 function attemptAutoFix(code: string, errors: string[]): string {
   let fixedCode = code;
 
+  // First, check if the code appears to be truncated
+  if (isCodeTruncated(fixedCode)) {
+    fixedCode = fixTruncatedCode(fixedCode);
+  }
+
   // Fix common issues based on error patterns
   for (const error of errors) {
     if (error.includes('expected ","')) {
@@ -148,9 +153,71 @@ function attemptAutoFix(code: string, errors: string[]): string {
       // Try to fix unclosed JSX elements
       fixedCode = fixUnclosedJSX(fixedCode);
     }
+
+    if (error.includes('}') && error.includes('expected')) {
+      // Try to fix missing closing braces
+      fixedCode = fixMissingBraces(fixedCode);
+    }
   }
 
   return fixedCode;
+}
+
+/**
+ * Detects if code appears to be truncated
+ */
+function isCodeTruncated(code: string): boolean {
+  const lines = code.split('\n');
+  const lastLine = lines[lines.length - 1].trim();
+
+  // Check for common signs of truncation
+  const truncationSigns = [
+    // Incomplete JSX
+    !lastLine.endsWith('>') && lastLine.includes('<'),
+    // Incomplete string
+    (lastLine.match(/["']/g) || []).length % 2 !== 0,
+    // Ends mid-word or mid-expression
+    /[a-zA-Z0-9]$/.test(lastLine) && !lastLine.endsWith(';') && !lastLine.endsWith('}'),
+    // Incomplete function call
+    lastLine.includes('(') && !lastLine.includes(')'),
+  ];
+
+  return truncationSigns.some(sign => sign);
+}
+
+/**
+ * Attempts to fix truncated code
+ */
+function fixTruncatedCode(code: string): string {
+  let fixedCode = code;
+
+  // Remove incomplete last line if it's clearly truncated
+  const lines = fixedCode.split('\n');
+  const lastLine = lines[lines.length - 1];
+
+  if (isCodeTruncated(code)) {
+    // Remove the truncated line
+    lines.pop();
+    fixedCode = lines.join('\n');
+  }
+
+  return fixedCode;
+}
+
+/**
+ * Fixes missing closing braces
+ */
+function fixMissingBraces(code: string): string {
+  const openBraces = (code.match(/{/g) || []).length;
+  const closeBraces = (code.match(/}/g) || []).length;
+  const braceDiff = openBraces - closeBraces;
+
+  if (braceDiff > 0) {
+    // Add closing braces
+    return code + '\n' + '}'.repeat(braceDiff);
+  }
+
+  return code;
 }
 
 /**
@@ -229,17 +296,116 @@ function fixUnterminatedStrings(code: string): string {
 function fixUnclosedJSX(code: string): string {
   let fixedCode = code;
 
-  // Simple heuristic to fix common JSX issues
-  const jsxOpenTags = fixedCode.match(/<[A-Z]\w*[^>]*>/g) || [];
-  const jsxCloseTags = fixedCode.match(/<\/[A-Z]\w*>/g) || [];
+  // Track open JSX elements with a stack
+  const jsxStack: string[] = [];
 
-  // If we have more opening tags than closing tags, try to balance them
-  if (jsxOpenTags.length > jsxCloseTags.length) {
-    // This is a very basic fix - in practice, you'd need more sophisticated parsing
-    // For now, we'll just add a warning
+  // Enhanced regex to match opening and closing tags
+  const jsxRegex = /<\/?([A-Z][A-Za-z0-9]*)[^>]*>/g;
+  let match;
+  let lastValidPosition = 0;
+
+  while ((match = jsxRegex.exec(fixedCode)) !== null) {
+    const fullMatch = match[0];
+    const tagName = match[1];
+
+    if (fullMatch.startsWith('</')) {
+      // Closing tag
+      if (jsxStack.length > 0 && jsxStack[jsxStack.length - 1] === tagName) {
+        jsxStack.pop();
+        lastValidPosition = match.index + fullMatch.length;
+      }
+    } else if (fullMatch.endsWith('/>')) {
+      // Self-closing tag - no action needed
+      lastValidPosition = match.index + fullMatch.length;
+    } else {
+      // Opening tag
+      jsxStack.push(tagName);
+    }
+  }
+
+  // If we have unclosed tags, close them
+  if (jsxStack.length > 0) {
+    // Get the code up to the last valid position
+    let closingTags = '';
+
+    // Close all open tags in reverse order
+    for (let i = jsxStack.length - 1; i >= 0; i--) {
+      closingTags += `</${jsxStack[i]}>`;
+    }
+
+    // Check if the code appears to be truncated
+    const lines = fixedCode.split('\n');
+    const lastLine = lines[lines.length - 1];
+
+    // If the last line doesn't end with a semicolon or closing brace, it might be truncated
+    if (!lastLine.trim().endsWith(';') && !lastLine.trim().endsWith('}')) {
+      // Try to intelligently close the structure
+      fixedCode = fixedCode.trim();
+
+      // Add the closing tags
+      fixedCode += '\n' + closingTags;
+
+      // Check if we need to close any JavaScript structures
+      const openBraces = (fixedCode.match(/{/g) || []).length;
+      const closeBraces = (fixedCode.match(/}/g) || []).length;
+      const braceDiff = openBraces - closeBraces;
+
+      if (braceDiff > 0) {
+        // Add closing braces with proper indentation
+        fixedCode += '\n' + '}'.repeat(braceDiff);
+      }
+
+      // Add final semicolon if needed
+      if (!fixedCode.trim().endsWith(';')) {
+        fixedCode += ';';
+      }
+    } else {
+      // Insert closing tags before the last closing structure
+      const insertPosition = findInsertPosition(fixedCode);
+      fixedCode = fixedCode.slice(0, insertPosition) + closingTags + fixedCode.slice(insertPosition);
+    }
   }
 
   return fixedCode;
+}
+
+/**
+ * Finds the best position to insert closing tags
+ */
+function findInsertPosition(code: string): number {
+  // Look for the last JSX content before export statements or closing braces
+  const exportMatch = code.lastIndexOf('export const');
+  const exportDefaultMatch = code.lastIndexOf('export default');
+  const lastBraceMatch = code.lastIndexOf('};');
+
+  let position = code.length;
+
+  if (exportMatch > -1) {
+    position = Math.min(position, exportMatch);
+  }
+  if (exportDefaultMatch > -1) {
+    position = Math.min(position, exportDefaultMatch);
+  }
+  if (lastBraceMatch > -1) {
+    position = Math.min(position, lastBraceMatch);
+  }
+
+  // Find the end of the last JSX element before the position
+  const beforePosition = code.substring(0, position);
+  const lastClosingTag = beforePosition.lastIndexOf('</');
+  const lastSelfClosingTag = beforePosition.lastIndexOf('/>');
+
+  const lastTag = Math.max(lastClosingTag, lastSelfClosingTag);
+  if (lastTag > -1) {
+    // Find the end of this tag
+    const fromTag = code.substring(lastTag);
+    const tagEnd = fromTag.indexOf('>');
+    if (tagEnd > -1) {
+      return lastTag + tagEnd + 1;
+    }
+  }
+
+  return position;
 }
 
 /**
