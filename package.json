@@ -1,6 +1,6 @@
 {
   "name": "@tpitre/story-ui",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "AI-powered Storybook story generator for any React component library",
   "type": "module",
   "main": "dist/index.js",
