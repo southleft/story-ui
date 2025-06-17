@@ -501,10 +501,45 @@ const StoryUIPanel: React.FC = () => {
 
       // Create user-friendly response message instead of showing raw markup
       let responseMessage: string;
+      let statusIcon = '✅';
+
+      // Check for validation issues
+      if (data.validation && data.validation.hasWarnings) {
+        statusIcon = '⚠️';
+        const warningCount = data.validation.warnings.length;
+        const errorCount = data.validation.errors.length;
+
+        if (errorCount > 0) {
+          statusIcon = '🔧';
+        }
+      }
+
       if (data.isUpdate) {
-        responseMessage = `✅ Updated your story: "${data.title}"\n\nI've made the requested changes while keeping the same layout structure. You can view the updated component in Storybook.`;
+        responseMessage = `${statusIcon} Updated your story: "${data.title}"\n\nI've made the requested changes while keeping the same layout structure. You can view the updated component in Storybook.`;
       } else {
-        responseMessage = `✅ Created new story: "${data.title}"\n\nI've generated the component with the requested features. You can view it in Storybook where you'll see both the rendered component and its markup in the Docs tab.`;
+        responseMessage = `${statusIcon} Created new story: "${data.title}"\n\nI've generated the component with the requested features. You can view it in Storybook where you'll see both the rendered component and its markup in the Docs tab.`;
+      }
+
+      // Add validation information if there are issues
+      if (data.validation && data.validation.hasWarnings) {
+        responseMessage += '\n\n';
+
+        if (data.validation.errors.length > 0) {
+          responseMessage += `🔧 **Auto-fixed ${data.validation.errors.length} syntax error(s):**\n`;
+          responseMessage += data.validation.errors.slice(0, 3).map(error => `  • ${error}`).join('\n');
+          if (data.validation.errors.length > 3) {
+            responseMessage += `\n  • ... and ${data.validation.errors.length - 3} more`;
+          }
+          responseMessage += '\n';
+        }
+
+        if (data.validation.warnings.length > 0) {
+          responseMessage += `⚠️ **Warnings:**\n`;
+          responseMessage += data.validation.warnings.slice(0, 2).map(warning => `  • ${warning}`).join('\n');
+          if (data.validation.warnings.length > 2) {
+            responseMessage += `\n  • ... and ${data.validation.warnings.length - 2} more`;
+          }
+        }
       }
 
       const aiMsg = { role: 'ai' as const, content: responseMessage };

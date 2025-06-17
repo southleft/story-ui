@@ -34,14 +34,20 @@ export function loadUserConfig(): StoryUIConfig {
         // Read and evaluate the config file
         const configContent = fs.readFileSync(configPath, 'utf-8');
 
-        // Simple evaluation for CommonJS modules
-        if (configContent.includes('module.exports')) {
+        // Handle both CommonJS and ES modules
+        if (configContent.includes('module.exports') || configContent.includes('export default')) {
           // Create a temporary module context
           const module = { exports: {} };
           const exports = module.exports;
 
+          // For ES modules, convert to CommonJS for evaluation
+          let evalContent = configContent;
+          if (configContent.includes('export default')) {
+            evalContent = configContent.replace(/export\s+default\s+/, 'module.exports = ');
+          }
+
           // Evaluate the config file content
-          eval(configContent);
+          eval(evalContent);
 
           const userConfig = module.exports as any;
           const config = createStoryUIConfig(userConfig.default || userConfig);
@@ -96,7 +102,8 @@ export function validateConfig(config: StoryUIConfig): { isValid: boolean; error
     errors.push('Either componentsPath, componentsMetadataPath, or a components array must be specified');
   }
 
-  if (config.componentsPath && !fs.existsSync(config.componentsPath)) {
+  // Only validate componentsPath if it's provided (not null/undefined)
+  if (config.componentsPath && config.componentsPath !== null && !fs.existsSync(config.componentsPath)) {
     errors.push(`Components path does not exist: ${config.componentsPath}`);
   }
 
@@ -104,7 +111,7 @@ export function validateConfig(config: StoryUIConfig): { isValid: boolean; error
     errors.push(`Components metadata path does not exist: ${config.componentsMetadataPath}`);
   }
 
-  // Check import path
+  // Check import path - but allow actual library names like 'antd'
   if (!config.importPath || config.importPath === 'your-component-library' || config.importPath.trim() === '') {
     errors.push('importPath must be configured to point to your component library');
   }

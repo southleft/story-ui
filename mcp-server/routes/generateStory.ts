@@ -10,6 +10,7 @@ import { buildClaudePrompt as buildFlexiblePrompt } from '../../story-generator/
 import { loadUserConfig, validateConfig } from '../../story-generator/configLoader.js';
 import { setupProductionGitignore } from '../../story-generator/productionGitignoreManager.js';
 import { getInMemoryStoryService, GeneratedStory } from '../../story-generator/inMemoryStoryService.js';
+import { extractAndValidateCodeBlock, createFallbackStory, validateStoryCode } from '../../story-generator/validateStory.js';
 
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514';
@@ -218,18 +219,45 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
     const aiText = await callClaude(fullPrompt);
     console.log('Claude raw response:', aiText);
 
-    let fileContents = extractCodeBlock(aiText);
-    if (!fileContents) {
-      // Fallback: try to extract from first import statement onward
-      const importIdx = aiText.indexOf('import');
-      if (importIdx !== -1) {
-        fileContents = aiText.slice(importIdx).trim();
+    // Use the new robust validation system
+    const validationResult = extractAndValidateCodeBlock(aiText);
+
+    let fileContents: string;
+    let hasValidationWarnings = false;
+
+    if (!validationResult.isValid) {
+      console.error('Generated code validation failed:', validationResult.errors);
+
+      // If we have fixedCode, use it
+      if (validationResult.fixedCode) {
+        fileContents = validationResult.fixedCode;
+        hasValidationWarnings = true;
+        console.log('Using auto-fixed code with warnings:', validationResult.warnings);
+      } else {
+        // Create fallback story
+        console.log('Creating fallback story due to validation failure');
+        fileContents = createFallbackStory(prompt, config);
+        hasValidationWarnings = true;
+      }
+    } else {
+      // Extract the validated code
+      const codeMatch = aiText.match(/```(?:tsx|jsx|typescript|ts|js|javascript)?\s*([\s\S]*?)\s*```/i);
+      if (codeMatch) {
+        fileContents = codeMatch[1].trim();
+      } else {
+        const importIdx = aiText.indexOf('import');
+        fileContents = importIdx !== -1 ? aiText.slice(importIdx).trim() : aiText.trim();
+      }
+
+      if (validationResult.warnings.length > 0) {
+        hasValidationWarnings = true;
+        console.log('Validation warnings:', validationResult.warnings);
       }
     }
 
-    if (!fileContents || !fileContents.startsWith('import')) {
-      console.error('No valid code block or import found in Claude response. Skipping file write.');
-      return res.status(500).json({ error: 'Claude did not return a valid code block.' });
+    if (!fileContents) {
+      console.error('No valid code could be extracted or generated.');
+      return res.status(500).json({ error: 'Failed to generate valid TypeScript code.' });
     }
 
     // Generate title based on conversation context
@@ -298,7 +326,12 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         story: fileContents,
         environment: 'production',
         storage: 'in-memory',
-        isUpdate
+        isUpdate,
+        validation: {
+          hasWarnings: hasValidationWarnings,
+          errors: validationResult.errors || [],
+          warnings: validationResult.warnings || []
+        }
       });
     } else {
       // Development: Write to file system
@@ -312,7 +345,12 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         story: fileContents,
         environment: 'development',
         storage: 'file-system',
-        isUpdate
+        isUpdate,
+        validation: {
+          hasWarnings: hasValidationWarnings,
+          errors: validationResult.errors || [],
+          warnings: validationResult.warnings || []
+        }
       });
     }
   } catch (err: any) {

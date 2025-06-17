@@ -41,7 +41,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/southleft/story-ui.git"
+    "url": "git+https://github.com/southleft/story-ui.git"
   },
   "bugs": {
     "url": "https://github.com/southleft/story-ui/issues"
@@ -62,7 +62,8 @@
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "inquirer": "^9.2.0",
-    "node-fetch": "^2.6.7"
+    "node-fetch": "^2.6.7",
+    "typescript": "^5.8.3"
   },
   "devDependencies": {
     "@commitlint/cli": "^19.6.1",
@@ -82,8 +83,7 @@
     "cz-conventional-changelog": "^3.3.0",
     "husky": "^9.1.7",
     "semantic-release": "^24.2.0",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.8.3"
+    "ts-node": "^10.9.2"
   },
   "peerDependencies": {
     "@storybook/react": ">=6.0.0",
