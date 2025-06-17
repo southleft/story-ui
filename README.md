@@ -223,12 +223,57 @@ npx story-ui init --auto-detect
 
 ## Component Discovery
 
-Story UI automatically discovers components using multiple methods:
+Story UI features an **Enhanced Component Discovery System** that automatically finds and categorizes your design system components:
 
-1. **Directory Structure**: Scans component directories for `.tsx` files
-2. **Story Files**: Extracts component information from existing `.stories.tsx` files
-3. **Custom Elements**: Reads `custom-elements.json` for web components
-4. **Package Exports**: Analyzes package.json exports and index files
+### How It Works
+
+```mermaid
+graph TD
+    A["Story UI Installation"] --> B["Component Discovery System"]
+    B --> C{"Identify Sources"}
+
+    C --> D["NPM Packages<br/>@mui/material<br/>antd<br/>@chakra-ui/react<br/>custom packages"]
+    C --> E["Local Files<br/>*.tsx, *.jsx<br/>*.ts, *.js"]
+    C --> F["TypeScript Definitions<br/>*.d.ts files"]
+    C --> G["Custom Elements<br/>custom-elements.json"]
+
+    D --> H["Auto-detect<br/>Pre-configured components<br/>for popular libraries"]
+    E --> I["Parse source files<br/>Extract components & props"]
+    F --> J["Analyze type definitions<br/>Extract interfaces"]
+    G --> K["Read metadata<br/>Parse component specs"]
+
+    H --> L["Component Registry"]
+    I --> L
+    J --> L
+    K --> L
+
+    L --> M["Categorized Components<br/>• Layout<br/>• Content<br/>• Form<br/>• Navigation<br/>• Feedback"]
+
+    M --> N["API Endpoints"]
+    N --> O["GET /mcp/components<br/>Returns discovered components"]
+    N --> P["POST /mcp/generate-story<br/>AI generates with full context"]
+
+    P --> Q["TypeScript Validation<br/>• Syntax checking<br/>• Auto-fix common errors<br/>• Fallback generation"]
+    Q --> R["Story Created Successfully<br/>✅ No syntax errors<br/>✅ No duplicates<br/>✅ Ready for Storybook"]
+```
+
+### Discovery Methods
+
+1. **Pre-configured Libraries**: Built-in component lists for popular design systems (Ant Design, MUI, Chakra UI)
+2. **Directory Structure**: Scans component directories for `.tsx` files
+3. **Story Files**: Extracts component information from existing `.stories.tsx` files
+4. **Custom Elements**: Reads `custom-elements.json` for web components
+5. **Package Exports**: Analyzes package.json exports and index files
+6. **TypeScript Definitions**: Parses `.d.ts` files for component interfaces
+
+### Features
+
+- ✅ **Zero Configuration**: Works out of the box with popular design systems
+- ✅ **Intelligent Categorization**: Automatically groups components by type
+- ✅ **Props Discovery**: Extracts component properties and types
+- ✅ **Validation System**: Catches and fixes common TypeScript errors
+- ✅ **Duplicate Prevention**: Tracks generated stories to avoid duplicates
+- ✅ **Performance Optimized**: Caches discovered components with 1-minute TTL
 
 ## Design System Examples
 
