@@ -1,5 +1,6 @@
 import { StoryUIConfig } from '../story-ui.config.js';
 import { DiscoveredComponent } from './componentDiscovery.js';
+import { EnhancedComponentDiscovery } from './enhancedComponentDiscovery.js';
 
 export interface GeneratedPrompt {
   systemPrompt: string;
@@ -88,7 +89,7 @@ function generateComponentReference(components: DiscoveredComponent[], config: S
 function formatComponentReference(component: DiscoveredComponent, config: StoryUIConfig): string {
   let reference = `- ${component.name}`;
 
-  if (component.props.length > 0) {
+  if (component.props && component.props.length > 0) {
     reference += `: Props: ${component.props.join(', ')}`;
   }
 

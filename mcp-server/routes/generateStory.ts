@@ -12,6 +12,7 @@ import { setupProductionGitignore } from '../../story-generator/productionGitign
 import { getInMemoryStoryService, GeneratedStory } from '../../story-generator/inMemoryStoryService.js';
 import { extractAndValidateCodeBlock, createFallbackStory, validateStoryCode } from '../../story-generator/validateStory.js';
 import { StoryTracker, StoryMapping } from '../../story-generator/storyTracker.js';
+import { EnhancedComponentDiscovery } from '../../story-generator/enhancedComponentDiscovery.js';
 
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514';
@@ -24,16 +25,18 @@ const SAMPLE_STORY = '';
 // Legacy component reference - now using dynamic discovery
 const COMPONENT_REFERENCE = '';
 
-// Legacy function - now uses flexible system
-function buildClaudePrompt(userPrompt: string) {
+// Legacy function - now uses flexible system with enhanced discovery
+async function buildClaudePrompt(userPrompt: string) {
   const config = loadUserConfig();
-  const components = discoverComponents(config);
+  const discovery = new EnhancedComponentDiscovery(config);
+  const components = await discovery.discoverAll();
   return buildFlexiblePrompt(userPrompt, config, components);
 }
 
 // Enhanced function that includes conversation context
-function buildClaudePromptWithContext(userPrompt: string, config: any, conversation?: any[]) {
-  const components = discoverComponents(config);
+async function buildClaudePromptWithContext(userPrompt: string, config: any, conversation?: any[]) {
+  const discovery = new EnhancedComponentDiscovery(config);
+  const components = await discovery.discoverAll();
 
   // If no conversation context, use the standard prompt
   if (!conversation || conversation.length <= 1) {
@@ -217,7 +220,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
     const isUpdate = fileName && conversation && conversation.length > 2;
 
     // Build prompt with conversation context if available
-    const fullPrompt = buildClaudePromptWithContext(prompt, config, conversation);
+    const fullPrompt = await buildClaudePromptWithContext(prompt, config, conversation);
     console.log('Layout configuration:', JSON.stringify(config.layoutRules, null, 2));
     console.log('Claude prompt:', fullPrompt);
     const aiText = await callClaude(fullPrompt);
@@ -253,7 +256,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         fileContents = importIdx !== -1 ? aiText.slice(importIdx).trim() : aiText.trim();
       }
 
-      if (validationResult.warnings.length > 0) {
+      if (validationResult.warnings && validationResult.warnings.length > 0) {
         hasValidationWarnings = true;
         console.log('Validation warnings:', validationResult.warnings);
       }
@@ -359,8 +362,8 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         isUpdate: isActuallyUpdate,
         validation: {
           hasWarnings: hasValidationWarnings,
-          errors: validationResult.errors || [],
-          warnings: validationResult.warnings || []
+          errors: validationResult?.errors || [],
+          warnings: validationResult?.warnings || []
         }
       });
     } else {
@@ -391,8 +394,8 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         isUpdate: isActuallyUpdate,
         validation: {
           hasWarnings: hasValidationWarnings,
-          errors: validationResult.errors || [],
-          warnings: validationResult.warnings || []
+          errors: validationResult?.errors || [],
+          warnings: validationResult?.warnings || []
         }
       });
     }
