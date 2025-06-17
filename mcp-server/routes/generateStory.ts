@@ -11,6 +11,7 @@ import { loadUserConfig, validateConfig } from '../../story-generator/configLoad
 import { setupProductionGitignore } from '../../story-generator/productionGitignoreManager.js';
 import { getInMemoryStoryService, GeneratedStory } from '../../story-generator/inMemoryStoryService.js';
 import { extractAndValidateCodeBlock, createFallbackStory, validateStoryCode } from '../../story-generator/validateStory.js';
+import { StoryTracker, StoryMapping } from '../../story-generator/storyTracker.js';
 
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514';
@@ -209,6 +210,9 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
     const storyService = getInMemoryStoryService(config);
     const isProduction = gitignoreManager.isProductionMode();
 
+    // Initialize story tracker for managing updates vs new creations
+    const storyTracker = new StoryTracker(config);
+
     // Check if this is an update to an existing story
     const isUpdate = fileName && conversation && conversation.length > 2;
 
@@ -285,16 +289,30 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       }
     );
 
+    // Check if there's an existing story with this title or prompt
+    const existingByTitle = storyTracker.findByTitle(aiTitle);
+    const existingByPrompt = storyTracker.findByPrompt(prompt);
+    const existingStory = existingByTitle || existingByPrompt;
+
     // Generate unique ID and filename
     let hash, finalFileName, storyId;
+    let isActuallyUpdate = false;
 
-    if (isUpdate && fileName) {
-      // For updates, use existing fileName and ID
+    if (existingStory) {
+      // Use existing story's details to update instead of creating duplicate
+      console.log(`Found existing story "${existingStory.title}" - updating instead of creating new`);
+      hash = existingStory.hash;
+      finalFileName = existingStory.fileName;
+      storyId = existingStory.storyId;
+      isActuallyUpdate = true;
+    } else if (isUpdate && fileName) {
+      // For conversation-based updates, use existing fileName and ID
       finalFileName = fileName;
       // Extract hash from existing fileName if possible
       const hashMatch = fileName.match(/-([a-f0-9]{8})(?:\.stories\.tsx)?$/);
       hash = hashMatch ? hashMatch[1] : crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 8);
       storyId = `story-${hash}`;
+      isActuallyUpdate = true;
     } else {
       // For new stories, generate new IDs
       hash = crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 8);
@@ -307,17 +325,29 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       const generatedStory: GeneratedStory = {
         id: storyId,
         title: aiTitle,
-        description: isUpdate ? `Updated: ${prompt}` : prompt,
+        description: isActuallyUpdate ? `Updated: ${prompt}` : prompt,
         content: fixedFileContents,
-        createdAt: isUpdate ? (new Date()) : new Date(),
+        createdAt: isActuallyUpdate ? (new Date()) : new Date(),
         lastAccessed: new Date(),
-        prompt: isUpdate ? conversation.map((msg: any) => `${msg.role}: ${msg.content}`).join('\n\n') : prompt,
+        prompt: isActuallyUpdate ? conversation.map((msg: any) => `${msg.role}: ${msg.content}`).join('\n\n') : prompt,
         components: extractComponentsFromContent(fixedFileContents)
       };
 
       storyService.storeStory(generatedStory);
 
-      console.log(`Story ${isUpdate ? 'updated' : 'stored'} in memory: ${storyId}`);
+      // Register with story tracker
+      const mapping: StoryMapping = {
+        title: aiTitle,
+        fileName: finalFileName,
+        storyId,
+        hash,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        prompt
+      };
+      storyTracker.registerStory(mapping);
+
+      console.log(`Story ${isActuallyUpdate ? 'updated' : 'stored'} in memory: ${storyId}`);
       res.json({
         success: true,
         fileName: finalFileName,
@@ -326,7 +356,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         story: fileContents,
         environment: 'production',
         storage: 'in-memory',
-        isUpdate,
+        isUpdate: isActuallyUpdate,
         validation: {
           hasWarnings: hasValidationWarnings,
           errors: validationResult.errors || [],
@@ -336,7 +366,20 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
     } else {
       // Development: Write to file system
       const outPath = generateStory({ fileContents: fixedFileContents, fileName: finalFileName });
-      console.log(`Story ${isUpdate ? 'updated' : 'written'} to:`, outPath);
+
+      // Register with story tracker
+      const mapping: StoryMapping = {
+        title: aiTitle,
+        fileName: finalFileName,
+        storyId,
+        hash,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        prompt
+      };
+      storyTracker.registerStory(mapping);
+
+      console.log(`Story ${isActuallyUpdate ? 'updated' : 'written'} to:`, outPath);
       res.json({
         success: true,
         fileName: finalFileName,
@@ -345,7 +388,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         story: fileContents,
         environment: 'development',
         storage: 'file-system',
-        isUpdate,
+        isUpdate: isActuallyUpdate,
         validation: {
           hasWarnings: hasValidationWarnings,
           errors: validationResult.errors || [],
