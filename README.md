@@ -373,6 +373,71 @@ Generate a new story from a natural language prompt.
 }
 ```
 
+#### GET `/mcp/components`
+
+Get all discovered components from your design system.
+
+**Response:**
+```json
+[
+  {
+    "name": "Button",
+    "description": "Button component",
+    "category": "form",
+    "props": ["type", "size", "loading", "icon", "onClick"],
+    "slots": []
+  },
+  // ... more components
+]
+```
+
+#### GET `/mcp/stories`
+
+Get all generated stories (production mode only).
+
+**Response:**
+```json
+[
+  {
+    "id": "story-abc123",
+    "title": "Login Form",
+    "createdAt": "2024-01-15T10:30:00Z",
+    "components": ["Form", "Input", "Button"]
+  },
+  // ... more stories
+]
+```
+
+#### GET `/mcp/stories/:id/content`
+
+Get the content of a specific story (production mode only).
+
+**Response:**
+```json
+{
+  "id": "story-abc123",
+  "title": "Login Form",
+  "content": "// Full story TypeScript code...",
+  "createdAt": "2024-01-15T10:30:00Z"
+}
+```
+
+#### GET `/mcp/stats`
+
+Get server and memory statistics (production mode only).
+
+**Response:**
+```json
+{
+  "environment": "production",
+  "uptime": 3600,
+  "storyCount": 12,
+  "totalSizeMB": 0.5,
+  "memoryLimit": 50,
+  "oldestStory": "2024-01-15T08:00:00Z"
+}
+```
+
 ### MCP Integration
 
 Story UI includes an MCP (Model Context Protocol) server for integration with Claude Desktop:
@@ -423,8 +488,8 @@ npx story-ui config --generate --type=json
 
 ```bash
 CLAUDE_API_KEY=your_claude_api_key_here
-CLAUDE_MODEL=claude-3-opus-20240229  # Optional, defaults to opus
-PORT=4001                            # Optional, defaults to 4001
+CLAUDE_MODEL=claude-sonnet-4-20250514  # Optional, defaults to latest Sonnet
+PORT=4001                              # Optional, defaults to 4001
 ```
 
 ## Production-Ready Deployment
@@ -451,7 +516,6 @@ Story UI automatically detects your environment:
 ```bash
 # Development setup
 npx story-ui init --auto-detect
-npx story-ui setup-gitignore
 
 # Production deployment
 # No additional setup needed - automatically detected!
@@ -528,11 +592,11 @@ Story UI is designed to be community-driven and extensible. Contributions are we
 ### Development Setup
 
 ```bash
-git clone https://github.com/your-org/story-ui
+git clone https://github.com/southleft/story-ui
 cd story-ui
-yarn install
-yarn build
-yarn start
+npm install
+npm run build
+npm run start
 ```
 
 ### Adding Design System Templates
