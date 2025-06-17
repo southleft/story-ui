@@ -37,3 +37,6 @@ test-storybooks/
 !test-storybooks/*/tsconfig.json
 !test-storybooks/*/.storybook/
 !test-storybooks/*/package.json
+
+*storybook.log
+storybook-static

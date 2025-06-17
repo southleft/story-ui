@@ -40,6 +40,23 @@ export async function setupCommand() {
     console.log('Install Storybook first: npx storybook@latest init\n');
   }
 
+  // Detect Storybook framework (Vite vs Webpack)
+  let storybookFramework = '@storybook/react'; // default
+  const devDeps = packageJson.devDependencies || {};
+  const deps = packageJson.dependencies || {};
+
+  // Check for Vite-based Storybook
+  if (devDeps['@storybook/react-vite'] || deps['@storybook/react-vite']) {
+    storybookFramework = '@storybook/react-vite';
+    console.log(chalk.green('✅ Detected Vite-based Storybook'));
+  } else if (devDeps['@storybook/react-webpack5'] || deps['@storybook/react-webpack5']) {
+    storybookFramework = '@storybook/react-webpack5';
+    console.log(chalk.green('✅ Detected Webpack 5-based Storybook'));
+  } else if (devDeps['@storybook/nextjs'] || deps['@storybook/nextjs']) {
+    storybookFramework = '@storybook/nextjs';
+    console.log(chalk.green('✅ Detected Next.js Storybook'));
+  }
+
   // Auto-detect design system
   const autoDetected = autoDetectDesignSystem();
   if (autoDetected) {
@@ -230,7 +247,17 @@ export async function setupCommand() {
     const targetPath = path.join(storyUITargetDir, file);
 
     if (fs.existsSync(sourcePath)) {
-      fs.copyFileSync(sourcePath, targetPath);
+      let content = fs.readFileSync(sourcePath, 'utf-8');
+
+      // Replace Storybook import based on detected framework
+      if (file === 'StoryUIPanel.stories.tsx' && storybookFramework !== '@storybook/react') {
+        content = content.replace(
+          "import type { StoryFn, Meta } from '@storybook/react';",
+          `import type { StoryFn, Meta } from '${storybookFramework}';`
+        );
+      }
+
+      fs.writeFileSync(targetPath, content);
       console.log(chalk.green(`✅ Copied ${file}`));
     } else {
       console.warn(chalk.yellow(`⚠️  Template file not found: ${file}`));

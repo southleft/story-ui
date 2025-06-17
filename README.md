@@ -547,6 +547,40 @@ For automated releases to work, you need to add an NPM_TOKEN secret to your GitH
 2. Add it to GitHub: Settings → Secrets → Actions → New repository secret
 3. Name: `NPM_TOKEN`, Value: your npm token
 
+## Troubleshooting
+
+### "The requested module does not provide an export named 'Meta'"
+
+This error occurs when Story UI is installed in a Vite-based Storybook project. The issue happens because the template uses `@storybook/react` imports, but Vite projects require `@storybook/react-vite`.
+
+**Solution:**
+1. Update your `src/stories/StoryUI/StoryUIPanel.stories.tsx` file
+2. Change the import from:
+   ```typescript
+   import { StoryFn, Meta } from '@storybook/react';
+   ```
+   To:
+   ```typescript
+   import type { StoryFn, Meta } from '@storybook/react-vite';
+   ```
+
+**Note:** This issue has been fixed in Story UI v1.2.0+. The init command now automatically detects your Storybook framework and uses the correct import.
+
+### Configuration validation errors
+
+If you see "Components path does not exist" error when using a design system from npm (like Ant Design):
+
+**Solution:**
+Add `componentsPath: null` to your `story-ui.config.js`:
+```javascript
+module.exports = {
+  importPath: "antd",
+  componentPrefix: "",
+  componentsPath: null,
+  // ... rest of config
+};
+```
+
 ## Support
 
 - 📖 [Documentation](https://github.com/southleft/story-ui#readme)

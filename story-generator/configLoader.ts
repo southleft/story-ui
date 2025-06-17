@@ -92,8 +92,8 @@ export function validateConfig(config: StoryUIConfig): { isValid: boolean; error
   }
 
   // Check if components can be discovered
-  if (!config.componentsPath && !config.componentsMetadataPath) {
-    errors.push('Either componentsPath or componentsMetadataPath must be specified');
+  if (!config.componentsPath && !config.componentsMetadataPath && (!config.components || config.components.length === 0)) {
+    errors.push('Either componentsPath, componentsMetadataPath, or a components array must be specified');
   }
 
   if (config.componentsPath && !fs.existsSync(config.componentsPath)) {
