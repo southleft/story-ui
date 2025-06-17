@@ -1,3 +1,10 @@
+## [1.5.1](https://github.com/southleft/story-ui/compare/v1.5.0...v1.5.1) (2025-06-17)
+
+
+### Bug Fixes
+
+* **generator:** improve handling of truncated AI responses ([5924329](https://github.com/southleft/story-ui/commit/5924329ada8be82beedaad48e09edfd24a030612))
+
 # Unreleased
 
 ### Bug Fixes
