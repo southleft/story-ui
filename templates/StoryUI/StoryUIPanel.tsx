@@ -1,7 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 
-const MCP_API = 'http://localhost:4001/mcp/generate-story';
-const SYNC_API = 'http://localhost:4001/mcp/sync';
+// Simple port configuration - defaults to 4001, configurable via window.STORY_UI_MCP_PORT
+const MCP_PORT = (window as any).STORY_UI_MCP_PORT || '4001';
+const MCP_API = `http://localhost:${MCP_PORT}/mcp/generate-story`;
+const SYNC_API = `http://localhost:${MCP_PORT}/mcp/sync`;
 const LOCAL_STORAGE_KEY = 'story_ui_chat_history_v2'; // Updated version for sync
 const MAX_RECENT_CHATS = 20;
 
@@ -36,7 +38,6 @@ const STYLES = {
     display: 'flex',
     height: '600px',
     background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
-    borderRadius: '12px',
     boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
     overflow: 'hidden',
     border: '1px solid rgba(255, 255, 255, 0.1)',

@@ -9,5 +9,6 @@
     "skipLibCheck": true,
     "outDir": "dist"
   },
-  "include": ["./**/*.ts"]
+  "include": ["./**/*.ts"],
+  "exclude": ["test-storybooks/**/*", "node_modules/**/*"]
 }

@@ -34,7 +34,10 @@ program
   .action((options) => {
     console.log('🚀 Starting Story UI server...');
 
-    const serverPath = path.resolve(__dirname, '../dist/mcp-server/index.js');
+    // Use absolute path to avoid dist/dist issue when package is linked
+    const pkgRoot = path.resolve(__dirname, '..');
+    const serverPath = path.join(pkgRoot, 'mcp-server/index.js');
+    console.log(`✅ Using MCP server at: ${serverPath}`);
     const env = { ...process.env };
 
     if (options.port) {

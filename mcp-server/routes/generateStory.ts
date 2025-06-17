@@ -12,7 +12,7 @@ import { setupProductionGitignore } from '../../story-generator/productionGitign
 import { getInMemoryStoryService, GeneratedStory } from '../../story-generator/inMemoryStoryService.js';
 
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
-const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-3-opus-20240229';
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514';
 
 // Legacy constants - now using dynamic discovery
 const COMPONENT_LIST: string[] = [];

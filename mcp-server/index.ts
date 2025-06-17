@@ -62,29 +62,28 @@ app.delete('/mcp/sync/stories', clearAllSyncedStories);
 app.get('/mcp/sync/chat-history', syncChatHistory);
 app.get('/mcp/sync/validate/:id', validateChatSession);
 
-const PORT = process.env.PORT || 4001;
-
 // Set up production-ready gitignore and directory structure on startup
 const config = loadUserConfig();
 const gitignoreManager = setupProductionGitignore(config);
 const storyService = getInMemoryStoryService(config);
 
-// Add memory stats endpoint for production monitoring
-app.get('/mcp/stats', (req, res) => {
-  const memoryStats = storyService.getMemoryStats();
-  const isProduction = gitignoreManager.isProductionMode();
+const PORT = parseInt(process.env.PORT || '4001', 10);
 
-  res.json({
-    environment: isProduction ? 'production' : 'development',
-    storyGeneration: isProduction ? 'in-memory' : 'file-system',
-    memoryStats,
-    uptime: process.uptime(),
-    nodeVersion: process.version
-  });
-});
-
+// Start server
 app.listen(PORT, () => {
   console.log(`MCP server running on port ${PORT}`);
   console.log(`Environment: ${gitignoreManager.isProductionMode() ? 'Production' : 'Development'}`);
   console.log(`Story generation: ${gitignoreManager.isProductionMode() ? 'In-memory' : 'File-system'}`);
+}).on('error', (err: any) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\n❌ Port ${PORT} is already in use!`);
+    console.error(`\n💡 To fix this:`);
+    console.error(`   1. Kill the process using port ${PORT}: lsof -ti:${PORT} | xargs kill`);
+    console.error(`   2. Or set a different PORT in your .env file`);
+    console.error(`   3. Make sure to update your Storybook StoryUI panel to use the same port\n`);
+    process.exit(1);
+  } else {
+    console.error('❌ Server failed to start:', err);
+    process.exit(1);
+  }
 });
