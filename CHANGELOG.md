@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/southleft/story-ui/compare/v1.5.2...v1.6.0) (2025-06-18)
+
+
+### Features
+
+* add GitHub templates, roadmap and project cleanup ([d4866db](https://github.com/southleft/story-ui/commit/d4866db1925ce305ba70a22c28d02e4e66aab9dd))
+
 ## [1.5.2](https://github.com/southleft/story-ui/compare/v1.5.1...v1.5.2) (2025-06-18)
 
 
