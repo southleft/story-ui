@@ -1,0 +1,105 @@
+# GitHub Labels Configuration
+# Use with: https://github.com/crazy-max/ghaction-github-labeler
+
+- name: "bug"
+  color: "d73a4a"
+  description: "Something isn't working"
+
+- name: "enhancement"
+  color: "a2eeef"
+  description: "New feature or request"
+
+- name: "roadmap"
+  color: "0052cc"
+  description: "Features planned for future releases"
+
+- name: "good first issue"
+  color: "7057ff"
+  description: "Good for newcomers"
+
+- name: "help wanted"
+  color: "008672"
+  description: "Extra attention is needed"
+
+- name: "priority:high"
+  color: "b60205"
+  description: "High priority item"
+
+- name: "priority:medium"
+  color: "fbca04"
+  description: "Medium priority item"
+
+- name: "priority:low"
+  color: "0e8a16"
+  description: "Low priority item"
+
+# Theme-based labels
+- name: "theme:ai"
+  color: "c5def5"
+  description: "AI and generation quality improvements"
+
+- name: "theme:dx"
+  color: "c5def5"
+  description: "Developer experience enhancements"
+
+- name: "theme:framework-support"
+  color: "c5def5"
+  description: "Support for additional frameworks"
+
+- name: "theme:collaboration"
+  color: "c5def5"
+  description: "Team and collaboration features"
+
+- name: "theme:performance"
+  color: "c5def5"
+  description: "Performance and optimization"
+
+- name: "theme:design-system"
+  color: "c5def5"
+  description: "Design system integration and support"
+
+- name: "theme:organization"
+  color: "c5def5"
+  description: "Organization and management features"
+
+- name: "theme:developer-experience"
+  color: "c5def5"
+  description: "Developer workflow improvements"
+
+# Status labels
+- name: "status:needs-triage"
+  color: "ffffff"
+  description: "Needs initial review and categorization"
+
+- name: "status:blocked"
+  color: "000000"
+  description: "Blocked by external dependencies"
+
+- name: "status:in-progress"
+  color: "fef2c0"
+  description: "Currently being worked on"
+
+- name: "status:needs-feedback"
+  color: "e99695"
+  description: "Waiting for community or maintainer feedback"
+
+# Size labels for effort estimation
+- name: "size:xs"
+  color: "c2e0c6"
+  description: "Very small change (< 1 day)"
+
+- name: "size:s"
+  color: "bfd4f2"
+  description: "Small change (1-3 days)"
+
+- name: "size:m"
+  color: "d4c5f9"
+  description: "Medium change (1 week)"
+
+- name: "size:l"
+  color: "f9c23c"
+  description: "Large change (2-4 weeks)"
+
+- name: "size:xl"
+  color: "f99157"
+  description: "Very large change (1+ months)"

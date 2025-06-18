@@ -1,0 +1,93 @@
+name: 🚀 Feature Request
+description: Suggest a new feature or enhancement for Story UI
+title: "[FEATURE] "
+labels: ["enhancement", "roadmap"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to suggest a new feature! This helps us understand what would make Story UI more valuable for you and the community.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 🎯 Problem Description
+      description: What problem does this feature solve? What's currently difficult or impossible?
+      placeholder: "As a [role], I want [goal] so that [benefit]..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: 💡 Proposed Solution
+      description: Describe your ideal solution. How would this feature work?
+      placeholder: "I envision a feature that..."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: 🏷️ Feature Category
+      description: Which area does this feature relate to?
+      options:
+        - AI & Generation Quality
+        - Design System Support
+        - Developer Experience
+        - Production & Deployment
+        - Collaboration & Sharing
+        - Performance & Optimization
+        - Accessibility
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: ⚡ Priority Level
+      description: How important is this feature for your workflow?
+      options:
+        - Low - Nice to have, would improve experience
+        - Medium - Would significantly improve my workflow
+        - High - Critical for adoption or current blocker
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-cases
+    attributes:
+      label: 🎬 Use Cases
+      description: Provide specific examples of how you'd use this feature
+      placeholder: |
+        1. When working on a dashboard, I would...
+        2. For marketing pages, this would help me...
+        3. In team reviews, stakeholders could...
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 🔄 Alternatives Considered
+      description: What workarounds are you currently using? What other solutions have you considered?
+      placeholder: "Currently I have to... I've also considered..."
+
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: 🌍 Expected Impact
+      description: Who would benefit from this feature?
+      options:
+        - label: Individual developers
+        - label: Design teams
+        - label: Product managers
+        - label: Stakeholders/clients
+        - label: Enterprise teams
+        - label: Open source community
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: 📝 Additional Context
+      description: Add any other context, mockups, links, or examples that would help us understand this request
+      placeholder: "Screenshots, links to similar features, technical constraints, etc."

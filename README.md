@@ -17,6 +17,10 @@ Story UI is a flexible, AI-powered tool that generates Storybook stories for any
 - 🧹 **Cleanup Utilities**: Built-in cleanup for old generated stories
 - 🎨 **Built-in UI**: Includes a Storybook panel for easy interaction
 
+## Roadmap
+
+Check out our [development roadmap](./ROADMAP.md) to see what's coming next and how you can contribute to the future of Story UI. We're planning exciting features like multi-framework support, story sharing, and advanced collaboration tools.
+
 ## Quick Start
 
 ### 1. Installation
@@ -694,4 +698,3 @@ module.exports = {
 
 - 📖 [Documentation](https://github.com/southleft/story-ui#readme)
 - 🐛 [Issues](https://github.com/southleft/story-ui/issues)
-- 💬 [Discussions](https://github.com/southleft/story-ui/discussions)
