@@ -33,7 +33,7 @@ Both scripts remove the following Story UI related files and configurations:
 ### 📋 Configuration Files
 - `story-ui.config.js`
 - `story-ui.config.ts`
-- `.env` (if created by Story UI)
+- `.env` (only if it contains Story UI header - existing .env files are preserved)
 
 ### 📁 Generated Stories Directories
 - `src/stories/generated/`
@@ -92,6 +92,7 @@ These scripts are particularly useful for:
 ## Safety Features
 
 - **Safe Removal** - Only removes files that actually exist
+- **Environment Protection** - Only removes .env files created by Story UI (preserves existing ones)
 - **Colored Output** - Easy to understand status messages
 - **Detailed Logging** - Shows exactly what was removed
 - **Manual Review** - Lists remaining files for manual review

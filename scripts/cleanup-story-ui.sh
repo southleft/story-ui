@@ -92,7 +92,19 @@ echo ""
 echo -e "${BLUE}📋 Configuration Files:${NC}"
 safe_remove "story-ui.config.js" "Story UI config file"
 safe_remove "story-ui.config.ts" "Story UI TypeScript config file"
-safe_remove ".env" "Environment file (if created by Story UI)"
+
+# Only remove .env if it was created by Story UI
+if [ -f ".env" ]; then
+    if grep -q "# Story UI Configuration" ".env" 2>/dev/null; then
+        echo -e "${YELLOW}🗑️  Removing Story UI .env file: ${NC}.env"
+        rm -f ".env"
+        echo -e "${GREEN}✅ Removed${NC}"
+    else
+        echo -e "${BLUE}ℹ️  .env file exists but was not created by Story UI (keeping it safe)${NC}"
+    fi
+else
+    echo -e "${BLUE}ℹ️  Not found: ${NC}.env"
+fi
 
 echo ""
 

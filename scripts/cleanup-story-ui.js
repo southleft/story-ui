@@ -180,7 +180,25 @@ function cleanup() {
   console.log(colorize('📋 Configuration Files:', 'blue'));
   safeRemove('story-ui.config.js', 'Story UI config file');
   safeRemove('story-ui.config.ts', 'Story UI TypeScript config file');
-  safeRemove('.env', 'Environment file (if created by Story UI)');
+
+  // Only remove .env if it was created by Story UI
+  const envPath = '.env';
+  if (fs.existsSync(envPath)) {
+    try {
+      const envContent = fs.readFileSync(envPath, 'utf-8');
+      if (envContent.includes('# Story UI Configuration')) {
+        console.log(colorize('🗑️  Removing Story UI .env file:', 'yellow'), path.resolve(envPath));
+        fs.unlinkSync(envPath);
+        console.log(colorize('✅ Removed', 'green'));
+      } else {
+        console.log(colorize('ℹ️  .env file exists but was not created by Story UI (keeping it safe)', 'blue'));
+      }
+    } catch (error) {
+      console.log(colorize('ℹ️  Could not read .env file (keeping it safe)', 'blue'));
+    }
+  } else {
+    console.log(colorize('ℹ️  Not found:', 'blue'), path.resolve(envPath));
+  }
   console.log('');
 
   // 2. Remove generated stories directories

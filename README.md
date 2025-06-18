@@ -570,11 +570,16 @@ npm run cleanup
 ```
 
 **What gets cleaned up:**
-- Configuration files (`story-ui.config.js`, `.env`)
+- Configuration files (`story-ui.config.js`, `.env` only if created by Story UI)
 - Generated stories directories (`src/stories/generated/`, etc.)
 - StoryUI components (`src/stories/StoryUI/`)
 - Cache files and story tracking files
 - Git ignore patterns
+
+**Safety features:**
+- ✅ **Environment Protection** - Preserves existing `.env` files (only removes ones created by Story UI)
+- ✅ **Safe Removal** - Only removes files that actually exist
+- ✅ **Non-destructive** - Won't break your existing project
 
 **Manual cleanup:**
 ```bash
