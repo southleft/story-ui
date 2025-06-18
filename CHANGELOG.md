@@ -1,3 +1,10 @@
+## [1.5.2](https://github.com/southleft/story-ui/compare/v1.5.1...v1.5.2) (2025-06-18)
+
+
+### Bug Fixes
+
+* support external design systems without local components directory ([2b6de67](https://github.com/southleft/story-ui/commit/2b6de6729b09697f571909b6abc62ba7e56a055f))
+
 ## [1.5.1](https://github.com/southleft/story-ui/compare/v1.5.0...v1.5.1) (2025-06-17)
 
 
