@@ -79,7 +79,7 @@ app.listen(PORT, () => {
     console.error(`\n❌ Port ${PORT} is already in use!`);
     console.error(`\n💡 To fix this:`);
     console.error(`   1. Kill the process using port ${PORT}: lsof -ti:${PORT} | xargs kill`);
-    console.error(`   2. Or set a different PORT in your .env file`);
+    console.error(`   2. Or use a different port: story-ui start --port=4002`);
     console.error(`   3. Make sure to update your Storybook StoryUI panel to use the same port\n`);
     process.exit(1);
   } else {

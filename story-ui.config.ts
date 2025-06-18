@@ -54,7 +54,7 @@ export interface StoryUIConfig {
 // Default generic configuration
 export const DEFAULT_CONFIG: StoryUIConfig = {
   generatedStoriesPath: path.resolve(process.cwd(), './src/stories/generated/'),
-  componentsPath: path.resolve(process.cwd(), './src/components'),
+  componentsPath: undefined, // No default path - should be set only for local component libraries
   componentsMetadataPath: undefined,
   storyPrefix: 'Generated/',
   defaultAuthor: 'Story UI AI',

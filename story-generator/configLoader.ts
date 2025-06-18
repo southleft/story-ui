@@ -97,13 +97,20 @@ export function validateConfig(config: StoryUIConfig): { isValid: boolean; error
     }
   }
 
+  // Determine if we're using an external package (like antd, @mui/material, etc.)
+  const isExternalPackage = config.importPath &&
+    !config.importPath.startsWith('.') &&
+    !config.importPath.startsWith('/') &&
+    config.importPath !== 'your-component-library' &&
+    config.importPath.trim() !== '';
+
   // Check if components can be discovered
-  if (!config.componentsPath && !config.componentsMetadataPath && (!config.components || config.components.length === 0)) {
+  if (!isExternalPackage && !config.componentsPath && !config.componentsMetadataPath && (!config.components || config.components.length === 0)) {
     errors.push('Either componentsPath, componentsMetadataPath, or a components array must be specified');
   }
 
-  // Only validate componentsPath if it's provided (not null/undefined)
-  if (config.componentsPath && config.componentsPath !== null && !fs.existsSync(config.componentsPath)) {
+  // Only validate componentsPath if it's provided AND we're not using an external package
+  if (!isExternalPackage && config.componentsPath && config.componentsPath !== null && !fs.existsSync(config.componentsPath)) {
     errors.push(`Components path does not exist: ${config.componentsPath}`);
   }
 
@@ -256,8 +263,15 @@ export function autoDetectDesignSystem(): Partial<StoryUIConfig> | null {
     const analysis = analyzeExistingStories(cwd);
     console.log(`📊 Analysis found: ${analysis.storyFiles.length} story files, ${analysis.componentDirs.length} component directories`);
 
-    // Determine the most likely component directory
-    const componentPath = findMostLikelyComponentDirectory(analysis.componentDirs, cwd);
+    // Determine if we're using an external package
+    const isExternalPackage = knownSystems && knownSystems.importPath &&
+      !knownSystems.importPath.startsWith('.') &&
+      !knownSystems.importPath.startsWith('/');
+
+    // Only determine component path if we're not using an external package
+    const componentPath = !isExternalPackage ?
+      findMostLikelyComponentDirectory(analysis.componentDirs, cwd) :
+      undefined;
 
     // Determine the most likely import path
     const importPath = findMostLikelyImportPath(analysis.importPaths, packageJson.name);
@@ -271,11 +285,15 @@ export function autoDetectDesignSystem(): Partial<StoryUIConfig> | null {
     // Build configuration
     const config: Partial<StoryUIConfig> = {
       generatedStoriesPath: path.join(cwd, 'src/stories/generated/'),
-      componentsPath: componentPath,
       importPath: importPath,
       componentPrefix: componentPrefix,
       layoutRules: layoutRules
     };
+
+    // Only set componentsPath for local component libraries
+    if (componentPath && !isExternalPackage) {
+      config.componentsPath = componentPath;
+    }
 
     // Merge with known system config if available
     if (knownSystems) {
