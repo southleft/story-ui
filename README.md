@@ -556,6 +556,35 @@ npx story-ui init --auto-detect
 5. Iterate and refine layouts
 6. Implement approved layouts in actual codebase
 
+### 🧹 **Cleanup Scripts**
+
+Story UI includes built-in cleanup scripts for testing and demo purposes. Perfect for cleaning up between test runs or preparing for video demos.
+
+**Automated Cleanup (Recommended):**
+```bash
+# Cross-platform Node.js script
+npm run cleanup
+
+# Or use the bash script (Linux/macOS)
+./scripts/cleanup-story-ui.sh
+```
+
+**What gets cleaned up:**
+- Configuration files (`story-ui.config.js`, `.env`)
+- Generated stories directories (`src/stories/generated/`, etc.)
+- StoryUI components (`src/stories/StoryUI/`)
+- Cache files and story tracking files
+- Git ignore patterns
+
+**Manual cleanup:**
+```bash
+npm uninstall @tpitre/story-ui
+rm -rf src/stories/generated/
+rm story-ui.config.js
+```
+
+See [scripts/README.md](./scripts/README.md) for detailed documentation.
+
 ### 📊 **Production Monitoring**
 
 ```bash

@@ -11,6 +11,7 @@
   "files": [
     "dist",
     "templates",
+    "scripts",
     ".env.sample",
     "README.md",
     "LICENSE"
@@ -24,7 +25,9 @@
     "release": "semantic-release",
     "release:dry-run": "semantic-release --dry-run",
     "commit": "cz",
-    "prepare": "husky"
+    "prepare": "husky",
+    "cleanup": "node scripts/cleanup-story-ui.js",
+    "cleanup:bash": "./scripts/cleanup-story-ui.sh"
   },
   "keywords": [
     "storybook",
