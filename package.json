@@ -27,7 +27,10 @@
     "commit": "cz",
     "prepare": "husky",
     "cleanup": "node scripts/cleanup-story-ui.js",
-    "cleanup:bash": "./scripts/cleanup-story-ui.sh"
+    "cleanup:bash": "./scripts/cleanup-story-ui.sh",
+    "test:setup": "./scripts/manage-test-projects.sh setup all",
+    "test:cleanup": "./scripts/manage-test-projects.sh cleanup all",
+    "test:list": "./scripts/manage-test-projects.sh list"
   },
   "keywords": [
     "storybook",

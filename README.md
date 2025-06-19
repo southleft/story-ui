@@ -493,7 +493,6 @@ npx story-ui config --generate --type=json
 ```bash
 CLAUDE_API_KEY=your_claude_api_key_here
 CLAUDE_MODEL=claude-sonnet-4-20250514  # Optional, defaults to latest Sonnet
-PORT=4001                              # Optional, defaults to 4001
 ```
 
 ## Production-Ready Deployment
