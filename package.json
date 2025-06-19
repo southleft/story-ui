@@ -24,7 +24,8 @@
     "release": "semantic-release",
     "release:dry-run": "semantic-release --dry-run",
     "commit": "cz",
-    "prepare": "husky"
+    "prepare": "husky",
+    "push": "./scripts/push.sh"
   },
   "keywords": [
     "storybook",
