@@ -1,3 +1,18 @@
+# [1.7.0](https://github.com/southleft/story-ui/compare/v1.6.0...v1.7.0) (2025-06-19)
+
+
+### Bug Fixes
+
+* add environment protection to cleanup scripts - only remove .env files created by Story UI ([a698817](https://github.com/southleft/story-ui/commit/a698817ee5292e1f58a7193717c35b24b0adc585))
+* add missing story-ui.config.ts file to resolve build errors ([5bb8f7a](https://github.com/southleft/story-ui/commit/5bb8f7a7478eb956367f9b34aadca7cc72371cc8))
+
+
+### Features
+
+* add comprehensive cleanup scripts for testing and demos ([5c3da22](https://github.com/southleft/story-ui/commit/5c3da221b9bf8458c8efc2bd1338ead76f29566e))
+* add smart push script to handle automatic rebasing ([baed025](https://github.com/southleft/story-ui/commit/baed02597e5f357e8f5f4603ae3b8f0801604d48))
+* add test project management system for clean testing cycles ([22b95a6](https://github.com/southleft/story-ui/commit/22b95a6aac8570b4a3b8335068ce243b2bee9cb6))
+
 # [1.6.0](https://github.com/southleft/story-ui/compare/v1.5.2...v1.6.0) (2025-06-18)
 
 
