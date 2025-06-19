@@ -1,6 +1,6 @@
-# Story UI Cleanup Scripts
+# Story UI Scripts
 
-This directory contains scripts to clean up Story UI installations for testing and demo purposes.
+This directory contains scripts for managing Story UI installations, cleanup, and testing workflows.
 
 ## Scripts
 
@@ -25,6 +25,27 @@ npm run cleanup
 ```
 
 **Platform:** Cross-platform (Windows, macOS, Linux)
+
+### `manage-test-projects.sh` (Test Management)
+A management script for handling Story UI installations across test projects in `test-storybooks/`.
+
+**Usage:**
+```bash
+# List all test projects
+./scripts/manage-test-projects.sh list
+
+# Setup cleanup scripts in a specific project
+./scripts/manage-test-projects.sh setup ant-design-test
+
+# Clean up a specific test project
+./scripts/manage-test-projects.sh cleanup ant-design-test
+
+# Setup/cleanup all test projects
+./scripts/manage-test-projects.sh setup all
+./scripts/manage-test-projects.sh cleanup all
+```
+
+**Platform:** Linux, macOS, Windows (with WSL/Git Bash)
 
 ## What Gets Cleaned Up
 
@@ -82,12 +103,21 @@ After running the cleanup script, you may need to manually:
 
 ## Use Cases
 
-These scripts are particularly useful for:
+### Cleanup Scripts (`cleanup-story-ui.*`)
+Perfect for cleaning up Story UI from any project:
 
 - 🎥 **Demo Preparation** - Clean slate for video recordings
 - 🧪 **Testing** - Reset environment between test runs
 - 🎯 **Fresh Installation** - Start with a clean project
 - 📦 **Package Development** - Test installation scenarios
+
+### Test Management Script (`manage-test-projects.sh`)
+Specifically designed for managing the test projects in `test-storybooks/`:
+
+- 🔄 **Batch Operations** - Setup/cleanup multiple test projects at once
+- 🧪 **Test Automation** - Integrate into testing workflows
+- 📋 **Project Discovery** - List and manage all available test projects
+- 🎯 **Targeted Cleanup** - Clean specific test projects without affecting others
 
 ## Safety Features
 
@@ -100,18 +130,87 @@ These scripts are particularly useful for:
 
 ## Running from NPM Scripts
 
-The Node.js script can be run via npm scripts added to your package.json:
+### Main Repository Scripts
+
+The main Story UI repository includes these npm scripts:
 
 ```json
 {
   "scripts": {
     "cleanup": "node scripts/cleanup-story-ui.js",
-    "cleanup:bash": "./scripts/cleanup-story-ui.sh"
+    "cleanup:bash": "./scripts/cleanup-story-ui.sh",
+    "test:setup": "./scripts/manage-test-projects.sh setup all",
+    "test:cleanup": "./scripts/manage-test-projects.sh cleanup all",
+    "test:list": "./scripts/manage-test-projects.sh list"
   }
 }
 ```
 
-Then run with:
+**Usage:**
 ```bash
+# Clean up current directory
+npm run cleanup
+
+# Manage test projects
+npm run test:list
+npm run test:cleanup
+npm run test:setup
+```
+
+### Test Project Scripts
+
+Test projects (after setup) include these npm scripts:
+
+```json
+{
+  "scripts": {
+    "cleanup": "node cleanup-story-ui.js",
+    "cleanup:bash": "./cleanup-story-ui.sh"
+  }
+}
+```
+
+**Usage from within test projects:**
+```bash
+cd test-storybooks/ant-design-test
 npm run cleanup
 ```
+
+## Quick Reference
+
+### From Main Repository
+
+```bash
+# List test projects
+npm run test:list
+
+# Setup cleanup scripts in all test projects
+npm run test:setup
+
+# Clean up all test projects
+npm run test:cleanup
+
+# Clean up specific test project
+./scripts/manage-test-projects.sh cleanup ant-design-test
+
+# Clean up current directory (main repo)
+npm run cleanup
+```
+
+### From Test Projects
+
+```bash
+cd test-storybooks/ant-design-test
+
+# Clean up this test project
+npm run cleanup
+
+# Alternative bash version
+npm run cleanup:bash
+```
+
+## See Also
+
+- **[TESTING.md](../TESTING.md)** - Complete testing workflows and demo preparation guide
+- **[README.md](../README.md)** - Main Story UI documentation
+- **[CONTRIBUTING.md](../CONTRIBUTING.md)** - Development and contribution guidelines
