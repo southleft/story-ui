@@ -26,7 +26,8 @@ yarn-error.log*
 
 # These are temporary stories for testing layouts and should not be committed
 
-# Test Storybook Projects (local testing only)
+# Personal Development & Testing Infrastructure
+dev-testing/
 test-storybooks/
 # But allow essential config files for proper TypeScript/Storybook setup
 !test-storybooks/*/tsconfig.json
