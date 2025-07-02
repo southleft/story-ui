@@ -86,7 +86,7 @@ async function startInstance(instance) {
     const isLocalDev = config.settings.useNpmLink;
 
     // Start MCP server
-    const mcpProcess = spawn('npm', ['exec', 'story-ui', 'start', '--port', mcpPort.toString()], {
+    const mcpProcess = spawn('npm', ['exec', 'story-ui', '--', 'start', '--port', mcpPort.toString()], {
       cwd: projectPath,
       stdio: 'pipe',
       shell: process.platform === 'win32'
