@@ -25,7 +25,15 @@ const getMCPPort = () => {
 const MCP_PORT = getMCPPort();
 const MCP_API = `http://localhost:${MCP_PORT}/mcp/generate-story`;
 const SYNC_API = `http://localhost:${MCP_PORT}/mcp/sync`;
-const LOCAL_STORAGE_KEY = 'story_ui_chat_history_v2'; // Updated version for sync
+
+// Make localStorage key unique per port to prevent cross-contamination
+const getStorageKey = () => {
+  // Get the current Storybook port from window.location
+  const currentPort = typeof window !== 'undefined' ? window.location.port : '6006';
+  return `story_ui_chat_history_v2_port_${currentPort}`;
+};
+
+const LOCAL_STORAGE_KEY = getStorageKey();
 const MAX_RECENT_CHATS = 20;
 
 interface Message {
