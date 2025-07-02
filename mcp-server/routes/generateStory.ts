@@ -368,7 +368,11 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       });
     } else {
       // Development: Write to file system
-      const outPath = generateStory({ fileContents: fixedFileContents, fileName: finalFileName });
+      const outPath = generateStory({
+        fileContents: fixedFileContents,
+        fileName: finalFileName,
+        config: config
+      });
 
       // Register with story tracker
       const mapping: StoryMapping = {

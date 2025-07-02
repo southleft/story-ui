@@ -29,6 +29,12 @@ export interface LayoutRules {
   prohibitedElements?: string[];
 }
 
+// Additional imports configuration
+export interface AdditionalImport {
+  path: string;
+  components: string[];
+}
+
 // Main Story UI configuration interface
 export interface StoryUIConfig {
   generatedStoriesPath: string;
@@ -44,6 +50,7 @@ export interface StoryUIConfig {
   systemPrompt?: string;
   layoutInstructions?: string[];
   examples?: string[];
+  additionalImports?: AdditionalImport[];
 }
 
 // Default generic configuration
@@ -98,15 +105,21 @@ export const DEFAULT_CONFIG: StoryUIConfig = {
     },
     prohibitedElements: []
   },
-  sampleStory: `import type { StoryObj } from '@storybook/react-webpack5';
+  sampleStory: `import type { Meta, StoryObj } from '@storybook/react';
 import { Card } from 'your-component-library';
 
-export default {
+const meta = {
   title: 'Layouts/Sample Layout',
   component: Card,
-};
+  parameters: {
+    layout: 'centered',
+  },
+} satisfies Meta<typeof Card>;
 
-export const Default: StoryObj<typeof Card> = {
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+export const Default: Story = {
   args: {
     children: (
       <Card>

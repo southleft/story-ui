@@ -41,7 +41,18 @@ function generateSystemPrompt(config: StoryUIConfig): string {
     `${config.componentPrefix.replace(/^[A-Z]+/, '')} design system` :
     'component library';
 
-  return `You are an expert UI developer creating Storybook stories. Use ONLY the React components from the ${componentSystemName} listed below.`;
+  return `You are an expert UI developer creating Storybook stories. Use ONLY the React components from the ${componentSystemName} listed below.
+
+CRITICAL STORY FORMAT RULES:
+- Use ES modules syntax for exports: "export default meta;" NOT "module.exports = meta;"
+- Every story file MUST have a default export with the meta object
+- Follow the Component Story Format (CSF) 3.0 standard
+
+IMPORTANT IMAGE RULES:
+- When using image components or <img> tags, ALWAYS include a src attribute
+- Use placeholder images from: https://via.placeholder.com/[width]x[height] (e.g., https://via.placeholder.com/300x200)
+- Or use Lorem Picsum: https://picsum.photos/[width]/[height] (e.g., https://picsum.photos/300/200)
+- Never create <img> tags without a src attribute`;
 }
 
 /**
@@ -165,6 +176,14 @@ function generateExamples(config: StoryUIConfig): string[] {
       examples.push(layoutExamples.grid);
       examples.push('');
     }
+
+    // Add image-specific examples
+    examples.push('Image usage examples:');
+    examples.push('// Always include src attribute with placeholder images:');
+    examples.push('<img src="https://via.placeholder.com/300x200" alt="Placeholder" />');
+    examples.push('// For responsive images:');
+    examples.push('<img src="https://picsum.photos/400/300" alt="Random image" style={{width: "100%", height: "auto"}} />');
+    examples.push('');
   }
 
   return examples;
@@ -200,21 +219,26 @@ function generateDefaultSampleStory(config: StoryUIConfig, components: Discovere
     children = '<div>Sample content</div>';
   }
 
-  return `import type { StoryObj } from '@storybook/react-webpack5';
+  return `import type { Meta, StoryObj } from '@storybook/react';
 ${importStatement}
 
-export default {
+const meta = {
   title: 'Layouts/Sample Layout',
   component: ${mainComponent},
-  subcomponents: { ${imports.slice(1).join(', ')} },
-};
+  parameters: {
+    layout: 'centered',
+  },
+} satisfies Meta<typeof ${mainComponent}>;
 
-export const Default: StoryObj<typeof ${mainComponent}> = {
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+export const Default: Story = {
   args: {
     children: (${children}
     )
   }
-};`;
+};`
 }
 
 /**
@@ -237,6 +261,15 @@ export function buildClaudePrompt(
     ...generated.examples,
   ];
 
+  // Add additional imports information if configured
+  if (config.additionalImports && config.additionalImports.length > 0) {
+    promptParts.push('');
+    promptParts.push('Additional imports available:');
+    config.additionalImports.forEach(additionalImport => {
+      promptParts.push(`- From '${additionalImport.path}': ${additionalImport.components.join(', ')}`);
+    });
+  }
+
   // Add critical structure instructions for multi-column layouts
   if (config.layoutRules.multiColumnWrapper && config.layoutRules.columnComponent) {
     promptParts.push(
@@ -249,6 +282,15 @@ export function buildClaudePrompt(
 
   promptParts.push(
     `Output a complete Storybook story file in TypeScript. Import components from "${config.importPath}". Use the following sample as a template. Respond ONLY with a single code block containing the full file, and nothing else.`,
+    '',
+    'CRITICAL REMINDERS:',
+    '- All images MUST have a src attribute with placeholder URLs (use https://via.placeholder.com/ or https://picsum.photos/)',
+    '- Never create <img> tags without src attributes',
+    '- MUST use ES modules syntax: "export default meta;" NOT "module.exports = meta;"',
+    '- The file MUST have a default export for the meta object',
+    '- Keep the story concise and focused - avoid overly complex layouts that might exceed token limits',
+    '- Ensure all JSX tags are properly closed',
+    '- Story must be complete and syntactically valid',
     '',
     'Sample story format:',
     generated.sampleStory,

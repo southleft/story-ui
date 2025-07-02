@@ -1,7 +1,28 @@
 import React, { useState, useRef, useEffect } from 'react';
 
-// Simple port configuration - defaults to 4001, configurable via window.STORY_UI_MCP_PORT
-const MCP_PORT = (window as any).STORY_UI_MCP_PORT || '4001';
+// Port configuration - supports multiple instances
+// 1. Check URL parameter: ?mcp-port=4002
+// 2. Check window global: window.STORY_UI_MCP_PORT
+// 3. Check environment variable: process.env.STORY_UI_MCP_PORT
+// 4. Default to 4001
+const getMCPPort = () => {
+  // Check URL parameter
+  if (typeof window !== 'undefined') {
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlPort = urlParams.get('mcp-port');
+    if (urlPort) return urlPort;
+  }
+
+  // Check window global
+  if (typeof window !== 'undefined' && (window as any).STORY_UI_MCP_PORT) {
+    return (window as any).STORY_UI_MCP_PORT;
+  }
+
+  // Default
+  return '4001';
+};
+
+const MCP_PORT = getMCPPort();
 const MCP_API = `http://localhost:${MCP_PORT}/mcp/generate-story`;
 const SYNC_API = `http://localhost:${MCP_PORT}/mcp/sync`;
 const LOCAL_STORAGE_KEY = 'story_ui_chat_history_v2'; // Updated version for sync
@@ -453,6 +474,7 @@ const StoryUIPanel: React.FC = () => {
   const [activeTitle, setActiveTitle] = useState<string>('');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   // Load and sync chats on mount
   useEffect(() => {
@@ -848,19 +870,19 @@ const StoryUIPanel: React.FC = () => {
 
         <form onSubmit={handleSend} style={STYLES.inputForm}>
           <input
+            ref={inputRef}
             type="text"
             value={input}
-            onChange={e => setInput(e.target.value)}
+            onChange={(e) => setInput(e.target.value)}
             placeholder="Describe your UI or give feedback..."
             style={STYLES.textInput}
-            disabled={loading}
             onFocus={(e) => {
-              e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.5)';
-              e.currentTarget.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1)';
+              e.target.style.border = '1px solid rgba(59, 130, 246, 0.5)';
+              e.target.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.1)';
             }}
             onBlur={(e) => {
-              e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
-              e.currentTarget.style.boxShadow = 'none';
+              e.target.style.border = '1px solid rgba(255, 255, 255, 0.2)';
+              e.target.style.boxShadow = 'none';
             }}
           />
           <button
@@ -873,19 +895,29 @@ const StoryUIPanel: React.FC = () => {
             onMouseEnter={(e) => {
               if (!loading && input.trim()) {
                 e.currentTarget.style.transform = 'translateY(-1px)';
-                e.currentTarget.style.boxShadow = '0 4px 16px rgba(16, 185, 129, 0.4)';
+                e.currentTarget.style.boxShadow = '0 4px 12px rgba(16, 185, 129, 0.4)';
               }
             }}
             onMouseLeave={(e) => {
-              if (!loading && input.trim()) {
-                e.currentTarget.style.transform = 'translateY(0)';
-                e.currentTarget.style.boxShadow = '0 2px 8px rgba(16, 185, 129, 0.3)';
-              }
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 2px 8px rgba(16, 185, 129, 0.3)';
             }}
           >
-            {loading ? '...' : 'Send'}
+            {loading ? 'Generating...' : 'Send'}
           </button>
         </form>
+
+        {/* MCP Port indicator */}
+        <div style={{
+          textAlign: 'center',
+          padding: '8px',
+          fontSize: '11px',
+          color: '#64748b',
+          borderTop: '1px solid rgba(255, 255, 255, 0.1)',
+          background: 'rgba(0, 0, 0, 0.3)'
+        }}>
+          Connected to MCP server on port {MCP_PORT}
+        </div>
 
         {error && <div style={STYLES.errorMessage}>{error}</div>}
       </div>

@@ -25,7 +25,8 @@
     "release:dry-run": "semantic-release --dry-run",
     "commit": "cz",
     "prepare": "husky",
-    "push": "./scripts/push.sh"
+    "push": "./scripts/push.sh",
+    "multi-instance": "node scripts/multi-instance.js"
   },
   "keywords": [
     "storybook",

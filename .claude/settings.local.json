@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(ls:*)",
+      "Bash(mkdir:*)",
+      "WebFetch(domain:mantine.dev)",
+      "Bash(npm run storybook:*)",
+      "Bash(mv:*)",
+      "Bash(rm:*)",
+      "Bash(npm install:*)",
+      "Bash(npx story-ui init:*)",
+      "Bash(grep:*)",
+      "Bash(npm run story-ui:*)",
+      "WebFetch(domain:www.npmjs.com)",
+      "Bash(npm create:*)",
+      "Bash(pkill:*)",
+      "Bash(true)",
+      "Bash(kill:*)",
+      "Bash(curl:*)"
+    ],
+    "deny": []
+  }
+}

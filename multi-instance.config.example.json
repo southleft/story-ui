@@ -1,0 +1,62 @@
+{
+  "instances": [
+    {
+      "name": "Primer (GitHub)",
+      "directory": "test-storybooks/primer-test",
+      "mcpPort": 4001,
+      "storybookPort": 6006,
+      "color": "\u001b[36m",
+      "enabled": true
+    },
+    {
+      "name": "Ant Design",
+      "directory": "test-storybooks/ant-design-test",
+      "mcpPort": 4002,
+      "storybookPort": 6007,
+      "color": "\u001b[33m",
+      "enabled": true
+    },
+    {
+      "name": "Mantine",
+      "directory": "test-storybooks/mantine-test",
+      "mcpPort": 4003,
+      "storybookPort": 6008,
+      "color": "\u001b[35m",
+      "enabled": true
+    },
+    {
+      "name": "Chakra UI",
+      "directory": "test-storybooks/chakra-test",
+      "mcpPort": 4004,
+      "storybookPort": 6009,
+      "color": "\u001b[32m",
+      "enabled": true
+    },
+    {
+      "name": "Material-UI",
+      "directory": "test-storybooks/mui-test",
+      "mcpPort": 4005,
+      "storybookPort": 6010,
+      "color": "\u001b[34m",
+      "enabled": false
+    },
+    {
+      "name": "Tailwind UI",
+      "directory": "test-storybooks/tailwind-test",
+      "mcpPort": 4006,
+      "storybookPort": 6011,
+      "color": "\u001b[31m",
+      "enabled": false
+    }
+  ],
+  "settings": {
+    "logFile": "~/.story-ui-multi-instance.log",
+    "useNpmLink": true,
+    "parallelStart": true,
+    "startDelay": 3000,
+    "colors": {
+      "available": ["\u001b[34m", "\u001b[31m", "\u001b[37m", "\u001b[90m"],
+      "info": "ANSI color codes for console output"
+    }
+  }
+}
