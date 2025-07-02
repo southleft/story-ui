@@ -114,7 +114,8 @@ async function startInstance(instance) {
     setTimeout(() => {
       console.log(`${prefix} Starting Storybook on port ${storybookPort}...`);
 
-      const storybookProcess = spawn('npm', ['run', 'storybook', '-p', storybookPort.toString()], {
+      // Run storybook directly to avoid conflicts with package.json scripts
+      const storybookProcess = spawn('npx', ['storybook', 'dev', '-p', storybookPort.toString()], {
         cwd: projectPath,
         stdio: 'pipe',
         shell: process.platform === 'win32'
