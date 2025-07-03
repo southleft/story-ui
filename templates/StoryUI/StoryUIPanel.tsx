@@ -6,19 +6,40 @@ import React, { useState, useRef, useEffect } from 'react';
 // 3. Check environment variable: process.env.STORY_UI_MCP_PORT
 // 4. Default to 4001
 const getMCPPort = () => {
-  // Check URL parameter
+  // Check URL parameter first (for manual override)
   if (typeof window !== 'undefined') {
     const urlParams = new URLSearchParams(window.location.search);
     const urlPort = urlParams.get('mcp-port');
     if (urlPort) return urlPort;
   }
 
-  // Check window global
+  // Check window global (for manual override)
   if (typeof window !== 'undefined' && (window as any).STORY_UI_MCP_PORT) {
     return (window as any).STORY_UI_MCP_PORT;
   }
 
-  // Default
+  // Automatic port mapping based on Storybook port
+  if (typeof window !== 'undefined') {
+    const storybookPort = window.location.port;
+
+    // Default port mappings for multi-instance setup
+    const portMappings: { [key: string]: string } = {
+      '6006': '4001', // Primer (GitHub)
+      '6007': '4002', // Ant Design
+      '6008': '4003', // Mantine
+      '6009': '4004', // Chakra UI
+      '6010': '4005', // Material-UI
+      '6011': '4006', // Tailwind UI
+    };
+
+    if (portMappings[storybookPort]) {
+      console.log(`[Story UI] Auto-detected MCP port ${portMappings[storybookPort]} for Storybook port ${storybookPort}`);
+      return portMappings[storybookPort];
+    }
+  }
+
+  // Default fallback
+  console.log('[Story UI] Using default MCP port 4001');
   return '4001';
 };
 
