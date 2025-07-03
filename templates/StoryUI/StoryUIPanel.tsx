@@ -27,7 +27,6 @@ const getMCPPort = () => {
       '6006': '4001', // Primer (GitHub)
       '6007': '4002', // Ant Design
       '6008': '4003', // Mantine
-      '6009': '4004', // Chakra UI
       '6010': '4005', // Material-UI
       '6011': '4006', // Tailwind UI
     };
