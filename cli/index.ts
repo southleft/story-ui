@@ -105,6 +105,8 @@ program
     }
   });
 
+
+
 async function autoDetectAndCreateConfig() {
   const cwd = process.cwd();
   const config: any = {

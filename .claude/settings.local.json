@@ -17,7 +17,13 @@
       "Bash(pkill:*)",
       "Bash(true)",
       "Bash(kill:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(npx storybook:*)",
+      "WebFetch(domain:react-spectrum.adobe.com)",
+      "Bash(npm run build-storybook:*)",
+      "Bash(node:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm link:*)"
     ],
     "deny": []
   }

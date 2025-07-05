@@ -1,0 +1,40 @@
+---
+alwaysApply: true
+---
+
+# Story UI Project Structure
+
+Story UI is a development tool for generating and managing Storybook stories with AI assistance. Here's the key project structure:
+
+## Core Components
+
+- **[story-generator](mdc:story-generator)** - Core story generation utilities and services
+- **[mcp-server](mcp:mcp-server)** - MCP (Model Context Protocol) server for AI interactions
+- **[cli](mdc:cli)** - Command-line interface for setup and management
+- **[templates](mdc:templates)** - Template files for components and stories
+
+## Configuration Files
+
+- **[story-ui.config.ts](mdc:story-ui.config.ts)** - Main configuration file
+- **[package.json](mdc:package.json)** - Project dependencies and scripts
+- **[tsconfig.json](mdc:tsconfig.json)** - TypeScript configuration
+
+## Test Environment
+
+- **[test-storybooks](mdc:test-storybooks)** - Directory for testing different component libraries
+- Each library gets its own subdirectory with independent Storybook setup
+
+## Key Features
+
+- AI-powered story generation for component libraries
+- Multi-instance support for different design systems
+- Configurable component discovery and blacklisting
+- Integration with various design systems (Material-UI, Chakra UI, etc.)
+- Branded Storybook customization
+
+## Development Notes
+
+- The project uses TypeScript throughout
+- Components are discovered automatically but can be blacklisted
+- Stories are generated based on component analysis and AI prompts
+- The system supports considerations and custom prompts for better story generation

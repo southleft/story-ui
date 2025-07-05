@@ -52,6 +52,20 @@ export function loadUserConfig(): StoryUIConfig {
           const userConfig = module.exports as any;
           const config = createStoryUIConfig(userConfig.default || userConfig);
 
+          // Detect Storybook framework if not already specified
+          if (!config.storybookFramework) {
+            const packageJsonPath = path.join(process.cwd(), 'package.json');
+            if (fs.existsSync(packageJsonPath)) {
+              try {
+                const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+                const dependencies = { ...packageJson.dependencies, ...packageJson.devDependencies };
+                config.storybookFramework = detectStorybookFramework(dependencies);
+              } catch (error) {
+                console.warn('Failed to detect Storybook framework:', error);
+              }
+            }
+          }
+
           // Cache the loaded config
           cachedConfig = config;
           configLoadTime = now;
@@ -70,11 +84,26 @@ export function loadUserConfig(): StoryUIConfig {
     console.warn('Please create a story-ui.config.js file in your project root to configure Story UI for your design system.');
   }
 
+  // Create default config with detected framework
+  const defaultConfig = { ...DEFAULT_CONFIG };
+  
+  // Detect Storybook framework for default config
+  const packageJsonPath = path.join(process.cwd(), 'package.json');
+  if (fs.existsSync(packageJsonPath)) {
+    try {
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+      const dependencies = { ...packageJson.dependencies, ...packageJson.devDependencies };
+      defaultConfig.storybookFramework = detectStorybookFramework(dependencies);
+    } catch (error) {
+      console.warn('Failed to detect Storybook framework:', error);
+    }
+  }
+
   // Cache the default config
-  cachedConfig = DEFAULT_CONFIG;
+  cachedConfig = defaultConfig;
   configLoadTime = now;
 
-  return DEFAULT_CONFIG;
+  return defaultConfig;
 }
 
 /**
@@ -239,6 +268,22 @@ export function analyzeExistingStories(projectRoot: string = process.cwd()): {
 }
 
 /**
+ * Detects the Storybook framework being used
+ */
+export function detectStorybookFramework(dependencies: Record<string, string>): string {
+  // Check for Vite-based Storybook
+  if (dependencies['@storybook/react-vite']) {
+    return '@storybook/react-vite';
+  } else if (dependencies['@storybook/react-webpack5']) {
+    return '@storybook/react-webpack5';
+  } else if (dependencies['@storybook/nextjs']) {
+    return '@storybook/nextjs';
+  }
+  // Default to generic React
+  return '@storybook/react';
+}
+
+/**
  * Auto-detects design system configuration by analyzing the project structure
  */
 export function autoDetectDesignSystem(): Partial<StoryUIConfig> | null {
@@ -282,12 +327,16 @@ export function autoDetectDesignSystem(): Partial<StoryUIConfig> | null {
     // Determine layout patterns
     const layoutRules = detectLayoutPatterns(analysis.layoutPatterns, componentPrefix);
 
+    // Detect Storybook framework
+    const storybookFramework = detectStorybookFramework(dependencies);
+
     // Build configuration
     const config: Partial<StoryUIConfig> = {
       generatedStoriesPath: path.join(cwd, 'src/stories/generated/'),
       importPath: importPath,
       componentPrefix: componentPrefix,
-      layoutRules: layoutRules
+      layoutRules: layoutRules,
+      storybookFramework: storybookFramework
     };
 
     // Only set componentsPath for local component libraries
@@ -381,6 +430,47 @@ function detectKnownDesignSystems(dependencies: Record<string, string>): Partial
         columnComponent: 'div',
         containerComponent: 'Container'
       }
+    };
+  }
+
+  // Adobe Spectrum detection
+  if (dependencies['@adobe/react-spectrum']) {
+    return {
+      importPath: '@adobe/react-spectrum',
+      componentPrefix: '',
+      layoutRules: {
+        multiColumnWrapper: 'Flex',
+        columnComponent: 'View',
+        containerComponent: 'View',
+        layoutExamples: {
+          twoColumn: `<Flex gap="size-200">
+  <View>Column 1 content</View>
+  <View>Column 2 content</View>
+</Flex>`,
+          threeColumn: `<Flex gap="size-200">
+  <View>Column 1</View>
+  <View>Column 2</View>
+  <View>Column 3</View>
+</Flex>`,
+          grid: `<View display="grid" gridTemplateColumns="repeat(auto-fill, minmax(300px, 1fr))" gap="size-200">
+  <View>Item 1</View>
+  <View>Item 2</View>
+  <View>Item 3</View>
+</View>`
+        },
+        prohibitedElements: ['div', 'span', 'section']
+      },
+      systemPrompt: 'You are an expert UI developer creating Storybook stories for Adobe Spectrum React components. Use ONLY the React components from @adobe/react-spectrum listed below. Adobe Spectrum uses a token-based spacing and sizing system (e.g., size-100, size-200, gap="size-200"). Never import from @internationalized/date unless specifically working with date/time components. For layout, use Flex and View components, not HTML div elements.',
+      additionalImports: [
+        {
+          path: '@internationalized/date',
+          components: ['parseDate', 'today', 'getLocalTimeZone', 'now', 'CalendarDate', 'CalendarDateTime', 'Time', 'ZonedDateTime']
+        },
+        {
+          path: '@spectrum-icons/workflow',
+          components: ['Edit', 'Delete', 'Settings', 'Share', 'Copy', 'Cut', 'Paste', 'More', 'Home', 'User', 'Document']
+        }
+      ]
     };
   }
 

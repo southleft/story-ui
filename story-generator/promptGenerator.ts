@@ -1,6 +1,7 @@
 import { StoryUIConfig } from '../story-ui.config.js';
 import { DiscoveredComponent } from './componentDiscovery.js';
 import { EnhancedComponentDiscovery } from './enhancedComponentDiscovery.js';
+import { loadConsiderations, considerationsToPrompt } from './considerationsLoader.js';
 
 export interface GeneratedPrompt {
   systemPrompt: string;
@@ -43,6 +44,32 @@ function generateSystemPrompt(config: StoryUIConfig): string {
 
   return `You are an expert UI developer creating Storybook stories. Use ONLY the React components from the ${componentSystemName} listed below.
 
+CRITICAL IMPORT RULES - MUST FOLLOW EXACTLY:
+1. **MANDATORY FIRST LINE**: ALWAYS include "import React from 'react';" as the VERY FIRST import
+   - This is REQUIRED for JSX to work properly
+   - Without this import, the story will fail with "React is not defined" error
+   - Example correct order:
+     import React from 'react';
+     import type { StoryObj } from '@storybook/[framework]';
+     import { ComponentName } from '[your-import-path]';
+
+2. Use the correct Storybook framework import for your environment
+3. ONLY import components that are explicitly listed in the "Available components" section below
+4. Do NOT create or import any components that are not in the list
+5. Do NOT import story exports from other story files
+6. When in doubt, use the basic components listed below
+
+REQUIRED STORY STRUCTURE:
+Every story MUST start with these three imports in this order:
+1. import React from 'react';
+2. import type { StoryObj } from '@storybook/[framework]';
+3. import { ComponentName } from '[library-path]';
+
+GENERAL COMPONENT RULES:
+- StoryUIPanel is the Story UI interface, not a design system component - never import it
+- Do not import components that end with Story, Example, Demo, or that appear to be story exports
+- Only use components explicitly listed in the available components section
+
 CRITICAL STORY FORMAT RULES:
 - Use ES modules syntax for exports: "export default meta;" NOT "module.exports = meta;"
 - Every story file MUST have a default export with the meta object
@@ -50,8 +77,8 @@ CRITICAL STORY FORMAT RULES:
 
 IMPORTANT IMAGE RULES:
 - When using image components or <img> tags, ALWAYS include a src attribute
-- Use placeholder images from: https://via.placeholder.com/[width]x[height] (e.g., https://via.placeholder.com/300x200)
-- Or use Lorem Picsum: https://picsum.photos/[width]/[height] (e.g., https://picsum.photos/300/200)
+- Use Lorem Picsum for all placeholder images: https://picsum.photos/[width]/[height] (e.g., https://picsum.photos/300/200)
+- You can add random variation with: https://picsum.photos/300/200?random=1
 - Never create <img> tags without a src attribute`;
 }
 
@@ -134,15 +161,15 @@ function generateLayoutInstructions(config: StoryUIConfig): string[] {
 
   if (layoutRules.multiColumnWrapper && layoutRules.columnComponent) {
     instructions.push('CRITICAL LAYOUT RULES:');
-    instructions.push(`- For ANY multi-column layout (2, 3, or more columns), use CSS Grid with ${layoutRules.multiColumnWrapper} elements`);
+    instructions.push(`- For ANY multi-column layout (2, 3, or more columns), use ${layoutRules.multiColumnWrapper} components`);
     instructions.push(`- Each column must be wrapped in its own ${layoutRules.columnComponent} element`);
-    instructions.push(`- Structure: <${layoutRules.multiColumnWrapper} style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem'}}><${layoutRules.columnComponent}>column 1</${layoutRules.columnComponent}><${layoutRules.columnComponent}>column 2</${layoutRules.columnComponent}></${layoutRules.multiColumnWrapper}>`);
-    instructions.push(`- Use inline styles for CSS Grid layouts since the design system lacks proper multi-column layout components`);
-    instructions.push(`- The grid container ${layoutRules.multiColumnWrapper} should be the main component in your story, not individual cards`);
+    instructions.push(`- Structure: <${layoutRules.multiColumnWrapper}><${layoutRules.columnComponent}>column 1</${layoutRules.columnComponent}><${layoutRules.columnComponent}>column 2</${layoutRules.columnComponent}></${layoutRules.multiColumnWrapper}>`);
+    instructions.push(`- NEVER use inline styles - use the component's built-in props for layout and styling`);
+    instructions.push(`- The ${layoutRules.multiColumnWrapper} should be the main component in your story for multi-column layouts`);
   }
 
   if (layoutRules.prohibitedElements && layoutRules.prohibitedElements.length > 0) {
-    instructions.push(`- Do NOT use plain HTML ${layoutRules.prohibitedElements.join(', ')} elements for layout - use the provided layout components`);
+    instructions.push(`- NEVER use plain HTML ${layoutRules.prohibitedElements.join(', ')} elements - ALWAYS use the provided design system components`);
   }
 
   return instructions;
@@ -180,9 +207,9 @@ function generateExamples(config: StoryUIConfig): string[] {
     // Add image-specific examples
     examples.push('Image usage examples:');
     examples.push('// Always include src attribute with placeholder images:');
-    examples.push('<img src="https://via.placeholder.com/300x200" alt="Placeholder" />');
-    examples.push('// For responsive images:');
-    examples.push('<img src="https://picsum.photos/400/300" alt="Random image" style={{width: "100%", height: "auto"}} />');
+    examples.push('<img src="https://picsum.photos/300/200" alt="Placeholder image" />');
+    examples.push('// For different random images:');
+    examples.push('<img src="https://picsum.photos/400/300?random=1" alt="Random image" style={{width: "100%", height: "auto"}} />');
     examples.push('');
   }
 
@@ -219,11 +246,13 @@ function generateDefaultSampleStory(config: StoryUIConfig, components: Discovere
     children = '<div>Sample content</div>';
   }
 
-  return `import type { Meta, StoryObj } from '@storybook/react';
+  const storybookFramework = config.storybookFramework || '@storybook/react';
+  return `import type { Meta, StoryObj } from '${storybookFramework}';
+import React from 'react';
 ${importStatement}
 
 const meta = {
-  title: 'Layouts/Sample Layout',
+  title: 'Generated/Sample Layout',
   component: ${mainComponent},
   parameters: {
     layout: 'centered',
@@ -254,12 +283,25 @@ export function buildClaudePrompt(
   const promptParts = [
     generated.systemPrompt,
     '',
+  ];
+
+  // Load and add custom considerations if available
+  const considerations = loadConsiderations(config.considerationsPath);
+  if (considerations) {
+    const considerationsPrompt = considerationsToPrompt(considerations);
+    if (considerationsPrompt) {
+      promptParts.push(considerationsPrompt);
+      promptParts.push('');
+    }
+  }
+
+  promptParts.push(
     ...generated.layoutInstructions,
     '',
     'Available components:',
     generated.componentReference,
     ...generated.examples,
-  ];
+  );
 
   // Add additional imports information if configured
   if (config.additionalImports && config.additionalImports.length > 0) {
@@ -270,12 +312,14 @@ export function buildClaudePrompt(
     });
   }
 
+  // Icons and other specific imports should be handled through additionalImports or considerations
+
   // Add critical structure instructions for multi-column layouts
   if (config.layoutRules.multiColumnWrapper && config.layoutRules.columnComponent) {
     promptParts.push(
-      `CRITICAL: For multi-column layouts, the children prop must contain a SINGLE ${config.layoutRules.multiColumnWrapper} with CSS Grid styling wrapping all ${config.layoutRules.columnComponent} components.`,
+      `CRITICAL: For multi-column layouts, the children prop must contain the ${config.layoutRules.multiColumnWrapper} component with proper props.`,
       `WRONG: children: (<><${config.layoutRules.columnComponent}>...</${config.layoutRules.columnComponent}><${config.layoutRules.columnComponent}>...</${config.layoutRules.columnComponent}></>)`,
-      `CORRECT: children: (<${config.layoutRules.multiColumnWrapper} style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem'}}><${config.layoutRules.columnComponent}>...</${config.layoutRules.columnComponent}><${config.layoutRules.columnComponent}>...</${config.layoutRules.columnComponent}></${config.layoutRules.multiColumnWrapper}>)`,
+      `CORRECT: children: (<${config.layoutRules.multiColumnWrapper}><${config.layoutRules.columnComponent}>...</${config.layoutRules.columnComponent}><${config.layoutRules.columnComponent}>...</${config.layoutRules.columnComponent}></${config.layoutRules.multiColumnWrapper}>)`,
       ''
     );
   }
@@ -284,7 +328,12 @@ export function buildClaudePrompt(
     `Output a complete Storybook story file in TypeScript. Import components from "${config.importPath}". Use the following sample as a template. Respond ONLY with a single code block containing the full file, and nothing else.`,
     '',
     'CRITICAL REMINDERS:',
-    '- All images MUST have a src attribute with placeholder URLs (use https://via.placeholder.com/ or https://picsum.photos/)',
+    '- Story title MUST always start with "Generated/" (e.g., title: "Generated/Recipe Card")',
+    '- Do NOT use prefixes like "Content/", "Components/", or any other section name',
+    '- ONLY import components that are listed in the "Available components" section',
+    '- Do NOT import story exports - these are NOT real components',
+    '- Check every import against the Available components list before using it',
+    '- All images MUST have a src attribute with placeholder URLs (use https://picsum.photos/)',
     '- Never create <img> tags without src attributes',
     '- MUST use ES modules syntax: "export default meta;" NOT "module.exports = meta;"',
     '- The file MUST have a default export for the meta object',

@@ -26,7 +26,11 @@
     "commit": "cz",
     "prepare": "husky",
     "push": "./scripts/push.sh",
-    "multi-instance": "node scripts/multi-instance.js"
+    "multi-instance": "node scripts/multi-instance.js",
+    "setup:design-system": "./scripts/setup-design-system.sh",
+    "setup:template": "./scripts/setup-design-system-template.sh",
+    "setup:list-templates": "./scripts/setup-design-system-template.sh",
+    "setup:branding": "node scripts/setup-storybook-branding.js"
   },
   "keywords": [
     "storybook",

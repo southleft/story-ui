@@ -1,18 +1,21 @@
 import { Request, Response } from 'express';
 import fetch from 'node-fetch';
 import { generateStory } from '../../story-generator/generateStory.js';
-import crypto from 'crypto';
-import fs from 'fs';
-import path from 'path';
+import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { discoverComponents } from '../../story-generator/componentDiscovery.js';
 import { buildClaudePrompt as buildFlexiblePrompt } from '../../story-generator/promptGenerator.js';
 import { loadUserConfig, validateConfig } from '../../story-generator/configLoader.js';
 import { setupProductionGitignore } from '../../story-generator/productionGitignoreManager.js';
 import { getInMemoryStoryService, GeneratedStory } from '../../story-generator/inMemoryStoryService.js';
-import { extractAndValidateCodeBlock, createFallbackStory, validateStoryCode } from '../../story-generator/validateStory.js';
+import { extractAndValidateCodeBlock, createFallbackStory } from '../../story-generator/validateStory.js';
+import { isBlacklistedComponent, isBlacklistedIcon, getBlacklistErrorMessage, ICON_CORRECTIONS } from '../../story-generator/componentBlacklist.js';
 import { StoryTracker, StoryMapping } from '../../story-generator/storyTracker.js';
 import { EnhancedComponentDiscovery } from '../../story-generator/enhancedComponentDiscovery.js';
+import { getDocumentation, isDeprecatedComponent, getComponentReplacement } from '../../story-generator/documentation-sources.js';
+import { Context7Integration } from '../../story-generator/context7Integration.js';
 
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514';
@@ -24,6 +27,9 @@ const SAMPLE_STORY = '';
 
 // Legacy component reference - now using dynamic discovery
 const COMPONENT_REFERENCE = '';
+
+// Initialize Context7 integration
+const context7 = new Context7Integration();
 
 // Legacy function - now uses flexible system with enhanced discovery
 async function buildClaudePrompt(userPrompt: string) {
@@ -38,9 +44,85 @@ async function buildClaudePromptWithContext(userPrompt: string, config: any, con
   const discovery = new EnhancedComponentDiscovery(config);
   const components = await discovery.discoverAll();
 
-  // If no conversation context, use the standard prompt
+  // Try to get documentation from Context7
+  let prompt: string;
+  const context7Docs = await context7.getDocumentation(config.importPath);
+
+  if (context7Docs) {
+    console.log('📚 Using Context7 documentation for enhanced story generation');
+
+    const enhancedPrompt = `${config.systemPrompt || ''}
+
+IMPORTANT: You have access to real-time design system documentation from Context7. Use ONLY the components and patterns listed below.
+
+LIBRARY: ${config.importPath} (${context7Docs.version})
+
+AVAILABLE COMPONENTS:
+${Object.entries(context7Docs.components).map(([name, doc]) =>
+  `- ${name}: ${doc.description}
+   ${doc.variants ? `Variants: ${doc.variants.join(', ')}` : ''}
+   ${doc.props ? `Props: ${Object.keys(doc.props).join(', ')}` : ''}
+   ${doc.examples ? `\n   Examples:\n${doc.examples.map(ex => `   // ${ex.title}\n   ${ex.code}`).join('\n')}` : ''}`
+).join('\n\n')}
+
+${context7Docs.patterns ? `
+RECOMMENDED PATTERNS:
+${Object.entries(context7Docs.patterns).map(([name, pattern]) =>
+  `${pattern.name}: ${pattern.description}\nExample:\n${pattern.example}`
+).join('\n\n')}` : ''}
+
+${config.importTemplate}
+
+CRITICAL: Never use components not listed above. No deprecated components like Heading, Stack, FormLayout, or LegacyGrid.
+
+User request: ${userPrompt}`;
+
+    prompt = enhancedPrompt;
+  } else {
+    // Fall back to bundled documentation if available
+    const documentation = getDocumentation(config.importPath);
+
+    if (documentation) {
+      console.log('📚 Using bundled documentation for enhanced story generation');
+
+      const enhancedPrompt = `${config.systemPrompt || ''}
+
+IMPORTANT: You have access to design system documentation. Use ONLY the components and patterns listed below.
+
+AVAILABLE COMPONENTS:
+${Object.entries(documentation.components || {}).map(([name, info]: [string, any]) =>
+  `- ${name}: ${info.description || 'Component available'}
+   ${info.variants ? `Variants: ${info.variants.join(', ')}` : ''}
+   ${info.commonProps ? `Props: ${info.commonProps.join(', ')}` : ''}
+   ${info.examples ? `\n   Examples:\n${info.examples.map((ex: any) => `   // ${ex.label}\n   ${ex.code}`).join('\n')}` : ''}`
+).join('\n\n')}
+
+DEPRECATED COMPONENTS (NEVER USE THESE):
+${Object.entries(documentation.deprecatedComponents || {}).map(([name, info]: [string, any]) =>
+  `❌ ${name} → Use ${info.replacement} instead. ${info.migration}`
+).join('\n')}
+
+${documentation.patterns ? `
+RECOMMENDED PATTERNS:
+${Object.entries(documentation.patterns).map(([name, pattern]: [string, any]) =>
+  `${name}: ${pattern.description}\nExample:\n${pattern.example}`
+).join('\n\n')}` : ''}
+
+${config.importTemplate}
+
+User request: ${userPrompt}`;
+
+      prompt = enhancedPrompt;
+    } else {
+      // No documentation available, use standard prompt
+      console.log('📔 No documentation found, using standard prompt generation');
+      prompt = buildFlexiblePrompt(userPrompt, config, components);
+    }
+  }
+
+  // If no conversation context, return the prompt as-is
   if (!conversation || conversation.length <= 1) {
-    return buildFlexiblePrompt(userPrompt, config, components);
+    return prompt;
   }
 
   // Extract conversation context for modifications
@@ -49,11 +131,8 @@ async function buildClaudePromptWithContext(userPrompt: string, config: any, con
     .map((msg: any) => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
     .join('\n\n');
 
-  // Get the base prompt
-  const basePrompt = buildFlexiblePrompt(userPrompt, config, components);
-
   // Add conversation context to the prompt
-  const contextualPrompt = basePrompt.replace(
+  const contextualPrompt = prompt.replace(
     'User request:',
     `CONVERSATION CONTEXT (for modifications/updates):
 ${conversationContext}
@@ -181,6 +260,99 @@ function escapeTitleForTS(title: string): string {
     .replace(/\t/g, '\\t');  // Escape tabs
 }
 
+function extractImportsFromCode(code: string, importPath: string): string[] {
+  const imports: string[] = [];
+
+  // Match import statements from the specific import path
+  const importRegex = new RegExp(`import\\s*{([^}]+)}\\s*from\\s*['"]${importPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`, 'g');
+
+  let match;
+  while ((match = importRegex.exec(code)) !== null) {
+    const importList = match[1];
+    // Split by comma and clean up each import
+    const components = importList.split(',').map(comp => comp.trim());
+    imports.push(...components);
+  }
+
+  return imports;
+}
+
+async function preValidateImports(code: string, config: any, discovery: EnhancedComponentDiscovery): Promise<{ isValid: boolean; errors: string[] }> {
+  const errors: string[] = [];
+
+  // Extract imports from the main import path
+  const componentImports = extractImportsFromCode(code, config.importPath);
+
+  // Use the enhanced discovery to validate components
+  const validation = await discovery.validateComponentNames(componentImports);
+
+  // Check for blacklisted components first
+  const allowedComponents = new Set<string>(discovery.getAvailableComponentNames());
+  for (const importName of componentImports) {
+    if (isBlacklistedComponent(importName, allowedComponents, config.importPath)) {
+      const errorMsg = getBlacklistErrorMessage(importName, config.importPath);
+      errors.push(`Blacklisted component detected: ${errorMsg}`);
+    }
+  }
+
+  // Add invalid component errors with suggestions
+  for (const invalidComponent of validation.invalid) {
+    const suggestion = validation.suggestions.get(invalidComponent);
+    if (suggestion) {
+      errors.push(`Invalid component: "${invalidComponent}" does not exist in ${config.importPath}. Did you mean "${suggestion}"?`);
+    } else {
+      errors.push(`Invalid component: "${invalidComponent}" does not exist in ${config.importPath}. Available components: ${validation.valid.slice(0, 5).join(', ')}${validation.valid.length > 5 ? '...' : ''}`);
+    }
+  }
+
+    // Extract icon imports (keep existing icon validation)
+  if (config.iconImports?.package) {
+    const allowedIcons = new Set<string>(config.iconImports?.commonIcons || []);
+    const iconImports = extractImportsFromCode(code, config.iconImports.package);
+
+    for (const iconName of iconImports) {
+      if (isBlacklistedIcon(iconName, allowedIcons)) {
+        const correction = ICON_CORRECTIONS[iconName];
+        if (correction) {
+          errors.push(`Invalid icon: "${iconName}" does not exist. Did you mean "${correction}"?`);
+        } else {
+          errors.push(`Invalid icon: "${iconName}" is not in the list of available icons.`);
+        }
+      } else if (!allowedIcons.has(iconName)) {
+        // Try to find a similar icon
+        const similarIcon = findSimilarIcon(iconName, allowedIcons);
+        if (similarIcon) {
+          errors.push(`Invalid icon: "${iconName}" does not exist. Did you mean "${similarIcon}"?`);
+        } else {
+          errors.push(`Invalid icon: "${iconName}" is not in the list of available icons.`);
+        }
+      }
+    }
+  }
+
+  return {
+    isValid: errors.length === 0,
+    errors
+  };
+}
+
+function findSimilarIcon(iconName: string, allowedIcons: Set<string>): string | null {
+  // Simple similarity check - find icons that contain similar words
+  const iconLower = iconName.toLowerCase();
+
+  for (const allowed of allowedIcons) {
+    const allowedLower = allowed.toLowerCase();
+
+    // Check if the core word matches
+    if (iconLower.includes('commit') && allowedLower.includes('commit')) return allowed;
+    if (iconLower.includes('branch') && allowedLower.includes('branch')) return allowed;
+    if (iconLower.includes('merge') && allowedLower.includes('merge')) return allowed;
+    if (iconLower.includes('pull') && allowedLower.includes('pull')) return allowed;
+  }
+
+  return null;
+}
+
 function fileNameFromTitle(title: string, hash: string): string {
   // Lowercase, replace spaces/special chars with dashes, remove quotes, truncate
   let base = title
@@ -226,34 +398,58 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
     const aiText = await callClaude(fullPrompt);
     console.log('Claude raw response:', aiText);
 
+        // Create enhanced component discovery for validation
+    const discovery = new EnhancedComponentDiscovery(config);
+    await discovery.discoverAll();
+
+    // Pre-validate imports in the raw AI text to catch blacklisted components early
+    const preValidation = await preValidateImports(aiText, config, discovery);
+    if (!preValidation.isValid) {
+      console.error('Pre-validation failed - blacklisted components detected:', preValidation.errors);
+
+      // Return error immediately without creating file
+      return res.status(400).json({
+        error: 'Generated code contains invalid imports',
+        details: preValidation.errors,
+        suggestion: 'The AI tried to use components that do not exist. Please try rephrasing your request using basic components like Box, Stack, Header, Button, etc.'
+      });
+    }
+
     // Use the new robust validation system
-    const validationResult = extractAndValidateCodeBlock(aiText);
+    const validationResult = extractAndValidateCodeBlock(aiText, config);
 
     let fileContents: string;
     let hasValidationWarnings = false;
 
-    if (!validationResult.isValid) {
+    console.log('Validation result:', {
+      isValid: validationResult.isValid,
+      errors: validationResult.errors,
+      warnings: validationResult.warnings,
+      hasFixedCode: !!validationResult.fixedCode
+    });
+
+    if (!validationResult.isValid && !validationResult.fixedCode) {
       console.error('Generated code validation failed:', validationResult.errors);
 
-      // If we have fixedCode, use it
+      // Create fallback story only if we can't fix the code
+      console.log('Creating fallback story due to validation failure');
+      fileContents = createFallbackStory(prompt, config);
+      hasValidationWarnings = true;
+    } else {
+      // Use fixed code if available, otherwise use the extracted code
       if (validationResult.fixedCode) {
         fileContents = validationResult.fixedCode;
         hasValidationWarnings = true;
-        console.log('Using auto-fixed code with warnings:', validationResult.warnings);
+        console.log('Using auto-fixed code');
       } else {
-        // Create fallback story
-        console.log('Creating fallback story due to validation failure');
-        fileContents = createFallbackStory(prompt, config);
-        hasValidationWarnings = true;
-      }
-    } else {
-      // Extract the validated code
-      const codeMatch = aiText.match(/```(?:tsx|jsx|typescript|ts|js|javascript)?\s*([\s\S]*?)\s*```/i);
-      if (codeMatch) {
-        fileContents = codeMatch[1].trim();
-      } else {
-        const importIdx = aiText.indexOf('import');
-        fileContents = importIdx !== -1 ? aiText.slice(importIdx).trim() : aiText.trim();
+        // Extract the validated code
+        const codeMatch = aiText.match(/```(?:tsx|jsx|typescript|ts|js|javascript)?\s*([\s\S]*?)\s*```/i);
+        if (codeMatch) {
+          fileContents = codeMatch[1].trim();
+        } else {
+          const importIdx = aiText.indexOf('import');
+          fileContents = importIdx !== -1 ? aiText.slice(importIdx).trim() : aiText.trim();
+        }
       }
 
       if (validationResult.warnings && validationResult.warnings.length > 0) {
@@ -265,6 +461,13 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
     if (!fileContents) {
       console.error('No valid code could be extracted or generated.');
       return res.status(500).json({ error: 'Failed to generate valid TypeScript code.' });
+    }
+
+    // CRITICAL: Double-check React import
+    if (!fileContents.includes("import React from 'react'") &&
+        (fileContents.includes('<') || fileContents.includes('/>'))) {
+      console.warn('⚠️  Missing React import detected, adding it automatically');
+      fileContents = "import React from 'react';\n" + fileContents;
     }
 
     // Generate title based on conversation context
@@ -284,13 +487,29 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
 
     // Escape the title for TypeScript
     const prettyPrompt = escapeTitleForTS(aiTitle);
-    const fixedFileContents = fileContents.replace(
-      /(export default \{\s*\n\s*title:\s*["'])([^"']+)(["'])/,
-      (match, p1, _p2, p3) => {
+
+    // Fix title with storyPrefix - handle both single-line and multi-line formats
+    let fixedFileContents = fileContents;
+
+    // First try: const meta = { title: "..." } format
+    fixedFileContents = fixedFileContents.replace(
+      /(const\s+meta\s*=\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
+      (match, p1, oldTitle, p3) => {
         const title = config.storyPrefix + prettyPrompt;
         return p1 + title + p3;
       }
     );
+
+    // Fallback: export default { title: "..." } format
+    if (!fixedFileContents.includes(config.storyPrefix)) {
+      fixedFileContents = fixedFileContents.replace(
+        /(export\s+default\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
+        (match, p1, oldTitle, p3) => {
+          const title = config.storyPrefix + prettyPrompt;
+          return p1 + title + p3;
+        }
+      );
+    }
 
     // Check if there's an existing story with this title or prompt
     const existingByTitle = storyTracker.findByTitle(aiTitle);

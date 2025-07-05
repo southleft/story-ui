@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { DiscoveredComponent } from './componentDiscovery.js';
 import { StoryUIConfig } from '../story-ui.config.js';
+import { DynamicPackageDiscovery } from './dynamicPackageDiscovery.js';
 
 export interface ComponentSource {
   type: 'npm' | 'local' | 'custom-elements' | 'typescript';
@@ -20,6 +21,7 @@ export interface EnhancedComponent extends DiscoveredComponent {
 export class EnhancedComponentDiscovery {
   private config: StoryUIConfig;
   private discoveredComponents: Map<string, EnhancedComponent> = new Map();
+  private validateAvailableComponents: Set<string> = new Set();
 
   constructor(config: StoryUIConfig) {
     this.config = config;
@@ -58,6 +60,28 @@ export class EnhancedComponentDiscovery {
     return Array.from(this.discoveredComponents.values());
   }
 
+      /**
+   * Get the project root directory from the config
+   */
+  private getProjectRoot(): string {
+    // If generatedStoriesPath exists, use it to determine project root
+    if (this.config.generatedStoriesPath) {
+      // Go up from src/stories/generated to find project root
+      let currentPath = path.resolve(this.config.generatedStoriesPath);
+
+      // Keep going up until we find a package.json
+      while (currentPath !== path.dirname(currentPath)) {
+        if (fs.existsSync(path.join(currentPath, 'package.json'))) {
+          return currentPath;
+        }
+        currentPath = path.dirname(currentPath);
+      }
+    }
+
+    // Fallback to current working directory
+    return process.cwd();
+  }
+
   /**
    * Identify all potential component sources
    */
@@ -82,7 +106,8 @@ export class EnhancedComponentDiscovery {
     }
 
     // Check for TypeScript definitions
-    const nodeModulesPath = path.join(process.cwd(), 'node_modules');
+    const projectRoot = this.getProjectRoot();
+    const nodeModulesPath = path.join(projectRoot, 'node_modules');
     if (this.config.importPath && fs.existsSync(nodeModulesPath)) {
       const packagePath = path.join(nodeModulesPath, this.config.importPath);
       const typesPath = path.join(nodeModulesPath, '@types', this.config.importPath.replace(/^@/, '').replace('/', '__'));
@@ -103,34 +128,28 @@ export class EnhancedComponentDiscovery {
     return sources;
   }
 
-  /**
-   * Discover components from npm packages
+    /**
+   * Discover components from npm packages using dynamic runtime discovery
    */
   private async discoverFromNpmPackage(source: ComponentSource): Promise<void> {
-    const packagePath = path.join(process.cwd(), 'node_modules', source.path);
+    // Determine the project root from the generated stories path
+    const projectRoot = this.getProjectRoot();
+    const packagePath = path.join(projectRoot, 'node_modules', source.path);
 
     if (!fs.existsSync(packagePath)) {
+      console.warn(`Package ${source.path} not found in node_modules at ${packagePath}`);
       return;
     }
 
-    // Read package.json to find entry points
-    const packageJsonPath = path.join(packagePath, 'package.json');
-    if (fs.existsSync(packageJsonPath)) {
-      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+    console.log(`🔍 Dynamically discovering components from ${source.path}...`);
 
-      // Try to find component exports
-      const possiblePaths = [
-        packageJson.main,
-        packageJson.module,
-        packageJson.exports?.['.'],
-        'index.js',
-        'index.ts',
-        'lib/index.js',
-        'dist/index.js',
-        'es/index.js'
-      ].filter(Boolean);
+    // Use dynamic discovery to get real exports
+    const dynamicDiscovery = new DynamicPackageDiscovery(source.path, projectRoot);
+    const packageExports = await dynamicDiscovery.getRealPackageExports();
 
-      // For known design systems, use predefined component lists
+    if (!packageExports) {
+      console.warn(`❌ Could not discover components from ${source.path}, falling back to predefined list`);
+      // Fallback to predefined components if dynamic discovery fails
       const knownComponents = this.getKnownDesignSystemComponents(source.path);
       if (knownComponents.length > 0) {
         for (const comp of knownComponents) {
@@ -141,23 +160,35 @@ export class EnhancedComponentDiscovery {
             category: comp.category || this.categorizeComponent(comp.name || '', comp.description || '') as any
           } as EnhancedComponent);
         }
-        return;
       }
-
-      // Try dynamic import for modern packages
-      for (const entryPath of possiblePaths) {
-        const fullPath = path.join(packagePath, entryPath);
-        if (fs.existsSync(fullPath)) {
-          try {
-            // This is where we'd ideally do dynamic import, but for safety
-            // we'll rely on known patterns and TypeScript definitions
-            console.log(`Found entry point: ${fullPath}`);
-          } catch (error) {
-            // Silent fail - will try other methods
-          }
-        }
-      }
+      return;
     }
+
+    // Process the real components found in the package
+    const realComponents = packageExports.components.filter(comp => comp.isComponent);
+    console.log(`✅ Found ${realComponents.length} real components in ${source.path} v${packageExports.packageVersion}`);
+    console.log(`📦 Available components: ${realComponents.map(c => c.name).join(', ')}`);
+
+    for (const realComp of realComponents) {
+      // Get enhanced metadata from predefined list if available
+      const knownComponents = this.getKnownDesignSystemComponents(source.path);
+      const knownComp = knownComponents.find(k => k.name === realComp.name);
+
+      this.discoveredComponents.set(realComp.name, {
+        name: realComp.name,
+        source,
+        filePath: '',
+        // Use known metadata if available, otherwise generate basic metadata
+        description: knownComp?.description || `${realComp.name} component`,
+        category: knownComp?.category || this.categorizeComponent(realComp.name, '') as any,
+        props: knownComp?.props || [],
+        slots: knownComp?.slots || [],
+        examples: knownComp?.examples || []
+      } as EnhancedComponent);
+    }
+
+    // Store the component names for validation
+    this.validateAvailableComponents = new Set(realComponents.map(c => c.name));
   }
 
   /**
@@ -256,6 +287,70 @@ export class EnhancedComponentDiscovery {
           { name: 'Input', category: 'form', description: 'Text input' },
           { name: 'Select', category: 'form', description: 'Select dropdown' }
         ];
+
+      case '@shopify/polaris':
+      case 'polaris':
+        return [
+          // Layout
+          { name: 'Box', category: 'layout', description: 'Layout box with padding and spacing control', props: ['padding', 'paddingInline', 'paddingBlock'] },
+          { name: 'BlockStack', category: 'layout', description: 'Vertical stack layout', props: ['gap', 'align', 'inlineAlign'] },
+          { name: 'InlineStack', category: 'layout', description: 'Horizontal stack layout', props: ['gap', 'align', 'blockAlign', 'wrap'] },
+          { name: 'InlineGrid', category: 'layout', description: 'Grid layout component', props: ['columns', 'gap'] },
+          { name: 'Grid', category: 'layout', description: 'CSS Grid layout', props: ['columns', 'gap'] },
+          { name: 'Layout', category: 'layout', description: 'Page layout component', props: ['sectioned'] },
+          { name: 'Divider', category: 'layout', description: 'Visual divider', props: ['borderColor'] },
+          { name: 'Bleed', category: 'layout', description: 'Negative margin component', props: ['marginInline', 'marginBlock'] },
+
+          // Surfaces
+          { name: 'Card', category: 'content', description: 'Card container', props: ['sectioned', 'subdued', 'actions', 'primaryFooterAction', 'secondaryFooterActions'] },
+          { name: 'LegacyCard', category: 'content', description: 'Legacy card component', props: ['title', 'sectioned', 'actions'] },
+          { name: 'CalloutCard', category: 'content', description: 'Callout card for important information', props: ['title', 'illustration', 'primaryAction'] },
+          { name: 'MediaCard', category: 'content', description: 'Card with media content', props: ['title', 'primaryAction', 'description', 'size'] },
+
+          // Navigation
+          { name: 'Breadcrumbs', category: 'navigation', description: 'Breadcrumb navigation', props: ['breadcrumbs'] },
+          { name: 'Link', category: 'navigation', description: 'Navigation link', props: ['url', 'external', 'monochrome'] },
+          { name: 'Pagination', category: 'navigation', description: 'Page navigation', props: ['hasPrevious', 'hasNext', 'onPrevious', 'onNext'] },
+          { name: 'LegacyTabs', category: 'navigation', description: 'Tabbed navigation', props: ['tabs', 'selected', 'onSelect'] },
+
+          // Actions
+          { name: 'Button', category: 'form', description: 'Action button', props: ['variant', 'tone', 'size', 'textAlign', 'fullWidth', 'loading', 'disabled', 'onClick'] },
+          { name: 'ButtonGroup', category: 'form', description: 'Group of buttons', props: ['segmented', 'fullWidth', 'variant'] },
+
+          // Form
+          { name: 'TextField', category: 'form', description: 'Text input field', props: ['label', 'value', 'onChange', 'error', 'helpText', 'placeholder', 'disabled', 'readOnly'] },
+          { name: 'Select', category: 'form', description: 'Select dropdown', props: ['label', 'options', 'value', 'onChange', 'error', 'helpText', 'placeholder', 'disabled'] },
+          { name: 'Checkbox', category: 'form', description: 'Checkbox input', props: ['label', 'checked', 'onChange', 'error', 'helpText', 'disabled'] },
+          { name: 'RadioButton', category: 'form', description: 'Radio button input', props: ['label', 'checked', 'onChange', 'disabled'] },
+          { name: 'ChoiceList', category: 'form', description: 'List of choices', props: ['title', 'choices', 'selected', 'onChange', 'allowMultiple'] },
+          { name: 'Form', category: 'form', description: 'Form container', props: ['onSubmit', 'noValidate'] },
+          { name: 'FormLayout', category: 'form', description: 'Form layout helper', props: ['children'] },
+
+          // Data Display
+          { name: 'Text', category: 'content', description: 'Text component', props: ['variant', 'as', 'alignment', 'tone', 'textDecorationLine'] },
+          { name: 'List', category: 'content', description: 'List component', props: ['type', 'gap'] },
+          { name: 'DescriptionList', category: 'content', description: 'Description list', props: ['items', 'spacing'] },
+          { name: 'DataTable', category: 'content', description: 'Data table', props: ['columnContentTypes', 'headings', 'rows', 'sortable'] },
+          { name: 'IndexTable', category: 'content', description: 'Index table for resources', props: ['resourceName', 'itemCount', 'headings', 'selectable'] },
+          { name: 'Badge', category: 'content', description: 'Status badge', props: ['tone', 'progress', 'size'] },
+          { name: 'ProgressBar', category: 'content', description: 'Progress indicator', props: ['progress', 'size', 'tone'] },
+          { name: 'Thumbnail', category: 'content', description: 'Image thumbnail', props: ['source', 'alt', 'size'] },
+          { name: 'Avatar', category: 'content', description: 'User avatar', props: ['customer', 'size', 'name', 'initials', 'source'] },
+
+          // Feedback
+          { name: 'Banner', category: 'feedback', description: 'Notification banner', props: ['title', 'tone', 'onDismiss', 'action'] },
+          { name: 'Modal', category: 'feedback', description: 'Modal dialog', props: ['open', 'onClose', 'title', 'primaryAction', 'secondaryActions'] },
+          { name: 'Toast', category: 'feedback', description: 'Toast notification', props: ['content', 'error', 'onDismiss', 'duration'] },
+          { name: 'Tooltip', category: 'feedback', description: 'Tooltip component', props: ['content', 'preferredPosition', 'active'] },
+          { name: 'Popover', category: 'feedback', description: 'Popover component', props: ['active', 'activator', 'onClose', 'preferredAlignment'] },
+          { name: 'Loading', category: 'feedback', description: 'Loading indicator', props: ['size'] },
+
+          // Utilities
+          { name: 'EmptyState', category: 'content', description: 'Empty state illustration', props: ['heading', 'action', 'secondaryAction', 'image'] },
+          { name: 'SkeletonPage', category: 'content', description: 'Page skeleton loader', props: ['title', 'breadcrumbs', 'primaryAction'] },
+          { name: 'SkeletonBodyText', category: 'content', description: 'Body text skeleton', props: ['lines'] },
+          { name: 'SkeletonDisplayText', category: 'content', description: 'Display text skeleton', props: ['size'] }
+        ];
     }
 
     return components;
@@ -276,6 +371,11 @@ export class EnhancedComponentDiscovery {
       const componentName = this.extractComponentName(file, content);
 
       if (componentName && !this.discoveredComponents.has(componentName)) {
+        // Skip Story UI components
+        if (componentName === 'StoryUIPanel' || componentName.startsWith('StoryUI')) {
+          continue;
+        }
+
         const props = this.extractPropsFromFile(content);
 
         this.discoveredComponents.set(componentName, {
@@ -513,5 +613,99 @@ export class EnhancedComponentDiscovery {
         });
       }
     }
+  }
+
+  /**
+   * Validate that component names actually exist in the discovered package
+   */
+  async validateComponentNames(componentNames: string[]): Promise<{
+    valid: string[];
+    invalid: string[];
+    suggestions: Map<string, string>;
+  }> {
+    // If we have real component validation data, use it
+    if (this.validateAvailableComponents.size > 0) {
+      const valid: string[] = [];
+      const invalid: string[] = [];
+      const suggestions = new Map<string, string>();
+
+      for (const componentName of componentNames) {
+        if (this.validateAvailableComponents.has(componentName)) {
+          valid.push(componentName);
+        } else {
+          invalid.push(componentName);
+
+          // Find a similar component
+          const suggestion = this.findSimilarComponent(componentName, Array.from(this.validateAvailableComponents));
+          if (suggestion) {
+            suggestions.set(componentName, suggestion);
+          }
+        }
+      }
+
+      return { valid, invalid, suggestions };
+    }
+
+    // Fallback to discovered components if no validation set
+    const discovered = Array.from(this.discoveredComponents.keys());
+    const valid = componentNames.filter(name => this.discoveredComponents.has(name));
+    const invalid = componentNames.filter(name => !this.discoveredComponents.has(name));
+    const suggestions = new Map<string, string>();
+
+    for (const invalidName of invalid) {
+      const suggestion = this.findSimilarComponent(invalidName, discovered);
+      if (suggestion) {
+        suggestions.set(invalidName, suggestion);
+      }
+    }
+
+    return { valid, invalid, suggestions };
+  }
+
+  /**
+   * Find a similar component name
+   */
+  private findSimilarComponent(targetName: string, availableComponents: string[]): string | null {
+    const targetLower = targetName.toLowerCase();
+
+    // Direct substring matches
+    for (const available of availableComponents) {
+      const availableLower = available.toLowerCase();
+      if (availableLower.includes(targetLower) || targetLower.includes(availableLower)) {
+        return available;
+      }
+    }
+
+    // Special case mappings for common mistakes
+    const commonMappings: Record<string, string[]> = {
+      'stack': ['BlockStack', 'InlineStack', 'LegacyStack'],
+      'layout': ['Layout', 'Box'],
+      'container': ['Box', 'Layout'],
+      'grid': ['Grid', 'InlineGrid'],
+      'text': ['Text'],
+      'button': ['Button'],
+      'card': ['Card', 'LegacyCard']
+    };
+
+    const mapping = commonMappings[targetLower];
+    if (mapping) {
+      for (const suggestion of mapping) {
+        if (availableComponents.includes(suggestion)) {
+          return suggestion;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Get the available component names for validation
+   */
+  getAvailableComponentNames(): string[] {
+    if (this.validateAvailableComponents.size > 0) {
+      return Array.from(this.validateAvailableComponents).sort();
+    }
+    return Array.from(this.discoveredComponents.keys()).sort();
   }
 }

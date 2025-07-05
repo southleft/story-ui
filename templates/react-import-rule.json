@@ -1,0 +1,36 @@
+{
+  "globalRules": {
+    "reactImportMandatory": {
+      "name": "React Import is Mandatory",
+      "priority": "CRITICAL",
+      "rule": "Every story file MUST include 'import React from 'react';' as the FIRST import. This is non-negotiable for JSX to work.",
+      "enforcement": "automatic",
+      "details": {
+        "why": "JSX syntax requires React to be in scope. Without this import, stories will fail with 'React is not defined' error.",
+        "where": "First line of imports, before any other imports",
+        "format": "import React from 'react';",
+        "examples": {
+          "correct": [
+            "import React from 'react';",
+            "import type { Meta, StoryObj } from '@storybook/react-webpack5';",
+            "import { Button, Card } from '@shopify/polaris';"
+          ],
+          "incorrect": [
+            "import type { Meta, StoryObj } from '@storybook/react-webpack5';",
+            "import { Button, Card } from '@shopify/polaris';",
+            "// Missing React import!"
+          ]
+        }
+      },
+      "automaticFix": {
+        "enabled": true,
+        "description": "The system will automatically add 'import React from 'react';' if it detects JSX without React import"
+      }
+    }
+  },
+  "implementation": {
+    "validation": "Story validation will check for React import when JSX is present",
+    "autoFix": "Missing React imports will be automatically added during generation",
+    "promptGuidance": "AI prompts emphasize React import as the first mandatory import"
+  }
+}

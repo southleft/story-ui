@@ -9,7 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 interface SetupAnswers {
-  designSystem: 'auto' | 'mui' | 'chakra' | 'antd' | 'mantine' | 'custom';
+  designSystem: 'auto' | 'mui' | 'chakra' | 'antd' | 'mantine' | 'spectrum' | 'custom';
   importPath?: string;
   componentPrefix?: string;
   generatedStoriesPath?: string;
@@ -81,6 +81,7 @@ export async function setupCommand() {
         { name: '⚡ Chakra UI (@chakra-ui/react)', value: 'chakra' },
         { name: '🐜 Ant Design (antd)', value: 'antd' },
         { name: '🎯 Mantine (@mantine/core)', value: 'mantine' },
+        { name: '🎭 Adobe Spectrum (@adobe/react-spectrum)', value: 'spectrum' },
         { name: '🔧 Custom/Other', value: 'custom' }
       ],
       default: autoDetected ? 'auto' : 'custom'
@@ -193,6 +194,57 @@ export async function setupCommand() {
         containerComponent: 'Container'
       }
     };
+  } else if (answers.designSystem === 'spectrum') {
+    config = {
+      importPath: '@adobe/react-spectrum',
+      componentPrefix: '',
+      layoutRules: {
+        multiColumnWrapper: 'Flex',
+        columnComponent: 'View',
+        containerComponent: 'View',
+        layoutExamples: {
+          twoColumn: `<Flex gap="size-200">
+  <View>Column 1 content</View>
+  <View>Column 2 content</View>
+</Flex>`,
+          threeColumn: `<Flex gap="size-200">
+  <View>Column 1</View>
+  <View>Column 2</View>
+  <View>Column 3</View>
+</Flex>`,
+          grid: `<View display="grid" gridTemplateColumns="repeat(auto-fill, minmax(300px, 1fr))" gap="size-200">
+  <View>Item 1</View>
+  <View>Item 2</View>
+  <View>Item 3</View>
+</View>`
+        },
+        prohibitedElements: ['div', 'span', 'section']
+      },
+      systemPrompt: 'You are an expert UI developer creating Storybook stories for Adobe Spectrum React components. Use ONLY the React components from @adobe/react-spectrum listed below. Adobe Spectrum uses a token-based spacing and sizing system (e.g., size-100, size-200, gap="size-200"). Never import from @internationalized/date unless specifically working with date/time components. For layout, use Flex and View components, not HTML div elements.',
+      additionalImports: [
+        {
+          path: '@internationalized/date',
+          components: ['parseDate', 'today', 'getLocalTimeZone', 'now', 'CalendarDate', 'CalendarDateTime', 'Time', 'ZonedDateTime']
+        },
+        {
+          path: '@spectrum-icons/workflow',
+          components: [
+            'Add', 'Alert', 'Archive', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowUp',
+            'Audio', 'Back', 'Bell', 'Bookmark', 'Calendar', 'Camera', 'Chat',
+            'ChevronDown', 'ChevronLeft', 'ChevronRight', 'ChevronUp', 'Clock', 'Close', 'Cloud',
+            'Comment', 'Copy', 'Cut', 'Data', 'Delete', 'Document', 'Download',
+            'Draft', 'Duplicate', 'Edit', 'Email', 'Export', 'Filter', 'Flag',
+            'Folder', 'Forward', 'FullScreen', 'Group', 'Heart', 'Help', 'History',
+            'Home', 'Image', 'Import', 'Info', 'Label', 'Link', 'Location',
+            'Maximize', 'Menu', 'Merge', 'Minimize', 'More', 'Move', 'Paste',
+            'Pause', 'Pending', 'Play', 'Print', 'Question', 'Redo', 'Refresh',
+            'Rename', 'Reply', 'Search', 'Settings', 'Share', 'Star', 'Stop',
+            'Sync', 'ThumbDown', 'ThumbUp', 'Undo', 'Ungroup', 'User', 'Workflow',
+            'ZoomIn', 'ZoomOut'
+          ]
+        }
+      ]
+    };
   } else {
     // Custom configuration
     config = {
@@ -264,6 +316,23 @@ export async function setupCommand() {
     }
   }
 
+  // Create considerations file
+  const considerationsTemplatePath = path.resolve(__dirname, '../../templates/story-ui-considerations.md');
+  const considerationsPath = path.join(process.cwd(), 'story-ui-considerations.md');
+
+  if (!fs.existsSync(considerationsPath) && fs.existsSync(considerationsTemplatePath)) {
+    let considerationsContent = fs.readFileSync(considerationsTemplatePath, 'utf-8');
+
+    // Customize based on selected design system
+    if (config.importPath) {
+      considerationsContent = considerationsContent.replace('[Your Component Library]', config.importPath);
+      considerationsContent = considerationsContent.replace('[your-import-path]', config.importPath);
+    }
+
+    fs.writeFileSync(considerationsPath, considerationsContent);
+    console.log(chalk.green('✅ Created story-ui-considerations.md for AI customization'));
+  }
+
   // Create .env file from template
   const envSamplePath = path.resolve(__dirname, '../../.env.sample');
   const envPath = path.join(process.cwd(), '.env');
@@ -323,6 +392,37 @@ export async function setupCommand() {
     packageJson.scripts = scripts;
     fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + '\n');
     console.log(chalk.green('✅ Added convenience scripts to package.json'));
+  }
+
+  // Check if documentation scraping is supported for this design system
+  const supportedDocSystems = ['@shopify/polaris', '@mui/material', '@chakra-ui/react', 'antd', '@mantine/core', '@adobe/react-spectrum'];
+  const supportsDocScraping = supportedDocSystems.includes(config.importPath);
+
+  if (supportsDocScraping) {
+    console.log(chalk.blue('\n📚 Documentation Enhancement Available\n'));
+    console.log(`Story UI can scrape the official ${config.importPath} documentation to generate more accurate stories.`);
+    console.log('This will provide:');
+    console.log('  ✅ Exact spacing tokens and design patterns');
+    console.log('  ✅ Component best practices and examples');
+    console.log('  ✅ Accessibility guidelines');
+    console.log('  ✅ Content writing guidelines\n');
+
+    const { shouldScrape } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'shouldScrape',
+        message: 'Would you like to enhance Story UI with official documentation?',
+        default: true
+      }
+    ]);
+
+    if (shouldScrape) {
+      console.log(chalk.gray('\nNote: Documentation scraping will be available in the next version.'));
+      console.log(chalk.gray('For now, Story UI will use its built-in knowledge of design systems.\n'));
+
+      // In future version, this would run:
+      // await runDocumentationScraper(config.importPath);
+    }
   }
 
   console.log(chalk.green.bold('\n🎉 Setup complete!\n'));

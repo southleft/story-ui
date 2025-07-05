@@ -26,11 +26,16 @@ export function discoverComponentsFromDirectory(
 
   const components: DiscoveredComponent[] = [];
   const dirs = fs.readdirSync(componentsPath, { withFileTypes: true })
-    .filter(d => d.isDirectory() && d.name !== 'generated' && !d.name.startsWith('.'));
+    .filter(d => d.isDirectory() && d.name !== 'generated' && !d.name.startsWith('.') && d.name !== 'StoryUI');
 
   for (const dir of dirs) {
     const componentName = componentPrefix + dir.name;
     const componentPath = path.join(componentsPath, dir.name);
+
+    // Skip Story UI components
+    if (componentName === 'StoryUIPanel' || componentName.startsWith('StoryUI')) {
+      continue;
+    }
 
     // Look for story files to extract component information
     const storyFile = path.join(componentPath, `${dir.name}.stories.tsx`);

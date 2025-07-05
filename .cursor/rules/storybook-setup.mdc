@@ -1,0 +1,133 @@
+---
+alwaysApply: false
+description: Instructions for setting up a new Storybook test environment in test-storybooks directory
+---
+
+# Storybook Test Environment Setup
+
+You are setting up a new Storybook test environment inside the `test-storybooks/$LIBRARY_NAME` directory of the Story UI codebase. Follow these steps exactly, stopping to verify each one before moving on.
+
+## 1. Setup
+
+- Create a new directory at `test-storybooks/$LIBRARY_NAME`.
+- Inside that directory, initialize a new React-based Storybook environment using the default Storybook CLI setup:
+  ```bash
+  npx storybook@latest init
+  ```
+- Confirm that the default Storybook runs correctly using `npm run storybook` (or `npm run storybook dev` if using Storybook 8+).
+- Once confirmed, kill the process (usually port 6006).
+- Delete the default stories that were generated in the `.storybook` config or `src/stories` folder.
+
+## 2. Install Component Library
+
+- Run `npm install $COMPONENT_LIBRARY` (e.g., `@mui/material`, `@chakra-ui/react`, etc.).
+- Confirm that the package is available in `node_modules`.
+
+### Install Adjacent Packages
+
+Most design systems require additional packages for full functionality. Install the common adjacent packages:
+
+**For Ant Design:**
+```bash
+npm install @ant-design/icons dayjs
+```
+
+**For Material-UI:**
+```bash
+npm install @mui/icons-material @emotion/react @emotion/styled
+```
+
+**For Chakra UI:**
+```bash
+npm install @chakra-ui/icons @emotion/react @emotion/styled framer-motion
+```
+
+**For Mantine:**
+```bash
+npm install @mantine/core @mantine/hooks @mantine/notifications @tabler/icons-react
+```
+
+**For other design systems, typically include:**
+- Icons package (e.g., `@library/icons`)
+- Tokens/theme package (e.g., `@library/tokens`, `@library/theme`)
+- CSS/style package (e.g., `@library/styles`)
+- Utility packages (date libraries, animation libraries, etc.)
+
+This ensures the full spectrum of the design system's offerings are available for story generation.
+
+## 3. Generate Initial Stories for Complex Components
+
+- Choose 3-5 of the more complex components from the library (e.g., `Card`, `Modal`, `Menu`, `DatePicker`, `Table`).
+- Manually create a `.stories.tsx` file for each one in `src/stories/`.
+- Ensure:
+  - Correct import paths
+  - All required subcomponents or dependencies are available
+  - No phantom imports
+- Run Storybook again and confirm the stories render with no console warnings or errors.
+
+## 4. Generate Stories for All Components
+
+- Create individual `.stories.tsx` files for each component in the component library.
+- Include variations (e.g., sizes, states, props) as supported by the component.
+- Re-run Storybook.
+- Confirm that:
+  - All stories render correctly
+  - No warnings or errors appear in the dev console
+
+## 5. Check for Image Component
+
+- Confirm whether the design system includes an image or media component.
+- If none is available, create a custom `Image` component:
+  - Accepts props: `src`, `alt`, `width`, `height`, `rounded`
+  - Uses `https://picsum.photos/{width}/{height}` as the fallback `src`
+  - Optional `rounded` prop to apply border-radius for avatar-style or card-style usage
+- Add a `.stories.tsx` file for this `Image` component with a few variations:
+  - Default
+  - Rounded
+  - Full width
+- Confirm it renders properly in Storybook.
+
+## 6. Customize Storybook Branding
+
+- Create or modify `.storybook/manager.js` to replace the Storybook logo with the design system name:
+  ```javascript
+  import { addons } from 'storybook/manager-api';
+  import { create } from 'storybook/theming';
+
+  const theme = create({
+    base: 'dark',
+    brandTitle: '$LIBRARY_NAME Design System',
+    brandUrl: undefined,
+    brandImage: undefined,
+  });
+
+  addons.setConfig({
+    theme: theme,
+  });
+  ```
+- Replace `$LIBRARY_NAME` with the actual design system name (e.g., "Ant Design", "Material-UI", "Chakra UI")
+- Restart Storybook to see the changes
+- Confirm the design system name appears in the upper left corner instead of the Storybook logo
+
+## 7. Final Check
+
+- Confirm:
+  - Storybook is running without warnings
+  - All stories render as expected
+  - Image component is available and functions correctly
+  - Custom branding shows the design system name in the upper left corner
+- Do not install or modify Story UI.
+- Notify me that the environment is fully ready and await further instruction.
+
+## Important Notes
+
+- Every task should be confirmed visually and in logs before proceeding.
+- Avoid generating any stories for internal utility components or wrappers unless they are exported and designed for direct use.
+- Reference the main [package.json](mdc:package.json) for project dependencies and scripts.
+- The [test-storybooks](mdc:test-storybooks) directory structure should be maintained for consistency.
+
+## Related Files
+
+- [story-ui.config.ts](mdc:story-ui.config.ts) - Main configuration file
+- [story-generator](mdc:story-generator) - Core story generation utilities
+- [templates](mdc:templates) - Template files for components and stories

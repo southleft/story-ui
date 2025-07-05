@@ -51,6 +51,8 @@ export interface StoryUIConfig {
   layoutInstructions?: string[];
   examples?: string[];
   additionalImports?: AdditionalImport[];
+  considerationsPath?: string;
+  storybookFramework?: string; // e.g., '@storybook/react-vite', '@storybook/react-webpack5', '@storybook/nextjs'
 }
 
 // Default generic configuration
@@ -106,10 +108,11 @@ export const DEFAULT_CONFIG: StoryUIConfig = {
     prohibitedElements: []
   },
   sampleStory: `import type { Meta, StoryObj } from '@storybook/react';
+import React from 'react';
 import { Card } from 'your-component-library';
 
 const meta = {
-  title: 'Layouts/Sample Layout',
+  title: 'Generated/Sample Layout',
   component: Card,
   parameters: {
     layout: 'centered',
