@@ -42,16 +42,25 @@ function generateSystemPrompt(config: StoryUIConfig): string {
     `${config.componentPrefix.replace(/^[A-Z]+/, '')} design system` :
     'component library';
 
-  return `You are an expert UI developer creating Storybook stories. Use ONLY the React components from the ${componentSystemName} listed below.
+  return `🚨 CRITICAL: EVERY STORY MUST START WITH "import React from 'react';" AS THE FIRST LINE 🚨
+
+You are an expert UI developer creating Storybook stories. Use ONLY the React components from the ${componentSystemName} listed below.
+
+🔴 MANDATORY FIRST LINE - NO EXCEPTIONS:
+The VERY FIRST LINE of every story file MUST be:
+import React from 'react';
 
 CRITICAL IMPORT RULES - MUST FOLLOW EXACTLY:
-1. **MANDATORY FIRST LINE**: ALWAYS include "import React from 'react';" as the VERY FIRST import
-   - This is REQUIRED for JSX to work properly
-   - Without this import, the story will fail with "React is not defined" error
-   - Example correct order:
-     import React from 'react';
-     import type { StoryObj } from '@storybook/[framework]';
-     import { ComponentName } from '[your-import-path]';
+1. **LINE 1: import React from 'react';** (MANDATORY - NEVER SKIP THIS)
+2. **LINE 2: import type { StoryObj } from '@storybook/[framework]';**
+3. **LINE 3: import { ComponentName } from '[your-import-path]';**
+
+⚠️  WITHOUT "import React from 'react';" THE STORY WILL FAIL WITH "React is not defined" ERROR ⚠️
+
+Example correct order:
+import React from 'react';
+import type { StoryObj } from '@storybook/[framework]';
+import { ComponentName } from '[your-import-path]';
 
 2. Use the correct Storybook framework import for your environment
 3. ONLY import components that are explicitly listed in the "Available components" section below
@@ -140,7 +149,7 @@ function formatComponentReference(component: DiscoveredComponent, config: StoryU
   }
 
   // Add specific usage notes for layout components
-  if (component.category === 'layout') {
+  if (component.category === 'layout' && component.name && typeof component.name === 'string') {
     if (component.name.toLowerCase().includes('layout') && !component.name.toLowerCase().includes('section')) {
       reference += ' - Use as main wrapper for multi-column layouts';
     } else if (component.name.toLowerCase().includes('section')) {
@@ -220,8 +229,8 @@ function generateExamples(config: StoryUIConfig): string[] {
  * Generates a default sample story if none provided
  */
 function generateDefaultSampleStory(config: StoryUIConfig, components: DiscoveredComponent[]): string {
-  const layoutComponent = components.find(c => c.category === 'layout' && !c.name.toLowerCase().includes('section'));
-  const sectionComponent = components.find(c => c.category === 'layout' && c.name.toLowerCase().includes('section'));
+  const layoutComponent = components.find(c => c.category === 'layout' && c.name && typeof c.name === 'string' && !c.name.toLowerCase().includes('section'));
+  const sectionComponent = components.find(c => c.category === 'layout' && c.name && typeof c.name === 'string' && c.name.toLowerCase().includes('section'));
   const contentComponent = components.find(c => c.category === 'content');
 
   const mainComponent = layoutComponent?.name || contentComponent?.name || components[0]?.name || 'div';
@@ -247,8 +256,8 @@ function generateDefaultSampleStory(config: StoryUIConfig, components: Discovere
   }
 
   const storybookFramework = config.storybookFramework || '@storybook/react';
-  return `import type { Meta, StoryObj } from '${storybookFramework}';
-import React from 'react';
+  return `import React from 'react';
+import type { Meta, StoryObj } from '${storybookFramework}';
 ${importStatement}
 
 const meta = {
@@ -327,7 +336,11 @@ export function buildClaudePrompt(
   promptParts.push(
     `Output a complete Storybook story file in TypeScript. Import components from "${config.importPath}". Use the following sample as a template. Respond ONLY with a single code block containing the full file, and nothing else.`,
     '',
-    'CRITICAL REMINDERS:',
+    '🚨 FINAL CRITICAL REMINDERS 🚨',
+    '🔴 FIRST LINE MUST BE: import React from \'react\';',
+    '🔴 WITHOUT THIS IMPORT, THE STORY WILL BREAK!',
+    '',
+    'OTHER CRITICAL RULES:',
     '- Story title MUST always start with "Generated/" (e.g., title: "Generated/Recipe Card")',
     '- Do NOT use prefixes like "Content/", "Components/", or any other section name',
     '- ONLY import components that are listed in the "Available components" section',

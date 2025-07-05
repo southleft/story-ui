@@ -256,8 +256,11 @@ function extractSlotsFromComponent(content: string): string[] {
 }
 
 function categorizeComponent(name: string, description: string): DiscoveredComponent['category'] {
+  if (!name || typeof name !== 'string') {
+    return 'other';
+  }
   const lowerName = name.toLowerCase();
-  const lowerDesc = description.toLowerCase();
+  const lowerDesc = (description && typeof description === 'string') ? description.toLowerCase() : '';
 
   if (lowerName.includes('layout') || lowerName.includes('grid') || lowerName.includes('container') || lowerName.includes('section')) {
     return 'layout';

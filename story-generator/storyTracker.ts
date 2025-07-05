@@ -30,7 +30,9 @@ export class StoryTracker {
       if (fs.existsSync(this.mappingFile)) {
         const data = JSON.parse(fs.readFileSync(this.mappingFile, 'utf-8'));
         for (const mapping of data) {
-          this.mappings.set(mapping.title.toLowerCase(), mapping);
+          if (mapping && mapping.title && typeof mapping.title === 'string') {
+            this.mappings.set(mapping.title.toLowerCase(), mapping);
+          }
         }
       }
     } catch (error) {
@@ -55,6 +57,9 @@ export class StoryTracker {
    * Find an existing story by title
    */
   findByTitle(title: string): StoryMapping | undefined {
+    if (!title || typeof title !== 'string') {
+      return undefined;
+    }
     // Normalize the title for comparison
     const normalizedTitle = title.toLowerCase().trim();
 
@@ -89,6 +94,9 @@ export class StoryTracker {
    * Find an existing story by prompt similarity
    */
   findByPrompt(prompt: string): StoryMapping | undefined {
+    if (!prompt || typeof prompt !== 'string') {
+      return undefined;
+    }
     const normalizedPrompt = prompt.toLowerCase().trim();
 
     // Remove common prefixes like "generate a", "create a", etc.
@@ -96,13 +104,31 @@ export class StoryTracker {
       .replace(/^(generate|create|build|make|design|show|write|produce|construct|draft|compose|implement|add|render|display)\s+(a|an|the)?\s*/i, '')
       .trim();
 
+    // Extract key terms from the prompt
+    const promptKeywords = cleanPrompt.split(/\s+/).filter(word => word.length > 2);
+
     // Try to find by similar prompts
     for (const mapping of this.mappings.values()) {
+      if (!mapping || !mapping.prompt || typeof mapping.prompt !== 'string') {
+        continue;
+      }
       const mappingPrompt = mapping.prompt.toLowerCase()
         .replace(/^(generate|create|build|make|design|show|write|produce|construct|draft|compose|implement|add|render|display)\s+(a|an|the)?\s*/i, '')
         .trim();
 
+      // Exact match
       if (mappingPrompt === cleanPrompt) {
+        return mapping;
+      }
+
+      // Fuzzy matching based on shared keywords
+      const mappingKeywords = mappingPrompt.split(/\s+/).filter(word => word.length > 2);
+      const sharedKeywords = promptKeywords.filter(word => mappingKeywords.includes(word));
+
+      // If 70% or more keywords match, consider it similar
+      const similarityThreshold = Math.max(2, Math.floor(promptKeywords.length * 0.7));
+      if (sharedKeywords.length >= similarityThreshold) {
+        console.log(`🔄 Found similar story: "${mapping.title}" (${sharedKeywords.length}/${promptKeywords.length} keywords match)`);
         return mapping;
       }
     }
@@ -114,6 +140,10 @@ export class StoryTracker {
    * Register a new or updated story
    */
   registerStory(mapping: StoryMapping): void {
+    if (!mapping || !mapping.title || typeof mapping.title !== 'string') {
+      console.warn('Invalid mapping provided to registerStory:', mapping);
+      return;
+    }
     const normalizedTitle = mapping.title.toLowerCase();
 
     // Check if we're updating an existing story
@@ -139,7 +169,7 @@ export class StoryTracker {
   removeStory(titleOrFileName: string): boolean {
     // Try to find by title first
     const byTitle = this.findByTitle(titleOrFileName);
-    if (byTitle) {
+    if (byTitle && byTitle.title && typeof byTitle.title === 'string') {
       this.mappings.delete(byTitle.title.toLowerCase());
       this.saveMappings();
       return true;

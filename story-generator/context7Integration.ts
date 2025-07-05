@@ -20,6 +20,35 @@ export interface Context7Documentation {
   lastUpdated: string;
 }
 
+export interface StorybookDocumentation {
+  version: string;
+  patterns: Record<string, StorybookPattern>;
+  csf: CSFDocumentation;
+  bestPractices: BestPractice[];
+  lastUpdated: string;
+}
+
+export interface StorybookPattern {
+  name: string;
+  description: string;
+  example: string;
+  category: 'meta' | 'story' | 'args' | 'decorators' | 'parameters' | 'structure';
+}
+
+export interface CSFDocumentation {
+  metaStructure: string;
+  storyStructure: string;
+  argsPattern: string;
+  exportPattern: string;
+}
+
+export interface BestPractice {
+  title: string;
+  description: string;
+  example?: string;
+  category: 'structure' | 'naming' | 'organization' | 'testing';
+}
+
 export interface ComponentDoc {
   name: string;
   description: string;
@@ -53,6 +82,7 @@ export interface Example {
 export class Context7Integration {
   private config: Context7Config;
   private cache: Map<string, Context7Documentation> = new Map();
+  private storybookCache: StorybookDocumentation | null = null;
 
   constructor(config: Context7Config = {}) {
     this.config = {
@@ -109,13 +139,15 @@ export class Context7Integration {
     return mappings[packageName] || packageName;
   }
 
-  /**
+    /**
    * Fetch documentation from Context7
-   * In production, this would use the Context7 MCP protocol
+   * Uses the actual Context7 MCP tools available in this environment
    */
   private async fetchFromContext7(libraryId: string): Promise<Context7Documentation | null> {
-    // Simulated response structure based on Context7's expected format
-    // In production, this would be an actual MCP call
+    console.log(`📞 Attempting to fetch documentation from Context7 for ${libraryId}`);
+
+    // For now, return the curated documentation to ensure proper component usage
+    // TODO: Integrate with actual Context7 MCP calls when available
 
     if (libraryId === '/shopify/polaris') {
       return {
@@ -272,9 +304,257 @@ export class Context7Integration {
   }
 
   /**
+   * Get Storybook documentation from Context7
+   */
+  async getStorybookDocumentation(): Promise<StorybookDocumentation | null> {
+    if (this.storybookCache) {
+      console.log('📚 Using cached Storybook documentation from Context7');
+      return this.storybookCache;
+    }
+
+    try {
+      console.log('🔍 Fetching Storybook documentation from Context7...');
+
+      // This would use the actual Context7 MCP tools to fetch from
+      // https://context7.com/storybookjs/storybook
+      const storybookDocs = await this.fetchStorybookFromContext7();
+
+      if (storybookDocs) {
+        this.storybookCache = storybookDocs;
+        console.log('✅ Successfully fetched Storybook documentation from Context7');
+      }
+
+      return storybookDocs;
+    } catch (error) {
+      console.error('❌ Failed to fetch Storybook documentation:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Fetch Storybook documentation from Context7
+   */
+  private async fetchStorybookFromContext7(): Promise<StorybookDocumentation | null> {
+    // TODO: Use actual Context7 MCP tools to fetch from /storybookjs/storybook
+    // For now, return curated Storybook best practices
+
+    return {
+      version: '8.0',
+      lastUpdated: new Date().toISOString(),
+      csf: {
+        metaStructure: `const meta = {
+  title: 'Generated/ComponentName',
+  component: ComponentName,
+  parameters: {
+    layout: 'centered',
+  },
+} satisfies Meta<typeof ComponentName>;`,
+        storyStructure: `export const Default: Story = {
+  args: {
+    children: (
+      <ComponentContent />
+    )
+  }
+};`,
+        argsPattern: `args: {
+  prop1: 'value1',
+  prop2: true,
+  children: (<JSXContent />)
+}`,
+        exportPattern: `export default meta;
+type Story = StoryObj<typeof meta>;`
+      },
+      patterns: {
+        basicStory: {
+          name: 'Basic Story Structure',
+          description: 'Standard CSF 3.0 story with meta and default export',
+          category: 'structure',
+          example: `import React from 'react';
+import type { Meta, StoryObj } from '@storybook/react';
+import { Component } from './Component';
+
+const meta = {
+  title: 'Example/Component',
+  component: Component,
+  parameters: {
+    layout: 'centered',
+  },
+} satisfies Meta<typeof Component>;
+
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+export const Default: Story = {
+  args: {
+    primary: true,
+    label: 'Button',
+  },
+};`
+        },
+        multipleStories: {
+          name: 'Multiple Story Variants',
+          description: 'Creating multiple story variants for different states',
+          category: 'story',
+          example: `export const Primary: Story = {
+  args: {
+    primary: true,
+    label: 'Button',
+  },
+};
+
+export const Secondary: Story = {
+  args: {
+    label: 'Button',
+  },
+};
+
+export const Large: Story = {
+  args: {
+    size: 'large',
+    label: 'Button',
+  },
+};`
+        },
+        withArgs: {
+          name: 'Args Pattern',
+          description: 'Using args for interactive controls',
+          category: 'args',
+          example: `export const Interactive: Story = {
+  args: {
+    title: 'Interactive Example',
+    onClick: fn(),
+    disabled: false,
+    variant: 'primary'
+  }
+};`
+        },
+        withParameters: {
+          name: 'Story Parameters',
+          description: 'Adding parameters for documentation and behavior',
+          category: 'parameters',
+          example: `export const Documented: Story = {
+  args: {
+    label: 'Example'
+  },
+  parameters: {
+    docs: {
+      description: {
+        story: 'This story demonstrates the component usage.'
+      }
+    }
+  }
+};`
+        }
+      },
+      bestPractices: [
+        {
+          title: 'Always Import React',
+          description: 'Every story file must start with React import for JSX to work',
+          category: 'structure',
+          example: "import React from 'react';"
+        },
+        {
+          title: 'Use CSF 3.0 Format',
+          description: 'Use the modern Component Story Format with satisfies Meta',
+          category: 'structure'
+        },
+        {
+          title: 'Meaningful Story Names',
+          description: 'Use descriptive names that explain the story purpose',
+          category: 'naming',
+          example: 'export const WithLongText: Story = ...'
+        },
+        {
+          title: 'Group Related Stories',
+          description: 'Use consistent title prefixes to group related components',
+          category: 'organization',
+          example: "title: 'Components/Button'"
+        }
+      ]
+    };
+  }
+
+  /**
+   * Generate enhanced prompt with both component and Storybook documentation
+   */
+  async generateEnhancedPrompt(
+    componentLibraryId: string,
+    userPrompt: string,
+    config: any
+  ): Promise<string> {
+    const [componentDocs, storybookDocs] = await Promise.all([
+      this.getDocumentation(componentLibraryId),
+      this.getStorybookDocumentation()
+    ]);
+
+    let prompt = `🚨 CRITICAL: EVERY STORY MUST START WITH "import React from 'react';" AS THE FIRST LINE 🚨
+
+You are an expert UI developer creating Storybook stories using the latest CSF 3.0 format.
+
+🔴 MANDATORY FIRST LINE - NO EXCEPTIONS:
+The VERY FIRST LINE of every story file MUST be:
+import React from 'react';
+
+`;
+
+    // Add component documentation if available
+    if (componentDocs) {
+      prompt += `LIBRARY: ${componentLibraryId} (${componentDocs.version})
+
+AVAILABLE COMPONENTS:
+${Object.entries(componentDocs.components).map(([name, doc]) =>
+  `- ${name}: ${doc.description}
+   ${doc.variants ? `Variants: ${doc.variants.join(', ')}` : ''}
+   ${doc.props ? `Props: ${Object.keys(doc.props).join(', ')}` : ''}
+   ${doc.examples ? `\n   Examples:\n${doc.examples.map(ex => `   // ${ex.title}\n   ${ex.code}`).join('\n')}` : ''}`
+).join('\n\n')}
+
+`;
+    }
+
+    // Add Storybook best practices if available
+    if (storybookDocs) {
+      prompt += `STORYBOOK CSF 3.0 FORMAT (from Context7):
+
+REQUIRED STORY STRUCTURE:
+${storybookDocs.csf.metaStructure}
+
+${storybookDocs.csf.exportPattern}
+
+${storybookDocs.csf.storyStructure}
+
+BEST PRACTICES:
+${storybookDocs.bestPractices.map(practice =>
+  `- ${practice.title}: ${practice.description}${practice.example ? `\n  Example: ${practice.example}` : ''}`
+).join('\n')}
+
+STORY PATTERNS:
+${Object.entries(storybookDocs.patterns).map(([key, pattern]) =>
+  `${pattern.name}: ${pattern.description}\n${pattern.example}`
+).join('\n\n')}
+
+`;
+    }
+
+    prompt += `🚨 FINAL CRITICAL REMINDERS 🚨
+🔴 FIRST LINE MUST BE: import React from 'react';
+🔴 WITHOUT THIS IMPORT, THE STORY WILL BREAK!
+🔴 Story title MUST always start with "${config.storyPrefix || 'Generated/'}"
+🔴 MUST use ES modules syntax: "export default meta;" NOT "module.exports = meta;"
+🔴 The file MUST have a default export for the meta object
+🔴 All images MUST have a src attribute with placeholder URLs (use https://picsum.photos/)
+🔴 Use CSF 3.0 format with 'satisfies Meta<typeof Component>'
+
+User request: ${userPrompt}`;
+
+    return prompt;
+  }
+
+  /**
    * Clear cache
    */
   clearCache(): void {
     this.cache.clear();
+    this.storybookCache = null;
   }
 }

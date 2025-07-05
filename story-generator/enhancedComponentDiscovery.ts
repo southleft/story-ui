@@ -496,6 +496,9 @@ export class EnhancedComponentDiscovery {
    * Categorize component based on name and content
    */
   private categorizeComponent(name: string, content: string): 'layout' | 'content' | 'form' | 'navigation' | 'feedback' | 'other' {
+    if (!name || typeof name !== 'string') {
+      return 'other';
+    }
     const nameLower = name.toLowerCase();
 
     // Layout components
@@ -666,10 +669,16 @@ export class EnhancedComponentDiscovery {
    * Find a similar component name
    */
   private findSimilarComponent(targetName: string, availableComponents: string[]): string | null {
+    if (!targetName || typeof targetName !== 'string') {
+      return null;
+    }
     const targetLower = targetName.toLowerCase();
 
     // Direct substring matches
     for (const available of availableComponents) {
+      if (!available || typeof available !== 'string') {
+        continue;
+      }
       const availableLower = available.toLowerCase();
       if (availableLower.includes(targetLower) || targetLower.includes(availableLower)) {
         return available;

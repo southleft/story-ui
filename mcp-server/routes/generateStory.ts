@@ -44,40 +44,15 @@ async function buildClaudePromptWithContext(userPrompt: string, config: any, con
   const discovery = new EnhancedComponentDiscovery(config);
   const components = await discovery.discoverAll();
 
-  // Try to get documentation from Context7
+  // Try to get documentation from Context7 (both component and Storybook docs)
   let prompt: string;
   const context7Docs = await context7.getDocumentation(config.importPath);
 
   if (context7Docs) {
     console.log('📚 Using Context7 documentation for enhanced story generation');
 
-    const enhancedPrompt = `${config.systemPrompt || ''}
-
-IMPORTANT: You have access to real-time design system documentation from Context7. Use ONLY the components and patterns listed below.
-
-LIBRARY: ${config.importPath} (${context7Docs.version})
-
-AVAILABLE COMPONENTS:
-${Object.entries(context7Docs.components).map(([name, doc]) =>
-  `- ${name}: ${doc.description}
-   ${doc.variants ? `Variants: ${doc.variants.join(', ')}` : ''}
-   ${doc.props ? `Props: ${Object.keys(doc.props).join(', ')}` : ''}
-   ${doc.examples ? `\n   Examples:\n${doc.examples.map(ex => `   // ${ex.title}\n   ${ex.code}`).join('\n')}` : ''}`
-).join('\n\n')}
-
-${context7Docs.patterns ? `
-RECOMMENDED PATTERNS:
-${Object.entries(context7Docs.patterns).map(([name, pattern]) =>
-  `${pattern.name}: ${pattern.description}\nExample:\n${pattern.example}`
-).join('\n\n')}` : ''}
-
-${config.importTemplate}
-
-CRITICAL: Never use components not listed above. No deprecated components like Heading, Stack, FormLayout, or LegacyGrid.
-
-User request: ${userPrompt}`;
-
-    prompt = enhancedPrompt;
+    // Use the new enhanced prompt generator that includes Storybook best practices
+    prompt = await context7.generateEnhancedPrompt(config.importPath, userPrompt, config);
   } else {
     // Fall back to bundled documentation if available
     const documentation = getDocumentation(config.importPath);
@@ -149,6 +124,9 @@ Current modification request:`
 }
 
 function slugify(str: string) {
+  if (!str || typeof str !== 'string') {
+    return 'untitled';
+  }
   return str
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -183,6 +161,9 @@ async function callClaude(prompt: string): Promise<string> {
 }
 
 function cleanPromptForTitle(prompt: string): string {
+  if (!prompt || typeof prompt !== 'string') {
+    return 'Untitled Story';
+  }
   // Remove common leading phrases (case-insensitive)
   const leadingPhrases = [
     /^generate (a|an|the)? /i,
@@ -337,6 +318,9 @@ async function preValidateImports(code: string, config: any, discovery: Enhanced
 }
 
 function findSimilarIcon(iconName: string, allowedIcons: Set<string>): string | null {
+  if (!iconName || typeof iconName !== 'string') {
+    return null;
+  }
   // Simple similarity check - find icons that contain similar words
   const iconLower = iconName.toLowerCase();
 
@@ -354,6 +338,12 @@ function findSimilarIcon(iconName: string, allowedIcons: Set<string>): string | 
 }
 
 function fileNameFromTitle(title: string, hash: string): string {
+  if (!title || typeof title !== 'string') {
+    title = 'untitled';
+  }
+  if (!hash || typeof hash !== 'string') {
+    hash = 'default';
+  }
   // Lowercase, replace spaces/special chars with dashes, remove quotes, truncate
   let base = title
     .toLowerCase()
@@ -463,10 +453,8 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       return res.status(500).json({ error: 'Failed to generate valid TypeScript code.' });
     }
 
-    // CRITICAL: Double-check React import
-    if (!fileContents.includes("import React from 'react'") &&
-        (fileContents.includes('<') || fileContents.includes('/>'))) {
-      console.warn('⚠️  Missing React import detected, adding it automatically');
+    // CRITICAL: Always add React import as the first line (mandatory for all stories)
+    if (!fileContents.startsWith("import React from 'react';")) {
       fileContents = "import React from 'react';\n" + fileContents;
     }
 
