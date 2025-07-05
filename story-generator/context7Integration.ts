@@ -6,6 +6,8 @@
  */
 
 import fetch from 'node-fetch';
+import fs from 'fs';
+import path from 'path';
 
 export interface Context7Config {
   apiUrl?: string;
@@ -125,18 +127,30 @@ export class Context7Integration {
 
   /**
    * Map package names to Context7 library IDs
+   * This can be configured per environment during initialization
    */
   private mapToContext7Id(packageName: string): string {
-    const mappings: Record<string, string> = {
-      '@shopify/polaris': '/shopify/polaris',
-      '@mui/material': '/mui/material',
-      'antd': '/ant-design/ant-design',
-      '@chakra-ui/react': '/chakra-ui/chakra-ui',
-      '@mantine/core': '/mantine/mantine',
-      // Add more mappings as needed
-    };
+    // Check local configuration for mapping
+    const localConfigPath = path.join(process.cwd(), 'context7-config.json');
+    if (fs.existsSync(localConfigPath)) {
+      try {
+        const localConfig = JSON.parse(fs.readFileSync(localConfigPath, 'utf-8'));
+        // Find the library ID that matches this package
+        for (const [libraryId, config] of Object.entries(localConfig)) {
+          if (packageName === '@mantine/core' && libraryId === '/mantine/mantine') return libraryId;
+          if (packageName === 'antd' && libraryId === '/ant-design/ant-design') return libraryId;
+          if (packageName === '@adobe/react-spectrum' && libraryId === '/adobe/react-spectrum') return libraryId;
+          if (packageName === '@shopify/polaris' && libraryId === '/shopify/polaris') return libraryId;
+          if (packageName === '@mui/material' && libraryId === '/mui/material') return libraryId;
+          if (packageName === '@chakra-ui/react' && libraryId === '/chakra-ui/chakra-ui') return libraryId;
+        }
+      } catch (error) {
+        console.warn(`Failed to read local Context7 config:`, error);
+      }
+    }
 
-    return mappings[packageName] || packageName;
+    // Default mapping - return as-is
+    return packageName;
   }
 
     /**
@@ -146,139 +160,24 @@ export class Context7Integration {
   private async fetchFromContext7(libraryId: string): Promise<Context7Documentation | null> {
     console.log(`📞 Attempting to fetch documentation from Context7 for ${libraryId}`);
 
-    // For now, return the curated documentation to ensure proper component usage
     // TODO: Integrate with actual Context7 MCP calls when available
+    // For now, this will be populated by environment-specific configuration files
 
-    if (libraryId === '/shopify/polaris') {
-      return {
-        libraryId,
-        version: 'v13.0.0',
-        lastUpdated: new Date().toISOString(),
-        components: {
-          'Text': {
-            name: 'Text',
-            description: 'Typography component for all text in Polaris',
-            variants: ['heading3xl', 'heading2xl', 'headingXl', 'headingLg', 'headingMd', 'headingSm', 'headingXs', 'bodyLg', 'bodyMd', 'bodySm', 'bodyXs'],
-            props: {
-              as: {
-                type: 'ElementType',
-                required: true,
-                description: 'The element type to render',
-                default: 'p'
-              },
-              variant: {
-                type: 'TextVariant',
-                required: false,
-                description: 'Typographic style'
-              },
-              tone: {
-                type: "'subdued' | 'success' | 'critical' | 'warning' | 'caution' | 'emphasis' | 'info' | 'inherit'",
-                required: false,
-                description: 'Text color'
-              }
-            },
-            examples: [
-              {
-                title: 'Heading',
-                code: '<Text variant="headingLg" as="h2">Page title</Text>'
-              },
-              {
-                title: 'Body text',
-                code: '<Text variant="bodyMd" as="p">Regular paragraph text</Text>'
-              }
-            ]
-          },
-          'Button': {
-            name: 'Button',
-            description: 'Interactive button component',
-            variants: ['primary', 'secondary', 'tertiary', 'plain', 'monochrome'],
-            props: {
-              variant: {
-                type: 'ButtonVariant',
-                description: 'Visual style of button'
-              },
-              tone: {
-                type: "'critical' | 'success'",
-                description: 'Button color tone'
-              },
-              size: {
-                type: "'slim' | 'medium' | 'large'",
-                default: 'medium'
-              }
-            }
-          },
-          'BlockStack': {
-            name: 'BlockStack',
-            description: 'Vertical stack layout component',
-            props: {
-              gap: {
-                type: 'Gap',
-                description: 'Space between children',
-                default: '400'
-              }
-            }
-          },
-          'InlineStack': {
-            name: 'InlineStack',
-            description: 'Horizontal stack layout component',
-            props: {
-              gap: {
-                type: 'Gap',
-                description: 'Space between children'
-              },
-              align: {
-                type: 'Align',
-                description: 'Horizontal alignment'
-              }
-            }
-          },
-          'Card': {
-            name: 'Card',
-            description: 'Content container component',
-            props: {
-              padding: {
-                type: 'Spacing',
-                description: 'Internal padding'
-              },
-              roundedAbove: {
-                type: 'Breakpoint',
-                description: 'Border radius breakpoint'
-              }
-            }
-          },
-          // Deprecated components are not included in Context7's response
-          // This is the key benefit - we only get current, valid components
-        },
-        patterns: {
-          forms: {
-            name: 'Form Layout',
-            description: 'Recommended form structure',
-            components: ['Form', 'BlockStack', 'TextField', 'Button'],
-            example: `<Form onSubmit={handleSubmit}>
-  <BlockStack gap="400">
-    <TextField
-      label="Email"
-      type="email"
-      value={email}
-      onChange={setEmail}
-    />
-    <TextField
-      label="Password"
-      type="password"
-      value={password}
-      onChange={setPassword}
-    />
-    <Button submit variant="primary">
-      Sign in
-    </Button>
-  </BlockStack>
-</Form>`
-          }
+    // Check if there's a local Context7 configuration file
+    const localConfigPath = path.join(process.cwd(), 'context7-config.json');
+    if (fs.existsSync(localConfigPath)) {
+      try {
+        const localConfig = JSON.parse(fs.readFileSync(localConfigPath, 'utf-8'));
+        if (localConfig[libraryId]) {
+          console.log(`📚 Using local Context7 configuration for ${libraryId}`);
+          return localConfig[libraryId];
         }
-      };
+      } catch (error) {
+        console.warn(`Failed to load local Context7 config:`, error);
+      }
     }
 
-    // Return null for unknown libraries
+    // Return null - environment-specific documentation should be configured during init
     return null;
   }
 

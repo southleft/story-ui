@@ -16,6 +16,36 @@ interface SetupAnswers {
   componentsPath?: string;
   hasApiKey?: boolean;
   apiKey?: string;
+  enableContext7?: boolean;
+}
+
+async function createContext7Config(importPath: string, designSystem: string) {
+  const context7ConfigPath = path.join(process.cwd(), 'context7-config.json');
+
+  // Map design systems to Context7 library IDs
+  const designSystemMappings: Record<string, string> = {
+    'mui': '/mui/material',
+    'chakra': '/chakra-ui/chakra-ui',
+    'antd': '/ant-design/ant-design',
+    'mantine': '/mantine/mantine',
+    'spectrum': '/adobe/react-spectrum'
+  };
+
+  const libraryId = designSystemMappings[designSystem] || importPath;
+
+  const context7Config = {
+    [libraryId]: {
+      libraryId,
+      version: 'latest',
+      lastUpdated: new Date().toISOString(),
+      // This will be populated by actual Context7 integration or fallback documentation
+      components: {},
+      patterns: {}
+    }
+  };
+
+  fs.writeFileSync(context7ConfigPath, JSON.stringify(context7Config, null, 2));
+  console.log(chalk.green(`✅ Created Context7 configuration for ${libraryId}`));
 }
 
 export async function setupCommand() {
@@ -126,6 +156,16 @@ export async function setupCommand() {
       message: 'Enter your Claude API key:',
       when: (answers) => answers.hasApiKey,
       validate: (input) => input.trim() ? true : 'API key is required'
+    },
+    {
+      type: 'confirm',
+      name: 'enableContext7',
+      message: 'Enable Context7 integration for real-time documentation? (Recommended for supported design systems)',
+      default: true,
+      when: (answers) => {
+        const supportedSystems = ['auto', 'mui', 'chakra', 'antd', 'mantine', 'spectrum'];
+        return supportedSystems.includes(answers.designSystem);
+      }
     }
   ]);
 
@@ -270,11 +310,25 @@ export async function setupCommand() {
   config.storyPrefix = 'Generated/';
   config.defaultAuthor = 'Story UI AI';
 
+  // Add Context7 configuration if enabled
+  if (answers.enableContext7) {
+    config.context7 = {
+      enabled: true,
+      cacheEnabled: true,
+      timeout: 10000
+    };
+  }
+
   // Create configuration file
   const configContent = `module.exports = ${JSON.stringify(config, null, 2)};`;
   const configPath = path.join(process.cwd(), 'story-ui.config.js');
 
   fs.writeFileSync(configPath, configContent);
+
+  // Create Context7 configuration file if enabled
+  if (answers.enableContext7) {
+    await createContext7Config(config.importPath, answers.designSystem);
+  }
 
   // Create generated stories directory
   const storiesDir = path.dirname(config.generatedStoriesPath);

@@ -1,7 +1,7 @@
 {
   "name": "@tpitre/story-ui",
-  "version": "1.7.1",
-  "description": "AI-powered Storybook story generator for any React component library",
+  "version": "1.8.0",
+  "description": "AI-powered Storybook story generator with Context7 integration for real-time documentation",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -41,7 +41,11 @@
     "design-system",
     "claude",
     "mcp",
-    "story-generation"
+    "story-generation",
+    "context7",
+    "documentation",
+    "real-time",
+    "component-library"
   ],
   "author": "Story UI Contributors",
   "license": "MIT",

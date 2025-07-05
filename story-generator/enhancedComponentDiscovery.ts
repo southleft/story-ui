@@ -351,6 +351,8 @@ export class EnhancedComponentDiscovery {
           { name: 'SkeletonBodyText', category: 'content', description: 'Body text skeleton', props: ['lines'] },
           { name: 'SkeletonDisplayText', category: 'content', description: 'Display text skeleton', props: ['size'] }
         ];
+
+
     }
 
     return components;
