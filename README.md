@@ -11,17 +11,17 @@ Story UI revolutionizes component documentation by automatically generating Stor
 
 ### 🎯 Core Features
 - **AI-Powered Story Generation**: Chat with AI to create comprehensive Storybook stories
-- **Real-time Documentation Access**: Integrated with [Context7](https://context7.com/) for up-to-date component docs
+- **Intelligent Iteration Support**: Modify existing stories without losing your work
 - **Multi-Component Library Support**: Works with any React component library
 - **Real-time Story Updates**: See your stories appear in Storybook instantly
 - **Intelligent Component Discovery**: Automatically finds and analyzes your components
 - **TypeScript Support**: Full TypeScript integration with type-aware story generation
 
-### 🚀 Context7 Integration (New!)
-- **No Setup Required**: Documentation is fetched automatically via Context7
-- **Always Current**: Real-time access to the latest component APIs
-- **No Deprecated Components**: Context7 ensures only valid, current components are used
-- **Rich Examples**: Access to curated examples and best practices
+### 📚 Documentation System (New!)
+- **Directory-Based Documentation**: Organize design system docs in a structured directory
+- **Multiple Format Support**: Markdown, JSON, HTML, and text files
+- **Legacy Support**: Still supports single `story-ui-considerations.md` file
+- **Auto-Discovery**: Automatically finds and loads documentation from `story-ui-docs/` directory
 
 ### 🎨 Advanced Features
 - **Memory-Persistent Stories**: Stories are remembered across sessions
@@ -36,6 +36,9 @@ Story UI revolutionizes component documentation by automatically generating Stor
 # Install Story UI
 npm install -D @tpitre/story-ui
 
+# Initialize Story UI in your project
+npx story-ui init
+
 # Add to your package.json scripts
 "story-ui": "story-ui start"
 
@@ -47,19 +50,19 @@ npm run story-ui -- --port 4005
 ```
 
 Story UI will automatically:
-- ✅ Connect to Context7 for real-time documentation
 - ✅ Discover your components
 - ✅ Set up the chat interface
 - ✅ Generate stories as you type
+- ✅ Load your design system documentation
 
 ## 📚 How It Works
 
-Story UI leverages [Context7](https://context7.com/)'s comprehensive library documentation to ensure generated stories use only valid, current components. When you request a story:
+Story UI uses advanced AI to understand your component library and generate appropriate stories:
 
 1. **Component Discovery**: Story UI scans your codebase for available components
-2. **Documentation Fetch**: Context7 provides real-time API documentation
-3. **AI Generation**: Claude generates stories using only documented components
-4. **Validation**: Stories are validated against the actual component library
+2. **Documentation Loading**: Reads your design system documentation (if available)
+3. **AI Generation**: Claude generates stories using discovered components
+4. **Iteration Support**: Previous code is preserved when modifying stories
 5. **Hot Reload**: Stories appear instantly in your Storybook
 
 ## 🎯 Configuration
@@ -95,16 +98,16 @@ export default {
 
 ## 🌟 Supported Design Systems
 
-Story UI works with any React component library. Context7 provides enhanced documentation for:
+Story UI ships with pre-configured support for popular design systems:
 
-| Design System | Package | Context7 Docs |
-|--------------|---------|---------------|
-| Shopify Polaris | `@shopify/polaris` | ✅ [Available](https://context7.com/shopify/polaris) |
-| Material-UI | `@mui/material` | ✅ Available |
-| Ant Design | `antd` | ✅ Available |
-| Chakra UI | `@chakra-ui/react` | ✅ Available |
-| Mantine | `@mantine/core` | ✅ Available |
-| And many more... | | |
+| Design System | Package | Template Available |
+|--------------|---------|-------------------|
+| Material-UI | `@mui/material` | ✅ Yes |
+| Ant Design | `antd` | ✅ Yes |
+| Chakra UI | `@chakra-ui/react` | ✅ Yes |
+| Mantine | `@mantine/core` | ✅ Yes |
+| shadcn/ui | Various | 🔜 Coming Soon |
+| Custom | Any React library | ✅ Yes |
 
 ## 📱 Examples
 
@@ -138,27 +141,86 @@ You: "Create a product card with image, title, price, and add to cart button"
 AI: "I'll create a product card using Polaris components..."
 ```
 
-The AI will use only valid, current components from the design system, automatically avoiding any deprecated components.
+### Iterating on Existing Stories
+
+```
+You: "Make the buttons full width"
+
+AI: "I'll modify the existing story to make the buttons full width..."
+```
+
+The AI will preserve your existing code and only modify what you requested!
+
+## 📖 Documentation Support
+
+### Directory-Based Documentation (Recommended)
+
+Create a `story-ui-docs/` directory in your project root:
+
+```
+story-ui-docs/
+├── README.md                    # Overview and getting started
+├── guidelines/
+│   ├── accessibility.md         # Accessibility guidelines
+│   ├── responsive-design.md     # Responsive design rules
+│   └── brand-guidelines.md      # Brand usage
+├── tokens/
+│   ├── colors.json             # Color tokens
+│   ├── spacing.md              # Spacing system
+│   └── typography.json         # Typography tokens
+├── components/
+│   ├── button.md               # Button documentation
+│   └── forms.md                # Form component docs
+└── patterns/
+    ├── layouts.md              # Layout patterns
+    └── data-tables.md          # Table patterns
+```
+
+Story UI will automatically discover and use this documentation to generate better stories.
+
+### Legacy Single-File Documentation
+
+You can still use a single `story-ui-considerations.md` file in your project root for simpler setups.
 
 ## 🔧 Advanced Features
 
-### Context7 Documentation
+### Story Version History
 
-Story UI automatically fetches documentation from Context7, providing:
-- Component descriptions and props
-- Valid variants and options
-- Usage examples
-- Best practices
-
-No configuration needed - it just works!
+Every generated story is tracked with version history:
+- Each iteration is saved with a timestamp
+- Previous versions are linked for easy tracking
+- History is stored in `.story-ui-history/` (git-ignored)
 
 ### Component Validation
 
 All generated stories are validated to ensure:
 - ✅ Only existing components are imported
 - ✅ Props match component interfaces
-- ✅ No deprecated components are used
 - ✅ Import paths are correct
+- ✅ TypeScript types are valid
+
+### Production Mode
+
+In production environments, Story UI operates in memory-only mode:
+- No files are written to disk
+- Stories are served from memory
+- Clean deployment without generated files
+
+## 🚀 CLI Commands
+
+```bash
+# Initialize Story UI in a new project
+npx story-ui init
+
+# Start the Story UI server
+npx story-ui start
+
+# Start on a specific port
+npx story-ui start --port 4005
+
+# Use a specific config file
+npx story-ui start --config custom-config.js
+```
 
 ## 🤝 Contributing
 
@@ -189,274 +251,9 @@ MIT © [Story UI Contributors](LICENSE)
 
 - [GitHub Repository](https://github.com/southleft/story-ui)
 - [NPM Package](https://www.npmjs.com/package/@tpitre/story-ui)
-- [Context7 Documentation](https://context7.com/)
 - [Issues & Support](https://github.com/southleft/story-ui/issues)
 
 ---
 
 *Story UI - Making component documentation delightful, one conversation at a time.* ✨
 
-## ✨ Context7 Integration
-
-Story UI includes **Context7 integration** for real-time, up-to-date component documentation:
-
-- 🔄 **Real-time Documentation** - Always uses current component APIs and props
-- 🚫 **Deprecated Component Prevention** - Automatically avoids outdated components
-- 📚 **Multiple Story Variants** - Generates 5-12 story examples per component
-- 🎯 **Library-Specific Props** - Uses correct props for each design system
-- ⚡ **Enhanced Story Quality** - Modern CSF 3.0 format with TypeScript
-- 🏗️ **Environment-Specific** - Each Storybook environment has its own Context7 configuration
-
-### Supported Design Systems with Context7
-
-- ✅ **Shopify Polaris** - Full Context7 integration
-- ✅ **Mantine** - Enhanced component discovery
-- ✅ **Ant Design** - Library-specific props and variants
-- ✅ **Adobe Spectrum** - Real-time documentation integration
-- ✅ **Material-UI** - Component API validation
-- ✅ **Chakra UI** - Design token integration
-- 🔧 **Custom Systems** - Environment-specific Context7 configuration support
-- 🔄 **Chakra UI** - Coming soon
-
-## Features
-
-- 🤖 **AI-powered story generation** with Claude integration
-- 📱 **Multi-instance support** for different component libraries
-- 🎨 **Branded Storybook customization**
-- 🔍 **Automatic component discovery**
-- 📋 **Configurable component blacklisting**
-- 🎯 **Design system specific layouts and patterns**
-- 💾 **In-memory story management** for production environments
-- 🔄 **Real-time Context7 documentation integration**
-
-## Quick Start
-
-```bash
-# Install Story UI
-npm install @tpitre/story-ui
-
-# Initialize in your project
-npx story-ui init
-
-# Start the Story UI server
-npm run story-ui
-
-# Start Storybook with Story UI
-npm run storybook-with-ui
-```
-
-## Configuration
-
-### Basic Configuration
-
-Create a `story-ui.config.js` file in your project root:
-
-```javascript
-module.exports = {
-  importPath: '@your/component-library',
-  generatedStoriesPath: './src/stories/generated',
-  storyPrefix: 'Generated/',
-  defaultAuthor: 'Your Team',
-
-  // Enable Context7 integration (default: enabled)
-  context7: {
-    enabled: true,
-    cacheEnabled: true,
-    timeout: 10000
-  },
-
-  layoutRules: {
-    multiColumnWrapper: 'Grid',
-    columnComponent: 'GridItem',
-    containerComponent: 'Container'
-  }
-};
-```
-
-### Context7 Configuration Options
-
-```javascript
-{
-  context7: {
-    enabled: true,           // Enable Context7 integration
-    cacheEnabled: true,      // Cache documentation for performance
-    timeout: 10000,          // API timeout in milliseconds
-    apiUrl: 'custom-url'     // Custom Context7 API URL (optional)
-  }
-}
-```
-
-## Usage
-
-### Story Generation with Context7
-
-Context7 integration automatically:
-
-1. **Fetches Real-time Documentation** - Gets current component APIs
-2. **Validates Components** - Ensures only valid, non-deprecated components
-3. **Generates Multiple Variants** - Creates comprehensive story examples
-4. **Uses Correct Props** - Applies library-specific properties
-
-### Example Generated Stories
-
-**Mantine Button with Context7:**
-```typescript
-import React from 'react';
-import type { Meta, StoryObj } from '@storybook/react';
-import { Button } from '@mantine/core';
-
-const meta = {
-  title: 'Generated/Button Variants',
-  component: Button,
-  parameters: { layout: 'centered' },
-} satisfies Meta<typeof Button>;
-
-export default meta;
-type Story = StoryObj<typeof meta>;
-
-export const Filled: Story = {
-  args: { variant: 'filled', children: 'Filled Button' }
-};
-
-export const Outline: Story = {
-  args: { variant: 'outline', children: 'Outline Button' }
-};
-
-export const Gradient: Story = {
-  args: {
-    variant: 'gradient',
-    gradient: { from: 'blue', to: 'cyan', deg: 90 },
-    children: 'Gradient Button'
-  }
-};
-
-// ... 8 more variants automatically generated
-```
-
-**Ant Design Button with Context7:**
-```typescript
-import React from 'react';
-import type { Meta, StoryObj } from '@storybook/react';
-import { Button } from 'antd';
-
-const meta = {
-  title: 'Generated/Button Types',
-  component: Button,
-  parameters: { layout: 'centered' },
-} satisfies Meta<typeof Button>;
-
-export default meta;
-type Story = StoryObj<typeof meta>;
-
-export const Primary: Story = {
-  args: { type: 'primary', children: 'Primary Button' }
-};
-
-export const Dashed: Story = {
-  args: { type: 'dashed', children: 'Dashed Button' }
-};
-
-// ... more Ant Design specific variants
-```
-
-### Story UI Panel
-
-Access the Story UI panel in Storybook to:
-- Generate new stories with AI assistance
-- Browse and manage existing stories
-- Get real-time component documentation
-- Preview Context7 enhanced suggestions
-
-## Advanced Features
-
-### Multi-Instance Support
-
-Run multiple Story UI instances for different design systems:
-
-```bash
-# Terminal 1: Polaris (port 6006, MCP 4001)
-cd polaris-project && npm run storybook-with-ui
-
-# Terminal 2: Mantine (port 6007, MCP 4002)
-cd mantine-project && story-ui start --port=4002 && storybook dev -p 6007
-
-# Terminal 3: Ant Design (port 6008, MCP 4003)
-cd antd-project && story-ui start --port=4003 && storybook dev -p 6008
-```
-
-### Production Deployment
-
-Story UI automatically detects production environments and:
-- Uses in-memory story generation
-- Disables file system writes
-- Provides read-only story browsing
-- Maintains full Context7 integration
-
-### Custom Prompts and Considerations
-
-Create `story-ui-considerations.md` to guide AI generation:
-
-```markdown
-# Design System Considerations
-
-## Component Usage
-- Always use design tokens for spacing (e.g., `gap="size-200"`)
-- Prefer semantic color names over hex values
-- Include accessibility props (aria-label, alt text)
-
-## Story Structure
-- Create multiple variants showing different states
-- Include edge cases (loading, error, empty states)
-- Use realistic content and data
-- Follow Context7 documentation patterns
-```
-
-## API Reference
-
-### Context7Integration Class
-
-```typescript
-import { Context7Integration } from '@tpitre/story-ui';
-
-const context7 = new Context7Integration({
-  apiUrl: 'https://api.context7.com',
-  timeout: 10000
-});
-
-// Get documentation for a library
-const docs = await context7.getDocumentation('@mantine/core');
-
-// Check if component is valid and current
-const isValid = context7.isValidComponent('@mantine/core', 'Button');
-
-// Get Storybook best practices
-const storybookDocs = await context7.getStorybookDocumentation();
-```
-
-### Configuration Types
-
-```typescript
-interface Context7Config {
-  enabled?: boolean;
-  apiUrl?: string;
-  timeout?: number;
-  cacheEnabled?: boolean;
-}
-
-interface StoryUIConfig {
-  // ... other config options
-  context7?: Context7Config;
-}
-```
-
-## Contributing
-
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
----
-
-**Story UI** - Generate better stories faster with AI and real-time documentation integration.

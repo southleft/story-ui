@@ -433,46 +433,6 @@ function detectKnownDesignSystems(dependencies: Record<string, string>): Partial
     };
   }
 
-  // Adobe Spectrum detection
-  if (dependencies['@adobe/react-spectrum']) {
-    return {
-      importPath: '@adobe/react-spectrum',
-      componentPrefix: '',
-      layoutRules: {
-        multiColumnWrapper: 'Flex',
-        columnComponent: 'View',
-        containerComponent: 'View',
-        layoutExamples: {
-          twoColumn: `<Flex gap="size-200">
-  <View>Column 1 content</View>
-  <View>Column 2 content</View>
-</Flex>`,
-          threeColumn: `<Flex gap="size-200">
-  <View>Column 1</View>
-  <View>Column 2</View>
-  <View>Column 3</View>
-</Flex>`,
-          grid: `<View display="grid" gridTemplateColumns="repeat(auto-fill, minmax(300px, 1fr))" gap="size-200">
-  <View>Item 1</View>
-  <View>Item 2</View>
-  <View>Item 3</View>
-</View>`
-        },
-        prohibitedElements: ['div', 'span', 'section']
-      },
-      systemPrompt: 'You are an expert UI developer creating Storybook stories for Adobe Spectrum React components. Use ONLY the React components from @adobe/react-spectrum listed below. Adobe Spectrum uses a token-based spacing and sizing system (e.g., size-100, size-200, gap="size-200"). Never import from @internationalized/date unless specifically working with date/time components. For layout, use Flex and View components, not HTML div elements.',
-      additionalImports: [
-        {
-          path: '@internationalized/date',
-          components: ['parseDate', 'today', 'getLocalTimeZone', 'now', 'CalendarDate', 'CalendarDateTime', 'Time', 'ZonedDateTime']
-        },
-        {
-          path: '@spectrum-icons/workflow',
-          components: ['Edit', 'Delete', 'Settings', 'Share', 'Copy', 'Cut', 'Paste', 'More', 'Home', 'User', 'Document']
-        }
-      ]
-    };
-  }
 
   // ShadCN/UI detection
   if (dependencies['@radix-ui/react-slot'] || dependencies['class-variance-authority']) {

@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import glob from 'glob';
+import { glob } from 'glob';
 
 export interface DocumentationSource {
   type: 'markdown' | 'json' | 'html' | 'txt';
@@ -72,10 +72,10 @@ export class DocumentationLoader {
       '**/*.txt'
     ];
 
-    // Use glob.sync for simplicity since we're already in an async function
+    // Use async glob for ESM compatibility
     const allFiles: string[] = [];
     for (const pattern of patterns) {
-      const matches = glob.sync(pattern, {
+      const matches = await glob(pattern, {
         cwd: this.docsDir,
         absolute: false,
         ignore: ['**/node_modules/**', '**/.git/**']

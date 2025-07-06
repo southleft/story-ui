@@ -42,10 +42,11 @@
     "claude",
     "mcp",
     "story-generation",
-    "context7",
     "documentation",
     "real-time",
-    "component-library"
+    "component-library",
+    "iteration",
+    "version-history"
   ],
   "author": "Story UI Contributors",
   "license": "MIT",

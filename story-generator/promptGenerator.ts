@@ -190,9 +190,10 @@ function generateLayoutInstructions(config: StoryUIConfig): string[] {
     instructions.push(`- NEVER use plain HTML ${layoutRules.prohibitedElements.join(', ')} elements - ALWAYS use the provided design system components`);
   }
 
-  instructions.push(`- NEVER output raw <h1>-<h6> tags. Use <Heading level={n}> from @react-spectrum/text with Spectrum size props`);
-  instructions.push(`- NEVER hard-code CSS Grid properties like grid-template-columns or gap in style attrs. Use <Flex wrap gap="size-200"> or <Grid> with Spectrum size tokens`);
-  instructions.push(`- For outer spacing use <View> with padding/margin Spectrum tokens, not inline style or plain divs`);
+  // Generic layout instructions for all design systems
+  instructions.push(`- Use semantic heading components from your design system instead of raw <h1>-<h6> tags`);
+  instructions.push(`- Use the design system's layout components and spacing tokens instead of inline styles`);
+  instructions.push(`- Prefer design system components over plain HTML elements for consistent styling`);
 
   return instructions;
 }
