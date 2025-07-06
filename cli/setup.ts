@@ -4,9 +4,32 @@ import inquirer from 'inquirer';
 import chalk from 'chalk';
 import { autoDetectDesignSystem } from '../story-generator/configLoader.js';
 import { fileURLToPath } from 'url';
+import net from 'net';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// FIRST_EDIT: helper functions to check for free ports
+async function isPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const tester = net.createServer()
+      .once('error', () => resolve(false))
+      .once('listening', () => {
+        tester.close();
+        resolve(true);
+      })
+      .listen(port);
+  });
+}
+
+async function findAvailablePort(startPort: number): Promise<number> {
+  let port = startPort;
+  // eslint-disable-next-line no-await-in-loop
+  while (!(await isPortAvailable(port))) {
+    port += 1;
+  }
+  return port;
+}
 
 interface SetupAnswers {
   designSystem: 'auto' | 'mui' | 'chakra' | 'antd' | 'mantine' | 'spectrum' | 'custom';
@@ -17,36 +40,11 @@ interface SetupAnswers {
   hasApiKey?: boolean;
   apiKey?: string;
   enableContext7?: boolean;
+  mcpPort?: string;
 }
 
-async function createContext7Config(importPath: string, designSystem: string) {
-  const context7ConfigPath = path.join(process.cwd(), 'context7-config.json');
-
-  // Map design systems to Context7 library IDs
-  const designSystemMappings: Record<string, string> = {
-    'mui': '/mui/material',
-    'chakra': '/chakra-ui/chakra-ui',
-    'antd': '/ant-design/ant-design',
-    'mantine': '/mantine/mantine',
-    'spectrum': '/adobe/react-spectrum'
-  };
-
-  const libraryId = designSystemMappings[designSystem] || importPath;
-
-  const context7Config = {
-    [libraryId]: {
-      libraryId,
-      version: 'latest',
-      lastUpdated: new Date().toISOString(),
-      // This will be populated by actual Context7 integration or fallback documentation
-      components: {},
-      patterns: {}
-    }
-  };
-
-  fs.writeFileSync(context7ConfigPath, JSON.stringify(context7Config, null, 2));
-  console.log(chalk.green(`✅ Created Context7 configuration for ${libraryId}`));
-}
+// Context7 configuration is now handled entirely through MCP tools
+// No local configuration files are created
 
 export async function setupCommand() {
   console.log(chalk.blue.bold('\n🎨 Story UI Setup\n'));
@@ -143,6 +141,21 @@ export async function setupCommand() {
       message: 'Where are your component files located?',
       default: './src/components',
       when: (answers) => answers.designSystem === 'custom'
+    },
+    {
+      type: 'input',
+      name: 'mcpPort',
+      message: 'Port for the Story UI MCP server',
+      default: async () => {
+        const port = await findAvailablePort(4001);
+        return String(port);
+      },
+      validate: async (input) => {
+        const value = parseInt(input, 10);
+        if (isNaN(value) || value <= 0) return 'Enter a valid port number';
+        const available = await isPortAvailable(value);
+        return available ? true : `Port ${value} is already in use`;
+      }
     },
     {
       type: 'confirm',
@@ -325,10 +338,7 @@ export async function setupCommand() {
 
   fs.writeFileSync(configPath, configContent);
 
-  // Create Context7 configuration file if enabled
-  if (answers.enableContext7) {
-    await createContext7Config(config.importPath, answers.designSystem);
-  }
+  // Context7 integration is enabled through config only - no local files needed
 
   // Create generated stories directory
   const storiesDir = path.dirname(config.generatedStoriesPath);
@@ -434,9 +444,13 @@ export async function setupCommand() {
   // Update package.json with convenience scripts
   if (packageJson) {
     const scripts = packageJson.scripts || {};
+    // FIRST_EDIT: include chosen port in script
+    const portFlag = `--port ${answers.mcpPort || '4001'}`;
 
     if (!scripts['story-ui']) {
-      scripts['story-ui'] = 'story-ui start';
+      scripts['story-ui'] = `story-ui start ${portFlag}`;
+    } else if (!scripts['story-ui'].includes('--port')) {
+      scripts['story-ui'] += ` ${portFlag}`;
     }
 
     if (!scripts['storybook-with-ui'] && scripts['storybook']) {

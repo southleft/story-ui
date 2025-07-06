@@ -39,11 +39,14 @@ npm install -D @tpitre/story-ui
 # Add to your package.json scripts
 "story-ui": "story-ui start"
 
-# Start generating stories
+# Start generating stories (Story UI will pick 4001 or the next free port)
 npm run story-ui
+
+# Need a custom port? Just pass the flag:
+npm run story-ui -- --port 4005
 ```
 
-That's it! Story UI will automatically:
+Story UI will automatically:
 - ✅ Connect to Context7 for real-time documentation
 - ✅ Discover your components
 - ✅ Set up the chat interface
@@ -80,7 +83,7 @@ export default {
   outputPath: 'src/stories/generated',
 
   // Server configuration
-  port: 4000,
+  port: 4001,
 
   // Storybook integration
   storybook: {
@@ -193,23 +196,26 @@ MIT © [Story UI Contributors](LICENSE)
 
 *Story UI - Making component documentation delightful, one conversation at a time.* ✨
 
-## ✨ New: Context7 Integration
+## ✨ Context7 Integration
 
-Story UI now includes **Context7 integration** for real-time, up-to-date component documentation:
+Story UI includes **Context7 integration** for real-time, up-to-date component documentation:
 
 - 🔄 **Real-time Documentation** - Always uses current component APIs and props
 - 🚫 **Deprecated Component Prevention** - Automatically avoids outdated components
 - 📚 **Multiple Story Variants** - Generates 5-12 story examples per component
 - 🎯 **Library-Specific Props** - Uses correct props for each design system
 - ⚡ **Enhanced Story Quality** - Modern CSF 3.0 format with TypeScript
+- 🏗️ **Environment-Specific** - Each Storybook environment has its own Context7 configuration
 
 ### Supported Design Systems with Context7
 
 - ✅ **Shopify Polaris** - Full Context7 integration
 - ✅ **Mantine** - Enhanced component discovery
-- ✅ **Ant Design** - Proper prop mapping
-- 🔄 **Adobe Spectrum** - In development
-- 🔄 **Material-UI** - Coming soon
+- ✅ **Ant Design** - Library-specific props and variants
+- ✅ **Adobe Spectrum** - Real-time documentation integration
+- ✅ **Material-UI** - Component API validation
+- ✅ **Chakra UI** - Design token integration
+- 🔧 **Custom Systems** - Environment-specific Context7 configuration support
 - 🔄 **Chakra UI** - Coming soon
 
 ## Features

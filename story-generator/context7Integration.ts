@@ -9,9 +9,81 @@ import fetch from 'node-fetch';
 import fs from 'fs';
 import path from 'path';
 
+// Type declarations for MCP tools
+declare global {
+  var mcpTools: {
+    context7: {
+      resolveLibraryId: (params: { libraryName: string }) => Promise<Array<{ libraryId: string }>>;
+      getLibraryDocs: (params: { context7CompatibleLibraryID: string, topic?: string, tokens?: number }) => Promise<string>;
+    };
+  } | undefined;
+}
+
+// MCP Bridge for Node.js environments
+class MCPBridge {
+  private static instance: MCPBridge;
+
+  static getInstance(): MCPBridge {
+    if (!MCPBridge.instance) {
+      MCPBridge.instance = new MCPBridge();
+    }
+    return MCPBridge.instance;
+  }
+
+  async resolveLibraryId(libraryName: string): Promise<Array<{ libraryId: string }> | null> {
+    // Try global MCP tools first (when available in Claude environment)
+    if (typeof global !== 'undefined' && global.mcpTools) {
+      try {
+        return await global.mcpTools.context7.resolveLibraryId({ libraryName });
+      } catch (error) {
+        console.warn('Global MCP tools failed:', error);
+      }
+    }
+
+    // Fallback: direct mapping for known libraries
+    const knownMappings: Record<string, string> = {
+      '@adobe/react-spectrum': '/adobe/react-spectrum',
+      '@mui/material': '/mui/material',
+      '@chakra-ui/react': '/chakra-ui/chakra-ui',
+      'antd': '/ant-design/ant-design',
+      '@mantine/core': '/mantine/mantine',
+      '@shopify/polaris': '/shopify/polaris'
+    };
+
+    const libraryId = knownMappings[libraryName];
+    if (libraryId) {
+      return [{ libraryId }];
+    }
+
+    return null;
+  }
+
+  async getLibraryDocs(libraryId: string, topic?: string, tokens?: number): Promise<string | null> {
+    // Try global MCP tools first (when available in Claude environment)
+    if (typeof global !== 'undefined' && global.mcpTools) {
+      try {
+        return await global.mcpTools.context7.getLibraryDocs({
+          context7CompatibleLibraryID: libraryId,
+          topic: topic || 'components forms layout',
+          tokens: tokens || 8000
+        });
+      } catch (error) {
+        console.warn('Global MCP tools failed:', error);
+      }
+    }
+
+    // In Node.js environment, we can't make direct MCP calls
+    // This would need to be handled by the environment that has MCP access
+    console.log(`📋 MCP tools not available in Node.js environment for ${libraryId}`);
+    return null;
+  }
+}
+
 export interface Context7Config {
-  apiUrl?: string;
-  timeout?: number;
+  enabled: boolean;
+  primaryLibraryId?: string;
+  fallbackToEnhancedDiscovery?: boolean;
+  cacheTimeout?: number;
 }
 
 export interface Context7Documentation {
@@ -54,9 +126,12 @@ export interface BestPractice {
 export interface ComponentDoc {
   name: string;
   description: string;
-  props?: Record<string, PropDoc>;
+  props: Record<string, any>;
   variants?: string[];
-  examples?: Example[];
+  examples?: Array<{
+    title: string;
+    code: string;
+  }>;
   deprecated?: boolean;
   replacement?: string;
 }
@@ -85,100 +160,217 @@ export class Context7Integration {
   private config: Context7Config;
   private cache: Map<string, Context7Documentation> = new Map();
   private storybookCache: StorybookDocumentation | null = null;
+  private mcpBridge: MCPBridge;
 
-  constructor(config: Context7Config = {}) {
-    this.config = {
-      apiUrl: config.apiUrl || 'https://api.context7.com',
-      timeout: config.timeout || 10000
-    };
+  constructor(config: Context7Config = { enabled: true }) {
+    this.config = config;
+    this.mcpBridge = MCPBridge.getInstance();
   }
 
   /**
-   * Get documentation for a library from Context7
+   * Get documentation for a specific library
    */
-  async getDocumentation(libraryId: string): Promise<Context7Documentation | null> {
-    // Check cache first
-    if (this.cache.has(libraryId)) {
-      console.log(`📚 Using cached Context7 documentation for ${libraryId}`);
-      return this.cache.get(libraryId)!;
+  async getDocumentation(packageName: string): Promise<Context7Documentation | null> {
+    if (!this.config.enabled) {
+      console.log('📋 Context7 integration is disabled');
+      return null;
     }
 
     try {
-      console.log(`🔍 Fetching documentation from Context7 for ${libraryId}...`);
+      // Check cache first
+      const cacheKey = `${packageName}:${this.config.primaryLibraryId || 'default'}`;
+      if (this.cache.has(cacheKey)) {
+        const cached = this.cache.get(cacheKey)!;
+        const age = Date.now() - new Date(cached.lastUpdated).getTime();
+        const timeout = this.config.cacheTimeout || 3600000; // 1 hour default
 
-      // Map common package names to Context7 library IDs
-      const context7LibraryId = this.mapToContext7Id(libraryId);
-
-      // In a real implementation, this would call the Context7 MCP server
-      // For now, we'll return structured data based on what Context7 would provide
-      const documentation = await this.fetchFromContext7(context7LibraryId);
-
-      if (documentation) {
-        this.cache.set(libraryId, documentation);
-        console.log(`✅ Successfully fetched Context7 documentation for ${libraryId}`);
+        if (age < timeout) {
+          console.log(`📋 Using cached Context7 documentation for ${packageName}`);
+          return cached;
+        }
       }
+
+      // Resolve library ID
+      const libraryIdResult = await this.mcpBridge.resolveLibraryId(packageName);
+      if (!libraryIdResult || libraryIdResult.length === 0) {
+        console.log(`❌ Could not resolve library ID for ${packageName}`);
+        return null;
+      }
+
+      const libraryId = libraryIdResult[0].libraryId;
+      console.log(`✅ Resolved ${packageName} to ${libraryId}`);
+
+      // Get documentation
+      const docsResult = await this.mcpBridge.getLibraryDocs(libraryId, 'components forms layout', 8000);
+      if (!docsResult) {
+        console.log(`❌ Could not fetch documentation for ${libraryId}`);
+        return null;
+      }
+
+      console.log(`✅ Successfully fetched Context7 documentation for ${libraryId}`);
+      const documentation = this.parseContext7Response(libraryId, docsResult);
+
+      // Cache the result
+      this.cache.set(cacheKey, documentation);
 
       return documentation;
     } catch (error) {
-      console.error(`❌ Failed to fetch Context7 documentation:`, error);
+      console.error('❌ Error in Context7 integration:', error);
       return null;
     }
   }
 
   /**
-   * Map package names to Context7 library IDs
-   * This can be configured per environment during initialization
+   * Generate enhanced prompt with Context7 documentation
    */
-  private mapToContext7Id(packageName: string): string {
-    // Check local configuration for mapping
-    const localConfigPath = path.join(process.cwd(), 'context7-config.json');
-    if (fs.existsSync(localConfigPath)) {
-      try {
-        const localConfig = JSON.parse(fs.readFileSync(localConfigPath, 'utf-8'));
-        // Find the library ID that matches this package
-        for (const [libraryId, config] of Object.entries(localConfig)) {
-          if (packageName === '@mantine/core' && libraryId === '/mantine/mantine') return libraryId;
-          if (packageName === 'antd' && libraryId === '/ant-design/ant-design') return libraryId;
-          if (packageName === '@adobe/react-spectrum' && libraryId === '/adobe/react-spectrum') return libraryId;
-          if (packageName === '@shopify/polaris' && libraryId === '/shopify/polaris') return libraryId;
-          if (packageName === '@mui/material' && libraryId === '/mui/material') return libraryId;
-          if (packageName === '@chakra-ui/react' && libraryId === '/chakra-ui/chakra-ui') return libraryId;
-        }
-      } catch (error) {
-        console.warn(`Failed to read local Context7 config:`, error);
-      }
+  async generateEnhancedPrompt(packageName: string, userPrompt: string, config: any): Promise<string> {
+    const documentation = await this.getDocumentation(packageName);
+
+    if (!documentation) {
+      console.log('📋 No Context7 documentation available, using standard prompt');
+      return userPrompt;
     }
 
-    // Default mapping - return as-is
-    return packageName;
+    const componentList = Object.entries(documentation.components)
+      .map(([name, doc]) => {
+        const propsStr = Object.keys(doc.props).length > 0
+          ? `Props: ${Object.keys(doc.props).join(', ')}`
+          : '';
+
+        const examplesStr = doc.examples && doc.examples.length > 0
+          ? `\n   Examples:\n${doc.examples.map(ex => `   // ${ex.title}\n   ${ex.code}`).join('\n')}`
+          : '';
+
+        return `- ${name}: ${doc.description}${propsStr ? `\n   ${propsStr}` : ''}${examplesStr}`;
+      })
+      .join('\n\n');
+
+    const enhancedPrompt = `${config.systemPrompt || ''}
+
+🎯 CONTEXT7 ENHANCED DOCUMENTATION AVAILABLE
+
+You have access to comprehensive, up-to-date documentation from Context7. Use ONLY the components and patterns listed below.
+
+📚 AVAILABLE COMPONENTS (from Context7):
+${componentList}
+
+🔧 IMPORT TEMPLATE:
+${config.importTemplate}
+
+📋 STORYBOOK BEST PRACTICES:
+- Create stories that showcase component variants and states
+- Use descriptive story names that explain the use case
+- Include proper TypeScript types for all props
+- Follow the CSF3 format for modern Storybook stories
+- Use argTypes for interactive controls when appropriate
+
+🎨 DESIGN SYSTEM GUIDELINES:
+- Use semantic spacing and sizing from the design system
+- Follow the design system's color palette and typography
+- Implement proper accessibility patterns
+- Use layout components for consistent spacing and alignment
+
+User request: ${userPrompt}`;
+
+    return enhancedPrompt;
   }
 
-    /**
-   * Fetch documentation from Context7
-   * Uses the actual Context7 MCP tools available in this environment
+  /**
+   * Parse Context7 MCP response into our documentation format
    */
-  private async fetchFromContext7(libraryId: string): Promise<Context7Documentation | null> {
-    console.log(`📞 Attempting to fetch documentation from Context7 for ${libraryId}`);
+  private parseContext7Response(libraryId: string, docsResponse: string): Context7Documentation {
+    const components: Record<string, ComponentDoc> = {};
 
-    // TODO: Integrate with actual Context7 MCP calls when available
-    // For now, this will be populated by environment-specific configuration files
+    // Parse the Context7 response to extract component information
+    // The response contains code snippets and documentation
+    const snippets = this.extractCodeSnippets(docsResponse);
 
-    // Check if there's a local Context7 configuration file
-    const localConfigPath = path.join(process.cwd(), 'context7-config.json');
-    if (fs.existsSync(localConfigPath)) {
-      try {
-        const localConfig = JSON.parse(fs.readFileSync(localConfigPath, 'utf-8'));
-        if (localConfig[libraryId]) {
-          console.log(`📚 Using local Context7 configuration for ${libraryId}`);
-          return localConfig[libraryId];
-        }
-      } catch (error) {
-        console.warn(`Failed to load local Context7 config:`, error);
+    for (const snippet of snippets) {
+      const componentName = this.extractComponentName(snippet);
+      if (componentName && !components[componentName]) {
+        components[componentName] = {
+          name: componentName,
+          description: snippet.description || `${componentName} component`,
+          props: this.extractPropsFromSnippet(snippet),
+          examples: [{
+            title: snippet.title || 'Example',
+            code: snippet.code
+          }]
+        };
       }
     }
 
-    // Return null - environment-specific documentation should be configured during init
+    return {
+      libraryId,
+      components,
+      version: 'latest',
+      lastUpdated: new Date().toISOString()
+    };
+  }
+
+  /**
+   * Extract code snippets from Context7 response
+   */
+  private extractCodeSnippets(response: string): Array<{title: string, description: string, code: string}> {
+    const snippets: Array<{title: string, description: string, code: string}> = [];
+
+    // Parse the Context7 response format
+    const sections = response.split('----------------------------------------');
+
+    for (const section of sections) {
+      const titleMatch = section.match(/TITLE: (.+)/);
+      const descMatch = section.match(/DESCRIPTION: (.+)/);
+      const codeMatch = section.match(/CODE:\s*```[\w]*\n([\s\S]*?)\n```/);
+
+      if (titleMatch && descMatch && codeMatch) {
+        snippets.push({
+          title: titleMatch[1].trim(),
+          description: descMatch[1].trim(),
+          code: codeMatch[1].trim()
+        });
+      }
+    }
+
+    return snippets;
+  }
+
+  /**
+   * Extract component name from code snippet
+   */
+  private extractComponentName(snippet: {title: string, description: string, code: string}): string | null {
+    // Look for component names in the code
+    const componentMatches = snippet.code.match(/<([A-Z][a-zA-Z0-9]*)/g);
+    if (componentMatches) {
+      // Return the first component found, removing the '<'
+      return componentMatches[0].substring(1);
+    }
+
+    // Fallback: extract from title
+    const titleMatches = snippet.title.match(/([A-Z][a-zA-Z0-9]*)/);
+    if (titleMatches) {
+      return titleMatches[1];
+    }
+
     return null;
+  }
+
+  /**
+   * Extract props from code snippet
+   */
+  private extractPropsFromSnippet(snippet: {title: string, description: string, code: string}): Record<string, any> {
+    const props: Record<string, any> = {};
+
+    // Extract props from JSX attributes
+    const propMatches = snippet.code.matchAll(/(\w+)=(?:{[^}]+}|"[^"]*"|'[^']*')/g);
+    for (const match of propMatches) {
+      const propName = match[1];
+      props[propName] = {
+        type: 'any',
+        description: `${propName} prop`
+      };
+    }
+
+    return props;
   }
 
   /**
@@ -371,82 +563,6 @@ export const Large: Story = {
         }
       ]
     };
-  }
-
-  /**
-   * Generate enhanced prompt with both component and Storybook documentation
-   */
-  async generateEnhancedPrompt(
-    componentLibraryId: string,
-    userPrompt: string,
-    config: any
-  ): Promise<string> {
-    const [componentDocs, storybookDocs] = await Promise.all([
-      this.getDocumentation(componentLibraryId),
-      this.getStorybookDocumentation()
-    ]);
-
-    let prompt = `🚨 CRITICAL: EVERY STORY MUST START WITH "import React from 'react';" AS THE FIRST LINE 🚨
-
-You are an expert UI developer creating Storybook stories using the latest CSF 3.0 format.
-
-🔴 MANDATORY FIRST LINE - NO EXCEPTIONS:
-The VERY FIRST LINE of every story file MUST be:
-import React from 'react';
-
-`;
-
-    // Add component documentation if available
-    if (componentDocs) {
-      prompt += `LIBRARY: ${componentLibraryId} (${componentDocs.version})
-
-AVAILABLE COMPONENTS:
-${Object.entries(componentDocs.components).map(([name, doc]) =>
-  `- ${name}: ${doc.description}
-   ${doc.variants ? `Variants: ${doc.variants.join(', ')}` : ''}
-   ${doc.props ? `Props: ${Object.keys(doc.props).join(', ')}` : ''}
-   ${doc.examples ? `\n   Examples:\n${doc.examples.map(ex => `   // ${ex.title}\n   ${ex.code}`).join('\n')}` : ''}`
-).join('\n\n')}
-
-`;
-    }
-
-    // Add Storybook best practices if available
-    if (storybookDocs) {
-      prompt += `STORYBOOK CSF 3.0 FORMAT (from Context7):
-
-REQUIRED STORY STRUCTURE:
-${storybookDocs.csf.metaStructure}
-
-${storybookDocs.csf.exportPattern}
-
-${storybookDocs.csf.storyStructure}
-
-BEST PRACTICES:
-${storybookDocs.bestPractices.map(practice =>
-  `- ${practice.title}: ${practice.description}${practice.example ? `\n  Example: ${practice.example}` : ''}`
-).join('\n')}
-
-STORY PATTERNS:
-${Object.entries(storybookDocs.patterns).map(([key, pattern]) =>
-  `${pattern.name}: ${pattern.description}\n${pattern.example}`
-).join('\n\n')}
-
-`;
-    }
-
-    prompt += `🚨 FINAL CRITICAL REMINDERS 🚨
-🔴 FIRST LINE MUST BE: import React from 'react';
-🔴 WITHOUT THIS IMPORT, THE STORY WILL BREAK!
-🔴 Story title MUST always start with "${config.storyPrefix || 'Generated/'}"
-🔴 MUST use ES modules syntax: "export default meta;" NOT "module.exports = meta;"
-🔴 The file MUST have a default export for the meta object
-🔴 All images MUST have a src attribute with placeholder URLs (use https://picsum.photos/)
-🔴 Use CSF 3.0 format with 'satisfies Meta<typeof Component>'
-
-User request: ${userPrompt}`;
-
-    return prompt;
   }
 
   /**

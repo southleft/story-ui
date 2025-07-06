@@ -3,6 +3,7 @@ import path from 'path';
 import { DiscoveredComponent } from './componentDiscovery.js';
 import { StoryUIConfig } from '../story-ui.config.js';
 import { DynamicPackageDiscovery } from './dynamicPackageDiscovery.js';
+import { Context7Integration } from './context7Integration.js';
 
 export interface ComponentSource {
   type: 'npm' | 'local' | 'custom-elements' | 'typescript';
@@ -22,17 +23,29 @@ export class EnhancedComponentDiscovery {
   private config: StoryUIConfig;
   private discoveredComponents: Map<string, EnhancedComponent> = new Map();
   private validateAvailableComponents: Set<string> = new Set();
+  private context7: Context7Integration;
 
   constructor(config: StoryUIConfig) {
     this.config = config;
+    this.context7 = new Context7Integration();
   }
 
   /**
    * Discover components from all available sources
+   * Priority: 1. Context7 2. Dynamic Discovery 3. Static Lists 4. Manual Config
    */
   async discoverAll(): Promise<EnhancedComponent[]> {
-    const sources = this.identifySources();
+    // PRIORITY 1: Try Context7 first
+    if (this.config.importPath && !this.config.importPath.startsWith('.')) {
+      const context7Success = await this.discoverFromContext7();
+      if (context7Success) {
+        console.log('✅ Using Context7 as primary component source');
+        return Array.from(this.discoveredComponents.values());
+      }
+    }
 
+    // PRIORITY 2: Dynamic Discovery (when no manual components configured)
+    const sources = this.identifySources();
     for (const source of sources) {
       try {
         switch (source.type) {
@@ -54,7 +67,7 @@ export class EnhancedComponentDiscovery {
       }
     }
 
-    // Apply any manual configurations
+    // PRIORITY 3 & 4: Apply manual configurations as final fallback
     this.applyManualConfigurations();
 
     return Array.from(this.discoveredComponents.values());
@@ -89,7 +102,9 @@ export class EnhancedComponentDiscovery {
     const sources: ComponentSource[] = [];
 
     // Check for npm packages
-    if (this.config.importPath && !this.config.importPath.startsWith('.')) {
+    // Skip dynamic discovery if components are manually configured
+    if (this.config.importPath && !this.config.importPath.startsWith('.') &&
+        (!this.config.components || this.config.components.length === 0)) {
       sources.push({
         type: 'npm',
         path: this.config.importPath
@@ -189,6 +204,61 @@ export class EnhancedComponentDiscovery {
 
     // Store the component names for validation
     this.validateAvailableComponents = new Set(realComponents.map(c => c.name));
+  }
+
+  /**
+   * PRIORITY 1: Discover components from Context7 documentation
+   */
+  private async discoverFromContext7(): Promise<boolean> {
+    if (!this.config.importPath || this.config.importPath.startsWith('.')) {
+      return false;
+    }
+
+    try {
+      console.log(`🔍 Fetching documentation from Context7 for ${this.config.importPath}...`);
+      const docs = await this.context7.getDocumentation(this.config.importPath);
+
+      if (!docs || !docs.components) {
+        console.log(`❌ No Context7 documentation found for ${this.config.importPath}`);
+        return false;
+      }
+
+      console.log(`✅ Found ${Object.keys(docs.components).length} components in Context7 for ${this.config.importPath}`);
+
+      // Convert Context7 docs to EnhancedComponents
+      for (const [componentName, componentDoc] of Object.entries(docs.components)) {
+        // Skip deprecated components
+        if (componentDoc.deprecated) {
+          console.log(`⚠️ Skipping deprecated component: ${componentName}`);
+          continue;
+        }
+
+        this.discoveredComponents.set(componentName, {
+          name: componentName,
+          source: { type: 'npm', path: this.config.importPath },
+          filePath: '',
+          description: componentDoc.description,
+          category: this.categorizeComponent(componentName, componentDoc.description),
+          props: componentDoc.props ? Object.keys(componentDoc.props) : [],
+          slots: [],
+          examples: componentDoc.examples?.map(ex => ex.code) || [],
+          docUrl: `https://context7.com${docs.libraryId}/${componentName}`,
+          dependencies: []
+        });
+      }
+
+      // Store available components for validation
+      this.validateAvailableComponents = new Set(
+        Object.keys(docs.components).filter(name => !docs.components[name].deprecated)
+      );
+
+      console.log(`📦 Available Context7 components: ${Array.from(this.validateAvailableComponents).join(', ')}`);
+      return true;
+
+    } catch (error) {
+      console.error(`❌ Error fetching Context7 documentation:`, error);
+      return false;
+    }
   }
 
   /**
@@ -351,7 +421,6 @@ export class EnhancedComponentDiscovery {
           { name: 'SkeletonBodyText', category: 'content', description: 'Body text skeleton', props: ['lines'] },
           { name: 'SkeletonDisplayText', category: 'content', description: 'Display text skeleton', props: ['size'] }
         ];
-
 
     }
 

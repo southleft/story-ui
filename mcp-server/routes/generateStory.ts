@@ -16,6 +16,8 @@ import { StoryTracker, StoryMapping } from '../../story-generator/storyTracker.j
 import { EnhancedComponentDiscovery } from '../../story-generator/enhancedComponentDiscovery.js';
 import { getDocumentation, isDeprecatedComponent, getComponentReplacement } from '../../story-generator/documentation-sources.js';
 import { Context7Integration } from '../../story-generator/context7Integration.js';
+import { postProcessStory } from '../../story-generator/postProcessStory.js';
+import { validateStory, ValidationError } from '../../story-generator/storyValidator.js';
 
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514';
@@ -31,6 +33,54 @@ const COMPONENT_REFERENCE = '';
 // Initialize Context7 integration
 const context7 = new Context7Integration();
 
+/**
+ * Inject MCP tools into the global context for Context7 integration
+ * This simulates the MCP environment by providing the tools that would be available
+ */
+function injectMCPTools() {
+  // Check if we're in an environment that has access to MCP tools
+  // In a real deployment, this would be handled by the MCP server environment
+
+  if (typeof global !== 'undefined' && !global.mcpTools) {
+    // Create a mock MCP tools interface that uses the actual available tools
+    // This is a bridge between the Node.js environment and the MCP tools
+    global.mcpTools = {
+      context7: {
+        resolveLibraryId: async (params: { libraryName: string }) => {
+          // In a real implementation, this would call the actual MCP server
+          // For now, we'll use the fallback mapping
+          const knownMappings: Record<string, string> = {
+            '@adobe/react-spectrum': '/adobe/react-spectrum',
+            '@mui/material': '/mui/material',
+            '@chakra-ui/react': '/chakra-ui/chakra-ui',
+            'antd': '/ant-design/ant-design',
+            '@mantine/core': '/mantine/mantine',
+            '@shopify/polaris': '/shopify/polaris'
+          };
+
+          const libraryId = knownMappings[params.libraryName];
+          if (libraryId) {
+            return [{ libraryId }];
+          }
+          return [];
+        },
+
+                                getLibraryDocs: async (params: { context7CompatibleLibraryID: string, topic?: string, tokens?: number }) => {
+          console.log(`🔍 Attempting real Context7 MCP call for ${params.context7CompatibleLibraryID}`);
+
+          // In a Node.js environment, we can't directly access the Context7 MCP tools
+          // This would need to be handled by the environment that has MCP access
+          // For now, return empty string to indicate Context7 is not available
+          console.log(`❌ Context7 MCP tools not available in Node.js environment`);
+          console.log(`📋 Falling back to enhanced component discovery`);
+
+          return '';
+        }
+      }
+    };
+  }
+}
+
 // Legacy function - now uses flexible system with enhanced discovery
 async function buildClaudePrompt(userPrompt: string) {
   const config = loadUserConfig();
@@ -41,57 +91,80 @@ async function buildClaudePrompt(userPrompt: string) {
 
 // Enhanced function that includes conversation context
 async function buildClaudePromptWithContext(userPrompt: string, config: any, conversation?: any[]) {
+  // Inject MCP tools for Context7 integration
+  injectMCPTools();
+
   const discovery = new EnhancedComponentDiscovery(config);
   const components = await discovery.discoverAll();
 
-  // Try to get documentation from Context7 (both component and Storybook docs)
-  let prompt: string;
+  // Always start with component discovery as the authoritative source
+  console.log(`📦 Discovered ${components.length} components from ${config.importPath}`);
+  const availableComponents = components.map(c => c.name).join(', ');
+  console.log(`✅ Available components: ${availableComponents}`);
+
+    // Build base prompt with discovered components (always required)
+  let prompt = buildFlexiblePrompt(userPrompt, config, components);
+
+  // Try to enhance with Context7 documentation for usage patterns and design tokens
+  console.log(`🔍 Attempting to get Context7 documentation for ${config.importPath}`);
   const context7Docs = await context7.getDocumentation(config.importPath);
 
   if (context7Docs) {
-    console.log('📚 Using Context7 documentation for enhanced story generation');
+    console.log('📚 Enhancing prompt with Context7 documentation');
+    console.log(`📋 Found Context7 docs with ${Object.keys(context7Docs.components).length} component entries`);
 
-    // Use the new enhanced prompt generator that includes Storybook best practices
-    prompt = await context7.generateEnhancedPrompt(config.importPath, userPrompt, config);
+    // Enhance the existing prompt with Context7 documentation
+    // This adds usage patterns, design tokens, and best practices
+    // but doesn't override the component list from discovery
+    const context7Enhancement = `
+
+🎨 DESIGN SYSTEM DOCUMENTATION (Context7):
+${Object.entries(context7Docs.components || {}).map(([name, info]: [string, any]) => {
+  // Only include docs for components that actually exist in the discovered list
+  if (components.some(c => c.name === name)) {
+    return `- ${name}: ${info.description || 'Component available'}
+   ${info.variants ? `Variants: ${info.variants.join(', ')}` : ''}
+   ${Object.keys(info.props || {}).length > 0 ? `Props: ${Object.keys(info.props).join(', ')}` : ''}
+   ${info.examples ? `\n   Examples:\n${info.examples.map((ex: any) => `   // ${ex.title}\n   ${ex.code}`).join('\n')}` : ''}`;
+  }
+  return null;
+}).filter(Boolean).join('\n\n')}
+
+${context7Docs.patterns ? `
+RECOMMENDED PATTERNS:
+${Object.entries(context7Docs.patterns).map(([name, pattern]: [string, any]) =>
+  `${name}: ${pattern.description}\nExample:\n${pattern.example}`
+).join('\n\n')}` : ''}`;
+
+    // Insert the enhancement before the user request
+    prompt = prompt.replace('User request:', `${context7Enhancement}
+
+User request:`);
   } else {
-    // Fall back to bundled documentation if available
+    console.log('📋 No Context7 documentation available');
+
+    // Try bundled documentation as fallback enhancement
     const documentation = getDocumentation(config.importPath);
-
     if (documentation) {
-      console.log('📚 Using bundled documentation for enhanced story generation');
+      console.log('📚 Using bundled documentation for enhancement');
 
-      const enhancedPrompt = `${config.systemPrompt || ''}
+      const bundledEnhancement = `
 
-IMPORTANT: You have access to design system documentation. Use ONLY the components and patterns listed below.
-
-AVAILABLE COMPONENTS:
-${Object.entries(documentation.components || {}).map(([name, info]: [string, any]) =>
-  `- ${name}: ${info.description || 'Component available'}
+📚 BUNDLED DOCUMENTATION:
+${Object.entries(documentation.components || {}).map(([name, info]: [string, any]) => {
+  // Only include docs for components that actually exist in the discovered list
+  if (components.some(c => c.name === name)) {
+    return `- ${name}: ${info.description || 'Component available'}
    ${info.variants ? `Variants: ${info.variants.join(', ')}` : ''}
    ${info.commonProps ? `Props: ${info.commonProps.join(', ')}` : ''}
-   ${info.examples ? `\n   Examples:\n${info.examples.map((ex: any) => `   // ${ex.label}\n   ${ex.code}`).join('\n')}` : ''}`
-).join('\n\n')}
+   ${info.examples ? `\n   Examples:\n${info.examples.map((ex: any) => `   // ${ex.label}\n   ${ex.code}`).join('\n')}` : ''}`;
+  }
+  return null;
+}).filter(Boolean).join('\n\n')}`;
 
-DEPRECATED COMPONENTS (NEVER USE THESE):
-${Object.entries(documentation.deprecatedComponents || {}).map(([name, info]: [string, any]) =>
-  `❌ ${name} → Use ${info.replacement} instead. ${info.migration}`
-).join('\n')}
+      prompt = prompt.replace('User request:', `${bundledEnhancement}
 
-${documentation.patterns ? `
-RECOMMENDED PATTERNS:
-${Object.entries(documentation.patterns).map(([name, pattern]: [string, any]) =>
-  `${name}: ${pattern.description}\nExample:\n${pattern.example}`
-).join('\n\n')}` : ''}
-
-${config.importTemplate}
-
-User request: ${userPrompt}`;
-
-      prompt = enhancedPrompt;
-    } else {
-      // No documentation available, use standard prompt
-      console.log('📔 No documentation found, using standard prompt generation');
-      prompt = buildFlexiblePrompt(userPrompt, config, components);
+User request:`);
     }
   }
 
@@ -139,7 +212,7 @@ function extractCodeBlock(text: string): string | null {
   return codeBlock ? codeBlock[1].trim() : null;
 }
 
-async function callClaude(prompt: string): Promise<string> {
+async function callClaude(messages: { role: 'user' | 'assistant', content: string }[]): Promise<string> {
   const apiKey = process.env.CLAUDE_API_KEY;
   if (!apiKey) throw new Error('Claude API key not set');
   const response = await fetch(CLAUDE_API_URL, {
@@ -152,7 +225,7 @@ async function callClaude(prompt: string): Promise<string> {
     body: JSON.stringify({
       model: CLAUDE_MODEL,
       max_tokens: 4096,
-      messages: [{ role: 'user', content: prompt }],
+      messages,
     }),
   });
   const data = await response.json();
@@ -211,7 +284,7 @@ async function getClaudeTitle(userPrompt: string): Promise<string> {
     '',
     'Title:'
   ].join('\n');
-  const aiText = await callClaude(titlePrompt);
+  const aiText = await callClaude([{ role: 'user', content: titlePrompt }]);
   // Take the first non-empty line, trim, and remove quotes if present
   const lines = aiText.split('\n').map(l => l.trim()).filter(Boolean);
   if (lines.length > 0) {
@@ -381,14 +454,69 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
     // Check if this is an update to an existing story
     const isUpdate = fileName && conversation && conversation.length > 2;
 
-    // Build prompt with conversation context if available
-    const fullPrompt = await buildClaudePromptWithContext(prompt, config, conversation);
-    console.log('Layout configuration:', JSON.stringify(config.layoutRules, null, 2));
-    console.log('Claude prompt:', fullPrompt);
-    const aiText = await callClaude(fullPrompt);
-    console.log('Claude raw response:', aiText);
+    // --- Start of Validation and Retry Loop ---
+    let aiText = '';
+    let validationErrors: ValidationError[] = [];
+    const maxRetries = 3;
+    let attempts = 0;
 
-        // Create enhanced component discovery for validation
+    const initialPrompt = await buildClaudePromptWithContext(prompt, config, conversation);
+    const messages: { role: 'user' | 'assistant', content: string }[] = [{ role: 'user', content: initialPrompt }];
+
+    while (attempts < maxRetries) {
+      attempts++;
+      console.log(`--- Story Generation Attempt ${attempts} ---`);
+
+      const claudeResponse = await callClaude(messages);
+      const extractedCode = extractCodeBlock(claudeResponse);
+
+      if (!extractedCode) {
+        aiText = claudeResponse; // Use raw response if no code block
+        if (attempts < maxRetries) {
+          console.log('No code block found, retrying...');
+          messages.push({ role: 'assistant', content: aiText });
+          messages.push({ role: 'user', content: 'You did not provide a code block. Please provide the complete story in a single `tsx` code block.' });
+          continue;
+        } else {
+          // On last attempt, accept the response as is
+           break;
+        }
+      } else {
+        aiText = extractedCode;
+      }
+
+      validationErrors = validateStory(aiText);
+
+      if (validationErrors.length === 0) {
+        console.log('✅ Validation successful!');
+        break; // Exit loop on success
+      }
+
+      console.log(`❌ Validation failed with ${validationErrors.length} errors:`);
+      validationErrors.forEach(err => console.log(`  - Line ${err.line}: ${err.message}`));
+
+      if (attempts < maxRetries) {
+        const errorFeedback = validationErrors
+          .map(err => `- Line ${err.line}: ${err.message}`)
+          .join('\n');
+
+        const retryPrompt = `Your previous attempt failed validation with the following errors:\n${errorFeedback}\n\nPlease correct these issues and provide the full, valid story code. Do not use the forbidden patterns.`;
+
+        messages.push({ role: 'assistant', content: claudeResponse });
+        messages.push({ role: 'user', content: retryPrompt });
+      }
+    }
+
+    if (validationErrors.length > 0) {
+      console.error(`Story generation failed after ${maxRetries} attempts.`);
+      // Optional: decide if you want to return an error or proceed with the last attempt
+      // For now, we'll proceed with the last attempt and let the user see the result
+    }
+    // --- End of Validation and Retry Loop ---
+
+    console.log('Claude final response:', aiText);
+
+    // Create enhanced component discovery for validation
     const discovery = new EnhancedComponentDiscovery(config);
     await discovery.discoverAll();
 
@@ -437,8 +565,13 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         if (codeMatch) {
           fileContents = codeMatch[1].trim();
         } else {
+          // Fallback: extract from import to end of valid TypeScript
           const importIdx = aiText.indexOf('import');
-          fileContents = importIdx !== -1 ? aiText.slice(importIdx).trim() : aiText.trim();
+          if (importIdx !== -1) {
+            fileContents = aiText;
+          } else {
+            fileContents = aiText.trim();
+          }
         }
       }
 
@@ -453,10 +586,13 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       return res.status(500).json({ error: 'Failed to generate valid TypeScript code.' });
     }
 
-    // CRITICAL: Always add React import as the first line (mandatory for all stories)
-    if (!fileContents.startsWith("import React from 'react';")) {
+    // CRITICAL: Ensure React import exists but avoid duplicates
+    if (!fileContents.includes("import React from 'react';")) {
       fileContents = "import React from 'react';\n" + fileContents;
     }
+
+    // Post-processing is now consolidated to run once on the final code
+    let fixedFileContents = postProcessStory(fileContents, config.importPath);
 
     // Generate title based on conversation context
     let aiTitle;
@@ -477,9 +613,6 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
     const prettyPrompt = escapeTitleForTS(aiTitle);
 
     // Fix title with storyPrefix - handle both single-line and multi-line formats
-    let fixedFileContents = fileContents;
-
-    // First try: const meta = { title: "..." } format
     fixedFileContents = fixedFileContents.replace(
       /(const\s+meta\s*=\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
       (match, p1, oldTitle, p3) => {
@@ -613,6 +746,17 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Story generation failed' });
   }
+}
+
+/**
+ * Fixes inline styles in the generated story content
+ * Converts React camelCase style properties to kebab-case CSS properties
+ */
+function fixInlineStyles(content: string): string {
+  // This function is now superseded by the validator and postProcessStory
+  // but can be kept for other potential style cleanups if needed.
+  // For now, the main logic is in the validator.
+  return content;
 }
 
 /**

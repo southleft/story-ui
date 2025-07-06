@@ -16,22 +16,13 @@ interface ChatSession {
   lastUpdated: number;
 }
 
-// Auto-detect port based on current origin
+// Determine the MCP API port.
+// 1. If the host application sets `window.__STORY_UI_PORT__`, prefer that.
+// 2. Otherwise fall back to the default 4001.
 const getApiPort = () => {
-  const port = window.location.port;
-  const storybookToMcpPortMap: Record<string, string> = {
-    '6006': '3003',
-    '6007': '3004',
-    '6008': '3005',
-    '6009': '3006',
-    '6010': '3007',
-    '6011': '3008',
-    '6012': '3009',
-    '6013': '3010',
-    '6014': '3011',
-    '6015': '3012',
-  };
-  return storybookToMcpPortMap[port] || '3003';
+  const override = (window as any).__STORY_UI_PORT__;
+  if (override) return String(override);
+  return '4001';
 };
 
 const MCP_API = `http://localhost:${getApiPort()}/story-ui/generate`;
@@ -77,13 +68,13 @@ const syncWithActualStories = async (): Promise<ChatSession[]> => {
       console.error('Failed to fetch stories from backend');
       return loadChats();
     }
-    
+
     const data = await response.json();
     const memoryStories = data.stories || [];
-    
+
     // Load existing chats
     const existingChats = loadChats();
-    
+
     // Create a map for quick lookup
     const chatMap = new Map<string, ChatSession>();
     existingChats.forEach(chat => {
@@ -92,12 +83,12 @@ const syncWithActualStories = async (): Promise<ChatSession[]> => {
         chatMap.set(chat.fileName, chat);
       }
     });
-    
+
     // Update or add memory stories
     memoryStories.forEach((story: any) => {
       const storyId = story.storyId || story.fileName;
       const existingChat = chatMap.get(storyId) || chatMap.get(story.fileName);
-      
+
       if (existingChat) {
         // Update existing chat with latest info
         existingChat.title = story.title || existingChat.title;
@@ -121,11 +112,11 @@ const syncWithActualStories = async (): Promise<ChatSession[]> => {
         chatMap.set(storyId, newChat);
       }
     });
-    
+
     // Convert back to array and save
     const syncedChats = Array.from(chatMap.values());
     saveChats(syncedChats);
-    
+
     return syncedChats;
   } catch (error) {
     console.error('Error syncing with backend:', error);
@@ -142,16 +133,16 @@ const deleteStoryAndChat = async (chatId: string): Promise<boolean> => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ storyId: chatId })
     });
-    
+
     if (!response.ok) {
       console.error('Failed to delete story from backend');
       return false;
     }
-    
+
     // Then remove from local storage
     const chats = loadChats().filter(chat => chat.id !== chatId);
     saveChats(chats);
-    
+
     return true;
   } catch (error) {
     console.error('Error deleting story:', error);
@@ -441,7 +432,7 @@ styleSheet.textContent = `
     40% { content: ".."; }
     60%, 100% { content: "..."; }
   }
-  
+
   .loading-dots::after {
     content: ".";
     animation: loadingDots 1.4s infinite;
@@ -542,7 +533,7 @@ export function StoryUIPanel() {
         responseMessage = `${statusIcon} Updated your story: "${data.title}"\n\nI've made the requested changes while keeping the same layout structure. You can view the updated component in Storybook.`;
       } else {
         responseMessage = `${statusIcon} Created new story: "${data.title}"\n\nI've generated the component with the requested features. You can view it in Storybook where you'll see both the rendered component and its markup in the Docs tab.`;
-        
+
         // IMPORTANT: Add a note about refreshing for new stories
         responseMessage += '\n\n💡 **Note**: If you don\'t see the story immediately, you may need to refresh your Storybook page (Cmd/Ctrl + R) for new stories to appear in the sidebar.';
       }
@@ -822,9 +813,9 @@ export function StoryUIPanel() {
       {/* Main content */}
       <div style={STYLES.mainContent}>
         <div style={STYLES.chatHeader}>
-          <h1 style={{ 
-            fontSize: '24px', 
-            margin: 0, 
+          <h1 style={{
+            fontSize: '24px',
+            margin: 0,
             fontWeight: '600',
             background: 'linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%)',
             WebkitBackgroundClip: 'text',

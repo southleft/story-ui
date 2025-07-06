@@ -46,11 +46,6 @@ storybook-static
 ./src/stories/generated/
 ./src/stories/generated/**
 
-# Multi-instance configuration (user-specific)
-multi-instance.config.json
-# But keep the example file
-!multi-instance.config.example.json
-
 # Utility files
 clear-localstorage.html
 

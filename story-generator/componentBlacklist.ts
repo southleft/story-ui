@@ -61,7 +61,9 @@ export function isBlacklistedComponent(componentName: string, validComponents: S
   }
 
   // Check if it's a known deprecated component (fallback for when importPath not provided)
-  if (POLARIS_DEPRECATED_COMPONENTS.includes(componentName)) {
+  // Only apply Polaris deprecated components to Polaris imports
+  if (importPath && (importPath.includes('polaris') || importPath.includes('@shopify/polaris')) &&
+      POLARIS_DEPRECATED_COMPONENTS.includes(componentName)) {
     return true;
   }
 

@@ -57,6 +57,12 @@ CRITICAL IMPORT RULES - MUST FOLLOW EXACTLY:
 
 ⚠️  WITHOUT "import React from 'react';" THE STORY WILL FAIL WITH "React is not defined" ERROR ⚠️
 
+🚨 COMPONENT IMPORT VALIDATION - CRITICAL 🚨
+You can ONLY import components that are explicitly listed in the "Available components" section below.
+ANY component not in that list DOES NOT EXIST and will cause import errors.
+Before importing any component, verify it exists in the Available components list.
+If a component is not listed, DO NOT use it - choose an alternative from the available list.
+
 Example correct order:
 import React from 'react';
 import type { StoryObj } from '@storybook/[framework]';
@@ -173,13 +179,19 @@ function generateLayoutInstructions(config: StoryUIConfig): string[] {
     instructions.push(`- For ANY multi-column layout (2, 3, or more columns), use ${layoutRules.multiColumnWrapper} components`);
     instructions.push(`- Each column must be wrapped in its own ${layoutRules.columnComponent} element`);
     instructions.push(`- Structure: <${layoutRules.multiColumnWrapper}><${layoutRules.columnComponent}>column 1</${layoutRules.columnComponent}><${layoutRules.columnComponent}>column 2</${layoutRules.columnComponent}></${layoutRules.multiColumnWrapper}>`);
-    instructions.push(`- NEVER use inline styles - use the component's built-in props for layout and styling`);
+    instructions.push(`- NEVER use inline styles or style prop - use the component's built-in props for layout and styling`);
+    instructions.push(`- NEVER use CSS properties as props (like display="grid" or gridTemplateColumns) - these are not valid props`);
+    instructions.push(`- For grid-like layouts, use Flex with wrap prop and appropriate gap, NOT CSS Grid`);
     instructions.push(`- The ${layoutRules.multiColumnWrapper} should be the main component in your story for multi-column layouts`);
   }
 
   if (layoutRules.prohibitedElements && layoutRules.prohibitedElements.length > 0) {
     instructions.push(`- NEVER use plain HTML ${layoutRules.prohibitedElements.join(', ')} elements - ALWAYS use the provided design system components`);
   }
+
+  instructions.push(`- NEVER output raw <h1>-<h6> tags. Use <Heading level={n}> from @react-spectrum/text with Spectrum size props`);
+  instructions.push(`- NEVER hard-code CSS Grid properties like grid-template-columns or gap in style attrs. Use <Flex wrap gap="size-200"> or <Grid> with Spectrum size tokens`);
+  instructions.push(`- For outer spacing use <View> with padding/margin Spectrum tokens, not inline style or plain divs`);
 
   return instructions;
 }
@@ -336,8 +348,9 @@ export function buildClaudePrompt(
   promptParts.push(
     `Output a complete Storybook story file in TypeScript. Import components from "${config.importPath}". Use the following sample as a template. Respond ONLY with a single code block containing the full file, and nothing else.`,
     '',
+    '<rules>',
     '🚨 FINAL CRITICAL REMINDERS 🚨',
-    '🔴 FIRST LINE MUST BE: import React from \'react\';',
+    "🔴 FIRST LINE MUST BE: import React from 'react';",
     '🔴 WITHOUT THIS IMPORT, THE STORY WILL BREAK!',
     '',
     'OTHER CRITICAL RULES:',
@@ -346,6 +359,9 @@ export function buildClaudePrompt(
     '- ONLY import components that are listed in the "Available components" section',
     '- Do NOT import story exports - these are NOT real components',
     '- Check every import against the Available components list before using it',
+    '- FORBIDDEN: Provider, defaultTheme, ThemeProvider, or any theme-related components',
+    '- FORBIDDEN: Any component not explicitly listed in the Available components section',
+    '- FORBIDDEN: `UNSAFE_style` prop. NEVER use it. If you need to style something like bold text, find a semantic component or prop (e.g., `<Heading>`) instead of manually styling `<Text>`.',
     '- All images MUST have a src attribute with placeholder URLs (use https://picsum.photos/)',
     '- Never create <img> tags without src attributes',
     '- MUST use ES modules syntax: "export default meta;" NOT "module.exports = meta;"',
@@ -353,6 +369,7 @@ export function buildClaudePrompt(
     '- Keep the story concise and focused - avoid overly complex layouts that might exceed token limits',
     '- Ensure all JSX tags are properly closed',
     '- Story must be complete and syntactically valid',
+    '</rules>',
     '',
     'Sample story format:',
     generated.sampleStory,
