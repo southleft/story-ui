@@ -76,3 +76,7 @@ build
 
 # Test scripts
 test-*.js
+
+# Local AI tooling and editor artefacts
+.cursor/
+.claude/
