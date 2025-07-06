@@ -69,6 +69,9 @@ build
 # Story UI cache directory
 .story-ui-cache/
 
+# Story UI history directory
+.story-ui-history/
+
 # Test scripts
 test-*.js
 

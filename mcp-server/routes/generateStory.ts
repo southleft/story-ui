@@ -17,6 +17,7 @@ import { EnhancedComponentDiscovery } from '../../story-generator/enhancedCompon
 import { getDocumentation, isDeprecatedComponent, getComponentReplacement } from '../../story-generator/documentation-sources.js';
 import { postProcessStory } from '../../story-generator/postProcessStory.js';
 import { validateStory, ValidationError } from '../../story-generator/storyValidator.js';
+import { StoryHistoryManager } from '../../story-generator/storyHistory.js';
 
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514';
@@ -39,8 +40,13 @@ async function buildClaudePrompt(userPrompt: string) {
   return await buildFlexiblePrompt(userPrompt, config, components);
 }
 
-// Enhanced function that includes conversation context
-async function buildClaudePromptWithContext(userPrompt: string, config: any, conversation?: any[]) {
+// Enhanced function that includes conversation context and previous code
+async function buildClaudePromptWithContext(
+  userPrompt: string, 
+  config: any, 
+  conversation?: any[],
+  previousCode?: string
+) {
   const discovery = new EnhancedComponentDiscovery(config);
   const components = await discovery.discoverAll();
 
@@ -87,11 +93,31 @@ User request:`);
     .map((msg: any) => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
     .join('\n\n');
 
+  // Build contextual prompt with previous code if available
+  let contextSection = `CONVERSATION CONTEXT (for modifications/updates):
+${conversationContext}`;
+
+  if (previousCode) {
+    contextSection += `
+
+PREVIOUS GENERATED CODE (this is what you're modifying):
+\`\`\`tsx
+${previousCode}
+\`\`\`
+
+CRITICAL INSTRUCTIONS FOR MODIFICATIONS:
+1. DO NOT regenerate the entire story from scratch
+2. PRESERVE all existing styling, components, and structure
+3. ONLY change what the user specifically requests
+4. Keep the exact same layout (Grid structure, columns, etc.) unless explicitly asked to change it
+5. Maintain all visual styling (colors, shadows, spacing) unless asked to modify them
+6. Think of this as EDITING the code above, not creating new code`;
+  }
+
   // Add conversation context to the prompt
   const contextualPrompt = prompt.replace(
     'User request:',
-    `CONVERSATION CONTEXT (for modifications/updates):
-${conversationContext}
+    `${contextSection}
 
 IMPORTANT: The user is asking to modify/update the story based on the above conversation.
 - Keep the SAME layout structure (number of columns, grid setup) unless explicitly asked to change it
@@ -358,9 +384,25 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
 
     // Initialize story tracker for managing updates vs new creations
     const storyTracker = new StoryTracker(config);
+    
+    // Initialize history manager - use the current working directory
+    const historyManager = new StoryHistoryManager(process.cwd());
 
     // Check if this is an update to an existing story
     const isUpdate = fileName && conversation && conversation.length > 2;
+    
+    // Get previous code if this is an update
+    let previousCode: string | undefined;
+    let parentVersionId: string | undefined;
+    
+    if (isUpdate && fileName) {
+      const currentVersion = historyManager.getCurrentVersion(fileName);
+      if (currentVersion) {
+        previousCode = currentVersion.code;
+        parentVersionId = currentVersion.id;
+        console.log('🔄 Found previous version for iteration');
+      }
+    }
 
     // --- Start of Validation and Retry Loop ---
     let aiText = '';
@@ -368,7 +410,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
     const maxRetries = 3;
     let attempts = 0;
 
-    const initialPrompt = await buildClaudePromptWithContext(prompt, config, conversation);
+    const initialPrompt = await buildClaudePromptWithContext(prompt, config, conversation, previousCode);
     const messages: { role: 'user' | 'assistant', content: string }[] = [{ role: 'user', content: initialPrompt }];
 
     while (attempts < maxRetries) {
@@ -597,6 +639,14 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         prompt
       };
       storyTracker.registerStory(mapping);
+      
+      // Save to history
+      historyManager.addVersion(
+        finalFileName,
+        prompt,
+        fixedFileContents,
+        parentVersionId
+      );
 
       console.log(`Story ${isActuallyUpdate ? 'updated' : 'stored'} in memory: ${storyId}`);
       res.json({
@@ -633,6 +683,14 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         prompt
       };
       storyTracker.registerStory(mapping);
+      
+      // Save to history
+      historyManager.addVersion(
+        finalFileName,
+        prompt,
+        fixedFileContents,
+        parentVersionId
+      );
 
       console.log(`Story ${isActuallyUpdate ? 'updated' : 'written'} to:`, outPath);
       res.json({
