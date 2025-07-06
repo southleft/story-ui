@@ -3,7 +3,6 @@ export * from './story-ui.config.js';
 export * from './story-ui.config.loader.js';
 export * from './story-generator/componentDiscovery.js';
 export * from './story-generator/promptGenerator.js';
-export * from './story-generator/context7Integration.js';
 
 // Re-export key types and functions
 export type {
@@ -35,15 +34,6 @@ export {
   buildClaudePrompt
 } from './story-generator/promptGenerator.js';
 
-export {
-  Context7Integration,
-  Context7Documentation,
-  StorybookDocumentation,
-  ComponentDoc,
-  PropDoc,
-  PatternDoc,
-  Example
-} from './story-generator/context7Integration.js';
 
 export {
   ProductionGitignoreManager,

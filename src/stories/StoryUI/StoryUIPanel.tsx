@@ -20,14 +20,21 @@ interface ChatSession {
 // 1. If the host application sets `window.__STORY_UI_PORT__`, prefer that.
 // 2. Otherwise fall back to the default 4001.
 const getApiPort = () => {
-  const override = (window as any).__STORY_UI_PORT__;
+  const override =
+    // Explicit global set in preview.ts or elsewhere
+    (window as any).__STORY_UI_PORT__ ||
+    // Vite exposes env vars prefixed with VITE_
+    (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_STORY_UI_PORT) ||
+    // Fallback to process.env when available (e.g., in webpack-built Storybook)
+    (typeof process !== 'undefined' && (process.env as any)?.STORY_UI_PORT);
+
   if (override) return String(override);
   return '4001';
 };
 
-const MCP_API = `http://localhost:${getApiPort()}/story-ui/generate`;
-const STORIES_API = `http://localhost:${getApiPort()}/story-ui/stories`;
-const DELETE_API = `http://localhost:${getApiPort()}/story-ui/delete`;
+const MCP_API = `http://localhost:${getApiPort()}/mcp/generate-story`;
+const STORIES_API = `http://localhost:${getApiPort()}/mcp/sync/stories`;
+const DELETE_API = `http://localhost:${getApiPort()}/mcp/sync/stories`;
 const STORAGE_KEY = `story-ui-chats-${window.location.port}`;
 const MAX_RECENT_CHATS = 20;
 
@@ -128,10 +135,9 @@ const syncWithActualStories = async (): Promise<ChatSession[]> => {
 const deleteStoryAndChat = async (chatId: string): Promise<boolean> => {
   try {
     // First try to delete from backend
-    const response = await fetch(DELETE_API, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ storyId: chatId })
+    const response = await fetch(`http://localhost:${getApiPort()}/mcp/sync/stories/${chatId}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' }
     });
 
     if (!response.ok) {
@@ -172,26 +178,27 @@ const STYLES = {
     backdropFilter: 'blur(10px)',
     transition: 'width 0.3s ease',
     position: 'relative' as const,
+    padding: '12px 16px',
   },
 
   sidebarCollapsed: {
     width: '60px',
+    padding: '12px 8px',
   },
 
   sidebarToggle: {
-    position: 'absolute' as const,
-    top: '16px',
-    right: '16px',
-    zIndex: 10,
+    width: '100%',
+    marginBottom: '8px',
     background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
     color: 'white',
     border: 'none',
     borderRadius: '8px',
-    padding: '8px 12px',
+    padding: '10px 16px',
     fontSize: '14px',
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: '8px',
     transition: 'all 0.2s ease',
     boxShadow: '0 2px 8px rgba(59, 130, 246, 0.3)',
@@ -457,7 +464,7 @@ const formatTime = (timestamp: number): string => {
 };
 
 // Main component
-export function StoryUIPanel() {
+export default function StoryUIPanel() {
   const [input, setInput] = useState('');
   const [conversation, setConversation] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
@@ -744,7 +751,7 @@ export function StoryUIPanel() {
           {sidebarOpen ? '☰ Chats' : '☰'}
         </button>
         {sidebarOpen && (
-          <div style={{ flex: 1, overflowY: 'auto', padding: '0 16px 16px 16px' }}>
+          <div style={{ flex: 1, overflowY: 'auto' }}>
             <button
               onClick={handleNewChat}
               style={STYLES.newChatButton}

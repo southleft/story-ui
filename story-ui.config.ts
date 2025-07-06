@@ -55,12 +55,6 @@ export interface StoryUIConfig {
   additionalImports?: AdditionalImport[];
   considerationsPath?: string;
   storybookFramework?: string; // e.g., '@storybook/react-vite', '@storybook/react-webpack5', '@storybook/nextjs'
-  context7?: {
-    enabled?: boolean;
-    apiUrl?: string;
-    timeout?: number;
-    cacheEnabled?: boolean;
-  };
 }
 
 // Default generic configuration

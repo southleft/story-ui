@@ -169,16 +169,6 @@ export async function setupCommand() {
       message: 'Enter your Claude API key:',
       when: (answers) => answers.hasApiKey,
       validate: (input) => input.trim() ? true : 'API key is required'
-    },
-    {
-      type: 'confirm',
-      name: 'enableContext7',
-      message: 'Enable Context7 integration for real-time documentation? (Recommended for supported design systems)',
-      default: true,
-      when: (answers) => {
-        const supportedSystems = ['auto', 'mui', 'chakra', 'antd', 'mantine', 'spectrum'];
-        return supportedSystems.includes(answers.designSystem);
-      }
     }
   ]);
 
@@ -323,14 +313,6 @@ export async function setupCommand() {
   config.storyPrefix = 'Generated/';
   config.defaultAuthor = 'Story UI AI';
 
-  // Add Context7 configuration if enabled
-  if (answers.enableContext7) {
-    config.context7 = {
-      enabled: true,
-      cacheEnabled: true,
-      timeout: 10000
-    };
-  }
 
   // Create configuration file
   const configContent = `module.exports = ${JSON.stringify(config, null, 2)};`;
@@ -338,7 +320,6 @@ export async function setupCommand() {
 
   fs.writeFileSync(configPath, configContent);
 
-  // Context7 integration is enabled through config only - no local files needed
 
   // Create generated stories directory
   const storiesDir = path.dirname(config.generatedStoriesPath);

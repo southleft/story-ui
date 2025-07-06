@@ -15,7 +15,6 @@ import { isBlacklistedComponent, isBlacklistedIcon, getBlacklistErrorMessage, IC
 import { StoryTracker, StoryMapping } from '../../story-generator/storyTracker.js';
 import { EnhancedComponentDiscovery } from '../../story-generator/enhancedComponentDiscovery.js';
 import { getDocumentation, isDeprecatedComponent, getComponentReplacement } from '../../story-generator/documentation-sources.js';
-import { Context7Integration } from '../../story-generator/context7Integration.js';
 import { postProcessStory } from '../../story-generator/postProcessStory.js';
 import { validateStory, ValidationError } from '../../story-generator/storyValidator.js';
 
@@ -30,70 +29,18 @@ const SAMPLE_STORY = '';
 // Legacy component reference - now using dynamic discovery
 const COMPONENT_REFERENCE = '';
 
-// Initialize Context7 integration
-const context7 = new Context7Integration();
 
-/**
- * Inject MCP tools into the global context for Context7 integration
- * This simulates the MCP environment by providing the tools that would be available
- */
-function injectMCPTools() {
-  // Check if we're in an environment that has access to MCP tools
-  // In a real deployment, this would be handled by the MCP server environment
-
-  if (typeof global !== 'undefined' && !global.mcpTools) {
-    // Create a mock MCP tools interface that uses the actual available tools
-    // This is a bridge between the Node.js environment and the MCP tools
-    global.mcpTools = {
-      context7: {
-        resolveLibraryId: async (params: { libraryName: string }) => {
-          // In a real implementation, this would call the actual MCP server
-          // For now, we'll use the fallback mapping
-          const knownMappings: Record<string, string> = {
-            '@adobe/react-spectrum': '/adobe/react-spectrum',
-            '@mui/material': '/mui/material',
-            '@chakra-ui/react': '/chakra-ui/chakra-ui',
-            'antd': '/ant-design/ant-design',
-            '@mantine/core': '/mantine/mantine',
-            '@shopify/polaris': '/shopify/polaris'
-          };
-
-          const libraryId = knownMappings[params.libraryName];
-          if (libraryId) {
-            return [{ libraryId }];
-          }
-          return [];
-        },
-
-                                getLibraryDocs: async (params: { context7CompatibleLibraryID: string, topic?: string, tokens?: number }) => {
-          console.log(`🔍 Attempting real Context7 MCP call for ${params.context7CompatibleLibraryID}`);
-
-          // In a Node.js environment, we can't directly access the Context7 MCP tools
-          // This would need to be handled by the environment that has MCP access
-          // For now, return empty string to indicate Context7 is not available
-          console.log(`❌ Context7 MCP tools not available in Node.js environment`);
-          console.log(`📋 Falling back to enhanced component discovery`);
-
-          return '';
-        }
-      }
-    };
-  }
-}
 
 // Legacy function - now uses flexible system with enhanced discovery
 async function buildClaudePrompt(userPrompt: string) {
   const config = loadUserConfig();
   const discovery = new EnhancedComponentDiscovery(config);
   const components = await discovery.discoverAll();
-  return buildFlexiblePrompt(userPrompt, config, components);
+  return await buildFlexiblePrompt(userPrompt, config, components);
 }
 
 // Enhanced function that includes conversation context
 async function buildClaudePromptWithContext(userPrompt: string, config: any, conversation?: any[]) {
-  // Inject MCP tools for Context7 integration
-  injectMCPTools();
-
   const discovery = new EnhancedComponentDiscovery(config);
   const components = await discovery.discoverAll();
 
@@ -102,53 +49,14 @@ async function buildClaudePromptWithContext(userPrompt: string, config: any, con
   const availableComponents = components.map(c => c.name).join(', ');
   console.log(`✅ Available components: ${availableComponents}`);
 
-    // Build base prompt with discovered components (always required)
-  let prompt = buildFlexiblePrompt(userPrompt, config, components);
+  // Build base prompt with discovered components (always required)
+  let prompt = await buildFlexiblePrompt(userPrompt, config, components);
 
-  // Try to enhance with Context7 documentation for usage patterns and design tokens
-  console.log(`🔍 Attempting to get Context7 documentation for ${config.importPath}`);
-  const context7Docs = await context7.getDocumentation(config.importPath);
-
-  if (context7Docs) {
-    console.log('📚 Enhancing prompt with Context7 documentation');
-    console.log(`📋 Found Context7 docs with ${Object.keys(context7Docs.components).length} component entries`);
-
-    // Enhance the existing prompt with Context7 documentation
-    // This adds usage patterns, design tokens, and best practices
-    // but doesn't override the component list from discovery
-    const context7Enhancement = `
-
-🎨 DESIGN SYSTEM DOCUMENTATION (Context7):
-${Object.entries(context7Docs.components || {}).map(([name, info]: [string, any]) => {
-  // Only include docs for components that actually exist in the discovered list
-  if (components.some(c => c.name === name)) {
-    return `- ${name}: ${info.description || 'Component available'}
-   ${info.variants ? `Variants: ${info.variants.join(', ')}` : ''}
-   ${Object.keys(info.props || {}).length > 0 ? `Props: ${Object.keys(info.props).join(', ')}` : ''}
-   ${info.examples ? `\n   Examples:\n${info.examples.map((ex: any) => `   // ${ex.title}\n   ${ex.code}`).join('\n')}` : ''}`;
-  }
-  return null;
-}).filter(Boolean).join('\n\n')}
-
-${context7Docs.patterns ? `
-RECOMMENDED PATTERNS:
-${Object.entries(context7Docs.patterns).map(([name, pattern]: [string, any]) =>
-  `${name}: ${pattern.description}\nExample:\n${pattern.example}`
-).join('\n\n')}` : ''}`;
-
-    // Insert the enhancement before the user request
-    prompt = prompt.replace('User request:', `${context7Enhancement}
-
-User request:`);
-  } else {
-    console.log('📋 No Context7 documentation available');
-
-    // Try bundled documentation as fallback enhancement
-    const documentation = getDocumentation(config.importPath);
-    if (documentation) {
-      console.log('📚 Using bundled documentation for enhancement');
-
-      const bundledEnhancement = `
+// Try to enhance with bundled documentation for usage patterns and design tokens
+  console.log('📋 Using bundled documentation for enhancement');
+  const documentation = getDocumentation(config.importPath);
+  if (documentation) {
+    const bundledEnhancement = `
 
 📚 BUNDLED DOCUMENTATION:
 ${Object.entries(documentation.components || {}).map(([name, info]: [string, any]) => {
@@ -157,15 +65,15 @@ ${Object.entries(documentation.components || {}).map(([name, info]: [string, any
     return `- ${name}: ${info.description || 'Component available'}
    ${info.variants ? `Variants: ${info.variants.join(', ')}` : ''}
    ${info.commonProps ? `Props: ${info.commonProps.join(', ')}` : ''}
-   ${info.examples ? `\n   Examples:\n${info.examples.map((ex: any) => `   // ${ex.label}\n   ${ex.code}`).join('\n')}` : ''}`;
+   ${info.examples ? `\n   Examples:\n${info.examples.map((ex: any) => `   // ${ex.label}
+   ${ex.code}`).join('\n')}` : ''}`;
   }
   return null;
 }).filter(Boolean).join('\n\n')}`;
 
-      prompt = prompt.replace('User request:', `${bundledEnhancement}
+    prompt = prompt.replace('User request:', `${bundledEnhancement}
 
 User request:`);
-    }
   }
 
   // If no conversation context, return the prompt as-is

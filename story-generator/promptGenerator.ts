@@ -2,6 +2,7 @@ import { StoryUIConfig } from '../story-ui.config.js';
 import { DiscoveredComponent } from './componentDiscovery.js';
 import { EnhancedComponentDiscovery } from './enhancedComponentDiscovery.js';
 import { loadConsiderations, considerationsToPrompt } from './considerationsLoader.js';
+import { DocumentationLoader } from './documentationLoader.js';
 
 export interface GeneratedPrompt {
   systemPrompt: string;
@@ -294,11 +295,11 @@ export const Default: Story = {
 /**
  * Builds the complete Claude prompt
  */
-export function buildClaudePrompt(
+export async function buildClaudePrompt(
   userPrompt: string,
   config: StoryUIConfig,
   components: DiscoveredComponent[]
-): string {
+): Promise<string> {
   const generated = generatePrompt(config, components);
 
   const promptParts = [
@@ -306,13 +307,35 @@ export function buildClaudePrompt(
     '',
   ];
 
-  // Load and add custom considerations if available
-  const considerations = loadConsiderations(config.considerationsPath);
-  if (considerations) {
-    const considerationsPrompt = considerationsToPrompt(considerations);
-    if (considerationsPrompt) {
-      promptParts.push(considerationsPrompt);
-      promptParts.push('');
+  // Load documentation - try new directory-based approach first
+  const projectRoot = config.considerationsPath ? 
+    config.considerationsPath.replace(/\/story-ui-considerations\.(md|json)$/, '') : 
+    process.cwd();
+  
+  const docLoader = new DocumentationLoader(projectRoot);
+  let documentationAdded = false;
+  
+  if (docLoader.hasDocumentation()) {
+    const docs = await docLoader.loadDocumentation();
+    if (docs.sources.length > 0) {
+      const docPrompt = docLoader.formatForPrompt(docs);
+      if (docPrompt) {
+        promptParts.push(docPrompt);
+        promptParts.push('');
+        documentationAdded = true;
+      }
+    }
+  }
+  
+  // Fall back to legacy considerations file if no directory-based docs
+  if (!documentationAdded) {
+    const considerations = loadConsiderations(config.considerationsPath);
+    if (considerations) {
+      const considerationsPrompt = considerationsToPrompt(considerations);
+      if (considerationsPrompt) {
+        promptParts.push(considerationsPrompt);
+        promptParts.push('');
+      }
     }
   }
 
