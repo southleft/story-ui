@@ -166,8 +166,8 @@ export class UniversalDesignSystemAdapter {
         layoutComponents: ['Box', 'Flex', 'Grid', 'Stack'],
         formComponents: ['Textfield', 'Button', 'Select', 'Checkbox', 'Radio', 'Toggle'],
         importPatterns: {
-          default: ['Button', 'Textfield', 'Heading'],
-          named: ['Box', 'Flex', 'Grid', 'Text']
+          default: ['Button', 'Textfield', 'Heading', 'Avatar', 'Badge', 'Lozenge', 'Banner', 'Flag', 'Breadcrumbs', 'Tabs'],
+          named: ['Box', 'Flex', 'Grid', 'Text', 'ProgressIndicator']
         },
         designTokens: {
           spacing: 'space.*',
