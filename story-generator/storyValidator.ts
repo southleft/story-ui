@@ -28,5 +28,22 @@ export function validateStory(storyContent: string): ValidationError[] {
     }
   });
 
+  // Check for truncated story (multiple closing tags on a single line followed by };)
+  const lastFewLines = lines.slice(-5).join('\n');
+  if (lastFewLines.match(/<\/\w+><\/\w+><\/\w+><\/\w+>.*\n\s*\};/)) {
+    errors.push({
+      message: 'Story appears to be truncated. Multiple closing tags found on a single line followed by abrupt ending.',
+      line: lines.length - 1,
+    });
+  }
+
+  // Check for proper story structure
+  if (!storyContent.includes('export default meta')) {
+    errors.push({
+      message: 'Story is missing required "export default meta" statement.',
+      line: 1,
+    });
+  }
+
   return errors;
 }
