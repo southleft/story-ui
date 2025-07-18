@@ -17,6 +17,15 @@ const rootDir = path.join(__dirname, '..');
 
 // Design system branding configurations
 const DESIGN_SYSTEM_CONFIGS = {
+  'atlassian': {
+    name: 'Atlassian Design System',
+    url: 'https://atlassian.design',
+    primaryColor: '#0052CC',
+    secondaryColor: '#42526E',
+    fontBase: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+    appBg: '#161616',
+    barBg: '#1f1f1f',
+  },
   'adobe-spectrum': {
     name: 'Adobe Spectrum',
     url: 'https://spectrum.adobe.com',
@@ -172,6 +181,7 @@ function detectDesignSystem(directory) {
       const dependencies = { ...packageJson.dependencies, ...packageJson.devDependencies };
 
       // Check for known design system packages
+      if (dependencies['@atlaskit/button'] || dependencies['@atlaskit/primitives']) return DESIGN_SYSTEM_CONFIGS['atlassian'];
       if (dependencies['@mui/material']) return DESIGN_SYSTEM_CONFIGS['material-ui'];
       if (dependencies['antd']) return DESIGN_SYSTEM_CONFIGS['ant-design'];
       if (dependencies['@mantine/core']) return DESIGN_SYSTEM_CONFIGS['mantine'];
