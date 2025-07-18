@@ -66,6 +66,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
+    "@atlaskit/storybook-addon-design-system": "^3.1.2",
     "chalk": "^5.3.0",
     "commander": "^11.0.0",
     "concurrently": "^8.2.0",
@@ -75,6 +76,7 @@
     "glob": "^11.0.3",
     "inquirer": "^9.2.0",
     "node-fetch": "^2.6.7",
+    "react-icons": "^5.5.0",
     "typescript": "^5.8.3"
   },
   "devDependencies": {

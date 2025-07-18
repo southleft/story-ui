@@ -12,6 +12,7 @@ export function validateStory(storyContent: string): ValidationError[] {
   const forbiddenPatterns = [
     { pattern: /UNSAFE_style\s*=\s*\{/i, message: 'The `UNSAFE_style` prop is strictly forbidden. Do not use it for any reason.' },
     { pattern: /UNSAFE_className\s*=\s*['"]/i, message: 'The `UNSAFE_className` prop is forbidden.' },
+    { pattern: /<Text\s+as\s*=\s*["']h[1-6]["']/i, message: 'Text component does not support heading elements (h1-h6) in the "as" prop. Use Heading component instead.' },
     // Remove overly strict rules - divs, imgs, and inline styles are fine in moderation
     // Only check for actual syntax errors or patterns that would break Storybook
   ];

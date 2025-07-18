@@ -92,6 +92,13 @@ export class DynamicPackageDiscovery {
         const module = await dynamicImport(packageName);
         return module;
       } catch (importError) {
+        // Check if this is a CSS import error (common with compiled design systems)
+        const errorMessage = (importError as any)?.message || String(importError);
+        if (errorMessage.includes('.css:') || errorMessage.includes('Unexpected token')) {
+          console.log(`🔄 ${packageName}: CSS detected, using static analysis (normal for design systems)`);
+          return this.discoverFromPackageStructure();
+        }
+        
         // Fall back to require (for CommonJS)
         // Create require from the project root's package.json to ensure correct module resolution
         const projectPackageJson = path.join(this.projectRoot, 'package.json');
@@ -99,8 +106,20 @@ export class DynamicPackageDiscovery {
         return require(packageName);
       }
     } catch (error) {
-      console.warn(`Could not import/require ${packageName}:`, error);
-      return null;
+      // Check if this is a CSS import error 
+      const errorMessage = (error as any)?.message || String(error);
+      if (errorMessage.includes('.css:') || errorMessage.includes('Unexpected token')) {
+        console.log(`🔄 ${packageName}: CSS detected, using static analysis (normal for design systems)`);
+        return this.discoverFromPackageStructure();
+      }
+      
+      if (errorMessage.includes('window is not defined')) {
+        console.log(`🔄 ${packageName}: Browser-only component, using static analysis`);
+        return this.discoverFromPackageStructure();
+      }
+      
+      console.log(`📋 ${packageName}: Dynamic import failed, using static analysis`);
+      return this.discoverFromPackageStructure();
     }
   }
 
@@ -309,6 +328,163 @@ export class DynamicPackageDiscovery {
     }
 
     return null;
+  }
+
+  /**
+   * Alternative discovery method when package imports fail due to CSS
+   * Analyzes package.json exports and TypeScript definitions
+   */
+  private discoverFromPackageStructure(): any {
+    try {
+      const packagePath = path.join(this.projectRoot, 'node_modules', this.packageName);
+      const packageJsonPath = path.join(packagePath, 'package.json');
+      
+      if (!fs.existsSync(packageJsonPath)) {
+        console.log(`📦 No package.json found for ${this.packageName}`);
+        return null;
+      }
+
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+      const exports: any = {};
+
+      // Method 1: Analyze package.json exports field
+      if (packageJson.exports) {
+        console.log(`📋 Analyzing exports field in ${this.packageName}/package.json`);
+        this.extractExportsFromPackageJson(packageJson.exports, exports);
+      }
+
+      // Method 2: Look for index.d.ts or main TypeScript declarations
+      const typingsPath = packageJson.types || packageJson.typings || './dist/types/index.d.ts';
+      const fullTypingsPath = path.join(packagePath, typingsPath);
+      
+      if (fs.existsSync(fullTypingsPath)) {
+        console.log(`📋 Analyzing TypeScript declarations for ${this.packageName}`);
+        this.extractExportsFromTypeDefinitions(fullTypingsPath, exports);
+      }
+
+      // Method 3: Scan known Atlassian component patterns
+      if (this.packageName.startsWith('@atlaskit/')) {
+        console.log(`📋 Using Atlassian-specific discovery for ${this.packageName}`);
+        this.extractAtlaskitComponents(packagePath, exports);
+      }
+
+      return Object.keys(exports).length > 0 ? exports : null;
+
+    } catch (error) {
+      console.warn(`Alternative discovery failed for ${this.packageName}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Extract component exports from package.json exports field
+   */
+  private extractExportsFromPackageJson(exportsField: any, result: any): void {
+    if (typeof exportsField === 'string') {
+      // Simple export like "./dist/index.js"
+      return;
+    }
+
+    if (typeof exportsField === 'object') {
+      for (const [key, value] of Object.entries(exportsField)) {
+        if (key === '.' || key === './index') {
+          // Main export - we'll analyze this elsewhere
+          continue;
+        }
+        
+        if (key.startsWith('./') && !key.includes('*')) {
+          // Named export like "./Button" or "./components/Button"
+          const componentName = key.replace('./', '').split('/').pop();
+          if (componentName && /^[A-Z]/.test(componentName)) {
+            result[componentName] = `AtlaskitComponent_${componentName}`;
+            console.log(`📍 Found component export: ${componentName}`);
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Extract component declarations from TypeScript definition files
+   */
+  private extractExportsFromTypeDefinitions(typingsPath: string, result: any): void {
+    try {
+      const content = fs.readFileSync(typingsPath, 'utf-8');
+      
+      // Look for export declarations like:
+      // export declare const Button: ...
+      // export default Button
+      // export { Button }
+      
+      const exportPatterns = [
+        /export\s+declare\s+const\s+([A-Z][a-zA-Z0-9]+)/g,
+        /export\s+declare\s+function\s+([A-Z][a-zA-Z0-9]+)/g,
+        /export\s+\{\s*([A-Z][a-zA-Z0-9, ]+)\s*\}/g,
+        /export\s+default\s+([A-Z][a-zA-Z0-9]+)/g,
+      ];
+
+      for (const pattern of exportPatterns) {
+        let match;
+        while ((match = pattern.exec(content)) !== null) {
+          const componentName = match[1];
+          if (componentName && /^[A-Z]/.test(componentName)) {
+            result[componentName] = `AtlaskitComponent_${componentName}`;
+            console.log(`📍 Found component in .d.ts: ${componentName}`);
+          }
+        }
+      }
+    } catch (error) {
+      console.warn(`Could not read TypeScript definitions: ${error}`);
+    }
+  }
+
+  /**
+   * Use Atlassian-specific patterns to discover components
+   */
+  private extractAtlaskitComponents(packagePath: string, result: any): void {
+    // Common Atlassian component mapping based on package names
+    const atlaskitComponentMap: Record<string, string[]> = {
+      '@atlaskit/avatar': ['Avatar', 'AvatarGroup'],
+      '@atlaskit/badge': ['Badge'],
+      '@atlaskit/banner': ['Banner'],
+      '@atlaskit/breadcrumbs': ['Breadcrumbs', 'BreadcrumbsItem'],
+      '@atlaskit/button': ['Button', 'LoadingButton'],
+      '@atlaskit/checkbox': ['Checkbox'],
+      '@atlaskit/dropdown-menu': ['DropdownMenu', 'DropdownItem', 'DropdownItemGroup'],
+      '@atlaskit/flag': ['Flag', 'FlagGroup'],
+      '@atlaskit/form': ['Form', 'Field', 'FormSection', 'FormHeader', 'FormFooter'],
+      '@atlaskit/heading': ['Heading'],
+      '@atlaskit/icon': ['Icon'],
+      '@atlaskit/lozenge': ['Lozenge'],
+      '@atlaskit/menu': ['Menu', 'MenuGroup', 'MenuItem'],
+      '@atlaskit/modal-dialog': ['Modal', 'ModalBody', 'ModalFooter', 'ModalHeader'],
+      '@atlaskit/pagination': ['Pagination'],
+      '@atlaskit/popup': ['Popup'],
+      '@atlaskit/progress-indicator': ['ProgressIndicator'],
+      '@atlaskit/progress-tracker': ['ProgressTracker'],
+      '@atlaskit/radio': ['Radio', 'RadioGroup'],
+      '@atlaskit/range': ['Range'],
+      '@atlaskit/section-message': ['SectionMessage'],
+      '@atlaskit/select': ['Select', 'AsyncSelect', 'CreatableSelect'],
+      '@atlaskit/spinner': ['Spinner'],
+      '@atlaskit/table': ['Table'],
+      '@atlaskit/tabs': ['Tabs', 'Tab', 'TabList', 'TabPanel'],
+      '@atlaskit/tag': ['Tag', 'TagGroup'],
+      '@atlaskit/textarea': ['TextArea'],
+      '@atlaskit/textfield': ['Textfield'],
+      '@atlaskit/toggle': ['Toggle'],
+      '@atlaskit/tooltip': ['Tooltip'],
+      '@atlaskit/tree': ['Tree'],
+      '@atlaskit/primitives': ['Box', 'Grid', 'Flex', 'Stack', 'Inline', 'Text', 'Pressable'],
+    };
+
+    const components = atlaskitComponentMap[this.packageName];
+    if (components) {
+      console.log(`📍 Using known Atlassian components for ${this.packageName}: ${components.join(', ')}`);
+      for (const component of components) {
+        result[component] = `AtlaskitComponent_${component}`;
+      }
+    }
   }
 }
 

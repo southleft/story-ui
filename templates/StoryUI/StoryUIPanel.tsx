@@ -17,17 +17,29 @@ interface ChatSession {
 }
 
 // Determine the MCP API port.
-// 1. If the host application sets `window.__STORY_UI_PORT__`, prefer that.
-// 2. Otherwise fall back to the default 4001.
+// 1. Check multiple possible environment variables/overrides in order of preference
+// 2. Check VITE_STORY_UI_PORT from environment
+// 3. Check window.__STORY_UI_PORT__ set by host application
+// 4. Otherwise fall back to the default 4001.
 const getApiPort = () => {
-  const override = (window as any).__STORY_UI_PORT__;
-  if (override) return String(override);
+  // Check for Vite environment variable
+  const vitePort = (import.meta as any).env?.VITE_STORY_UI_PORT;
+  if (vitePort) return String(vitePort);
+  
+  // Check for window override (legacy support)
+  const windowOverride = (window as any).__STORY_UI_PORT__;
+  if (windowOverride) return String(windowOverride);
+  
+  // Check for MCP port override set by stories file
+  const mcpOverride = (window as any).STORY_UI_MCP_PORT;
+  if (mcpOverride) return String(mcpOverride);
+  
   return '4001';
 };
 
 const MCP_API = `http://localhost:${getApiPort()}/story-ui/generate`;
 const STORIES_API = `http://localhost:${getApiPort()}/story-ui/stories`;
-const DELETE_API = `http://localhost:${getApiPort()}/story-ui/delete`;
+const DELETE_API_BASE = `http://localhost:${getApiPort()}/story-ui/stories`;
 const STORAGE_KEY = `story-ui-chats-${window.location.port}`;
 const MAX_RECENT_CHATS = 20;
 
@@ -66,6 +78,13 @@ const syncWithActualStories = async (): Promise<ChatSession[]> => {
     const response = await fetch(STORIES_API);
     if (!response.ok) {
       console.error('Failed to fetch stories from backend');
+      return loadChats();
+    }
+
+    // Check if response is JSON
+    const contentType = response.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      console.error('Server returned non-JSON response, likely server not running or wrong port');
       return loadChats();
     }
 
@@ -128,14 +147,20 @@ const syncWithActualStories = async (): Promise<ChatSession[]> => {
 const deleteStoryAndChat = async (chatId: string): Promise<boolean> => {
   try {
     // First try to delete from backend
-    const response = await fetch(DELETE_API, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ storyId: chatId })
+    const response = await fetch(`${DELETE_API_BASE}/${chatId}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' }
     });
 
     if (!response.ok) {
       console.error('Failed to delete story from backend');
+      return false;
+    }
+
+    // Check if response is JSON
+    const contentType = response.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      console.error('Server returned non-JSON response, likely server not running or wrong port');
       return false;
     }
 
@@ -147,6 +172,29 @@ const deleteStoryAndChat = async (chatId: string): Promise<boolean> => {
   } catch (error) {
     console.error('Error deleting story:', error);
     return false;
+  }
+};
+
+// Test connection to MCP server
+const testMCPConnection = async (): Promise<{ connected: boolean; error?: string }> => {
+  try {
+    const response = await fetch(STORIES_API, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (!response.ok) {
+      return { connected: false, error: `HTTP ${response.status}: ${response.statusText}` };
+    }
+
+    const contentType = response.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      return { connected: false, error: 'Server returned non-JSON response (likely wrong port or server not running)' };
+    }
+
+    return { connected: true };
+  } catch (error) {
+    return { connected: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
 };
 
@@ -179,22 +227,22 @@ const STYLES = {
   },
 
   sidebarToggle: {
-    position: 'absolute' as const,
-    top: '16px',
-    right: '16px',
-    zIndex: 10,
+    width: '100%',
+    padding: '10px 16px',
     background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
     color: 'white',
     border: 'none',
     borderRadius: '8px',
-    padding: '8px 12px',
     fontSize: '14px',
+    fontWeight: '500',
     cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
+    marginBottom: '8px',
     transition: 'all 0.2s ease',
     boxShadow: '0 2px 8px rgba(59, 130, 246, 0.3)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '8px',
   },
 
   newChatButton: {
@@ -466,20 +514,31 @@ export function StoryUIPanel() {
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [activeTitle, setActiveTitle] = useState<string>('');
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [connectionStatus, setConnectionStatus] = useState<{ connected: boolean; error?: string }>({ connected: false });
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   // Load and sync chats on mount
   useEffect(() => {
     const initializeChats = async () => {
-      const syncedChats = await syncWithActualStories();
-      const sortedChats = syncedChats.sort((a, b) => b.lastUpdated - a.lastUpdated).slice(0, MAX_RECENT_CHATS);
-      setRecentChats(sortedChats);
+      // Test connection first
+      const connectionTest = await testMCPConnection();
+      setConnectionStatus(connectionTest);
+      
+      if (connectionTest.connected) {
+        const syncedChats = await syncWithActualStories();
+        const sortedChats = syncedChats.sort((a, b) => b.lastUpdated - a.lastUpdated).slice(0, MAX_RECENT_CHATS);
+        setRecentChats(sortedChats);
 
-      if (sortedChats.length > 0) {
-        setConversation(sortedChats[0].conversation);
-        setActiveChatId(sortedChats[0].id);
-        setActiveTitle(sortedChats[0].title);
+        if (sortedChats.length > 0) {
+          setConversation(sortedChats[0].conversation);
+          setActiveChatId(sortedChats[0].id);
+          setActiveTitle(sortedChats[0].title);
+        }
+      } else {
+        // Load from local storage if server is not available
+        const localChats = loadChats();
+        setRecentChats(localChats);
       }
     };
 
@@ -498,6 +557,17 @@ export function StoryUIPanel() {
     if (!input.trim()) return;
     setError(null);
     setLoading(true);
+    
+    // Test connection before sending
+    const connectionTest = await testMCPConnection();
+    setConnectionStatus(connectionTest);
+    
+    if (!connectionTest.connected) {
+      setError(`Cannot connect to MCP server: ${connectionTest.error || 'Server not running'}`);
+      setLoading(false);
+      return;
+    }
+    
     const newConversation = [...conversation, { role: 'user' as const, content: input }];
     setConversation(newConversation);
     setInput('');
@@ -511,6 +581,14 @@ export function StoryUIPanel() {
           fileName: activeChatId || undefined,
         }),
       });
+      
+      // Check if response is JSON
+      const contentType = res.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const text = await res.text();
+        throw new Error(`Server returned non-JSON response (likely server not running or wrong port). Response: ${text.substring(0, 200)}...`);
+      }
+      
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || 'Story generation failed');
 
@@ -725,26 +803,23 @@ export function StoryUIPanel() {
         ...STYLES.sidebar,
         ...(sidebarOpen ? {} : STYLES.sidebarCollapsed),
       }}>
-        <button
-          onClick={() => setSidebarOpen(o => !o)}
-          style={{
-            ...STYLES.sidebarToggle,
-            ...(sidebarOpen ? {} : { width: '40px', height: '40px', padding: '0' }),
-          }}
-          title={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.transform = 'scale(1.05)';
-            e.currentTarget.style.boxShadow = '0 4px 16px rgba(59, 130, 246, 0.4)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.transform = 'scale(1)';
-            e.currentTarget.style.boxShadow = '0 2px 8px rgba(59, 130, 246, 0.3)';
-          }}
-        >
-          {sidebarOpen ? '☰ Chats' : '☰'}
-        </button>
         {sidebarOpen && (
-          <div style={{ flex: 1, overflowY: 'auto', padding: '0 16px 16px 16px' }}>
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
+            <button
+              onClick={() => setSidebarOpen(false)}
+              style={STYLES.sidebarToggle}
+              title="Collapse sidebar"
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'translateY(-1px)';
+                e.currentTarget.style.boxShadow = '0 4px 16px rgba(59, 130, 246, 0.4)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.boxShadow = '0 2px 8px rgba(59, 130, 246, 0.3)';
+              }}
+            >
+              ☰ Chats
+            </button>
             <button
               onClick={handleNewChat}
               style={STYLES.newChatButton}
@@ -808,6 +883,31 @@ export function StoryUIPanel() {
             ))}
           </div>
         )}
+        {!sidebarOpen && (
+          <div style={{ padding: '16px' }}>
+            <button
+              onClick={() => setSidebarOpen(true)}
+              style={{
+                ...STYLES.sidebarToggle,
+                width: '40px',
+                height: '40px',
+                padding: '0',
+                fontSize: '16px',
+              }}
+              title="Expand sidebar"
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'scale(1.05)';
+                e.currentTarget.style.boxShadow = '0 4px 16px rgba(59, 130, 246, 0.4)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'scale(1)';
+                e.currentTarget.style.boxShadow = '0 2px 8px rgba(59, 130, 246, 0.3)';
+              }}
+            >
+              ☰
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Main content */}
@@ -827,6 +927,26 @@ export function StoryUIPanel() {
           <p style={{ fontSize: '14px', margin: '4px 0 0 0', color: '#94a3b8' }}>
             Generate Storybook stories with AI
           </p>
+          <div style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '8px', 
+            marginTop: '8px',
+            fontSize: '12px'
+          }}>
+            <div style={{
+              width: '8px',
+              height: '8px',
+              borderRadius: '50%',
+              backgroundColor: connectionStatus.connected ? '#10b981' : '#f87171'
+            }}></div>
+            <span style={{ color: connectionStatus.connected ? '#10b981' : '#f87171' }}>
+              {connectionStatus.connected 
+                ? `Connected to MCP server (port ${getApiPort()})`
+                : `Disconnected: ${connectionStatus.error || 'Server not running'}`
+              }
+            </span>
+          </div>
         </div>
 
         <div style={STYLES.chatContainer}>
@@ -913,5 +1033,3 @@ export function StoryUIPanel() {
     </div>
   );
 }
-
-export { StoryUIPanel };

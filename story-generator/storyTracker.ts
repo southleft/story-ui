@@ -67,25 +67,9 @@ export class StoryTracker {
     let mapping = this.mappings.get(normalizedTitle);
     if (mapping) return mapping;
 
-    // Try fuzzy matching for similar titles
-    for (const [key, value] of this.mappings) {
-      // Check if the key contains the normalized title or vice versa
-      if (key.includes(normalizedTitle) || normalizedTitle.includes(key)) {
-        return value;
-      }
-
-      // Check for very similar titles (e.g., "dashboard" vs "inventory dashboard")
-      const keywords = normalizedTitle.split(/\s+/);
-      const keyKeywords = key.split(/\s+/);
-
-      // If all keywords from the shorter title are in the longer one
-      const shortKeywords = keywords.length < keyKeywords.length ? keywords : keyKeywords;
-      const longKeywords = keywords.length < keyKeywords.length ? keyKeywords : keywords;
-
-      if (shortKeywords.every(word => longKeywords.includes(word))) {
-        return value;
-      }
-    }
+    // Don't do fuzzy matching for titles - only exact matches
+    // This prevents "Card" from matching "Card Layouts" or "Profile Card"
+    // Users expect new stories when they request variations
 
     return undefined;
   }
@@ -125,9 +109,10 @@ export class StoryTracker {
       const mappingKeywords = mappingPrompt.split(/\s+/).filter(word => word.length > 2);
       const sharedKeywords = promptKeywords.filter(word => mappingKeywords.includes(word));
 
-      // If 70% or more keywords match, consider it similar
-      const similarityThreshold = Math.max(2, Math.floor(promptKeywords.length * 0.7));
-      if (sharedKeywords.length >= similarityThreshold) {
+      // Only consider it similar if 90% or more keywords match AND at least 4 keywords
+      // This prevents false positives like "card" matching "card layouts" vs "card animations"
+      const similarityThreshold = Math.max(4, Math.floor(promptKeywords.length * 0.9));
+      if (sharedKeywords.length >= similarityThreshold && promptKeywords.length >= 4) {
         console.log(`🔄 Found similar story: "${mapping.title}" (${sharedKeywords.length}/${promptKeywords.length} keywords match)`);
         return mapping;
       }

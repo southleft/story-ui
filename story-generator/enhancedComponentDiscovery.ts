@@ -32,8 +32,12 @@ export class EnhancedComponentDiscovery {
    * Priority: 1. Dynamic Discovery 2. Static Lists 3. Manual Config
    */
   async discoverAll(): Promise<EnhancedComponent[]> {
-    // PRIORITY 1: Dynamic Discovery (when no manual components configured)
+    console.log('🔍 Starting comprehensive component discovery...');
+    
+    // Step 1: Discover from all sources
     const sources = this.identifySources();
+    console.log(`📁 Found ${sources.length} discovery sources:`, sources.map(s => `${s.type}:${s.path}`));
+    
     for (const source of sources) {
       try {
         switch (source.type) {
@@ -55,10 +59,78 @@ export class EnhancedComponentDiscovery {
       }
     }
 
-    // PRIORITY 3 & 4: Apply manual configurations as final fallback
+    // Step 2: Apply manual configurations as override/fallback
     this.applyManualConfigurations();
 
-    return Array.from(this.discoveredComponents.values());
+    // Step 3: Resolve component conflicts and apply prioritization
+    this.resolveComponentConflicts();
+
+    const finalComponents = Array.from(this.discoveredComponents.values());
+    console.log(`✅ Discovery complete: ${finalComponents.length} components found`);
+    
+    // Log summary by source type
+    this.logDiscoverySummary(finalComponents);
+    
+    return finalComponents;
+  }
+
+  /**
+   * Resolve naming conflicts between different sources
+   * Priority: Local > Manual Config > npm packages
+   */
+  private resolveComponentConflicts(): void {
+    const conflicts = new Map<string, EnhancedComponent[]>();
+    
+    // Group components by name to find conflicts
+    for (const component of this.discoveredComponents.values()) {
+      const name = component.name;
+      if (!conflicts.has(name)) {
+        conflicts.set(name, []);
+      }
+      conflicts.get(name)!.push(component);
+    }
+
+    // Resolve conflicts using priority system
+    for (const [name, componentList] of conflicts) {
+      if (componentList.length > 1) {
+        console.log(`⚠️  Resolving conflict for component "${name}" (${componentList.length} versions found)`);
+        
+        // Priority order: local > manual config > npm
+        const prioritized = componentList.sort((a, b) => {
+          const getPriority = (comp: EnhancedComponent) => {
+            if (comp.source.type === 'local') return 1; // Highest priority
+            if (comp.source.type === 'npm') return 2;
+            return 3; // Lowest priority for others
+          };
+          
+          return getPriority(a) - getPriority(b);
+        });
+
+        // Keep highest priority, remove others
+        const winner = prioritized[0];
+        const losers = prioritized.slice(1);
+        
+        for (const loser of losers) {
+          this.discoveredComponents.delete(loser.name);
+        }
+        
+        console.log(`✅ Kept ${winner.source.type} version of "${name}" from ${winner.source.path}`);
+      }
+    }
+  }
+
+  /**
+   * Log discovery summary for debugging
+   */
+  private logDiscoverySummary(components: EnhancedComponent[]): void {
+    const summary = components.reduce((acc, comp) => {
+      const sourceType = comp.source.type;
+      if (!acc[sourceType]) acc[sourceType] = 0;
+      acc[sourceType]++;
+      return acc;
+    }, {} as Record<string, number>);
+
+    console.log('📊 Component discovery summary:', summary);
   }
 
       /**
@@ -89,17 +161,49 @@ export class EnhancedComponentDiscovery {
   private identifySources(): ComponentSource[] {
     const sources: ComponentSource[] = [];
 
+    // Auto-discover ALL available design system packages (new!)
+    this.addDesignSystemPackages(sources);
+
     // Check for npm packages
-    // Skip dynamic discovery if components are manually configured
-    if (this.config.importPath && !this.config.importPath.startsWith('.') &&
-        (!this.config.components || this.config.components.length === 0)) {
+    // Always run dynamic discovery for design systems
+    if (this.config.importPath && !this.config.importPath.startsWith('.')) {
       sources.push({
         type: 'npm',
         path: this.config.importPath
       });
     }
 
+    // Also discover from layout components if specified
+    if (this.config.layoutComponents && this.config.layoutComponents.length > 0) {
+      const layoutImportPaths = new Set<string>();
+      for (const layoutComp of this.config.layoutComponents) {
+        if (layoutComp.importPath && !layoutComp.importPath.startsWith('.')) {
+          layoutImportPaths.add(layoutComp.importPath);
+        }
+      }
+      
+      for (const layoutPath of layoutImportPaths) {
+        sources.push({
+          type: 'npm',
+          path: layoutPath
+        });
+      }
+    }
+
+    // Check for design system preferred components
+    if (this.config.designSystemGuidelines?.preferredComponents) {
+      for (const [category, packagePath] of Object.entries(this.config.designSystemGuidelines.preferredComponents)) {
+        if (typeof packagePath === 'string' && !packagePath.startsWith('.')) {
+          sources.push({
+            type: 'npm',
+            path: packagePath
+          });
+        }
+      }
+    }
+
     // Check for local component directories
+    // 1. Manually configured componentsPath (highest priority)
     if (this.config.componentsPath && fs.existsSync(this.config.componentsPath)) {
       sources.push({
         type: 'local',
@@ -108,8 +212,41 @@ export class EnhancedComponentDiscovery {
       });
     }
 
-    // Check for TypeScript definitions
+    // 2. Auto-discover common React component directories from project root
     const projectRoot = this.getProjectRoot();
+    const commonComponentDirs = [
+      'src/components',
+      'src/ui',
+      'components',
+      'ui',
+      'src/lib/components',
+      'lib/components',
+      'src/shared/components',
+      'shared/components'
+    ];
+
+    for (const dir of commonComponentDirs) {
+      const fullPath = path.join(projectRoot, dir);
+      if (fs.existsSync(fullPath) && fullPath !== this.config.componentsPath) {
+        sources.push({
+          type: 'local',
+          path: fullPath,
+          patterns: ['*.tsx', '*.jsx', '*.ts', '*.js']
+        });
+      }
+    }
+
+    // 3. Scan alongside stories in src/stories directory (co-located components)
+    const storiesDir = path.join(projectRoot, 'src/stories');
+    if (fs.existsSync(storiesDir)) {
+      sources.push({
+        type: 'local', 
+        path: storiesDir,
+        patterns: ['*.tsx', '*.jsx'] // Only component files, not story files
+      });
+    }
+
+    // Check for TypeScript definitions
     const nodeModulesPath = path.join(projectRoot, 'node_modules');
     if (this.config.importPath && fs.existsSync(nodeModulesPath)) {
       const packagePath = path.join(nodeModulesPath, this.config.importPath);
@@ -129,6 +266,117 @@ export class EnhancedComponentDiscovery {
     }
 
     return sources;
+  }
+
+  /**
+   * Auto-discover all available design system packages in node_modules
+   */
+  private addDesignSystemPackages(sources: ComponentSource[]): void {
+    const projectRoot = this.getProjectRoot();
+    const nodeModulesPath = path.join(projectRoot, 'node_modules');
+    
+    if (!fs.existsSync(nodeModulesPath)) {
+      console.log('⚠️ No node_modules found, skipping auto-discovery');
+      return;
+    }
+
+    // Detect design system type and scan appropriate packages
+    const designSystemScopes = [
+      '@atlaskit',    // Atlassian Design System
+      '@mui',         // Material-UI
+      '@chakra-ui',   // Chakra UI
+      '@shopify',     // Polaris
+      '@mantine',     // Mantine
+      '@nextui-org',  // NextUI
+      '@headlessui',  // Headless UI
+      '@radix-ui',    // Radix UI
+    ];
+
+    for (const scope of designSystemScopes) {
+      const scopePath = path.join(nodeModulesPath, scope);
+      
+      if (fs.existsSync(scopePath)) {
+        console.log(`🔍 Auto-discovering ${scope} packages...`);
+        
+        try {
+          const packages = fs.readdirSync(scopePath, { withFileTypes: true })
+            .filter(entry => entry.isDirectory() && !entry.name.startsWith('.'))
+            .map(entry => `${scope}/${entry.name}`);
+
+          console.log(`📦 Found ${packages.length} ${scope} packages`);
+          
+          // Filter to likely component packages (skip utilities, types, etc.)
+          const componentPackages = packages.filter(pkg => this.isLikelyComponentPackage(pkg));
+          
+          console.log(`✅ ${componentPackages.length} packages identified as component packages`);
+          
+          // Add as discovery sources, but with lower priority than manual config
+          for (const packageName of componentPackages) {
+            // Skip packages already added from config
+            const alreadyAdded = sources.some(s => s.path === packageName);
+            if (!alreadyAdded) {
+              sources.push({
+                type: 'npm',
+                path: packageName
+              });
+            }
+          }
+          
+        } catch (error) {
+          console.warn(`Failed to scan ${scope} packages:`, error);
+        }
+      }
+    }
+  }
+
+  /**
+   * Check if a package is likely to contain React components (not utilities, types, etc.)
+   */
+  private isLikelyComponentPackage(packageName: string): boolean {
+    const name = packageName.toLowerCase();
+    
+    // Skip obvious utility packages
+    const utilityPatterns = [
+      'types',
+      'utils', 'util', 'utilities',
+      'helpers', 'constants', 'config',
+      'analytics', 'tracking', 'metrics',
+      'tokens', 'theme', 'styles', 'css',
+      'icons', 'icon', // Icons are usually too numerous and specific
+      'editor-', // Editor plugins are usually too specific
+      'smart-card', // Requires SmartCardProvider wrapper - too complex for simple stories
+      '-types', '-utils', '-constants',
+      'babel-', 'webpack-', 'rollup-', 'eslint-',
+      'test', 'mock', 'fixture', 'storybook',
+      'codemod', 'migration',
+      'build', 'dev', 'cli'
+    ];
+
+    // Skip if contains utility patterns
+    if (utilityPatterns.some(pattern => name.includes(pattern))) {
+      return false;
+    }
+
+    // Skip very specific/internal packages for Atlassian
+    if (name.startsWith('@atlaskit/')) {
+      const atlaskitSpecific = [
+        'activity-provider', 'adf-', 'analytics-', 'app-provider',
+        'atlassian-context', 'browser-apis', 'chunkinator', 'comment',
+        'css-reset', 'ds-lib', 'dynamic-table', 'editor-', 'emoji',
+        'fabric-', 'feature-', 'growth-', 'help-', 'jira-', 'media-',
+        'mention-', 'navigation-', 'onboarding-', 'page-', 'people-',
+        'product-', 'pubsub-', 'react-beautiful-dnd', 'reduced-ui-pack',
+        'renderer-', 'search-', 'service-', 'smart-', 'status-', 'task-',
+        'teams-', 'theme-', 'tree-', 'ufo-', 'user-picker', 'util-',
+        'webdriver-'
+      ];
+      
+      if (atlaskitSpecific.some(pattern => name.includes(pattern))) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
     /**
@@ -151,7 +399,7 @@ export class EnhancedComponentDiscovery {
     const packageExports = await dynamicDiscovery.getRealPackageExports();
 
     if (!packageExports) {
-      console.warn(`❌ Could not discover components from ${source.path}, falling back to predefined list`);
+      console.log(`📋 ${source.path}: Using static component list (design system detected)`);
       // Fallback to predefined components if dynamic discovery fails
       const knownComponents = this.getKnownDesignSystemComponents(source.path);
       if (knownComponents.length > 0) {
@@ -342,7 +590,7 @@ export class EnhancedComponentDiscovery {
           { name: 'Avatar', category: 'content', description: 'User avatar', props: ['customer', 'size', 'name', 'initials', 'source'] },
 
           // Feedback
-          { name: 'Banner', category: 'feedback', description: 'Notification banner', props: ['title', 'tone', 'onDismiss', 'action'] },
+          { name: 'Banner', category: 'feedback', description: 'Notification banner - Does NOT accept children', props: ['title', 'tone', 'onDismiss', 'action'] },
           { name: 'Modal', category: 'feedback', description: 'Modal dialog', props: ['open', 'onClose', 'title', 'primaryAction', 'secondaryActions'] },
           { name: 'Toast', category: 'feedback', description: 'Toast notification', props: ['content', 'error', 'onDismiss', 'duration'] },
           { name: 'Tooltip', category: 'feedback', description: 'Tooltip component', props: ['content', 'preferredPosition', 'active'] },
@@ -355,6 +603,7 @@ export class EnhancedComponentDiscovery {
           { name: 'SkeletonBodyText', category: 'content', description: 'Body text skeleton', props: ['lines'] },
           { name: 'SkeletonDisplayText', category: 'content', description: 'Display text skeleton', props: ['size'] }
         ];
+
 
     }
 
@@ -372,12 +621,17 @@ export class EnhancedComponentDiscovery {
     const files = this.findComponentFiles(source.path, source.patterns || ['*.tsx', '*.jsx']);
 
     for (const file of files) {
+      // Skip story files, test files, and other non-component files
+      if (this.isNonComponentFile(file)) {
+        continue;
+      }
+
       const content = fs.readFileSync(file, 'utf-8');
       const componentName = this.extractComponentName(file, content);
 
       if (componentName && !this.discoveredComponents.has(componentName)) {
-        // Skip Story UI components
-        if (componentName === 'StoryUIPanel' || componentName.startsWith('StoryUI')) {
+        // Skip Story UI components and other internal components
+        if (this.shouldSkipComponent(componentName, content)) {
           continue;
         }
 
@@ -395,6 +649,46 @@ export class EnhancedComponentDiscovery {
         });
       }
     }
+  }
+
+  /**
+   * Check if a file should be skipped (stories, tests, etc.)
+   */
+  private isNonComponentFile(filePath: string): boolean {
+    const fileName = path.basename(filePath);
+    const skipPatterns = [
+      /\.stories?\.(tsx?|jsx?)$/i,    // Story files
+      /\.test\.(tsx?|jsx?)$/i,        // Test files
+      /\.spec\.(tsx?|jsx?)$/i,        // Spec files
+      /\.d\.ts$/i,                    // Type definition files
+      /index\.(tsx?|jsx?)$/i,         // Index files (usually just exports)
+      /\.config\.(tsx?|jsx?)$/i,      // Config files
+      /\.mock\.(tsx?|jsx?)$/i,        // Mock files
+    ];
+
+    return skipPatterns.some(pattern => pattern.test(fileName));
+  }
+
+  /**
+   * Check if a component should be skipped based on name or content
+   */
+  private shouldSkipComponent(componentName: string, content: string): boolean {
+    // Skip Story UI components
+    if (componentName === 'StoryUIPanel' || componentName.startsWith('StoryUI')) {
+      return true;
+    }
+
+    // Skip components that look like story exports
+    if (componentName.endsWith('Story') || componentName.endsWith('Example') || componentName.endsWith('Demo')) {
+      return true;
+    }
+
+    // Skip if content indicates it's not a proper component (e.g., just exports)
+    if (content.includes('export default meta') || content.includes('satisfies Meta')) {
+      return true;
+    }
+
+    return false;
   }
 
   /**
@@ -602,8 +896,30 @@ export class EnhancedComponentDiscovery {
    * Apply manual component configurations
    */
   private applyManualConfigurations(): void {
+    // Add main components from config
     if (this.config.components && Array.isArray(this.config.components)) {
       for (const comp of this.config.components) {
+        const existing = this.discoveredComponents.get(comp.name);
+
+        this.discoveredComponents.set(comp.name, {
+          name: comp.name,
+          filePath: '',
+          props: comp.props || existing?.props || [],
+          source: {
+            type: 'custom-elements',
+            path: 'manual-config'
+          },
+          description: comp.description || existing?.description || `${comp.name} component`,
+          category: comp.category || existing?.category || this.categorizeComponent(comp.name, ''),
+          slots: comp.slots || existing?.slots || [],
+          examples: comp.examples || existing?.examples || []
+        });
+      }
+    }
+
+    // Add layout components from config
+    if (this.config.layoutComponents && Array.isArray(this.config.layoutComponents)) {
+      for (const comp of this.config.layoutComponents) {
         const existing = this.discoveredComponents.get(comp.name);
 
         this.discoveredComponents.set(comp.name, {

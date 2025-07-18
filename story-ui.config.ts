@@ -37,6 +37,32 @@ export interface AdditionalImport {
 
 
 
+// Design system guidelines configuration
+export interface DesignSystemGuidelines {
+  name: string;
+  preferredComponents?: {
+    [category: string]: string; // category -> package path
+  };
+  spacingTokens?: {
+    prefix: string;
+    values: string[];
+  };
+  colorTokens?: {
+    prefix: string;
+    categories: string[];
+  };
+  prohibitedPatterns?: {
+    cssFrameworks?: string[];
+    classNamePatterns?: string[];
+    inlineStyles?: string[];
+  };
+  enforcementRules?: {
+    requireDesignTokens?: boolean;
+    prohibitArbitraryValues?: boolean;
+    enforceComponentLibrary?: boolean;
+  };
+}
+
 // Main Story UI configuration interface
 export interface StoryUIConfig {
   generatedStoriesPath: string;
@@ -47,6 +73,7 @@ export interface StoryUIConfig {
   importPath: string;
   componentPrefix: string;
   components: ComponentConfig[];
+  layoutComponents?: ComponentConfig[]; // Layout-specific components
   layoutRules: LayoutRules;
   sampleStory: string;
   systemPrompt?: string;
@@ -55,6 +82,7 @@ export interface StoryUIConfig {
   additionalImports?: AdditionalImport[];
   considerationsPath?: string;
   storybookFramework?: string; // e.g., '@storybook/react-vite', '@storybook/react-webpack5', '@storybook/nextjs'
+  designSystemGuidelines?: DesignSystemGuidelines;
 }
 
 // Default generic configuration

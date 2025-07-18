@@ -147,15 +147,78 @@ export function validateConfig(config: StoryUIConfig): { isValid: boolean; error
     errors.push(`Components metadata path does not exist: ${config.componentsMetadataPath}`);
   }
 
-  // Check import path - but allow actual library names like 'antd'
-  if (!config.importPath || config.importPath === 'your-component-library' || config.importPath.trim() === '') {
-    errors.push('importPath must be configured to point to your component library');
+  // Check import path - but allow it to be optional if auto-discovery will find local components
+  const hasManualImportPath = config.importPath && 
+    config.importPath !== 'your-component-library' && 
+    config.importPath.trim() !== '';
+  
+  const hasLocalComponents = checkForLocalComponents(config);
+  const hasManualComponents = config.components && config.components.length > 0;
+  
+  if (!hasManualImportPath && !hasLocalComponents && !hasManualComponents) {
+    errors.push('Either importPath must be configured, or local components must be available for auto-discovery');
   }
 
   return {
     isValid: errors.length === 0,
     errors
   };
+}
+
+/**
+ * Check if local components are available for auto-discovery
+ */
+function checkForLocalComponents(config: StoryUIConfig): boolean {
+  // Get project root from generated stories path
+  let projectRoot = process.cwd();
+  
+  if (config.generatedStoriesPath) {
+    let currentPath = path.resolve(config.generatedStoriesPath);
+    while (currentPath !== path.dirname(currentPath)) {
+      if (fs.existsSync(path.join(currentPath, 'package.json'))) {
+        projectRoot = currentPath;
+        break;
+      }
+      currentPath = path.dirname(currentPath);
+    }
+  }
+
+  // Check for manually configured components path
+  if (config.componentsPath && fs.existsSync(config.componentsPath)) {
+    return true;
+  }
+
+  // Check for common React component directories
+  const commonComponentDirs = [
+    'src/components',
+    'src/ui', 
+    'components',
+    'ui',
+    'src/lib/components',
+    'lib/components',
+    'src/shared/components',
+    'shared/components'
+  ];
+
+  for (const dir of commonComponentDirs) {
+    const fullPath = path.join(projectRoot, dir);
+    if (fs.existsSync(fullPath)) {
+      // Check if it contains React component files
+      try {
+        const files = fs.readdirSync(fullPath);
+        const hasComponents = files.some(file => 
+          file.endsWith('.tsx') || file.endsWith('.jsx')
+        );
+        if (hasComponents) {
+          return true;
+        }
+      } catch (error) {
+        // Ignore errors and continue checking
+      }
+    }
+  }
+
+  return false;
 }
 
 /**

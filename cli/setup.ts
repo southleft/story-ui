@@ -5,6 +5,7 @@ import chalk from 'chalk';
 import { autoDetectDesignSystem } from '../story-generator/configLoader.js';
 import { fileURLToPath } from 'url';
 import net from 'net';
+import { execSync } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -337,6 +338,11 @@ export async function setupCommand() {
       if (answers.apiKey) {
         envContent = envContent.replace('your-claude-api-key-here', answers.apiKey);
       }
+      
+      // Update the VITE_STORY_UI_PORT with the chosen port
+      if (answers.mcpPort) {
+        envContent = envContent.replace('VITE_STORY_UI_PORT=4001', `VITE_STORY_UI_PORT=${answers.mcpPort}`);
+      }
 
       fs.writeFileSync(envPath, envContent);
       console.log(chalk.green(`✅ Created .env file${answers.apiKey ? ' with your API key' : ''}`));
@@ -386,8 +392,56 @@ export async function setupCommand() {
     }
 
     packageJson.scripts = scripts;
+    
+    // Check and add required dependencies
+    const dependencies = packageJson.dependencies || {};
+    const devDependencies = packageJson.devDependencies || {};
+    let needsInstall = false;
+    
+    // Check for react-icons
+    if (!dependencies['react-icons'] && !devDependencies['react-icons']) {
+      console.log(chalk.blue('📦 Adding react-icons dependency...'));
+      dependencies['react-icons'] = '^5.5.0';
+      needsInstall = true;
+    }
+    
+    // Check for concurrently (needed for storybook-with-ui script)
+    if (!dependencies['concurrently'] && !devDependencies['concurrently']) {
+      console.log(chalk.blue('📦 Adding concurrently dependency...'));
+      devDependencies['concurrently'] = '^8.2.0';
+      needsInstall = true;
+    }
+    
+    packageJson.dependencies = dependencies;
+    packageJson.devDependencies = devDependencies;
+    
     fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + '\n');
     console.log(chalk.green('✅ Added convenience scripts to package.json'));
+    
+    if (needsInstall) {
+      console.log(chalk.blue('\n📦 Installing required dependencies...'));
+      console.log(chalk.gray('This may take a moment...\n'));
+      
+      // Detect package manager
+      const npmLock = fs.existsSync(path.join(process.cwd(), 'package-lock.json'));
+      const yarnLock = fs.existsSync(path.join(process.cwd(), 'yarn.lock'));
+      const pnpmLock = fs.existsSync(path.join(process.cwd(), 'pnpm-lock.yaml'));
+      
+      let installCommand = 'npm install';
+      if (yarnLock) {
+        installCommand = 'yarn install';
+      } else if (pnpmLock) {
+        installCommand = 'pnpm install';
+      }
+      
+      try {
+        execSync(installCommand, { stdio: 'inherit' });
+        console.log(chalk.green('✅ Dependencies installed successfully'));
+      } catch (error) {
+        console.log(chalk.yellow('⚠️  Failed to install dependencies automatically.'));
+        console.log(chalk.yellow(`   Please run "${installCommand}" manually to complete the setup.`));
+      }
+    }
   }
 
   // Check if documentation scraping is supported for this design system

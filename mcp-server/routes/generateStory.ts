@@ -582,23 +582,24 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       );
     }
 
-    // Check if there's an existing story with this title or prompt
-    const existingByTitle = storyTracker.findByTitle(aiTitle);
-    const existingByPrompt = storyTracker.findByPrompt(prompt);
-    const existingStory = existingByTitle || existingByPrompt;
+    // Check if this is an update to an existing story
+    // ONLY consider it an update if we're in the same conversation context
+    let existingStory = null;
+    if (isUpdate && fileName) {
+      // When updating within a conversation, look for the story by fileName
+      existingStory = storyTracker.findByTitle(aiTitle);
+      if (existingStory && existingStory.fileName !== fileName) {
+        // If found story has different fileName, it's not the same story
+        existingStory = null;
+      }
+    }
+    // Remove the automatic "find by prompt" logic that was preventing duplicates
 
     // Generate unique ID and filename
     let hash, finalFileName, storyId;
     let isActuallyUpdate = false;
 
-    if (existingStory) {
-      // Use existing story's details to update instead of creating duplicate
-      console.log(`Found existing story "${existingStory.title}" - updating instead of creating new`);
-      hash = existingStory.hash;
-      finalFileName = existingStory.fileName;
-      storyId = existingStory.storyId;
-      isActuallyUpdate = true;
-    } else if (isUpdate && fileName) {
+    if (isUpdate && fileName) {
       // For conversation-based updates, use existing fileName and ID
       finalFileName = fileName;
       // Extract hash from existing fileName if possible
@@ -607,10 +608,12 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       storyId = `story-${hash}`;
       isActuallyUpdate = true;
     } else {
-      // For new stories, generate new IDs
-      hash = crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 8);
+      // For new stories, ALWAYS generate new IDs with timestamp to ensure uniqueness
+      const timestamp = Date.now();
+      hash = crypto.createHash('sha1').update(prompt + timestamp).digest('hex').slice(0, 8);
       finalFileName = fileName || fileNameFromTitle(aiTitle, hash);
       storyId = `story-${hash}`;
+      isActuallyUpdate = false;
     }
 
     if (isProduction) {

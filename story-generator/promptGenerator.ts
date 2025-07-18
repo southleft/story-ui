@@ -45,6 +45,8 @@ function generateSystemPrompt(config: StoryUIConfig): string {
 
   return `🚨 CRITICAL: EVERY STORY MUST START WITH "import React from 'react';" AS THE FIRST LINE 🚨
 
+🔴 CRITICAL RULE: NEVER use children in args for ANY component or layout. Always use render functions. 🔴
+
 You are an expert UI developer creating Storybook stories. Use ONLY the React components from the ${componentSystemName} listed below.
 
 🔴 MANDATORY FIRST LINE - NO EXCEPTIONS:
@@ -95,7 +97,23 @@ IMPORTANT IMAGE RULES:
 - When using image components or <img> tags, ALWAYS include a src attribute
 - Use Lorem Picsum for all placeholder images: https://picsum.photos/[width]/[height] (e.g., https://picsum.photos/300/200)
 - You can add random variation with: https://picsum.photos/300/200?random=1
-- Never create <img> tags without a src attribute`;
+- Never create <img> tags without a src attribute
+
+STORY STRUCTURE RULES:
+- NEVER pass children through args for ANY component - this breaks story rendering
+- Always use render functions: render: () => (<YourLayout />)
+- For layouts with multiple components, DO NOT set component in meta
+- Only set component in meta when showcasing a SINGLE component's variations
+- Examples of what NOT to do:
+  ❌ args: { children: <div>content</div> }
+  ❌ args: { children: (<><Component1 /><Component2 /></>) }
+  ✅ render: () => (<div><Component1 /><Component2 /></div>)
+
+SPACING AND LAYOUT RULES:
+- Use the layout components provided in the component library when available
+- If no layout components are available, use appropriate HTML elements with inline styles
+- Follow the design system's spacing and styling conventions
+- Use the component library's design tokens and spacing system when available`;
 }
 
 /**
@@ -164,6 +182,7 @@ function formatComponentReference(component: DiscoveredComponent, config: StoryU
     }
   }
 
+
   reference += '\n';
   return reference;
 }
@@ -180,7 +199,7 @@ function generateLayoutInstructions(config: StoryUIConfig): string[] {
     instructions.push(`- For ANY multi-column layout (2, 3, or more columns), use ${layoutRules.multiColumnWrapper} components`);
     instructions.push(`- Each column must be wrapped in its own ${layoutRules.columnComponent} element`);
     instructions.push(`- Structure: <${layoutRules.multiColumnWrapper}><${layoutRules.columnComponent}>column 1</${layoutRules.columnComponent}><${layoutRules.columnComponent}>column 2</${layoutRules.columnComponent}></${layoutRules.multiColumnWrapper}>`);
-    instructions.push(`- NEVER use inline styles or style prop - use the component's built-in props for layout and styling`);
+    instructions.push(`- Use component library styling approach (className, style props, or design tokens as appropriate)`);
     instructions.push(`- NEVER use CSS properties as props (like display="grid" or gridTemplateColumns) - these are not valid props`);
     instructions.push(`- For grid-like layouts, use Flex with wrap prop and appropriate gap, NOT CSS Grid`);
     instructions.push(`- The ${layoutRules.multiColumnWrapper} should be the main component in your story for multi-column layouts`);
@@ -234,6 +253,50 @@ function generateExamples(config: StoryUIConfig): string[] {
     examples.push('// For different random images:');
     examples.push('<img src="https://picsum.photos/400/300?random=1" alt="Random image" style={{width: "100%", height: "auto"}} />');
     examples.push('');
+    
+    // Add proper story structure examples
+    examples.push('Proper story structure examples:');
+    examples.push('');
+    examples.push('// CORRECT - Layout with multiple components:');
+    examples.push('const meta = {');
+    examples.push('  title: "Generated/Homepage Hero",');
+    examples.push('  parameters: { layout: "fullscreen" },');
+    examples.push('  // NO component field for layouts!');
+    examples.push('} satisfies Meta;');
+    examples.push('');
+    examples.push('export const Default: Story = {');
+    examples.push('  render: () => (');
+    examples.push('    <div>');
+    examples.push('      <Banner title="Sale!" variant="success" />');
+    examples.push('      <div className="hero-section">');
+    examples.push('        <h1>Welcome</h1>');
+    examples.push('      </div>');
+    examples.push('    </div>');
+    examples.push('  )');
+    examples.push('};');
+    examples.push('');
+    examples.push('// WRONG - Never use children in args:');
+    examples.push('export const Wrong: Story = {');
+    examples.push('  args: {');
+    examples.push('    children: ( // ❌ NEVER DO THIS');
+    examples.push('      <div>content</div>');
+    examples.push('    )');
+    examples.push('  }');
+    examples.push('};');
+    examples.push('');
+    examples.push('// CORRECT - Single component showcase:');
+    examples.push('const meta = {');
+    examples.push('  title: "Generated/Banner Variations",');
+    examples.push('  component: Banner, // ✓ OK for single component');
+    examples.push('} satisfies Meta<typeof Banner>;');
+    examples.push('');
+    examples.push('export const InfoBanner: Story = {');
+    examples.push('  args: {');
+    examples.push('    title: "Information",');
+    examples.push('    variant: "info"');
+    examples.push('  }');
+    examples.push('};');
+    examples.push('');
   }
 
   return examples;
@@ -255,27 +318,51 @@ function generateDefaultSampleStory(config: StoryUIConfig, components: Discovere
 
   const importStatement = `import { ${imports.join(', ')} } from '${config.importPath}';`;
 
-  let children = '';
+  let renderContent = '';
   if (layoutComponent && sectionComponent) {
-    children = `
-      <${layoutComponent.name}>
-        <${sectionComponent.name}>
-          ${contentComponent ? `<${contentComponent.name}>Sample content</${contentComponent.name}>` : 'Sample content'}
-        </${sectionComponent.name}>
-      </${layoutComponent.name}>`;
+    renderContent = `
+    <${layoutComponent.name}>
+      <${sectionComponent.name}>
+        ${contentComponent ? `<${contentComponent.name}>Sample content</${contentComponent.name}>` : 'Sample content'}
+      </${sectionComponent.name}>
+    </${layoutComponent.name}>`;
   } else if (contentComponent) {
-    children = `<${contentComponent.name}>Sample content</${contentComponent.name}>`;
+    renderContent = `<${contentComponent.name}>Sample content</${contentComponent.name}>`;
   } else {
-    children = '<div>Sample content</div>';
+    renderContent = '<div>Sample content</div>';
   }
 
   const storybookFramework = config.storybookFramework || '@storybook/react';
-  return `import React from 'react';
+  
+  // For layouts, don't set a component in meta
+  const isLayout = layoutComponent || renderContent.includes('<div');
+  
+  if (isLayout) {
+    return `import React from 'react';
 import type { Meta, StoryObj } from '${storybookFramework}';
 ${importStatement}
 
 const meta = {
   title: 'Generated/Sample Layout',
+  parameters: {
+    layout: 'centered',
+  },
+} satisfies Meta;
+
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+export const Default: Story = {
+  render: () => (${renderContent}
+  )
+};`
+  } else {
+    return `import React from 'react';
+import type { Meta, StoryObj } from '${storybookFramework}';
+${importStatement}
+
+const meta = {
+  title: 'Generated/Sample Component',
   component: ${mainComponent},
   parameters: {
     layout: 'centered',
@@ -287,10 +374,10 @@ type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {
   args: {
-    children: (${children}
-    )
+    // Add component props here
   }
 };`
+  }
 }
 
 /**
@@ -309,13 +396,13 @@ export async function buildClaudePrompt(
   ];
 
   // Load documentation - try new directory-based approach first
-  const projectRoot = config.considerationsPath ? 
-    config.considerationsPath.replace(/\/story-ui-considerations\.(md|json)$/, '') : 
+  const projectRoot = config.considerationsPath ?
+    config.considerationsPath.replace(/\/story-ui-considerations\.(md|json)$/, '') :
     process.cwd();
-  
+
   const docLoader = new DocumentationLoader(projectRoot);
   let documentationAdded = false;
-  
+
   if (docLoader.hasDocumentation()) {
     const docs = await docLoader.loadDocumentation();
     if (docs.sources.length > 0) {
@@ -327,7 +414,7 @@ export async function buildClaudePrompt(
       }
     }
   }
-  
+
   // Fall back to legacy considerations file if no directory-based docs
   if (!documentationAdded) {
     const considerations = loadConsiderations(config.considerationsPath);
@@ -351,23 +438,40 @@ export async function buildClaudePrompt(
   // Add additional imports information if configured
   if (config.additionalImports && config.additionalImports.length > 0) {
     promptParts.push('');
-    promptParts.push('Additional imports available:');
+    promptParts.push('ADDITIONAL IMPORT EXAMPLES - COPY THESE EXACTLY:');
     config.additionalImports.forEach(additionalImport => {
-      promptParts.push(`- From '${additionalImport.path}': ${additionalImport.components.join(', ')}`);
+      // For each import path, show the exact syntax
+      const componentExamples = additionalImport.components.map(componentName => {
+        // Check if this component has specific import type information
+        // Look in both components and layoutComponents arrays
+        let componentConfig = config.components?.find(c => c.name === componentName);
+        if (!componentConfig) {
+          componentConfig = config.layoutComponents?.find(c => c.name === componentName);
+        }
+        
+        // Use runtime check for importType since it may not be in TypeScript interface
+        if (componentConfig && (componentConfig as any).importType === 'default') {
+          return `import ${componentName} from '${additionalImport.path}';`;
+        } else {
+          return `import { ${componentName} } from '${additionalImport.path}';`;
+        }
+      });
+      
+      componentExamples.forEach(example => {
+        promptParts.push(`- ${example}`);
+      });
     });
   }
 
   // Icons and other specific imports should be handled through additionalImports or considerations
 
-  // Add critical structure instructions for multi-column layouts
-  if (config.layoutRules.multiColumnWrapper && config.layoutRules.columnComponent) {
-    promptParts.push(
-      `CRITICAL: For multi-column layouts, the children prop must contain the ${config.layoutRules.multiColumnWrapper} component with proper props.`,
-      `WRONG: children: (<><${config.layoutRules.columnComponent}>...</${config.layoutRules.columnComponent}><${config.layoutRules.columnComponent}>...</${config.layoutRules.columnComponent}></>)`,
-      `CORRECT: children: (<${config.layoutRules.multiColumnWrapper}><${config.layoutRules.columnComponent}>...</${config.layoutRules.columnComponent}><${config.layoutRules.columnComponent}>...</${config.layoutRules.columnComponent}></${config.layoutRules.multiColumnWrapper}>)`,
-      ''
-    );
-  }
+  // Reinforce NO children in args rule
+  promptParts.push(
+    '',
+    '🔴 CRITICAL REMINDER: NEVER use children in args 🔴',
+    'Always use render functions for any layout or component composition.',
+    ''
+  );
 
   promptParts.push(
     `Output a complete Storybook story file in TypeScript. Import components from "${config.importPath}". Use the following sample as a template. Respond ONLY with a single code block containing the full file, and nothing else.`,
@@ -393,6 +497,11 @@ export async function buildClaudePrompt(
     '- Keep the story concise and focused - avoid overly complex layouts that might exceed token limits',
     '- Ensure all JSX tags are properly closed',
     '- Story must be complete and syntactically valid',
+    '- CRITICAL: Never put ANY content in args.children - always use render function',
+    '- Use render functions for ALL layouts and component compositions',
+    '- For layouts: DO NOT set component in meta',
+    '- Only set component in meta when showcasing a SINGLE component',
+    '- Use appropriate styling for the component library (design tokens, className, or inline styles as needed)',
     '</rules>',
     '',
     'Sample story format:',
