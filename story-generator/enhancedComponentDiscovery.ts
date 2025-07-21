@@ -282,8 +282,7 @@ export class EnhancedComponentDiscovery {
 
     // Detect design system type and scan appropriate packages
     const designSystemScopes = [
-      '@atlaskit',    // Atlassian Design System
-      '@mui',         // Material-UI
+      '@base_ui',     // Base UI
       '@chakra-ui',   // Chakra UI
       '@shopify',     // Polaris
       '@mantine',     // Mantine
@@ -357,24 +356,6 @@ export class EnhancedComponentDiscovery {
       return false;
     }
 
-    // Skip very specific/internal packages for Atlassian
-    if (name.startsWith('@atlaskit/')) {
-      const atlaskitSpecific = [
-        'activity-provider', 'adf-', 'analytics-', 'app-provider',
-        'atlassian-context', 'browser-apis', 'chunkinator', 'comment',
-        'css-reset', 'ds-lib', 'dynamic-table', 'editor-', 'emoji',
-        'fabric-', 'feature-', 'growth-', 'help-', 'jira-', 'media-',
-        'mention-', 'navigation-', 'onboarding-', 'page-', 'people-',
-        'product-', 'pubsub-', 'react-beautiful-dnd', 'reduced-ui-pack',
-        'renderer-', 'search-', 'service-', 'smart-', 'status-', 'task-',
-        'teams-', 'theme-', 'tree-', 'ufo-', 'user-picker', 'util-',
-        'webdriver-'
-      ];
-      
-      if (atlaskitSpecific.some(pattern => name.includes(pattern))) {
-        return false;
-      }
-    }
 
     return true;
   }
@@ -434,7 +415,8 @@ export class EnhancedComponentDiscovery {
         category: knownComp?.category || this.categorizeComponent(realComp.name, '') as any,
         props: knownComp?.props || [],
         slots: knownComp?.slots || [],
-        examples: knownComp?.examples || []
+        examples: knownComp?.examples || [],
+        __componentPath: realComp.__componentPath
       } as EnhancedComponent);
     }
 
@@ -445,169 +427,12 @@ export class EnhancedComponentDiscovery {
 
   /**
    * Get known components for popular design systems
+   * Returns empty array to rely on dynamic discovery
    */
   private getKnownDesignSystemComponents(packageName: string): Partial<EnhancedComponent>[] {
-    const components: Partial<EnhancedComponent>[] = [];
-
-    switch (packageName) {
-      case 'antd':
-      case 'ant-design':
-        return [
-          // Layout
-          { name: 'Layout', category: 'layout', description: 'Main layout wrapper' },
-          { name: 'Row', category: 'layout', description: 'Grid row for layouts' },
-          { name: 'Col', category: 'layout', description: 'Grid column for layouts' },
-          { name: 'Grid', category: 'layout', description: 'Grid layout component' },
-          { name: 'Space', category: 'layout', description: 'Spacing component' },
-          { name: 'Divider', category: 'layout', description: 'Divider line' },
-
-          // Data Display
-          { name: 'Table', category: 'content', description: 'Data table', props: ['dataSource', 'columns', 'pagination', 'loading'] },
-          { name: 'Card', category: 'content', description: 'Card container', props: ['title', 'extra', 'loading', 'bordered'] },
-          { name: 'Statistic', category: 'content', description: 'Statistical display', props: ['title', 'value', 'prefix', 'suffix'] },
-          { name: 'List', category: 'content', description: 'List display', props: ['dataSource', 'renderItem', 'loading'] },
-          { name: 'Badge', category: 'content', description: 'Badge for status', props: ['count', 'dot', 'status'] },
-          { name: 'Tag', category: 'content', description: 'Tag label', props: ['color', 'closable', 'icon'] },
-          { name: 'Avatar', category: 'content', description: 'User avatar', props: ['src', 'size', 'shape', 'icon'] },
-          { name: 'Progress', category: 'content', description: 'Progress bar', props: ['percent', 'status', 'type'] },
-
-          // Form
-          { name: 'Form', category: 'form', description: 'Form container', props: ['layout', 'onFinish', 'initialValues'] },
-          { name: 'Input', category: 'form', description: 'Text input', props: ['placeholder', 'value', 'onChange', 'size'] },
-          { name: 'Select', category: 'form', description: 'Select dropdown', props: ['options', 'value', 'onChange', 'placeholder'] },
-          { name: 'Button', category: 'form', description: 'Button', props: ['type', 'size', 'loading', 'icon', 'onClick'] },
-          { name: 'Switch', category: 'form', description: 'Toggle switch', props: ['checked', 'onChange', 'size'] },
-          { name: 'DatePicker', category: 'form', description: 'Date picker', props: ['value', 'onChange', 'format'] },
-
-          // Feedback
-          { name: 'Alert', category: 'feedback', description: 'Alert message', props: ['message', 'type', 'showIcon', 'closable'] },
-          { name: 'Modal', category: 'feedback', description: 'Modal dialog', props: ['title', 'visible', 'onOk', 'onCancel'] },
-          { name: 'Tooltip', category: 'feedback', description: 'Tooltip', props: ['title', 'placement'] },
-          { name: 'Dropdown', category: 'feedback', description: 'Dropdown menu', props: ['menu', 'placement', 'trigger'] },
-
-          // Navigation
-          { name: 'Menu', category: 'navigation', description: 'Navigation menu', props: ['items', 'mode', 'selectedKeys'] },
-          { name: 'Tabs', category: 'navigation', description: 'Tabbed navigation', props: ['items', 'activeKey', 'onChange'] },
-          { name: 'Breadcrumb', category: 'navigation', description: 'Breadcrumb navigation', props: ['items'] },
-          { name: 'Pagination', category: 'navigation', description: 'Pagination', props: ['current', 'total', 'pageSize', 'onChange'] }
-        ];
-
-      case '@mui/material':
-        return [
-          // Layout
-          { name: 'Box', category: 'layout', description: 'Basic layout box' },
-          { name: 'Container', category: 'layout', description: 'Responsive container' },
-          { name: 'Grid', category: 'layout', description: 'Grid layout', props: ['container', 'item', 'xs', 'sm', 'md', 'lg', 'xl'] },
-          { name: 'Stack', category: 'layout', description: 'Stack layout' },
-
-          // Surfaces
-          { name: 'Card', category: 'content', description: 'Card surface' },
-          { name: 'CardContent', category: 'content', description: 'Card content area' },
-          { name: 'Paper', category: 'content', description: 'Paper surface' },
-
-          // Data Display
-          { name: 'Typography', category: 'content', description: 'Text typography', props: ['variant', 'component'] },
-          { name: 'Table', category: 'content', description: 'Data table' },
-          { name: 'Chip', category: 'content', description: 'Chip component' },
-
-          // Inputs
-          { name: 'Button', category: 'form', description: 'Button', props: ['variant', 'color', 'size'] },
-          { name: 'TextField', category: 'form', description: 'Text input', props: ['label', 'variant', 'value', 'onChange'] },
-          { name: 'Select', category: 'form', description: 'Select dropdown' },
-          { name: 'Switch', category: 'form', description: 'Toggle switch' }
-        ];
-
-      case '@chakra-ui/react':
-        return [
-          // Layout
-          { name: 'Box', category: 'layout', description: 'Basic layout box' },
-          { name: 'Flex', category: 'layout', description: 'Flexbox layout' },
-          { name: 'Grid', category: 'layout', description: 'CSS Grid layout' },
-          { name: 'SimpleGrid', category: 'layout', description: 'Simple grid layout', props: ['columns', 'spacing'] },
-          { name: 'Stack', category: 'layout', description: 'Stack layout', props: ['direction', 'spacing'] },
-          { name: 'HStack', category: 'layout', description: 'Horizontal stack' },
-          { name: 'VStack', category: 'layout', description: 'Vertical stack' },
-
-          // Content
-          { name: 'Card', category: 'content', description: 'Card container' },
-          { name: 'Text', category: 'content', description: 'Text component' },
-          { name: 'Heading', category: 'content', description: 'Heading text' },
-          { name: 'Badge', category: 'content', description: 'Badge component' },
-
-          // Form
-          { name: 'Button', category: 'form', description: 'Button', props: ['colorScheme', 'size', 'variant'] },
-          { name: 'Input', category: 'form', description: 'Text input' },
-          { name: 'Select', category: 'form', description: 'Select dropdown' }
-        ];
-
-      case '@shopify/polaris':
-      case 'polaris':
-        return [
-          // Layout
-          { name: 'Box', category: 'layout', description: 'Layout box with padding and spacing control', props: ['padding', 'paddingInline', 'paddingBlock'] },
-          { name: 'BlockStack', category: 'layout', description: 'Vertical stack layout', props: ['gap', 'align', 'inlineAlign'] },
-          { name: 'InlineStack', category: 'layout', description: 'Horizontal stack layout', props: ['gap', 'align', 'blockAlign', 'wrap'] },
-          { name: 'InlineGrid', category: 'layout', description: 'Grid layout component', props: ['columns', 'gap'] },
-          { name: 'Grid', category: 'layout', description: 'CSS Grid layout', props: ['columns', 'gap'] },
-          { name: 'Layout', category: 'layout', description: 'Page layout component', props: ['sectioned'] },
-          { name: 'Divider', category: 'layout', description: 'Visual divider', props: ['borderColor'] },
-          { name: 'Bleed', category: 'layout', description: 'Negative margin component', props: ['marginInline', 'marginBlock'] },
-
-          // Surfaces
-          { name: 'Card', category: 'content', description: 'Card container', props: ['sectioned', 'subdued', 'actions', 'primaryFooterAction', 'secondaryFooterActions'] },
-          { name: 'LegacyCard', category: 'content', description: 'Legacy card component', props: ['title', 'sectioned', 'actions'] },
-          { name: 'CalloutCard', category: 'content', description: 'Callout card for important information', props: ['title', 'illustration', 'primaryAction'] },
-          { name: 'MediaCard', category: 'content', description: 'Card with media content', props: ['title', 'primaryAction', 'description', 'size'] },
-
-          // Navigation
-          { name: 'Breadcrumbs', category: 'navigation', description: 'Breadcrumb navigation', props: ['breadcrumbs'] },
-          { name: 'Link', category: 'navigation', description: 'Navigation link', props: ['url', 'external', 'monochrome'] },
-          { name: 'Pagination', category: 'navigation', description: 'Page navigation', props: ['hasPrevious', 'hasNext', 'onPrevious', 'onNext'] },
-          { name: 'LegacyTabs', category: 'navigation', description: 'Tabbed navigation', props: ['tabs', 'selected', 'onSelect'] },
-
-          // Actions
-          { name: 'Button', category: 'form', description: 'Action button', props: ['variant', 'tone', 'size', 'textAlign', 'fullWidth', 'loading', 'disabled', 'onClick'] },
-          { name: 'ButtonGroup', category: 'form', description: 'Group of buttons', props: ['segmented', 'fullWidth', 'variant'] },
-
-          // Form
-          { name: 'TextField', category: 'form', description: 'Text input field', props: ['label', 'value', 'onChange', 'error', 'helpText', 'placeholder', 'disabled', 'readOnly'] },
-          { name: 'Select', category: 'form', description: 'Select dropdown', props: ['label', 'options', 'value', 'onChange', 'error', 'helpText', 'placeholder', 'disabled'] },
-          { name: 'Checkbox', category: 'form', description: 'Checkbox input', props: ['label', 'checked', 'onChange', 'error', 'helpText', 'disabled'] },
-          { name: 'RadioButton', category: 'form', description: 'Radio button input', props: ['label', 'checked', 'onChange', 'disabled'] },
-          { name: 'ChoiceList', category: 'form', description: 'List of choices', props: ['title', 'choices', 'selected', 'onChange', 'allowMultiple'] },
-          { name: 'Form', category: 'form', description: 'Form container', props: ['onSubmit', 'noValidate'] },
-          { name: 'FormLayout', category: 'form', description: 'Form layout helper', props: ['children'] },
-
-          // Data Display
-          { name: 'Text', category: 'content', description: 'Text component', props: ['variant', 'as', 'alignment', 'tone', 'textDecorationLine'] },
-          { name: 'List', category: 'content', description: 'List component', props: ['type', 'gap'] },
-          { name: 'DescriptionList', category: 'content', description: 'Description list', props: ['items', 'spacing'] },
-          { name: 'DataTable', category: 'content', description: 'Data table', props: ['columnContentTypes', 'headings', 'rows', 'sortable'] },
-          { name: 'IndexTable', category: 'content', description: 'Index table for resources', props: ['resourceName', 'itemCount', 'headings', 'selectable'] },
-          { name: 'Badge', category: 'content', description: 'Status badge', props: ['tone', 'progress', 'size'] },
-          { name: 'ProgressBar', category: 'content', description: 'Progress indicator', props: ['progress', 'size', 'tone'] },
-          { name: 'Thumbnail', category: 'content', description: 'Image thumbnail', props: ['source', 'alt', 'size'] },
-          { name: 'Avatar', category: 'content', description: 'User avatar', props: ['customer', 'size', 'name', 'initials', 'source'] },
-
-          // Feedback
-          { name: 'Banner', category: 'feedback', description: 'Notification banner - Does NOT accept children', props: ['title', 'tone', 'onDismiss', 'action'] },
-          { name: 'Modal', category: 'feedback', description: 'Modal dialog', props: ['open', 'onClose', 'title', 'primaryAction', 'secondaryActions'] },
-          { name: 'Toast', category: 'feedback', description: 'Toast notification', props: ['content', 'error', 'onDismiss', 'duration'] },
-          { name: 'Tooltip', category: 'feedback', description: 'Tooltip component', props: ['content', 'preferredPosition', 'active'] },
-          { name: 'Popover', category: 'feedback', description: 'Popover component', props: ['active', 'activator', 'onClose', 'preferredAlignment'] },
-          { name: 'Loading', category: 'feedback', description: 'Loading indicator', props: ['size'] },
-
-          // Utilities
-          { name: 'EmptyState', category: 'content', description: 'Empty state illustration', props: ['heading', 'action', 'secondaryAction', 'image'] },
-          { name: 'SkeletonPage', category: 'content', description: 'Page skeleton loader', props: ['title', 'breadcrumbs', 'primaryAction'] },
-          { name: 'SkeletonBodyText', category: 'content', description: 'Body text skeleton', props: ['lines'] },
-          { name: 'SkeletonDisplayText', category: 'content', description: 'Display text skeleton', props: ['size'] }
-        ];
-
-
-    }
-
-    return components;
+    // Return empty array to rely purely on dynamic component discovery
+    // This ensures we test the actual package scanning capabilities
+    return [];
   }
 
   /**

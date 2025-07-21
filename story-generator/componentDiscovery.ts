@@ -10,6 +10,7 @@ export interface DiscoveredComponent {
   category: 'layout' | 'content' | 'form' | 'navigation' | 'feedback' | 'other';
   slots?: string[];
   examples?: string[];
+  __componentPath?: string;
 }
 
 /**

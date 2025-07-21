@@ -7,6 +7,7 @@ export interface RealPackageComponent {
   name: string;
   isComponent: boolean;
   type: 'function' | 'class' | 'object' | 'unknown';
+  __componentPath?: string;
 }
 
 export interface PackageExports {
@@ -51,21 +52,76 @@ export class DynamicPackageDiscovery {
       const packageExports = await this.requirePackage(this.packageName);
 
       if (!packageExports) {
-        console.warn(`Could not require package ${this.packageName}`);
-        return null;
+        console.log(`🔄 Could not directly import ${this.packageName}, falling back to structure analysis`);
+        // Don't return null here - fall back to structure discovery
       }
 
-      const allExports = Object.keys(packageExports);
       const components: RealPackageComponent[] = [];
+      let allExports: string[] = [];
 
-      for (const exportName of allExports) {
-        const exportValue = packageExports[exportName];
-        const component: RealPackageComponent = {
-          name: exportName,
-          isComponent: this.isLikelyComponent(exportName, exportValue),
-          type: this.getExportType(exportValue)
-        };
-        components.push(component);
+      if (packageExports) {
+        // Successfully imported package - analyze exports
+        allExports = Object.keys(packageExports);
+
+        for (const exportName of allExports) {
+          const exportValue = packageExports[exportName];
+          const component: RealPackageComponent = {
+            name: exportName,
+            isComponent: this.isLikelyComponent(exportName, exportValue),
+            type: this.getExportType(exportValue),
+            __componentPath: exportValue?.__componentPath
+          };
+          components.push(component);
+        }
+        
+        // Check if we found any actual components
+        const componentCount = components.filter(c => c.isComponent).length;
+        console.log(`📋 Found ${componentCount} components in main ${this.packageName} export`);
+        
+        // If no components found in main export, fall back to structure analysis
+        if (componentCount === 0) {
+          console.log(`🔄 No components in main export, falling back to structure analysis for ${this.packageName}...`);
+          const structureExports = this.discoverFromPackageStructure();
+          
+          if (structureExports) {
+            const structureComponentNames = Object.keys(structureExports);
+            console.log(`📁 Structure analysis found ${structureComponentNames.length} components`);
+            
+            // Replace with structure-discovered components
+            allExports = structureComponentNames;
+            components.length = 0; // Clear the array
+            
+            for (const exportName of structureComponentNames) {
+              const structureExport = structureExports[exportName];
+              const component: RealPackageComponent = {
+                name: exportName,
+                isComponent: true, // Assume true since we filtered in structure discovery
+                type: 'function',
+                __componentPath: structureExport?.__componentPath
+              };
+              components.push(component);
+            }
+          }
+        }
+      } else {
+        // Failed to import - fall back to structure analysis
+        console.log(`📁 Import failed, analyzing package structure for ${this.packageName}...`);
+        const structureExports = this.discoverFromPackageStructure();
+        
+        if (structureExports) {
+          allExports = Object.keys(structureExports);
+          
+          for (const exportName of allExports) {
+            const structureExport = structureExports[exportName];
+            const component: RealPackageComponent = {
+              name: exportName,
+              isComponent: true, // Assume true since we filtered in structure discovery
+              type: 'function',
+              __componentPath: structureExport?.__componentPath
+            };
+            components.push(component);
+          }
+        }
       }
 
       console.log(`✅ Discovered ${components.filter(c => c.isComponent).length} components from ${this.packageName} v${packageVersion}`);
@@ -362,11 +418,12 @@ export class DynamicPackageDiscovery {
         this.extractExportsFromTypeDefinitions(fullTypingsPath, exports);
       }
 
-      // Method 3: Scan known Atlassian component patterns
-      if (this.packageName.startsWith('@atlaskit/')) {
-        console.log(`📋 Using Atlassian-specific discovery for ${this.packageName}`);
-        this.extractAtlaskitComponents(packagePath, exports);
+      // Method 3: Scan for component subdirectories (for packages like Base Web)
+      if (Object.keys(exports).length === 0) {
+        console.log(`📁 Scanning subdirectories for ${this.packageName} components...`);
+        this.scanComponentSubdirectories(packagePath, exports);
       }
+
 
       return Object.keys(exports).length > 0 ? exports : null;
 
@@ -374,6 +431,114 @@ export class DynamicPackageDiscovery {
       console.warn(`Alternative discovery failed for ${this.packageName}:`, error);
       return null;
     }
+  }
+
+  /**
+   * Scan package subdirectories for components (e.g., baseui/button, baseui/input)
+   */
+  private scanComponentSubdirectories(packagePath: string, result: any): void {
+    try {
+      console.log(`🔍 Scanning ${packagePath} for component subdirectories...`);
+      const entries = fs.readdirSync(packagePath, { withFileTypes: true });
+      console.log(`📁 Found ${entries.length} entries in ${packagePath}`);
+      
+      let componentDirsFound = 0;
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+        
+        componentDirsFound++;
+        
+        const subdirPath = path.join(packagePath, entry.name);
+        const indexTypingsPath = path.join(subdirPath, 'index.d.ts');
+        
+        // Check if this subdirectory has an index.d.ts (likely a component)
+        if (fs.existsSync(indexTypingsPath)) {
+          try {
+            const typingsContent = fs.readFileSync(indexTypingsPath, 'utf-8');
+            
+            // Look for component exports (functions/classes starting with uppercase)
+            const componentExports = this.extractComponentsFromTypings(typingsContent);
+            
+            if (componentExports.length > 0) {
+              console.log(`📦 Found ${componentExports.length} components in ${entry.name}/`);
+              
+              // Add each component to the result
+              for (const componentName of componentExports) {
+                // Create a mock export function for this component
+                result[componentName] = () => {};
+                result[componentName].displayName = componentName;
+                result[componentName].__componentPath = `${this.packageName}/${entry.name}`;
+              }
+            }
+          } catch (error) {
+            // Skip this subdirectory if we can't read its typings
+            continue;
+          }
+        }
+      }
+      
+      console.log(`✅ Scanned ${componentDirsFound} component directories for ${this.packageName}`);
+      console.log(`📦 Total components found in subdirectories: ${Object.keys(result).length}`);
+    } catch (error) {
+      console.warn(`Failed to scan subdirectories for ${this.packageName}:`, error);
+    }
+  }
+
+  /**
+   * Extract component names from TypeScript declaration content
+   */
+  private extractComponentsFromTypings(content: string): string[] {
+    const components: string[] = [];
+    
+    // Look for export statements with component-like names
+    const exportRegex = /export\s+{\s*([^}]+)\s*}/g;
+    const defaultExportRegex = /export\s+{\s*default\s+as\s+(\w+)\s*}/g;
+    const namedExportRegex = /export\s+.*?\s+(\w+)\s*(?:,|$)/g;
+    
+    let match;
+    
+    // Extract from export { ... } statements
+    while ((match = exportRegex.exec(content)) !== null) {
+      const exportsList = match[1];
+      const exports = exportsList.split(',').map(e => e.trim());
+      
+      for (const exp of exports) {
+        // Handle "default as ComponentName" pattern
+        const defaultAsMatch = exp.match(/default\s+as\s+(\w+)/);
+        if (defaultAsMatch) {
+          const componentName = defaultAsMatch[1];
+          if (this.isComponentName(componentName)) {
+            components.push(componentName);
+          }
+        } else {
+          // Handle regular export names
+          const cleanName = exp.replace(/\s+as\s+\w+/, '').trim();
+          if (this.isComponentName(cleanName)) {
+            components.push(cleanName);
+          }
+        }
+      }
+    }
+    
+    return [...new Set(components)]; // Remove duplicates
+  }
+
+  /**
+   * Check if a name looks like a React component
+   */
+  private isComponentName(name: string): boolean {
+    // Must start with uppercase letter
+    if (!/^[A-Z]/.test(name)) return false;
+    
+    // Skip constants and utilities
+    if (name.toUpperCase() === name) return false; // ALL_CAPS constants
+    if (name.startsWith('Styled')) return false; // Styled components (usually internal)
+    if (name.endsWith('Provider')) return false; // Context providers
+    if (name.endsWith('Context')) return false; // React contexts
+    if (name.endsWith('Type') || name.endsWith('Types')) return false; // Type definitions
+    
+    return true;
   }
 
   /**
@@ -396,7 +561,7 @@ export class DynamicPackageDiscovery {
           // Named export like "./Button" or "./components/Button"
           const componentName = key.replace('./', '').split('/').pop();
           if (componentName && /^[A-Z]/.test(componentName)) {
-            result[componentName] = `AtlaskitComponent_${componentName}`;
+            result[componentName] = `Component_${componentName}`;
             console.log(`📍 Found component export: ${componentName}`);
           }
         }
@@ -428,7 +593,7 @@ export class DynamicPackageDiscovery {
         while ((match = pattern.exec(content)) !== null) {
           const componentName = match[1];
           if (componentName && /^[A-Z]/.test(componentName)) {
-            result[componentName] = `AtlaskitComponent_${componentName}`;
+            result[componentName] = `Component_${componentName}`;
             console.log(`📍 Found component in .d.ts: ${componentName}`);
           }
         }
@@ -438,54 +603,6 @@ export class DynamicPackageDiscovery {
     }
   }
 
-  /**
-   * Use Atlassian-specific patterns to discover components
-   */
-  private extractAtlaskitComponents(packagePath: string, result: any): void {
-    // Common Atlassian component mapping based on package names
-    const atlaskitComponentMap: Record<string, string[]> = {
-      '@atlaskit/avatar': ['Avatar', 'AvatarGroup'],
-      '@atlaskit/badge': ['Badge'],
-      '@atlaskit/banner': ['Banner'],
-      '@atlaskit/breadcrumbs': ['Breadcrumbs', 'BreadcrumbsItem'],
-      '@atlaskit/button': ['Button', 'LoadingButton'],
-      '@atlaskit/checkbox': ['Checkbox'],
-      '@atlaskit/dropdown-menu': ['DropdownMenu', 'DropdownItem', 'DropdownItemGroup'],
-      '@atlaskit/flag': ['Flag', 'FlagGroup'],
-      '@atlaskit/form': ['Form', 'Field', 'FormSection', 'FormHeader', 'FormFooter'],
-      '@atlaskit/heading': ['Heading'],
-      '@atlaskit/icon': ['Icon'],
-      '@atlaskit/lozenge': ['Lozenge'],
-      '@atlaskit/menu': ['Menu', 'MenuGroup', 'MenuItem'],
-      '@atlaskit/modal-dialog': ['Modal', 'ModalBody', 'ModalFooter', 'ModalHeader'],
-      '@atlaskit/pagination': ['Pagination'],
-      '@atlaskit/popup': ['Popup'],
-      '@atlaskit/progress-indicator': ['ProgressIndicator'],
-      '@atlaskit/progress-tracker': ['ProgressTracker'],
-      '@atlaskit/radio': ['Radio', 'RadioGroup'],
-      '@atlaskit/range': ['Range'],
-      '@atlaskit/section-message': ['SectionMessage'],
-      '@atlaskit/select': ['Select', 'AsyncSelect', 'CreatableSelect'],
-      '@atlaskit/spinner': ['Spinner'],
-      '@atlaskit/table': ['Table'],
-      '@atlaskit/tabs': ['Tabs', 'Tab', 'TabList', 'TabPanel'],
-      '@atlaskit/tag': ['Tag', 'TagGroup'],
-      '@atlaskit/textarea': ['TextArea'],
-      '@atlaskit/textfield': ['Textfield'],
-      '@atlaskit/toggle': ['Toggle'],
-      '@atlaskit/tooltip': ['Tooltip'],
-      '@atlaskit/tree': ['Tree'],
-      '@atlaskit/primitives': ['Box', 'Grid', 'Flex', 'Stack', 'Inline', 'Text', 'Pressable'],
-    };
-
-    const components = atlaskitComponentMap[this.packageName];
-    if (components) {
-      console.log(`📍 Using known Atlassian components for ${this.packageName}: ${components.join(', ')}`);
-      for (const component of components) {
-        result[component] = `AtlaskitComponent_${component}`;
-      }
-    }
-  }
 }
 
 /**
