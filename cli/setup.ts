@@ -384,9 +384,9 @@ export async function setupCommand() {
       message: 'Which design system are you using?',
       choices: [
         { name: '🤖 Auto-detect from package.json', value: 'auto' },
-        { name: '🐜 Ant Design (antd) - Install & Configure', value: 'antd' },
-        { name: '🎯 Mantine (@mantine/core) - Install & Configure', value: 'mantine' },
-        { name: '⚡ Chakra UI (@chakra-ui/react) - Install & Configure', value: 'chakra' },
+        { name: '🐜 Ant Design (antd) - Automatic Install & Configure', value: 'antd' },
+        { name: '🎯 Mantine (@mantine/core) - Automatic Install & Configure', value: 'mantine' },
+        { name: '⚡ Chakra UI (@chakra-ui/react) - Automatic Install & Configure', value: 'chakra' },
         { name: '🔧 Custom/Other', value: 'custom' }
       ],
       default: autoDetected ? 'auto' : 'custom'
@@ -398,7 +398,8 @@ export async function setupCommand() {
         const systemName = answers.designSystem === 'antd' ? 'Ant Design' : 
                           answers.designSystem === 'mantine' ? 'Mantine' :
                           answers.designSystem === 'chakra' ? 'Chakra UI' : 'the design system';
-        return `🚨 IMPORTANT: Would you like to install ${systemName} packages now?\n   (Required for Storybook to work properly)`;
+        const config = DESIGN_SYSTEM_CONFIGS[answers.designSystem as keyof typeof DESIGN_SYSTEM_CONFIGS];
+        return `🚨 IMPORTANT: Would you like to install ${systemName} packages now?\n   Required packages: ${config.packages.join(', ')}\n   (Without these packages, Story UI and Storybook will not work properly)`;
       },
       when: (answers) => ['antd', 'mantine', 'chakra'].includes(answers.designSystem),
       default: true
