@@ -125,6 +125,7 @@ function setupStorybookPreview(designSystem: string) {
       imports: [
         "import type { Preview } from '@storybook/react-vite'",
         "import { MantineProvider } from '@mantine/core'",
+        "import '@mantine/core/styles.css'",
         "import React from 'react'"
       ],
       decorator: `(Story) => (
@@ -234,12 +235,59 @@ async function installDesignSystem(systemKey: keyof typeof DESIGN_SYSTEM_CONFIGS
   try {
     console.log(chalk.gray(`Running: ${installCommand}`));
     execSync(installCommand, { stdio: 'inherit' });
+    
+    // Verify installation was successful by re-checking package.json
+    const updatedPackageJson = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf-8'));
+    const updatedDeps = { ...updatedPackageJson.dependencies, ...updatedPackageJson.devDependencies };
+    const stillMissingPackages = config.packages.filter(pkg => !updatedDeps[pkg]);
+    
+    if (stillMissingPackages.length > 0) {
+      throw new Error(`Installation failed: packages still missing: ${stillMissingPackages.join(', ')}`);
+    }
+    
     console.log(chalk.green(`✅ ${config.name} installed successfully!`));
     
     if (config.additionalSetup) {
-      console.log(chalk.blue('\n📋 Additional setup required:'));
-      console.log(chalk.gray(`Add this import to your main CSS/index file:`));
-      console.log(chalk.cyan(`${config.additionalSetup}`));
+      // Try to automatically add CSS import for Mantine
+      if (systemKey === 'mantine') {
+        const cssFiles = [
+          path.join(process.cwd(), 'src', 'index.css'),
+          path.join(process.cwd(), 'src', 'main.css'),
+          path.join(process.cwd(), 'src', 'App.css')
+        ];
+        
+        let cssAdded = false;
+        for (const cssFile of cssFiles) {
+          if (fs.existsSync(cssFile)) {
+            try {
+              const cssContent = fs.readFileSync(cssFile, 'utf-8');
+              if (!cssContent.includes('@mantine/core/styles.css')) {
+                const newContent = `@import "@mantine/core/styles.css";\n\n${cssContent}`;
+                fs.writeFileSync(cssFile, newContent);
+                console.log(chalk.green(`✅ Added Mantine CSS import to ${path.relative(process.cwd(), cssFile)}`));
+                cssAdded = true;
+                break;
+              } else {
+                console.log(chalk.blue(`ℹ️ Mantine CSS already imported in ${path.relative(process.cwd(), cssFile)}`));
+                cssAdded = true;
+                break;
+              }
+            } catch (error) {
+              console.warn(chalk.yellow(`⚠️ Could not modify ${cssFile}:`, error));
+            }
+          }
+        }
+        
+        if (!cssAdded) {
+          console.log(chalk.blue('\n📋 Manual setup required:'));
+          console.log(chalk.gray(`Add this import to your main CSS file:`));
+          console.log(chalk.cyan(`${config.additionalSetup}`));
+        }
+      } else {
+        console.log(chalk.blue('\n📋 Additional setup required:'));
+        console.log(chalk.gray(`Add this import to your main CSS/index file:`));
+        console.log(chalk.cyan(`${config.additionalSetup}`));
+      }
     }
     
     return true;
