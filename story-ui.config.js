@@ -1,5 +1,5 @@
 module.exports = {
-  "generatedStoriesPath": "/Users/tjpitre/Sites/story-ui/src/stories/generated",
+  "generatedStoriesPath": "./src/stories/generated",
   "importPath": "@tpitre/story-ui",
   "componentPrefix": "",
   "layoutRules": {
@@ -12,7 +12,7 @@ module.exports = {
     "prohibitedElements": []
   },
   "storybookFramework": "@storybook/react-vite",
-  "componentsPath": "/Users/tjpitre/Sites/story-ui/templates/StoryUI",
+  "componentsPath": "./templates/StoryUI",
   "storyPrefix": "Generated/",
   "defaultAuthor": "Story UI AI"
 };
