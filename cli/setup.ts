@@ -169,6 +169,93 @@ export default preview;
   console.log(chalk.green(`✅ Created .storybook/preview.tsx with ${designSystem} provider setup`));
 }
 
+/**
+ * Set up Storybook preview file with appropriate providers for design systems
+ */
+function setupStorybookPreview(designSystem: string) {
+  const storybookDir = path.join(process.cwd(), '.storybook');
+  const previewTsPath = path.join(storybookDir, 'preview.ts');
+  const previewTsxPath = path.join(storybookDir, 'preview.tsx');
+  
+  if (!fs.existsSync(storybookDir)) {
+    console.log(chalk.yellow('⚠️  .storybook directory not found. Please run storybook init first.'));
+    return;
+  }
+
+  const designSystemConfigs = {
+    chakra: {
+      imports: [
+        "import type { Preview } from '@storybook/react-vite'",
+        "import { ChakraProvider, defaultSystem } from '@chakra-ui/react'",
+        "import React from 'react'"
+      ],
+      decorator: `(Story) => (
+      <ChakraProvider value={defaultSystem}>
+        <Story />
+      </ChakraProvider>
+    )`
+    },
+    antd: {
+      imports: [
+        "import type { Preview } from '@storybook/react-vite'",
+        "import { ConfigProvider } from 'antd'",
+        "import React from 'react'"
+      ],
+      decorator: `(Story) => (
+      <ConfigProvider>
+        <Story />
+      </ConfigProvider>
+    )`
+    },
+    mantine: {
+      imports: [
+        "import type { Preview } from '@storybook/react-vite'",
+        "import { MantineProvider } from '@mantine/core'",
+        "import '@mantine/core/styles.css'",
+        "import React from 'react'"
+      ],
+      decorator: `(Story) => (
+      <MantineProvider>
+        <Story />
+      </MantineProvider>
+    )`
+    }
+  };
+
+  const config = designSystemConfigs[designSystem as keyof typeof designSystemConfigs];
+  if (!config) return;
+
+  // Create the preview content
+  const previewContent = `${config.imports.join('\n')}
+
+const preview: Preview = {
+  parameters: {
+    controls: {
+      matchers: {
+       color: /(background|color)$/i,
+       date: /Date$/i,
+      },
+    },
+  },
+  decorators: [
+    ${config.decorator},
+  ],
+};
+
+export default preview;
+`;
+
+  // Remove existing preview.ts if it exists
+  if (fs.existsSync(previewTsPath)) {
+    fs.unlinkSync(previewTsPath);
+  }
+
+  // Create preview.tsx with JSX support
+  fs.writeFileSync(previewTsxPath, previewContent);
+  
+  console.log(chalk.green(`✅ Created .storybook/preview.tsx with ${designSystem} provider setup`));
+}
+
 interface SetupAnswers {
   designSystem: 'auto' | 'chakra' | 'antd' | 'mantine' | 'custom';
   installDesignSystem?: boolean;
@@ -234,12 +321,59 @@ async function installDesignSystem(systemKey: keyof typeof DESIGN_SYSTEM_CONFIGS
   try {
     console.log(chalk.gray(`Running: ${installCommand}`));
     execSync(installCommand, { stdio: 'inherit' });
+    
+    // Verify installation was successful by re-checking package.json
+    const updatedPackageJson = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf-8'));
+    const updatedDeps = { ...updatedPackageJson.dependencies, ...updatedPackageJson.devDependencies };
+    const stillMissingPackages = config.packages.filter(pkg => !updatedDeps[pkg]);
+    
+    if (stillMissingPackages.length > 0) {
+      throw new Error(`Installation failed: packages still missing: ${stillMissingPackages.join(', ')}`);
+    }
+    
     console.log(chalk.green(`✅ ${config.name} installed successfully!`));
     
     if (config.additionalSetup) {
-      console.log(chalk.blue('\n📋 Additional setup required:'));
-      console.log(chalk.gray(`Add this import to your main CSS/index file:`));
-      console.log(chalk.cyan(`${config.additionalSetup}`));
+      // Try to automatically add CSS import for Mantine
+      if (systemKey === 'mantine') {
+        const cssFiles = [
+          path.join(process.cwd(), 'src', 'index.css'),
+          path.join(process.cwd(), 'src', 'main.css'),
+          path.join(process.cwd(), 'src', 'App.css')
+        ];
+        
+        let cssAdded = false;
+        for (const cssFile of cssFiles) {
+          if (fs.existsSync(cssFile)) {
+            try {
+              const cssContent = fs.readFileSync(cssFile, 'utf-8');
+              if (!cssContent.includes('@mantine/core/styles.css')) {
+                const newContent = `@import "@mantine/core/styles.css";\n\n${cssContent}`;
+                fs.writeFileSync(cssFile, newContent);
+                console.log(chalk.green(`✅ Added Mantine CSS import to ${path.relative(process.cwd(), cssFile)}`));
+                cssAdded = true;
+                break;
+              } else {
+                console.log(chalk.blue(`ℹ️ Mantine CSS already imported in ${path.relative(process.cwd(), cssFile)}`));
+                cssAdded = true;
+                break;
+              }
+            } catch (error) {
+              console.warn(chalk.yellow(`⚠️ Could not modify ${cssFile}:`, error));
+            }
+          }
+        }
+        
+        if (!cssAdded) {
+          console.log(chalk.blue('\n📋 Manual setup required:'));
+          console.log(chalk.gray(`Add this import to your main CSS file:`));
+          console.log(chalk.cyan(`${config.additionalSetup}`));
+        }
+      } else {
+        console.log(chalk.blue('\n📋 Additional setup required:'));
+        console.log(chalk.gray(`Add this import to your main CSS/index file:`));
+        console.log(chalk.cyan(`${config.additionalSetup}`));
+      }
     }
     
     return true;
