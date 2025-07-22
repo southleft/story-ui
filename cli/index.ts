@@ -179,22 +179,22 @@ async function createTemplateConfig(template: string) {
   let config: any;
 
   switch (template) {
-    case 'material-ui':
+    case 'base-ui':
       config = {
-        importPath: '@mui/material',
+        importPath: '@base_ui/react',
         componentPrefix: '',
         layoutRules: {
-          multiColumnWrapper: 'Grid',
-          columnComponent: 'Grid',
+          multiColumnWrapper: 'div',
+          columnComponent: 'div',
           layoutExamples: {
-            twoColumn: `<Grid container spacing={2}>
-  <Grid item xs={6}>
-    <Card>Left content</Card>
-  </Grid>
-  <Grid item xs={6}>
-    <Card>Right content</Card>
-  </Grid>
-</Grid>`
+            twoColumn: `<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+  <div style={{ padding: '16px', border: '1px solid #e0e0e0', borderRadius: '8px' }}>
+    Left content
+  </div>
+  <div style={{ padding: '16px', border: '1px solid #e0e0e0', borderRadius: '8px' }}>
+    Right content
+  </div>
+</div>`
           }
         }
       };

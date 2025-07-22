@@ -18,16 +18,17 @@ Story UI revolutionizes component documentation by automatically generating Stor
 - **TypeScript Support**: Full TypeScript integration with type-aware story generation
 
 ### 📚 Documentation System (New!)
+- **Auto-Generated Structure**: `npx story-ui init` creates a `story-ui-docs/` directory template
 - **Directory-Based Documentation**: Organize design system docs in a structured directory
 - **Multiple Format Support**: Markdown, JSON, HTML, and text files
 - **Legacy Support**: Still supports single `story-ui-considerations.md` file
-- **Auto-Discovery**: Automatically finds and loads documentation from `story-ui-docs/` directory
+- **Auto-Discovery**: Automatically finds and loads documentation to enhance AI story generation
 
 ### 🎨 Advanced Features
 - **Memory-Persistent Stories**: Stories are remembered across sessions
 - **Git Integration**: Automatic gitignore management for generated files
 - **Production Mode**: Clean deployment without generated stories
-- **Multiple Instance Support**: Run different design systems in parallel
+- **Auto Port Detection**: Automatically finds available ports
 - **Hot Reload Integration**: Stories update automatically as you chat
 
 ## 🚀 Quick Start
@@ -52,8 +53,9 @@ npm run story-ui -- --port 4005
 Story UI will automatically:
 - ✅ Discover your components
 - ✅ Set up the chat interface
+- ✅ Create a `story-ui-docs/` directory structure for your design system documentation
 - ✅ Generate stories as you type
-- ✅ Load your design system documentation
+- ✅ Load your design system documentation to enhance AI generation
 
 ## 📚 How It Works
 
@@ -72,42 +74,39 @@ Story UI uses advanced AI to understand your component library and generate appr
 ```javascript
 export default {
   // Component library import path
-  importPath: '@shopify/polaris',
-
-  // Component discovery patterns
-  patterns: ['src/**/*.{ts,tsx,js,jsx}'],
-  excludePatterns: [
-    'src/**/*.stories.{ts,tsx,js,jsx}',
-    'src/**/*.test.{ts,tsx,js,jsx}'
-  ],
-
-  // Output configuration
-  storyPath: 'src/stories',
-  outputPath: 'src/stories/generated',
-
-  // Server configuration
-  port: 4001,
-
-  // Storybook integration
-  storybook: {
-    port: 6006,
-    url: 'http://localhost:6006'
+  importPath: 'your-component-library',
+  
+  // Path to your local components (for custom libraries)
+  componentsPath: './src/components',
+  
+  // Generated stories location
+  generatedStoriesPath: './src/stories/generated/',
+  
+  // Story configuration
+  storyPrefix: 'Generated/',
+  defaultAuthor: 'Story UI AI',
+  
+  // Layout rules for multi-column layouts
+  layoutRules: {
+    multiColumnWrapper: 'div',
+    columnComponent: 'div',
+    containerComponent: 'div'
   }
 };
 ```
 
 ## 🌟 Supported Design Systems
 
-Story UI ships with pre-configured support for popular design systems:
+Story UI provides guided installation and automatic configuration for these design systems:
 
-| Design System | Package | Template Available |
-|--------------|---------|-------------------|
-| Material-UI | `@mui/material` | ✅ Yes |
-| Ant Design | `antd` | ✅ Yes |
-| Chakra UI | `@chakra-ui/react` | ✅ Yes |
-| Mantine | `@mantine/core` | ✅ Yes |
-| shadcn/ui | Various | 🔜 Coming Soon |
-| Custom | Any React library | ✅ Yes |
+| Design System | Package | Auto Install | Pre-configured |
+|--------------|---------|--------------|----------------|
+| Ant Design | `antd` | ✅ Yes | ✅ Yes |
+| Mantine | `@mantine/core` | ✅ Yes | ✅ Yes |
+| Chakra UI | `@chakra-ui/react` | ✅ Yes | ✅ Yes |
+| Custom | Any React library | ❌ Manual | ✅ Configurable |
+
+When you run `npx story-ui init`, you can choose to automatically install and configure these design systems with optimized layout rules and component mappings.
 
 ## 📱 Examples
 
@@ -123,12 +122,12 @@ Result:
 ```tsx
 export const AllVariants = {
   render: () => (
-    <BlockStack gap="400">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       <Button variant="primary">Primary</Button>
       <Button variant="secondary">Secondary</Button>
       <Button variant="tertiary">Tertiary</Button>
       <Button variant="plain">Plain</Button>
-    </BlockStack>
+    </div>
   )
 };
 ```
@@ -138,7 +137,7 @@ export const AllVariants = {
 ```
 You: "Create a product card with image, title, price, and add to cart button"
 
-AI: "I'll create a product card using Polaris components..."
+AI: "I'll create a product card using your design system components..."
 ```
 
 ### Iterating on Existing Stories

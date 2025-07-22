@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { MdSend } from 'react-icons/md';
 
 // Message type
 interface Message {
@@ -1026,7 +1025,9 @@ export function StoryUIPanel() {
             }}
           >
             <span>Send</span>
-            <MdSend size={16} />
+            <svg width={16} height={16} viewBox="0 0 24 24" fill="currentColor">
+              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+            </svg>
           </button>
         </form>
       </div>

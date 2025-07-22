@@ -6,7 +6,7 @@ Get up and running with Story UI in minutes!
 
 - Node.js 16+
 - An existing Storybook project
-- Claude Desktop app with MCP enabled
+- A Claude API key (get one at https://console.anthropic.com/)
 
 ## Installation
 
@@ -16,38 +16,56 @@ npm install --save-dev @tpitre/story-ui
 
 ## Initial Setup
 
-Run the setup command in your project root:
+Run the initialization command in your project root:
 
 ```bash
-npx story-ui setup
+npx story-ui init
 ```
 
 This will:
-1. Create a `story-ui.config.js` file
-2. Set up the Story UI panel component
-3. Configure your environment
+1. Auto-detect your existing design system (if any)
+2. Optionally install and configure popular design systems (Chakra UI, Ant Design, Mantine)
+3. Create a `story-ui.config.js` file with optimized settings
+4. Set up the Story UI panel component in your Storybook
+5. Configure `.gitignore` for generated stories
+6. Create a `story-ui-docs/` directory for your documentation
 
 ## Configuration
 
-Edit `story-ui.config.js` to specify your component library:
+The generated `story-ui.config.js` will be pre-configured based on your choices:
 
 ```javascript
-export default {
-  importPath: '@your-org/your-component-library',
-  generatedStoriesPath: './src/stories/generated/',
-  componentsPath: './src/components/' // Optional: for local components
+module.exports = {
+  generatedStoriesPath: "./src/stories/generated/",
+  importPath: "@chakra-ui/react", // or "antd", "@mantine/core", etc.
+  componentPrefix: "",
+  layoutRules: {
+    // Pre-configured for your design system
+  },
+  storyPrefix: "Generated/",
+  defaultAuthor: "Story UI AI"
 };
+```
+
+## Starting Story UI
+
+```bash
+# Start Story UI server (defaults to port 4001)
+npm run story-ui
+
+# Start Storybook and Story UI together
+npm run storybook-with-ui
 ```
 
 ## Using Story UI
 
-1. Open Claude Desktop
-2. Navigate to your project directory
-3. Use the Story UI MCP server to generate stories
-4. Stories will appear in your Storybook under "Generated/"
+1. Start Story UI and Storybook
+2. Navigate to "Story UI > Story Generator" in Storybook
+3. Chat with the AI to generate stories
+4. Stories appear instantly under "Generated/" in your Storybook
 
 ## Next Steps
 
-- Learn about [Considerations Files](./considerations.md) for better story generation
-- Explore [Configuration Options](./config-reference.md)
-- Set up [Multi-Instance Support](./multi-instance.md) for multiple design systems
+- Add design system documentation to `story-ui-docs/` for better AI generation
+- See [Custom Documentation](./CUSTOM_DOCUMENTATION.md) for details
+- Check the [main README](../README.md) for advanced features

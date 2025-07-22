@@ -161,8 +161,7 @@ export class EnhancedComponentDiscovery {
   private identifySources(): ComponentSource[] {
     const sources: ComponentSource[] = [];
 
-    // Auto-discover ALL available design system packages (new!)
-    this.addDesignSystemPackages(sources);
+    // Note: Auto-discovery removed - now using guided installation during init
 
     // Check for npm packages
     // Always run dynamic discovery for design systems
@@ -269,63 +268,11 @@ export class EnhancedComponentDiscovery {
   }
 
   /**
-   * Auto-discover all available design system packages in node_modules
+   * Auto-discovery removed - now handled by guided installation during init
+   * This function is kept for backward compatibility but does nothing
    */
   private addDesignSystemPackages(sources: ComponentSource[]): void {
-    const projectRoot = this.getProjectRoot();
-    const nodeModulesPath = path.join(projectRoot, 'node_modules');
-    
-    if (!fs.existsSync(nodeModulesPath)) {
-      console.log('⚠️ No node_modules found, skipping auto-discovery');
-      return;
-    }
-
-    // Detect design system type and scan appropriate packages
-    const designSystemScopes = [
-      '@base_ui',     // Base UI
-      '@chakra-ui',   // Chakra UI
-      '@shopify',     // Polaris
-      '@mantine',     // Mantine
-      '@nextui-org',  // NextUI
-      '@headlessui',  // Headless UI
-      '@radix-ui',    // Radix UI
-    ];
-
-    for (const scope of designSystemScopes) {
-      const scopePath = path.join(nodeModulesPath, scope);
-      
-      if (fs.existsSync(scopePath)) {
-        console.log(`🔍 Auto-discovering ${scope} packages...`);
-        
-        try {
-          const packages = fs.readdirSync(scopePath, { withFileTypes: true })
-            .filter(entry => entry.isDirectory() && !entry.name.startsWith('.'))
-            .map(entry => `${scope}/${entry.name}`);
-
-          console.log(`📦 Found ${packages.length} ${scope} packages`);
-          
-          // Filter to likely component packages (skip utilities, types, etc.)
-          const componentPackages = packages.filter(pkg => this.isLikelyComponentPackage(pkg));
-          
-          console.log(`✅ ${componentPackages.length} packages identified as component packages`);
-          
-          // Add as discovery sources, but with lower priority than manual config
-          for (const packageName of componentPackages) {
-            // Skip packages already added from config
-            const alreadyAdded = sources.some(s => s.path === packageName);
-            if (!alreadyAdded) {
-              sources.push({
-                type: 'npm',
-                path: packageName
-              });
-            }
-          }
-          
-        } catch (error) {
-          console.warn(`Failed to scan ${scope} packages:`, error);
-        }
-      }
-    }
+    // Functionality moved to guided installation process
   }
 
   /**

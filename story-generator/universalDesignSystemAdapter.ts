@@ -4,7 +4,7 @@ import { StoryUIConfig } from '../story-ui.config.js';
 
 export interface DesignSystemInfo {
   name: string;
-  type: 'material-ui' | 'chakra-ui' | 'antd' | 'atlaskit' | 'mantine' | 'nextui' | 'generic';
+  type: 'base-ui' | 'chakra-ui' | 'antd' | 'mantine' | 'nextui' | 'generic';
   scope?: string;
   primaryPackage: string;
   commonComponents: string[];
@@ -53,10 +53,9 @@ export class UniversalDesignSystemAdapter {
     this.detectedSystems = [];
 
     // Check for known design systems
-    this.checkForMaterialUI(allDeps);
+    this.checkForBaseUI(allDeps);
     this.checkForChakraUI(allDeps);
     this.checkForAntDesign(allDeps);
-    this.checkForAtlassian(allDeps);
     this.checkForMantine(allDeps);
     this.checkForNextUI(allDeps);
     this.checkForGenericReactComponents(allDeps);
@@ -78,14 +77,12 @@ export class UniversalDesignSystemAdapter {
     }
 
     switch (primarySystem.type) {
-      case 'material-ui':
-        return this.getMaterialUIConfig();
+      case 'base-ui':
+        return this.getBaseUIConfig();
       case 'chakra-ui':
         return this.getChakraUIConfig();
       case 'antd':
         return this.getAntDesignConfig();
-      case 'atlaskit':
-        return this.getAtlassianConfig();
       case 'mantine':
         return this.getMantineConfig();
       case 'nextui':
@@ -96,19 +93,19 @@ export class UniversalDesignSystemAdapter {
   }
 
   // Design system detection methods
-  private checkForMaterialUI(deps: Record<string, string>): void {
-    if (deps['@mui/material'] || deps['@material-ui/core']) {
+  private checkForBaseUI(deps: Record<string, string>): void {
+    if (deps['@base_ui/react']) {
       this.detectedSystems.push({
-        name: 'Material-UI',
-        type: 'material-ui',
-        scope: '@mui',
-        primaryPackage: '@mui/material',
-        commonComponents: ['Box', 'Container', 'Grid', 'Stack', 'Typography', 'Button', 'TextField'],
-        layoutComponents: ['Box', 'Container', 'Grid', 'Stack'],
-        formComponents: ['TextField', 'Button', 'Select', 'Checkbox', 'RadioGroup'],
+        name: 'Base UI',
+        type: 'base-ui',
+        scope: '@base_ui',
+        primaryPackage: '@base_ui/react',
+        commonComponents: ['Button', 'Input', 'Select', 'Checkbox', 'RadioGroup', 'Switch', 'Slider'],
+        layoutComponents: ['div', 'section', 'main', 'aside'],
+        formComponents: ['Input', 'Button', 'Select', 'Checkbox', 'RadioGroup', 'Switch'],
         importPatterns: {
           default: [],
-          named: ['Box', 'Container', 'Grid', 'Stack', 'Typography', 'Button', 'TextField']
+          named: ['Button', 'Input', 'Select', 'Checkbox', 'RadioGroup', 'Switch', 'Slider']
         }
       });
     }
@@ -153,29 +150,6 @@ export class UniversalDesignSystemAdapter {
     }
   }
 
-  private checkForAtlassian(deps: Record<string, string>): void {
-    const atlaskitPackages = Object.keys(deps).filter(pkg => pkg.startsWith('@atlaskit/'));
-    
-    if (atlaskitPackages.length > 0) {
-      this.detectedSystems.push({
-        name: 'Atlassian Design System',
-        type: 'atlaskit',
-        scope: '@atlaskit',
-        primaryPackage: '@atlaskit/primitives',
-        commonComponents: ['Box', 'Flex', 'Grid', 'Text', 'Heading', 'Button', 'Textfield'],
-        layoutComponents: ['Box', 'Flex', 'Grid', 'Stack'],
-        formComponents: ['Textfield', 'Button', 'Select', 'Checkbox', 'Radio', 'Toggle'],
-        importPatterns: {
-          default: ['Button', 'Textfield', 'Heading', 'Avatar', 'Badge', 'Lozenge', 'Banner', 'Flag', 'Breadcrumbs', 'Tabs'],
-          named: ['Box', 'Flex', 'Grid', 'Text', 'ProgressIndicator']
-        },
-        designTokens: {
-          spacing: 'space.*',
-          colors: 'color.*'
-        }
-      });
-    }
-  }
 
   private checkForMantine(deps: Record<string, string>): void {
     if (deps['@mantine/core']) {
@@ -245,7 +219,7 @@ export class UniversalDesignSystemAdapter {
   // Configuration generators
   private getPrimaryDesignSystem(): DesignSystemInfo | null {
     // Prioritize based on completeness and popularity
-    const priorities = ['atlaskit', 'material-ui', 'chakra-ui', 'antd', 'mantine', 'nextui', 'generic'];
+    const priorities = ['base-ui', 'chakra-ui', 'antd', 'mantine', 'nextui', 'generic'];
     
     for (const priority of priorities) {
       const system = this.detectedSystems.find(ds => ds.type === priority);
@@ -255,47 +229,21 @@ export class UniversalDesignSystemAdapter {
     return this.detectedSystems[0] || null;
   }
 
-  private getAtlassianConfig(): Partial<StoryUIConfig> {
-    return {
-      designSystemGuidelines: {
-        name: "Atlassian Design System",
-        preferredComponents: {
-          layout: "@atlaskit/primitives",
-          buttons: "@atlaskit/button/new",
-          forms: "@atlaskit/textfield"
-        },
-        spacingTokens: {
-          prefix: "space.",
-          values: ["025", "050", "075", "100", "150", "200", "300", "400", "500", "600", "800", "1000"]
-        },
-        colorTokens: {
-          prefix: "color.",
-          categories: ["text", "background", "border", "accent"]
-        }
-      },
-      layoutRules: {
-        multiColumnWrapper: "Grid",
-        columnComponent: "Box",
-        containerComponent: "Box",
-        prohibitedElements: ["div", "span"]
-      }
-    };
-  }
 
-  private getMaterialUIConfig(): Partial<StoryUIConfig> {
+  private getBaseUIConfig(): Partial<StoryUIConfig> {
     return {
       designSystemGuidelines: {
-        name: "Material-UI",
+        name: "Base UI",
         preferredComponents: {
-          layout: "@mui/material",
-          buttons: "@mui/material",
-          forms: "@mui/material"
+          layout: "@base_ui/react",
+          buttons: "@base_ui/react",
+          forms: "@base_ui/react"
         }
       },
       layoutRules: {
-        multiColumnWrapper: "Grid",
-        columnComponent: "Grid",
-        containerComponent: "Container"
+        multiColumnWrapper: "div",
+        columnComponent: "div",
+        containerComponent: "div"
       }
     };
   }

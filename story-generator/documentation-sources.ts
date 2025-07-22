@@ -127,22 +127,33 @@ export const BUNDLED_DOCUMENTATION: Record<string, any> = {
     }
   },
 
-  '@mui/material': {
-    version: 'v5',
+  '@base_ui/react': {
+    version: 'latest',
     lastUpdated: '2024-07-05',
     components: {
-      'Box': { description: 'Generic container using sx prop' },
-      'Typography': {
-        variants: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'subtitle1', 'subtitle2', 'body1', 'body2'],
-        description: 'Typography component'
-      },
       'Button': {
-        variants: ['text', 'contained', 'outlined'],
-        colors: ['primary', 'secondary', 'error', 'warning', 'info', 'success']
+        description: 'Unstyled button component with focus management',
+        props: ['disabled', 'onClick', 'children']
       },
-      'TextField': {
-        variants: ['outlined', 'filled', 'standard'],
-        description: 'Text input component'
+      'Input': {
+        description: 'Unstyled input component',
+        props: ['value', 'onChange', 'placeholder', 'disabled']
+      },
+      'Select': {
+        description: 'Unstyled select component',
+        props: ['value', 'onChange', 'multiple', 'disabled']
+      },
+      'Checkbox': {
+        description: 'Unstyled checkbox component',
+        props: ['checked', 'onChange', 'disabled']
+      },
+      'Switch': {
+        description: 'Unstyled switch component',
+        props: ['checked', 'onChange', 'disabled']
+      },
+      'Slider': {
+        description: 'Unstyled slider component',
+        props: ['value', 'onChange', 'min', 'max', 'step']
       }
     }
   }

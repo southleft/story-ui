@@ -33,7 +33,8 @@ async function findAvailablePort(startPort: number): Promise<number> {
 }
 
 interface SetupAnswers {
-  designSystem: 'auto' | 'mui' | 'chakra' | 'antd' | 'mantine' | 'custom';
+  designSystem: 'auto' | 'baseui' | 'chakra' | 'antd' | 'mantine' | 'custom';
+  installDesignSystem?: boolean;
   importPath?: string;
   componentPrefix?: string;
   generatedStoriesPath?: string;
@@ -43,8 +44,74 @@ interface SetupAnswers {
   mcpPort?: string;
 }
 
-// Context7 configuration is now handled entirely through MCP tools
-// No local configuration files are created
+// Design system installation configurations
+const DESIGN_SYSTEM_CONFIGS = {
+  antd: {
+    packages: ['antd'],
+    name: 'Ant Design',
+    importPath: 'antd',
+    additionalSetup: 'import "antd/dist/reset.css";'
+  },
+  mantine: {
+    packages: ['@mantine/core', '@mantine/hooks', '@mantine/notifications'],
+    name: 'Mantine',
+    importPath: '@mantine/core',
+    additionalSetup: 'import "@mantine/core/styles.css";'
+  },
+  chakra: {
+    packages: ['@chakra-ui/react', '@emotion/react', '@emotion/styled', 'framer-motion'],
+    name: 'Chakra UI',
+    importPath: '@chakra-ui/react',
+    additionalSetup: 'import { ChakraProvider } from "@chakra-ui/react";'
+  }
+};
+
+async function installDesignSystem(systemKey: keyof typeof DESIGN_SYSTEM_CONFIGS) {
+  const config = DESIGN_SYSTEM_CONFIGS[systemKey];
+  const packageJson = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf-8'));
+  
+  // Check if packages are already installed
+  const dependencies = { ...packageJson.dependencies, ...packageJson.devDependencies };
+  const missingPackages = config.packages.filter(pkg => !dependencies[pkg]);
+  
+  if (missingPackages.length === 0) {
+    console.log(chalk.green(`✅ ${config.name} packages already installed`));
+    return true;
+  }
+
+  console.log(chalk.blue(`\n📦 Installing ${config.name} packages...`));
+  console.log(chalk.gray(`Packages: ${missingPackages.join(', ')}`));
+  
+  // Detect package manager
+  const npmLock = fs.existsSync(path.join(process.cwd(), 'package-lock.json'));
+  const yarnLock = fs.existsSync(path.join(process.cwd(), 'yarn.lock'));
+  const pnpmLock = fs.existsSync(path.join(process.cwd(), 'pnpm-lock.yaml'));
+  
+  let installCommand = `npm install ${missingPackages.join(' ')}`;
+  if (yarnLock) {
+    installCommand = `yarn add ${missingPackages.join(' ')}`;
+  } else if (pnpmLock) {
+    installCommand = `pnpm add ${missingPackages.join(' ')}`;
+  }
+  
+  try {
+    console.log(chalk.gray(`Running: ${installCommand}`));
+    execSync(installCommand, { stdio: 'inherit' });
+    console.log(chalk.green(`✅ ${config.name} installed successfully!`));
+    
+    if (config.additionalSetup) {
+      console.log(chalk.blue('\n📋 Additional setup required:'));
+      console.log(chalk.gray(`Add this import to your main CSS/index file:`));
+      console.log(chalk.cyan(`${config.additionalSetup}`));
+    }
+    
+    return true;
+  } catch (error) {
+    console.error(chalk.red(`❌ Failed to install ${config.name}:`), error);
+    console.log(chalk.yellow(`\n💡 You can install manually with: ${installCommand}`));
+    return false;
+  }
+}
 
 export async function setupCommand() {
   console.log(chalk.blue.bold('\n🎨 Story UI Setup\n'));
@@ -105,13 +172,25 @@ export async function setupCommand() {
       message: 'Which design system are you using?',
       choices: [
         { name: '🤖 Auto-detect from package.json', value: 'auto' },
-        { name: '🎨 Material-UI (@mui/material)', value: 'mui' },
-        { name: '⚡ Chakra UI (@chakra-ui/react)', value: 'chakra' },
-        { name: '🐜 Ant Design (antd)', value: 'antd' },
-        { name: '🎯 Mantine (@mantine/core)', value: 'mantine' },
+        { name: '🐜 Ant Design (antd) - Install & Configure', value: 'antd' },
+        { name: '🎯 Mantine (@mantine/core) - Install & Configure', value: 'mantine' },
+        { name: '⚡ Chakra UI (@chakra-ui/react) - Install & Configure', value: 'chakra' },
+        { name: '🌊 Base Web (baseui)', value: 'baseui' },
         { name: '🔧 Custom/Other', value: 'custom' }
       ],
       default: autoDetected ? 'auto' : 'custom'
+    },
+    {
+      type: 'confirm',
+      name: 'installDesignSystem',
+      message: (answers) => {
+        const systemName = answers.designSystem === 'antd' ? 'Ant Design' : 
+                          answers.designSystem === 'mantine' ? 'Mantine' :
+                          answers.designSystem === 'chakra' ? 'Chakra UI' : 'the design system';
+        return `Would you like to install ${systemName} and its dependencies now?`;
+      },
+      when: (answers) => ['antd', 'mantine', 'chakra'].includes(answers.designSystem),
+      default: true
     },
     {
       type: 'input',
@@ -171,38 +250,38 @@ export async function setupCommand() {
     }
   ]);
 
+  // Install design system if requested
+  if (answers.installDesignSystem && ['antd', 'mantine', 'chakra'].includes(answers.designSystem)) {
+    const installSuccess = await installDesignSystem(answers.designSystem as keyof typeof DESIGN_SYSTEM_CONFIGS);
+    if (!installSuccess) {
+      console.log(chalk.yellow('⚠️  Installation failed but continuing with configuration...'));
+    }
+  }
+
   // Generate configuration
   let config: any = {};
 
   if (answers.designSystem === 'auto' && autoDetected) {
     config = autoDetected;
-  } else if (answers.designSystem === 'mui') {
+  } else if (answers.designSystem === 'baseui') {
     config = {
-      importPath: '@mui/material',
+      importPath: 'baseui',
       componentPrefix: '',
       layoutRules: {
-        multiColumnWrapper: 'Grid',
-        columnComponent: 'Grid',
-        containerComponent: 'Container',
+        multiColumnWrapper: 'div',
+        columnComponent: 'div',
+        containerComponent: 'div',
         layoutExamples: {
-          twoColumn: `<Grid container spacing={2}>
-  <Grid item xs={6}>
-    <Card>
-      <CardContent>
-        <Typography variant="h5">Left Card</Typography>
-        <Typography>Left content</Typography>
-      </CardContent>
-    </Card>
-  </Grid>
-  <Grid item xs={6}>
-    <Card>
-      <CardContent>
-        <Typography variant="h5">Right Card</Typography>
-        <Typography>Right content</Typography>
-      </CardContent>
-    </Card>
-  </Grid>
-</Grid>`
+          twoColumn: `<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+  <div style={{ padding: '16px', border: '1px solid #e0e0e0', borderRadius: '8px' }}>
+    <h3>Left Card</h3>
+    <p>Left content</p>
+  </div>
+  <div style={{ padding: '16px', border: '1px solid #e0e0e0', borderRadius: '8px' }}>
+    <h3>Right Card</h3>
+    <p>Right content</p>
+  </div>
+</div>`
         }
       }
     };
@@ -213,7 +292,31 @@ export async function setupCommand() {
       layoutRules: {
         multiColumnWrapper: 'SimpleGrid',
         columnComponent: 'Box',
-        containerComponent: 'Container'
+        containerComponent: 'Container',
+        layoutExamples: {
+          twoColumn: `<SimpleGrid columns={2} spacing={6}>
+  <Box>
+    <Card>
+      <CardHeader>
+        <Heading size="md">Left Card</Heading>
+      </CardHeader>
+      <CardBody>
+        <Text>Left content goes here</Text>
+      </CardBody>
+    </Card>
+  </Box>
+  <Box>
+    <Card>
+      <CardHeader>
+        <Heading size="md">Right Card</Heading>
+      </CardHeader>
+      <CardBody>
+        <Text>Right content goes here</Text>
+      </CardBody>
+    </Card>
+  </Box>
+</SimpleGrid>`
+        }
       }
     };
   } else if (answers.designSystem === 'antd') {
@@ -223,7 +326,21 @@ export async function setupCommand() {
       layoutRules: {
         multiColumnWrapper: 'Row',
         columnComponent: 'Col',
-        containerComponent: 'div'
+        containerComponent: 'div',
+        layoutExamples: {
+          twoColumn: `<Row gutter={16}>
+  <Col span={12}>
+    <Card title="Left Card" bordered={false}>
+      <p>Left content goes here</p>
+    </Card>
+  </Col>
+  <Col span={12}>
+    <Card title="Right Card" bordered={false}>
+      <p>Right content goes here</p>
+    </Card>
+  </Col>
+</Row>`
+        }
       }
     };
   } else if (answers.designSystem === 'mantine') {
@@ -233,7 +350,27 @@ export async function setupCommand() {
       layoutRules: {
         multiColumnWrapper: 'SimpleGrid',
         columnComponent: 'div',
-        containerComponent: 'Container'
+        containerComponent: 'Container',
+        layoutExamples: {
+          twoColumn: `<SimpleGrid cols={2} spacing="md">
+  <div>
+    <Card shadow="sm" padding="lg" radius="md" withBorder>
+      <Text fw={500} size="lg" mb="xs">Left Card</Text>
+      <Text size="sm" c="dimmed">
+        Left content goes here
+      </Text>
+    </Card>
+  </div>
+  <div>
+    <Card shadow="sm" padding="lg" radius="md" withBorder>
+      <Text fw={500} size="lg" mb="xs">Right Card</Text>
+      <Text size="sm" c="dimmed">
+        Right content goes here
+      </Text>
+    </Card>
+  </div>
+</SimpleGrid>`
+        }
       }
     };
   } else {
@@ -326,6 +463,31 @@ export async function setupCommand() {
     console.log(chalk.green('✅ Created story-ui-considerations.md for AI customization'));
   }
 
+  // Create documentation directory structure
+  const docsDir = path.join(process.cwd(), 'story-ui-docs');
+  if (!fs.existsSync(docsDir)) {
+    console.log(chalk.blue('\n📚 Creating documentation directory structure...'));
+    
+    // Create main directory and subdirectories
+    const subdirs = ['guidelines', 'tokens', 'components', 'patterns'];
+    fs.mkdirSync(docsDir, { recursive: true });
+    
+    for (const subdir of subdirs) {
+      fs.mkdirSync(path.join(docsDir, subdir), { recursive: true });
+    }
+
+    // Copy README template
+    const docsReadmeTemplatePath = path.resolve(__dirname, '../../templates/story-ui-docs-README.md');
+    const docsReadmePath = path.join(docsDir, 'README.md');
+    
+    if (fs.existsSync(docsReadmeTemplatePath)) {
+      fs.writeFileSync(docsReadmePath, fs.readFileSync(docsReadmeTemplatePath, 'utf-8'));
+    }
+    
+    console.log(chalk.green('✅ Created story-ui-docs/ directory structure'));
+    console.log(chalk.gray('   Add your design system documentation to enhance AI story generation'));
+  }
+
   // Create .env file from template
   const envSamplePath = path.resolve(__dirname, '../../.env.sample');
   const envPath = path.join(process.cwd(), '.env');
@@ -398,12 +560,6 @@ export async function setupCommand() {
     const devDependencies = packageJson.devDependencies || {};
     let needsInstall = false;
     
-    // Check for react-icons
-    if (!dependencies['react-icons'] && !devDependencies['react-icons']) {
-      console.log(chalk.blue('📦 Adding react-icons dependency...'));
-      dependencies['react-icons'] = '^5.5.0';
-      needsInstall = true;
-    }
     
     // Check for concurrently (needed for storybook-with-ui script)
     if (!dependencies['concurrently'] && !devDependencies['concurrently']) {
@@ -444,36 +600,6 @@ export async function setupCommand() {
     }
   }
 
-  // Check if documentation scraping is supported for this design system
-  const supportedDocSystems = ['@shopify/polaris', '@mui/material', '@chakra-ui/react', 'antd', '@mantine/core', '@adobe/react-spectrum'];
-  const supportsDocScraping = supportedDocSystems.includes(config.importPath);
-
-  if (supportsDocScraping) {
-    console.log(chalk.blue('\n📚 Documentation Enhancement Available\n'));
-    console.log(`Story UI can scrape the official ${config.importPath} documentation to generate more accurate stories.`);
-    console.log('This will provide:');
-    console.log('  ✅ Exact spacing tokens and design patterns');
-    console.log('  ✅ Component best practices and examples');
-    console.log('  ✅ Accessibility guidelines');
-    console.log('  ✅ Content writing guidelines\n');
-
-    const { shouldScrape } = await inquirer.prompt([
-      {
-        type: 'confirm',
-        name: 'shouldScrape',
-        message: 'Would you like to enhance Story UI with official documentation?',
-        default: true
-      }
-    ]);
-
-    if (shouldScrape) {
-      console.log(chalk.gray('\nNote: Documentation scraping will be available in the next version.'));
-      console.log(chalk.gray('For now, Story UI will use its built-in knowledge of design systems.\n'));
-
-      // In future version, this would run:
-      // await runDocumentationScraper(config.importPath);
-    }
-  }
 
   console.log(chalk.green.bold('\n🎉 Setup complete!\n'));
   console.log(`📁 Configuration saved to: ${chalk.cyan(configPath)}`);

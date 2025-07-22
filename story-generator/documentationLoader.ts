@@ -88,6 +88,11 @@ export class DocumentationLoader {
 
     // Process each file
     for (const file of files) {
+      // Skip README files as they are instructional, not design system documentation
+      if (path.basename(file).toLowerCase().startsWith('readme')) {
+        continue;
+      }
+      
       const filePath = path.join(this.docsDir, file);
       const content = fs.readFileSync(filePath, 'utf-8');
       const ext = path.extname(file).toLowerCase();

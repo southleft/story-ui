@@ -1,6 +1,6 @@
 {
   "name": "@tpitre/story-ui",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "AI-powered Storybook story generator with dynamic component discovery",
   "type": "module",
   "main": "dist/index.js",
@@ -26,11 +26,8 @@
     "commit": "cz",
     "prepare": "husky",
     "push": "./scripts/push.sh",
-    "multi-instance": "node scripts/multi-instance.js",
-    "setup:design-system": "./scripts/setup-design-system.sh",
-    "setup:template": "./scripts/setup-design-system-template.sh",
-    "setup:list-templates": "./scripts/setup-design-system-template.sh",
-    "setup:branding": "node scripts/setup-storybook-branding.js"
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build"
   },
   "keywords": [
     "storybook",
@@ -66,17 +63,17 @@
     "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
-    "@atlaskit/storybook-addon-design-system": "^3.1.2",
+    "baseui": "^15.0.0",
     "chalk": "^5.3.0",
     "commander": "^11.0.0",
-    "concurrently": "^8.2.0",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "glob": "^11.0.3",
     "inquirer": "^9.2.0",
     "node-fetch": "^2.6.7",
-    "react-icons": "^5.5.0",
+    "styletron-engine-atomic": "^1.6.2",
+    "styletron-react": "^6.1.1",
     "typescript": "^5.8.3"
   },
   "devDependencies": {
@@ -88,6 +85,8 @@
     "@semantic-release/github": "^10.3.5",
     "@semantic-release/npm": "^12.0.1",
     "@semantic-release/release-notes-generator": "^14.0.1",
+    "@storybook/addon-docs": "^9.0.17",
+    "@storybook/react-vite": "^9.0.17",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/glob": "^8.1.0",
@@ -98,6 +97,7 @@
     "cz-conventional-changelog": "^3.3.0",
     "husky": "^9.1.7",
     "semantic-release": "^24.2.0",
+    "storybook": "^9.0.17",
     "ts-node": "^10.9.2"
   },
   "peerDependencies": {

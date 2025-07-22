@@ -2,26 +2,15 @@
 
 Welcome to Story UI - an AI-powered Storybook story generator for React component libraries.
 
-## Getting Started
+## Available Documentation
 
-- [Installation Guide](./installation.md)
-- [Quick Start](./quick-start.md)
-- [Configuration](./configuration.md)
+- [Quick Start Guide](./quick-start.md) - Get up and running with Story UI
+- [Custom Documentation](./CUSTOM_DOCUMENTATION.md) - How to enhance Story UI with your design system documentation
 
-## Advanced Topics
+## Main Resources
 
-- [Custom Prompts](./custom-prompts.md)
-- [Considerations Files](./considerations.md)
-- [Multi-Instance Setup](./multi-instance.md)
-
-## API Reference
-
-- [CLI Commands](./cli.md)
-- [Configuration Options](./config-reference.md)
-
-## Contributing
-
-Please see our [Contributing Guide](../CONTRIBUTING.md) if you'd like to help improve Story UI.
+- [Main README](../README.md) - Complete feature overview and configuration
+- [Contributing Guide](../CONTRIBUTING.md) - How to contribute to Story UI
 
 ## Support
 

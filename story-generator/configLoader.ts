@@ -126,7 +126,7 @@ export function validateConfig(config: StoryUIConfig): { isValid: boolean; error
     }
   }
 
-  // Determine if we're using an external package (like antd, @mui/material, etc.)
+  // Determine if we're using an external package (like antd, @base_ui/react, etc.)
   const isExternalPackage = config.importPath &&
     !config.importPath.startsWith('.') &&
     !config.importPath.startsWith('/') &&
@@ -424,34 +424,26 @@ export function autoDetectDesignSystem(): Partial<StoryUIConfig> | null {
  * Detects known design systems from package.json dependencies
  */
 function detectKnownDesignSystems(dependencies: Record<string, string>): Partial<StoryUIConfig> | null {
-  // Material-UI detection
-  if (dependencies['@mui/material']) {
+  // Base UI detection
+  if (dependencies['@base_ui/react']) {
     return {
-      importPath: '@mui/material',
+      importPath: '@base_ui/react',
       componentPrefix: '',
       layoutRules: {
-        multiColumnWrapper: 'Grid',
-        columnComponent: 'Grid',
-        containerComponent: 'Container',
+        multiColumnWrapper: 'div',
+        columnComponent: 'div',
+        containerComponent: 'div',
         layoutExamples: {
-          twoColumn: `<Grid container spacing={2}>
-  <Grid item xs={6}>
-    <Card>
-      <CardContent>
-        <Typography variant="h5">Left Card</Typography>
-        <Typography>Left content</Typography>
-      </CardContent>
-    </Card>
-  </Grid>
-  <Grid item xs={6}>
-    <Card>
-      <CardContent>
-        <Typography variant="h5">Right Card</Typography>
-        <Typography>Right content</Typography>
-      </CardContent>
-    </Card>
-  </Grid>
-</Grid>`
+          twoColumn: `<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+  <div style={{ padding: '16px', border: '1px solid #e0e0e0', borderRadius: '8px' }}>
+    <h3>Left Card</h3>
+    <p>Left content</p>
+  </div>
+  <div style={{ padding: '16px', border: '1px solid #e0e0e0', borderRadius: '8px' }}>
+    <h3>Right Card</h3>
+    <p>Right content</p>
+  </div>
+</div>`
         }
       }
     };

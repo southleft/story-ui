@@ -66,6 +66,13 @@ ANY component not in that list DOES NOT EXIST and will cause import errors.
 Before importing any component, verify it exists in the Available components list.
 If a component is not listed, DO NOT use it - choose an alternative from the available list.
 
+🔴 IMPORT PATH RULE - MANDATORY 🔴
+ALWAYS use the EXACT import path shown in parentheses after each component name.
+For example: If the Available components list shows "Button (import from 'baseui/button')", 
+you MUST use: import { Button } from 'baseui/button';
+NEVER use the main package import if a specific path is shown.
+This is critical for proper component resolution.
+
 Example correct order:
 import React from 'react';
 import type { StoryObj } from '@storybook/[framework]';
@@ -160,6 +167,11 @@ function generateComponentReference(components: DiscoveredComponent[], config: S
  */
 function formatComponentReference(component: DiscoveredComponent, config: StoryUIConfig): string {
   let reference = `- ${component.name}`;
+
+  // Add import path information if available
+  if (component.__componentPath) {
+    reference += ` (import from '${component.__componentPath}')`;
+  }
 
   if (component.props && component.props.length > 0) {
     reference += `: Props: ${component.props.join(', ')}`;
@@ -303,6 +315,41 @@ function generateExamples(config: StoryUIConfig): string[] {
 }
 
 /**
+ * Generates import statements, using individual import paths if available
+ */
+function generateImportStatements(config: StoryUIConfig, components: DiscoveredComponent[], componentNames: string[]): string {
+  const importMap = new Map<string, string[]>();
+  
+  for (const componentName of componentNames) {
+    // Find the component in our discovered components to get its specific import path
+    const component = components.find(c => c.name === componentName);
+    
+    if (component && typeof component === 'object' && '__componentPath' in component) {
+      // Use the discovered component's specific import path
+      const importPath = component.__componentPath as string;
+      if (!importMap.has(importPath)) {
+        importMap.set(importPath, []);
+      }
+      importMap.get(importPath)!.push(componentName);
+    } else {
+      // Fallback to the main package import path
+      if (!importMap.has(config.importPath)) {
+        importMap.set(config.importPath, []);
+      }
+      importMap.get(config.importPath)!.push(componentName);
+    }
+  }
+  
+  // Generate import statements
+  const importLines: string[] = [];
+  for (const [importPath, components] of importMap) {
+    importLines.push(`import { ${components.join(', ')} } from '${importPath}';`);
+  }
+  
+  return importLines.join('\n');
+}
+
+/**
  * Generates a default sample story if none provided
  */
 function generateDefaultSampleStory(config: StoryUIConfig, components: DiscoveredComponent[]): string {
@@ -316,7 +363,7 @@ function generateDefaultSampleStory(config: StoryUIConfig, components: Discovere
   if (sectionComponent) imports.push(sectionComponent.name);
   if (contentComponent && contentComponent.name !== mainComponent) imports.push(contentComponent.name);
 
-  const importStatement = `import { ${imports.join(', ')} } from '${config.importPath}';`;
+  const importStatement = generateImportStatements(config, components, imports);
 
   let renderContent = '';
   if (layoutComponent && sectionComponent) {
@@ -474,7 +521,7 @@ export async function buildClaudePrompt(
   );
 
   promptParts.push(
-    `Output a complete Storybook story file in TypeScript. Import components from "${config.importPath}". Use the following sample as a template. Respond ONLY with a single code block containing the full file, and nothing else.`,
+    `Output a complete Storybook story file in TypeScript. Import components as shown in the sample template below. Use the following sample as a template. Respond ONLY with a single code block containing the full file, and nothing else.`,
     '',
     '<rules>',
     '🚨 FINAL CRITICAL REMINDERS 🚨',
@@ -485,6 +532,8 @@ export async function buildClaudePrompt(
     '- Story title MUST always start with "Generated/" (e.g., title: "Generated/Recipe Card")',
     '- Do NOT use prefixes like "Content/", "Components/", or any other section name',
     '- ONLY import components that are listed in the "Available components" section',
+    '- ALWAYS use the exact import path shown in parentheses after each component',
+    '- NEVER use main package imports when specific subpath imports are shown',
     '- Do NOT import story exports - these are NOT real components',
     '- Check every import against the Available components list before using it',
     '- FORBIDDEN: Provider, defaultTheme, ThemeProvider, or any theme-related components',
