@@ -40,9 +40,6 @@ npm install -D @tpitre/story-ui
 # Initialize Story UI in your project
 npx story-ui init
 
-# Add to your package.json scripts
-"story-ui": "story-ui start"
-
 # Start generating stories (Story UI will pick 4001 or the next free port)
 npm run story-ui
 
