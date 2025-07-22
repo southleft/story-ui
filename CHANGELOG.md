@@ -1,3 +1,10 @@
+## [2.1.4](https://github.com/southleft/story-ui/compare/v2.1.3...v2.1.4) (2025-07-22)
+
+
+### Bug Fixes
+
+* improve design system installation flow with clearer messaging ([c520d13](https://github.com/southleft/story-ui/commit/c520d13f32499d59a89e2574ceb97ab014df365e))
+
 ## [2.1.3](https://github.com/southleft/story-ui/compare/v2.1.2...v2.1.3) (2025-07-22)
 
 
