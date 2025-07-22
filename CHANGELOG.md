@@ -1,3 +1,10 @@
+## [2.1.2](https://github.com/southleft/story-ui/compare/v2.1.1...v2.1.2) (2025-07-22)
+
+
+### Bug Fixes
+
+* ensure design system packages are installed before creating preview files ([#7](https://github.com/southleft/story-ui/issues/7)) ([f701749](https://github.com/southleft/story-ui/commit/f7017497b70fef1d7ffb0cd89f37d98e9ad0e63e))
+
 ## [2.1.1](https://github.com/southleft/story-ui/compare/v2.1.0...v2.1.1) (2025-07-22)
 
 
