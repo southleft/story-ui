@@ -97,6 +97,25 @@ function setupStorybookPreview(designSystem: string) {
     return;
   }
 
+  // Verify required packages are installed before creating preview
+  if (['antd', 'mantine', 'chakra'].includes(designSystem)) {
+    const packageJsonPath = path.join(process.cwd(), 'package.json');
+    if (fs.existsSync(packageJsonPath)) {
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+      const allDeps = { ...packageJson.dependencies, ...packageJson.devDependencies };
+      const config = DESIGN_SYSTEM_CONFIGS[designSystem as keyof typeof DESIGN_SYSTEM_CONFIGS];
+      
+      if (config) {
+        const missingDeps = config.packages.filter(pkg => !allDeps[pkg]);
+        if (missingDeps.length > 0) {
+          console.log(chalk.red(`❌ Cannot create preview.tsx - missing dependencies: ${missingDeps.join(', ')}`));
+          console.log(chalk.yellow(`Please install them first: npm install ${missingDeps.join(' ')}`));
+          return;
+        }
+      }
+    }
+  }
+
   const designSystemConfigs = {
     chakra: {
       imports: [
@@ -445,6 +464,9 @@ export async function setupCommand() {
       console.log(chalk.cyan(`npm install ${config.packages.join(' ')}`));
       process.exit(1);
     }
+    
+    // Set up Storybook preview file after successful installation
+    setupStorybookPreview(answers.designSystem);
   } else if (['antd', 'mantine', 'chakra'].includes(answers.designSystem)) {
     // User declined installation - verify dependencies exist
     const packageJsonPath = path.join(process.cwd(), 'package.json');
@@ -459,6 +481,9 @@ export async function setupCommand() {
         console.log(chalk.yellow('Please install them manually:'));
         console.log(chalk.cyan(`npm install ${missingDeps.join(' ')}`));
         process.exit(1);
+      } else {
+        // Dependencies exist, set up Storybook preview
+        setupStorybookPreview(answers.designSystem);
       }
     }
   }
@@ -722,11 +747,6 @@ export async function setupCommand() {
 
   // Clean up default Storybook template components to prevent conflicts
   cleanupDefaultStorybookComponents();
-
-  // Set up Storybook preview file for design systems that require JSX
-  if (['chakra', 'antd', 'mantine'].includes(answers.designSystem)) {
-    setupStorybookPreview(answers.designSystem);
-  }
 
   // Update package.json with convenience scripts
   if (packageJson) {
