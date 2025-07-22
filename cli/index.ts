@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import { setupProductionGitignore } from '../story-generator/productionGitignoreManager.js';
 import { createStoryUIConfig } from '../story-ui.config.js';
 import { setupCommand } from './setup.js';
+import net from 'net';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,18 +32,40 @@ program
   .description('Start the Story UI server')
   .option('-p, --port <port>', 'Port to run the server on', '4001')
   .option('-c, --config <config>', 'Path to configuration file')
-  .action((options) => {
+  .action(async (options) => {
     console.log('🚀 Starting Story UI server...');
 
     // Use absolute path to avoid dist/dist issue when package is linked
     const pkgRoot = path.resolve(__dirname, '..');
     const serverPath = path.join(pkgRoot, 'mcp-server/index.js');
     console.log(`✅ Using MCP server at: ${serverPath}`);
-    const env = { ...process.env };
 
-    if (options.port) {
-      env.PORT = options.port;
+    // FIRST_EDIT: determine an available port
+    const requestedPort = parseInt(options.port || '4001', 10);
+
+    const isPortFree = (port: number) => {
+      return new Promise<boolean>((resolve) => {
+        const tester = net.createServer()
+          .once('error', () => resolve(false))
+          .once('listening', () => {
+            tester.close();
+            resolve(true);
+          })
+          .listen(port);
+      });
+    };
+
+    let finalPort = requestedPort;
+    // eslint-disable-next-line no-await-in-loop
+    while (!(await isPortFree(finalPort))) {
+      finalPort += 1;
     }
+
+    if (finalPort !== requestedPort) {
+      console.log(`⚠️  Port ${requestedPort} is in use. Using ${finalPort} instead.`);
+    }
+
+    const env: NodeJS.ProcessEnv = { ...process.env, PORT: String(finalPort) };
 
     if (options.config) {
       env.STORY_UI_CONFIG_PATH = options.config;
@@ -105,6 +128,8 @@ program
     }
   });
 
+
+
 async function autoDetectAndCreateConfig() {
   const cwd = process.cwd();
   const config: any = {
@@ -154,27 +179,6 @@ async function createTemplateConfig(template: string) {
   let config: any;
 
   switch (template) {
-    case 'material-ui':
-      config = {
-        importPath: '@mui/material',
-        componentPrefix: '',
-        layoutRules: {
-          multiColumnWrapper: 'Grid',
-          columnComponent: 'Grid',
-          layoutExamples: {
-            twoColumn: `<Grid container spacing={2}>
-  <Grid item xs={6}>
-    <Card>Left content</Card>
-  </Grid>
-  <Grid item xs={6}>
-    <Card>Right content</Card>
-  </Grid>
-</Grid>`
-          }
-        }
-      };
-      break;
-
     case 'chakra-ui':
       config = {
         importPath: '@chakra-ui/react',

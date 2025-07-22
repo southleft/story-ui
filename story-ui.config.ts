@@ -29,6 +29,40 @@ export interface LayoutRules {
   prohibitedElements?: string[];
 }
 
+// Additional imports configuration
+export interface AdditionalImport {
+  path: string;
+  components: string[];
+}
+
+
+
+// Design system guidelines configuration
+export interface DesignSystemGuidelines {
+  name: string;
+  preferredComponents?: {
+    [category: string]: string; // category -> package path
+  };
+  spacingTokens?: {
+    prefix: string;
+    values: string[];
+  };
+  colorTokens?: {
+    prefix: string;
+    categories: string[];
+  };
+  prohibitedPatterns?: {
+    cssFrameworks?: string[];
+    classNamePatterns?: string[];
+    inlineStyles?: string[];
+  };
+  enforcementRules?: {
+    requireDesignTokens?: boolean;
+    prohibitArbitraryValues?: boolean;
+    enforceComponentLibrary?: boolean;
+  };
+}
+
 // Main Story UI configuration interface
 export interface StoryUIConfig {
   generatedStoriesPath: string;
@@ -39,11 +73,16 @@ export interface StoryUIConfig {
   importPath: string;
   componentPrefix: string;
   components: ComponentConfig[];
+  layoutComponents?: ComponentConfig[]; // Layout-specific components
   layoutRules: LayoutRules;
   sampleStory: string;
   systemPrompt?: string;
   layoutInstructions?: string[];
   examples?: string[];
+  additionalImports?: AdditionalImport[];
+  considerationsPath?: string;
+  storybookFramework?: string; // e.g., '@storybook/react-vite', '@storybook/react-webpack5', '@storybook/nextjs'
+  designSystemGuidelines?: DesignSystemGuidelines;
 }
 
 // Default generic configuration
@@ -98,15 +137,22 @@ export const DEFAULT_CONFIG: StoryUIConfig = {
     },
     prohibitedElements: []
   },
-  sampleStory: `import type { StoryObj } from '@storybook/react-webpack5';
+  sampleStory: `import type { Meta, StoryObj } from '@storybook/react';
+import React from 'react';
 import { Card } from 'your-component-library';
 
-export default {
-  title: 'Layouts/Sample Layout',
+const meta = {
+  title: 'Generated/Sample Layout',
   component: Card,
-};
+  parameters: {
+    layout: 'centered',
+  },
+} satisfies Meta<typeof Card>;
 
-export const Default: StoryObj<typeof Card> = {
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+export const Default: Story = {
   args: {
     children: (
       <Card>

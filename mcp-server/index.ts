@@ -33,6 +33,7 @@ import {
 import { setupProductionGitignore, ProductionGitignoreManager } from '../story-generator/productionGitignoreManager.js';
 import { getInMemoryStoryService } from '../story-generator/inMemoryStoryService.js';
 import { loadUserConfig } from '../story-generator/configLoader.js';
+import fs from 'fs';
 
 const app = express();
 app.use(cors());
@@ -61,6 +62,84 @@ app.delete('/mcp/sync/stories/:id', deleteSyncedStory);
 app.delete('/mcp/sync/stories', clearAllSyncedStories);
 app.get('/mcp/sync/chat-history', syncChatHistory);
 app.get('/mcp/sync/validate/:id', validateChatSession);
+
+// Proxy routes for frontend compatibility (maps /story-ui/ to /mcp/)
+app.get('/story-ui/stories', getStoriesMetadata);
+app.get('/story-ui/stories/:id', getStoryById);
+app.get('/story-ui/stories/:id/content', getStoryContent);
+app.delete('/story-ui/stories/:id', deleteStory);
+app.delete('/story-ui/stories', clearAllStories);
+app.post('/story-ui/generate', generateStoryFromPrompt);
+app.post('/story-ui/claude', claudeProxy);
+app.get('/story-ui/components', getComponents);
+app.get('/story-ui/props', getProps);
+app.get('/story-ui/memory-stats', getMemoryStats);
+
+// Legacy delete route for backwards compatibility
+app.post('/story-ui/delete', async (req, res) => {
+  try {
+    const { chatId, storyId } = req.body;
+    const id = chatId || storyId; // Support both parameter names
+    
+    if (!id) {
+      return res.status(400).json({ error: 'chatId or storyId is required' });
+    }
+    
+    console.log(`🗑️ Attempting to delete story: ${id}`);
+    
+    // First try in-memory deletion (production mode)
+    const storyService = getInMemoryStoryService(config);
+    const inMemoryDeleted = storyService.deleteStory(id);
+    
+    if (inMemoryDeleted) {
+      console.log(`✅ Deleted story from memory: ${id}`);
+      return res.json({
+        success: true,
+        message: 'Story deleted successfully from memory'
+      });
+    }
+    
+    // If not found in memory, try file-system deletion (development mode)
+    if (gitignoreManager && !gitignoreManager.isProductionMode()) {
+      const storiesPath = config.generatedStoriesPath;
+      console.log(`🔍 Searching for file-system story in: ${storiesPath}`);
+      
+      if (fs.existsSync(storiesPath)) {
+        const files = fs.readdirSync(storiesPath);
+        const matchingFile = files.find(file => 
+          file.includes(id) || file.replace('.stories.tsx', '') === id
+        );
+        
+        if (matchingFile) {
+          const filePath = path.join(storiesPath, matchingFile);
+          fs.unlinkSync(filePath);
+          console.log(`✅ Deleted story file: ${filePath}`);
+          return res.json({
+            success: true,
+            message: 'Story deleted successfully from file system'
+          });
+        }
+      }
+    }
+    
+    console.log(`❌ Story not found: ${id}`);
+    return res.status(404).json({
+      success: false,
+      error: 'Story not found'
+    });
+  } catch (error) {
+    console.error('Error in legacy delete route:', error);
+    res.status(500).json({ error: 'Failed to delete story' });
+  }
+});
+
+// Synchronized story proxy routes
+app.get('/story-ui/sync/stories', getSyncedStories);
+app.get('/story-ui/sync/stories/:id', getSyncedStoryById);
+app.delete('/story-ui/sync/stories/:id', deleteSyncedStory);
+app.delete('/story-ui/sync/stories', clearAllSyncedStories);
+app.get('/story-ui/sync/chat-history', syncChatHistory);
+app.get('/story-ui/sync/validate/:id', validateChatSession);
 
 // Set up production-ready gitignore and directory structure on startup
 const config = loadUserConfig();

@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { STORY_UI_CONFIG } from '../story-ui.config.js';
+import { StoryUIConfig } from '../story-ui.config.js';
 
 function slugify(str: string) {
   return str
@@ -9,8 +9,23 @@ function slugify(str: string) {
     .replace(/^-+|-+$/g, '');
 }
 
-export function generateStory({ fileContents, fileName }: { fileContents: string; fileName: string }) {
-  const outPath = path.join(STORY_UI_CONFIG.generatedStoriesPath, fileName);
+export function generateStory({
+  fileContents,
+  fileName,
+  config
+}: {
+  fileContents: string;
+  fileName: string;
+  config: StoryUIConfig;
+}) {
+  const outPath = path.join(config.generatedStoriesPath, fileName);
+
+  // Ensure the directory exists
+  const dir = path.dirname(outPath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+
   fs.writeFileSync(outPath, fileContents, 'utf-8');
   return outPath;
 }

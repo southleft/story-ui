@@ -4,18 +4,113 @@ import inquirer from 'inquirer';
 import chalk from 'chalk';
 import { autoDetectDesignSystem } from '../story-generator/configLoader.js';
 import { fileURLToPath } from 'url';
+import net from 'net';
+import { execSync } from 'child_process';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// FIRST_EDIT: helper functions to check for free ports
+async function isPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const tester = net.createServer()
+      .once('error', () => resolve(false))
+      .once('listening', () => {
+        tester.close();
+        resolve(true);
+      })
+      .listen(port);
+  });
+}
+
+async function findAvailablePort(startPort: number): Promise<number> {
+  let port = startPort;
+  // eslint-disable-next-line no-await-in-loop
+  while (!(await isPortAvailable(port))) {
+    port += 1;
+  }
+  return port;
+}
+
 interface SetupAnswers {
-  designSystem: 'auto' | 'mui' | 'chakra' | 'antd' | 'mantine' | 'custom';
+  designSystem: 'auto' | 'chakra' | 'antd' | 'mantine' | 'custom';
+  installDesignSystem?: boolean;
   importPath?: string;
   componentPrefix?: string;
   generatedStoriesPath?: string;
   componentsPath?: string;
   hasApiKey?: boolean;
   apiKey?: string;
+  mcpPort?: string;
+}
+
+// Design system installation configurations
+const DESIGN_SYSTEM_CONFIGS = {
+  antd: {
+    packages: ['antd'],
+    name: 'Ant Design',
+    importPath: 'antd',
+    additionalSetup: 'import "antd/dist/reset.css";'
+  },
+  mantine: {
+    packages: ['@mantine/core', '@mantine/hooks', '@mantine/notifications'],
+    name: 'Mantine',
+    importPath: '@mantine/core',
+    additionalSetup: 'import "@mantine/core/styles.css";'
+  },
+  chakra: {
+    packages: ['@chakra-ui/react', '@emotion/react', '@emotion/styled', 'framer-motion'],
+    name: 'Chakra UI',
+    importPath: '@chakra-ui/react',
+    additionalSetup: 'import { ChakraProvider } from "@chakra-ui/react";'
+  }
+};
+
+async function installDesignSystem(systemKey: keyof typeof DESIGN_SYSTEM_CONFIGS) {
+  const config = DESIGN_SYSTEM_CONFIGS[systemKey];
+  const packageJson = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf-8'));
+  
+  // Check if packages are already installed
+  const dependencies = { ...packageJson.dependencies, ...packageJson.devDependencies };
+  const missingPackages = config.packages.filter(pkg => !dependencies[pkg]);
+  
+  if (missingPackages.length === 0) {
+    console.log(chalk.green(`✅ ${config.name} packages already installed`));
+    return true;
+  }
+
+  console.log(chalk.blue(`\n📦 Installing ${config.name} packages...`));
+  console.log(chalk.gray(`Packages: ${missingPackages.join(', ')}`));
+  
+  // Detect package manager
+  const npmLock = fs.existsSync(path.join(process.cwd(), 'package-lock.json'));
+  const yarnLock = fs.existsSync(path.join(process.cwd(), 'yarn.lock'));
+  const pnpmLock = fs.existsSync(path.join(process.cwd(), 'pnpm-lock.yaml'));
+  
+  let installCommand = `npm install ${missingPackages.join(' ')}`;
+  if (yarnLock) {
+    installCommand = `yarn add ${missingPackages.join(' ')}`;
+  } else if (pnpmLock) {
+    installCommand = `pnpm add ${missingPackages.join(' ')}`;
+  }
+  
+  try {
+    console.log(chalk.gray(`Running: ${installCommand}`));
+    execSync(installCommand, { stdio: 'inherit' });
+    console.log(chalk.green(`✅ ${config.name} installed successfully!`));
+    
+    if (config.additionalSetup) {
+      console.log(chalk.blue('\n📋 Additional setup required:'));
+      console.log(chalk.gray(`Add this import to your main CSS/index file:`));
+      console.log(chalk.cyan(`${config.additionalSetup}`));
+    }
+    
+    return true;
+  } catch (error) {
+    console.error(chalk.red(`❌ Failed to install ${config.name}:`), error);
+    console.log(chalk.yellow(`\n💡 You can install manually with: ${installCommand}`));
+    return false;
+  }
 }
 
 export async function setupCommand() {
@@ -77,13 +172,24 @@ export async function setupCommand() {
       message: 'Which design system are you using?',
       choices: [
         { name: '🤖 Auto-detect from package.json', value: 'auto' },
-        { name: '🎨 Material-UI (@mui/material)', value: 'mui' },
-        { name: '⚡ Chakra UI (@chakra-ui/react)', value: 'chakra' },
-        { name: '🐜 Ant Design (antd)', value: 'antd' },
-        { name: '🎯 Mantine (@mantine/core)', value: 'mantine' },
+        { name: '🐜 Ant Design (antd) - Install & Configure', value: 'antd' },
+        { name: '🎯 Mantine (@mantine/core) - Install & Configure', value: 'mantine' },
+        { name: '⚡ Chakra UI (@chakra-ui/react) - Install & Configure', value: 'chakra' },
         { name: '🔧 Custom/Other', value: 'custom' }
       ],
       default: autoDetected ? 'auto' : 'custom'
+    },
+    {
+      type: 'confirm',
+      name: 'installDesignSystem',
+      message: (answers) => {
+        const systemName = answers.designSystem === 'antd' ? 'Ant Design' : 
+                          answers.designSystem === 'mantine' ? 'Mantine' :
+                          answers.designSystem === 'chakra' ? 'Chakra UI' : 'the design system';
+        return `Would you like to install ${systemName} and its dependencies now?`;
+      },
+      when: (answers) => ['antd', 'mantine', 'chakra'].includes(answers.designSystem),
+      default: true
     },
     {
       type: 'input',
@@ -114,6 +220,21 @@ export async function setupCommand() {
       when: (answers) => answers.designSystem === 'custom'
     },
     {
+      type: 'input',
+      name: 'mcpPort',
+      message: 'Port for the Story UI MCP server',
+      default: async () => {
+        const port = await findAvailablePort(4001);
+        return String(port);
+      },
+      validate: async (input) => {
+        const value = parseInt(input, 10);
+        if (isNaN(value) || value <= 0) return 'Enter a valid port number';
+        const available = await isPortAvailable(value);
+        return available ? true : `Port ${value} is already in use`;
+      }
+    },
+    {
       type: 'confirm',
       name: 'hasApiKey',
       message: 'Do you have a Claude API key? (You can add it later)',
@@ -128,41 +249,19 @@ export async function setupCommand() {
     }
   ]);
 
+  // Install design system if requested
+  if (answers.installDesignSystem && ['antd', 'mantine', 'chakra'].includes(answers.designSystem)) {
+    const installSuccess = await installDesignSystem(answers.designSystem as keyof typeof DESIGN_SYSTEM_CONFIGS);
+    if (!installSuccess) {
+      console.log(chalk.yellow('⚠️  Installation failed but continuing with configuration...'));
+    }
+  }
+
   // Generate configuration
   let config: any = {};
 
   if (answers.designSystem === 'auto' && autoDetected) {
     config = autoDetected;
-  } else if (answers.designSystem === 'mui') {
-    config = {
-      importPath: '@mui/material',
-      componentPrefix: '',
-      layoutRules: {
-        multiColumnWrapper: 'Grid',
-        columnComponent: 'Grid',
-        containerComponent: 'Container',
-        layoutExamples: {
-          twoColumn: `<Grid container spacing={2}>
-  <Grid item xs={6}>
-    <Card>
-      <CardContent>
-        <Typography variant="h5">Left Card</Typography>
-        <Typography>Left content</Typography>
-      </CardContent>
-    </Card>
-  </Grid>
-  <Grid item xs={6}>
-    <Card>
-      <CardContent>
-        <Typography variant="h5">Right Card</Typography>
-        <Typography>Right content</Typography>
-      </CardContent>
-    </Card>
-  </Grid>
-</Grid>`
-        }
-      }
-    };
   } else if (answers.designSystem === 'chakra') {
     config = {
       importPath: '@chakra-ui/react',
@@ -170,7 +269,31 @@ export async function setupCommand() {
       layoutRules: {
         multiColumnWrapper: 'SimpleGrid',
         columnComponent: 'Box',
-        containerComponent: 'Container'
+        containerComponent: 'Container',
+        layoutExamples: {
+          twoColumn: `<SimpleGrid columns={2} spacing={6}>
+  <Box>
+    <Card>
+      <CardHeader>
+        <Heading size="md">Left Card</Heading>
+      </CardHeader>
+      <CardBody>
+        <Text>Left content goes here</Text>
+      </CardBody>
+    </Card>
+  </Box>
+  <Box>
+    <Card>
+      <CardHeader>
+        <Heading size="md">Right Card</Heading>
+      </CardHeader>
+      <CardBody>
+        <Text>Right content goes here</Text>
+      </CardBody>
+    </Card>
+  </Box>
+</SimpleGrid>`
+        }
       }
     };
   } else if (answers.designSystem === 'antd') {
@@ -180,7 +303,21 @@ export async function setupCommand() {
       layoutRules: {
         multiColumnWrapper: 'Row',
         columnComponent: 'Col',
-        containerComponent: 'div'
+        containerComponent: 'div',
+        layoutExamples: {
+          twoColumn: `<Row gutter={16}>
+  <Col span={12}>
+    <Card title="Left Card" bordered={false}>
+      <p>Left content goes here</p>
+    </Card>
+  </Col>
+  <Col span={12}>
+    <Card title="Right Card" bordered={false}>
+      <p>Right content goes here</p>
+    </Card>
+  </Col>
+</Row>`
+        }
       }
     };
   } else if (answers.designSystem === 'mantine') {
@@ -190,7 +327,27 @@ export async function setupCommand() {
       layoutRules: {
         multiColumnWrapper: 'SimpleGrid',
         columnComponent: 'div',
-        containerComponent: 'Container'
+        containerComponent: 'Container',
+        layoutExamples: {
+          twoColumn: `<SimpleGrid cols={2} spacing="md">
+  <div>
+    <Card shadow="sm" padding="lg" radius="md" withBorder>
+      <Text fw={500} size="lg" mb="xs">Left Card</Text>
+      <Text size="sm" c="dimmed">
+        Left content goes here
+      </Text>
+    </Card>
+  </div>
+  <div>
+    <Card shadow="sm" padding="lg" radius="md" withBorder>
+      <Text fw={500} size="lg" mb="xs">Right Card</Text>
+      <Text size="sm" c="dimmed">
+        Right content goes here
+      </Text>
+    </Card>
+  </div>
+</SimpleGrid>`
+        }
       }
     };
   } else {
@@ -218,11 +375,13 @@ export async function setupCommand() {
   config.storyPrefix = 'Generated/';
   config.defaultAuthor = 'Story UI AI';
 
+
   // Create configuration file
   const configContent = `module.exports = ${JSON.stringify(config, null, 2)};`;
   const configPath = path.join(process.cwd(), 'story-ui.config.js');
 
   fs.writeFileSync(configPath, configContent);
+
 
   // Create generated stories directory
   const storiesDir = path.dirname(config.generatedStoriesPath);
@@ -264,6 +423,48 @@ export async function setupCommand() {
     }
   }
 
+  // Create considerations file
+  const considerationsTemplatePath = path.resolve(__dirname, '../../templates/story-ui-considerations.md');
+  const considerationsPath = path.join(process.cwd(), 'story-ui-considerations.md');
+
+  if (!fs.existsSync(considerationsPath) && fs.existsSync(considerationsTemplatePath)) {
+    let considerationsContent = fs.readFileSync(considerationsTemplatePath, 'utf-8');
+
+    // Customize based on selected design system
+    if (config.importPath) {
+      considerationsContent = considerationsContent.replace('[Your Component Library]', config.importPath);
+      considerationsContent = considerationsContent.replace('[your-import-path]', config.importPath);
+    }
+
+    fs.writeFileSync(considerationsPath, considerationsContent);
+    console.log(chalk.green('✅ Created story-ui-considerations.md for AI customization'));
+  }
+
+  // Create documentation directory structure
+  const docsDir = path.join(process.cwd(), 'story-ui-docs');
+  if (!fs.existsSync(docsDir)) {
+    console.log(chalk.blue('\n📚 Creating documentation directory structure...'));
+    
+    // Create main directory and subdirectories
+    const subdirs = ['guidelines', 'tokens', 'components', 'patterns'];
+    fs.mkdirSync(docsDir, { recursive: true });
+    
+    for (const subdir of subdirs) {
+      fs.mkdirSync(path.join(docsDir, subdir), { recursive: true });
+    }
+
+    // Copy README template
+    const docsReadmeTemplatePath = path.resolve(__dirname, '../../templates/story-ui-docs-README.md');
+    const docsReadmePath = path.join(docsDir, 'README.md');
+    
+    if (fs.existsSync(docsReadmeTemplatePath)) {
+      fs.writeFileSync(docsReadmePath, fs.readFileSync(docsReadmeTemplatePath, 'utf-8'));
+    }
+    
+    console.log(chalk.green('✅ Created story-ui-docs/ directory structure'));
+    console.log(chalk.gray('   Add your design system documentation to enhance AI story generation'));
+  }
+
   // Create .env file from template
   const envSamplePath = path.resolve(__dirname, '../../.env.sample');
   const envPath = path.join(process.cwd(), '.env');
@@ -275,6 +476,11 @@ export async function setupCommand() {
       // If user provided API key, update the template
       if (answers.apiKey) {
         envContent = envContent.replace('your-claude-api-key-here', answers.apiKey);
+      }
+      
+      // Update the VITE_STORY_UI_PORT with the chosen port
+      if (answers.mcpPort) {
+        envContent = envContent.replace('VITE_STORY_UI_PORT=4001', `VITE_STORY_UI_PORT=${answers.mcpPort}`);
       }
 
       fs.writeFileSync(envPath, envContent);
@@ -311,9 +517,13 @@ export async function setupCommand() {
   // Update package.json with convenience scripts
   if (packageJson) {
     const scripts = packageJson.scripts || {};
+    // FIRST_EDIT: include chosen port in script
+    const portFlag = `--port ${answers.mcpPort || '4001'}`;
 
     if (!scripts['story-ui']) {
-      scripts['story-ui'] = 'story-ui start';
+      scripts['story-ui'] = `story-ui start ${portFlag}`;
+    } else if (!scripts['story-ui'].includes('--port')) {
+      scripts['story-ui'] += ` ${portFlag}`;
     }
 
     if (!scripts['storybook-with-ui'] && scripts['storybook']) {
@@ -321,9 +531,52 @@ export async function setupCommand() {
     }
 
     packageJson.scripts = scripts;
+    
+    // Check and add required dependencies
+    const dependencies = packageJson.dependencies || {};
+    const devDependencies = packageJson.devDependencies || {};
+    let needsInstall = false;
+    
+    
+    // Check for concurrently (needed for storybook-with-ui script)
+    if (!dependencies['concurrently'] && !devDependencies['concurrently']) {
+      console.log(chalk.blue('📦 Adding concurrently dependency...'));
+      devDependencies['concurrently'] = '^8.2.0';
+      needsInstall = true;
+    }
+    
+    packageJson.dependencies = dependencies;
+    packageJson.devDependencies = devDependencies;
+    
     fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + '\n');
     console.log(chalk.green('✅ Added convenience scripts to package.json'));
+    
+    if (needsInstall) {
+      console.log(chalk.blue('\n📦 Installing required dependencies...'));
+      console.log(chalk.gray('This may take a moment...\n'));
+      
+      // Detect package manager
+      const npmLock = fs.existsSync(path.join(process.cwd(), 'package-lock.json'));
+      const yarnLock = fs.existsSync(path.join(process.cwd(), 'yarn.lock'));
+      const pnpmLock = fs.existsSync(path.join(process.cwd(), 'pnpm-lock.yaml'));
+      
+      let installCommand = 'npm install';
+      if (yarnLock) {
+        installCommand = 'yarn install';
+      } else if (pnpmLock) {
+        installCommand = 'pnpm install';
+      }
+      
+      try {
+        execSync(installCommand, { stdio: 'inherit' });
+        console.log(chalk.green('✅ Dependencies installed successfully'));
+      } catch (error) {
+        console.log(chalk.yellow('⚠️  Failed to install dependencies automatically.'));
+        console.log(chalk.yellow(`   Please run "${installCommand}" manually to complete the setup.`));
+      }
+    }
   }
+
 
   console.log(chalk.green.bold('\n🎉 Setup complete!\n'));
   console.log(`📁 Configuration saved to: ${chalk.cyan(configPath)}`);

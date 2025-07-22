@@ -10,6 +10,7 @@ export interface DiscoveredComponent {
   category: 'layout' | 'content' | 'form' | 'navigation' | 'feedback' | 'other';
   slots?: string[];
   examples?: string[];
+  __componentPath?: string;
 }
 
 /**
@@ -26,11 +27,16 @@ export function discoverComponentsFromDirectory(
 
   const components: DiscoveredComponent[] = [];
   const dirs = fs.readdirSync(componentsPath, { withFileTypes: true })
-    .filter(d => d.isDirectory() && d.name !== 'generated' && !d.name.startsWith('.'));
+    .filter(d => d.isDirectory() && d.name !== 'generated' && !d.name.startsWith('.') && d.name !== 'StoryUI');
 
   for (const dir of dirs) {
     const componentName = componentPrefix + dir.name;
     const componentPath = path.join(componentsPath, dir.name);
+
+    // Skip Story UI components
+    if (componentName === 'StoryUIPanel' || componentName.startsWith('StoryUI')) {
+      continue;
+    }
 
     // Look for story files to extract component information
     const storyFile = path.join(componentPath, `${dir.name}.stories.tsx`);
@@ -251,8 +257,11 @@ function extractSlotsFromComponent(content: string): string[] {
 }
 
 function categorizeComponent(name: string, description: string): DiscoveredComponent['category'] {
+  if (!name || typeof name !== 'string') {
+    return 'other';
+  }
   const lowerName = name.toLowerCase();
-  const lowerDesc = description.toLowerCase();
+  const lowerDesc = (description && typeof description === 'string') ? description.toLowerCase() : '';
 
   if (lowerName.includes('layout') || lowerName.includes('grid') || lowerName.includes('container') || lowerName.includes('section')) {
     return 'layout';

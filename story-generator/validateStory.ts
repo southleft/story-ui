@@ -1,6 +1,7 @@
 import * as ts from 'typescript';
 import fs from 'fs';
 import path from 'path';
+import { isBlacklistedComponent, validateImports } from './componentBlacklist.js';
 
 export interface ValidationResult {
   isValid: boolean;
@@ -12,7 +13,7 @@ export interface ValidationResult {
 /**
  * Validates TypeScript code syntax and attempts to fix common issues
  */
-export function validateStoryCode(code: string, fileName: string = 'story.tsx'): ValidationResult {
+export function validateStoryCode(code: string, fileName: string = 'story.tsx', config?: any): ValidationResult {
   const result: ValidationResult = {
     isValid: true,
     errors: [],
@@ -69,8 +70,16 @@ export function validateStoryCode(code: string, fileName: string = 'story.tsx'):
     }
 
     // Additional semantic checks
-    const semanticErrors = performSemanticChecks(sourceFile);
+    const semanticErrors = performSemanticChecks(sourceFile, config);
     result.errors.push(...semanticErrors);
+
+    // Check for React import
+    const hasJSX = code.includes('<') || code.includes('/>');
+    const hasReactImport = code.includes('import React from \'react\';');
+    if (hasJSX && !hasReactImport) {
+      result.errors.push('Missing React import - add "import React from \'react\';" at the top of the file');
+      result.isValid = false;
+    }
 
     if (result.errors.length > 0) {
       result.isValid = false;
@@ -81,7 +90,7 @@ export function validateStoryCode(code: string, fileName: string = 'story.tsx'):
         result.fixedCode = fixedCode;
 
         // Re-validate the fixed code
-        const fixedValidation = validateStoryCode(fixedCode, fileName);
+        const fixedValidation = validateStoryCode(fixedCode, fileName, config);
         if (fixedValidation.isValid) {
           result.isValid = true;
           result.warnings.push('Code was automatically fixed for syntax errors');
@@ -100,10 +109,56 @@ export function validateStoryCode(code: string, fileName: string = 'story.tsx'):
 /**
  * Performs additional semantic checks on the AST
  */
-function performSemanticChecks(sourceFile: ts.SourceFile): string[] {
+function performSemanticChecks(sourceFile: ts.SourceFile, config?: any): string[] {
   const errors: string[] = [];
+  const availableComponents = new Set<string>();
+  const importedComponents = new Set<string>();
+
+  // If config is provided, collect available components
+  if (config && config.componentsToImport) {
+    config.componentsToImport.forEach((comp: string) => availableComponents.add(comp));
+  }
 
   function visit(node: ts.Node) {
+    // Check import statements for invalid components
+    if (ts.isImportDeclaration(node) && node.importClause && node.importClause.namedBindings) {
+      const moduleSpecifier = node.moduleSpecifier;
+      if (ts.isStringLiteral(moduleSpecifier)) {
+        const importPath = moduleSpecifier.text;
+
+        // Check if this is the main component library import
+        if (config && config.importPath && importPath === config.importPath) {
+          if (ts.isNamedImports(node.importClause.namedBindings)) {
+            node.importClause.namedBindings.elements.forEach(element => {
+              const componentName = element.name.text;
+              importedComponents.add(componentName);
+
+              // Check if component exists in available components
+              if (availableComponents.size > 0) {
+                if (isBlacklistedComponent(componentName, availableComponents)) {
+                  // This is a blacklisted component
+                  const validation = validateImports([componentName], availableComponents);
+                  const suggestions = validation.suggestions.get(componentName);
+
+                  let errorMsg = `Import error: "${componentName}" is not a valid component from ${importPath}. This appears to be a story export name or made-up component.`;
+
+                  if (suggestions && suggestions.length > 0) {
+                    errorMsg += ` Use these components instead: ${suggestions.join(', ')}.`;
+                  } else {
+                    errorMsg += ` Use basic components like Box, Stack, Text, Button instead.`;
+                  }
+
+                  errors.push(errorMsg);
+                } else if (!availableComponents.has(componentName)) {
+                  errors.push(`Import error: "${componentName}" is not available from ${importPath}. Available components include: ${Array.from(availableComponents).slice(0, 10).join(', ')}...`);
+                }
+              }
+            });
+          }
+        }
+      }
+    }
+
     // Check for unclosed JSX elements
     if (ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node)) {
       // Additional JSX-specific checks could go here
@@ -126,6 +181,11 @@ function performSemanticChecks(sourceFile: ts.SourceFile): string[] {
  */
 function attemptAutoFix(code: string, errors: string[]): string {
   let fixedCode = code;
+
+  // CRITICAL: Fix missing React import first (most important for JSX)
+  if (errors.some(e => e.includes('Missing React import'))) {
+    fixedCode = fixMissingReactImport(fixedCode);
+  }
 
   // First, check if the code appears to be truncated
   if (isCodeTruncated(fixedCode)) {
@@ -291,6 +351,30 @@ function fixUnterminatedStrings(code: string): string {
 }
 
 /**
+ * Fixes missing React import for JSX
+ */
+function fixMissingReactImport(code: string): string {
+  // Check if code has JSX but no React import
+  const hasJSX = code.includes('<') || code.includes('/>');
+  const hasReactImport = code.includes('import React') || code.includes('* as React');
+
+  if (hasJSX && !hasReactImport) {
+    // Find the first import statement or the beginning of the file
+    const firstImportIndex = code.indexOf('import');
+
+    if (firstImportIndex !== -1) {
+      // Insert React import before the first import
+      return code.slice(0, firstImportIndex) + "import React from 'react';\n" + code.slice(firstImportIndex);
+    } else {
+      // No imports, add at the beginning
+      return "import React from 'react';\n" + code;
+    }
+  }
+
+  return code;
+}
+
+/**
  * Fixes unclosed JSX elements
  */
 function fixUnclosedJSX(code: string): string {
@@ -411,7 +495,7 @@ function findInsertPosition(code: string): number {
 /**
  * Extracts and validates code blocks from AI responses
  */
-export function extractAndValidateCodeBlock(aiResponse: string): ValidationResult {
+export function extractAndValidateCodeBlock(aiResponse: string, config?: any): ValidationResult {
   // Try multiple extraction methods
   const extractionMethods = [
     // Standard code blocks
@@ -447,7 +531,7 @@ export function extractAndValidateCodeBlock(aiResponse: string): ValidationResul
   }
 
   // Validate the extracted code
-  return validateStoryCode(extractedCode);
+  return validateStoryCode(extractedCode, 'story.tsx', config);
 }
 
 /**
@@ -456,9 +540,10 @@ export function extractAndValidateCodeBlock(aiResponse: string): ValidationResul
 export function createFallbackStory(prompt: string, config: any): string {
   const title = prompt.length > 50 ? prompt.substring(0, 50) + '...' : prompt;
   const escapedTitle = title.replace(/"/g, '\\"');
+  const storybookFramework = config.storybookFramework || '@storybook/react';
 
   return `import React from 'react';
-import type { StoryObj } from '@storybook/react';
+import type { StoryObj } from '${storybookFramework}';
 
 // Fallback story generated due to AI generation error
 export default {

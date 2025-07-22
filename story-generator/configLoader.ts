@@ -52,6 +52,20 @@ export function loadUserConfig(): StoryUIConfig {
           const userConfig = module.exports as any;
           const config = createStoryUIConfig(userConfig.default || userConfig);
 
+          // Detect Storybook framework if not already specified
+          if (!config.storybookFramework) {
+            const packageJsonPath = path.join(process.cwd(), 'package.json');
+            if (fs.existsSync(packageJsonPath)) {
+              try {
+                const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+                const dependencies = { ...packageJson.dependencies, ...packageJson.devDependencies };
+                config.storybookFramework = detectStorybookFramework(dependencies);
+              } catch (error) {
+                console.warn('Failed to detect Storybook framework:', error);
+              }
+            }
+          }
+
           // Cache the loaded config
           cachedConfig = config;
           configLoadTime = now;
@@ -70,11 +84,26 @@ export function loadUserConfig(): StoryUIConfig {
     console.warn('Please create a story-ui.config.js file in your project root to configure Story UI for your design system.');
   }
 
+  // Create default config with detected framework
+  const defaultConfig = { ...DEFAULT_CONFIG };
+  
+  // Detect Storybook framework for default config
+  const packageJsonPath = path.join(process.cwd(), 'package.json');
+  if (fs.existsSync(packageJsonPath)) {
+    try {
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+      const dependencies = { ...packageJson.dependencies, ...packageJson.devDependencies };
+      defaultConfig.storybookFramework = detectStorybookFramework(dependencies);
+    } catch (error) {
+      console.warn('Failed to detect Storybook framework:', error);
+    }
+  }
+
   // Cache the default config
-  cachedConfig = DEFAULT_CONFIG;
+  cachedConfig = defaultConfig;
   configLoadTime = now;
 
-  return DEFAULT_CONFIG;
+  return defaultConfig;
 }
 
 /**
@@ -97,7 +126,7 @@ export function validateConfig(config: StoryUIConfig): { isValid: boolean; error
     }
   }
 
-  // Determine if we're using an external package (like antd, @mui/material, etc.)
+  // Determine if we're using an external package (like antd, @chakra-ui/react, etc.)
   const isExternalPackage = config.importPath &&
     !config.importPath.startsWith('.') &&
     !config.importPath.startsWith('/') &&
@@ -118,15 +147,78 @@ export function validateConfig(config: StoryUIConfig): { isValid: boolean; error
     errors.push(`Components metadata path does not exist: ${config.componentsMetadataPath}`);
   }
 
-  // Check import path - but allow actual library names like 'antd'
-  if (!config.importPath || config.importPath === 'your-component-library' || config.importPath.trim() === '') {
-    errors.push('importPath must be configured to point to your component library');
+  // Check import path - but allow it to be optional if auto-discovery will find local components
+  const hasManualImportPath = config.importPath && 
+    config.importPath !== 'your-component-library' && 
+    config.importPath.trim() !== '';
+  
+  const hasLocalComponents = checkForLocalComponents(config);
+  const hasManualComponents = config.components && config.components.length > 0;
+  
+  if (!hasManualImportPath && !hasLocalComponents && !hasManualComponents) {
+    errors.push('Either importPath must be configured, or local components must be available for auto-discovery');
   }
 
   return {
     isValid: errors.length === 0,
     errors
   };
+}
+
+/**
+ * Check if local components are available for auto-discovery
+ */
+function checkForLocalComponents(config: StoryUIConfig): boolean {
+  // Get project root from generated stories path
+  let projectRoot = process.cwd();
+  
+  if (config.generatedStoriesPath) {
+    let currentPath = path.resolve(config.generatedStoriesPath);
+    while (currentPath !== path.dirname(currentPath)) {
+      if (fs.existsSync(path.join(currentPath, 'package.json'))) {
+        projectRoot = currentPath;
+        break;
+      }
+      currentPath = path.dirname(currentPath);
+    }
+  }
+
+  // Check for manually configured components path
+  if (config.componentsPath && fs.existsSync(config.componentsPath)) {
+    return true;
+  }
+
+  // Check for common React component directories
+  const commonComponentDirs = [
+    'src/components',
+    'src/ui', 
+    'components',
+    'ui',
+    'src/lib/components',
+    'lib/components',
+    'src/shared/components',
+    'shared/components'
+  ];
+
+  for (const dir of commonComponentDirs) {
+    const fullPath = path.join(projectRoot, dir);
+    if (fs.existsSync(fullPath)) {
+      // Check if it contains React component files
+      try {
+        const files = fs.readdirSync(fullPath);
+        const hasComponents = files.some(file => 
+          file.endsWith('.tsx') || file.endsWith('.jsx')
+        );
+        if (hasComponents) {
+          return true;
+        }
+      } catch (error) {
+        // Ignore errors and continue checking
+      }
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -239,6 +331,22 @@ export function analyzeExistingStories(projectRoot: string = process.cwd()): {
 }
 
 /**
+ * Detects the Storybook framework being used
+ */
+export function detectStorybookFramework(dependencies: Record<string, string>): string {
+  // Check for Vite-based Storybook
+  if (dependencies['@storybook/react-vite']) {
+    return '@storybook/react-vite';
+  } else if (dependencies['@storybook/react-webpack5']) {
+    return '@storybook/react-webpack5';
+  } else if (dependencies['@storybook/nextjs']) {
+    return '@storybook/nextjs';
+  }
+  // Default to generic React
+  return '@storybook/react';
+}
+
+/**
  * Auto-detects design system configuration by analyzing the project structure
  */
 export function autoDetectDesignSystem(): Partial<StoryUIConfig> | null {
@@ -282,12 +390,16 @@ export function autoDetectDesignSystem(): Partial<StoryUIConfig> | null {
     // Determine layout patterns
     const layoutRules = detectLayoutPatterns(analysis.layoutPatterns, componentPrefix);
 
+    // Detect Storybook framework
+    const storybookFramework = detectStorybookFramework(dependencies);
+
     // Build configuration
     const config: Partial<StoryUIConfig> = {
       generatedStoriesPath: path.join(cwd, 'src/stories/generated/'),
       importPath: importPath,
       componentPrefix: componentPrefix,
-      layoutRules: layoutRules
+      layoutRules: layoutRules,
+      storybookFramework: storybookFramework
     };
 
     // Only set componentsPath for local component libraries
@@ -312,39 +424,6 @@ export function autoDetectDesignSystem(): Partial<StoryUIConfig> | null {
  * Detects known design systems from package.json dependencies
  */
 function detectKnownDesignSystems(dependencies: Record<string, string>): Partial<StoryUIConfig> | null {
-  // Material-UI detection
-  if (dependencies['@mui/material']) {
-    return {
-      importPath: '@mui/material',
-      componentPrefix: '',
-      layoutRules: {
-        multiColumnWrapper: 'Grid',
-        columnComponent: 'Grid',
-        containerComponent: 'Container',
-        layoutExamples: {
-          twoColumn: `<Grid container spacing={2}>
-  <Grid item xs={6}>
-    <Card>
-      <CardContent>
-        <Typography variant="h5">Left Card</Typography>
-        <Typography>Left content</Typography>
-      </CardContent>
-    </Card>
-  </Grid>
-  <Grid item xs={6}>
-    <Card>
-      <CardContent>
-        <Typography variant="h5">Right Card</Typography>
-        <Typography>Right content</Typography>
-      </CardContent>
-    </Card>
-  </Grid>
-</Grid>`
-        }
-      }
-    };
-  }
-
   // Chakra UI detection
   if (dependencies['@chakra-ui/react']) {
     return {
@@ -383,6 +462,7 @@ function detectKnownDesignSystems(dependencies: Record<string, string>): Partial
       }
     };
   }
+
 
   // ShadCN/UI detection
   if (dependencies['@radix-ui/react-slot'] || dependencies['class-variance-authority']) {

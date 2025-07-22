@@ -5,6 +5,9 @@ yarn.lock
 # Environment variables
 .env
 .env.local
+.env.development.local
+.env.test.local
+.env.production.local
 
 # Build output
 dist/
@@ -28,6 +31,7 @@ yarn-error.log*
 
 # Personal Development & Testing Infrastructure
 dev-testing/
+dev-docs/
 test-storybooks/
 # But allow essential config files for proper TypeScript/Storybook setup
 !test-storybooks/*/tsconfig.json
@@ -36,3 +40,41 @@ test-storybooks/
 
 *storybook.log
 storybook-static
+
+# Story UI - AI Generated Stories (ephemeral, not for version control)
+# These are temporary stories for testing layouts and should not be committed
+./src/stories/generated/
+./src/stories/generated/**
+
+# Utility files
+clear-localstorage.html
+
+# testing
+coverage
+
+# next.js
+.next/
+out/
+build
+
+# misc
+*.pem
+
+# turbo
+.turbo
+
+# vercel
+.vercel
+
+# Story UI cache directory
+.story-ui-cache/
+
+# Story UI history directory
+.story-ui-history/
+
+# Test scripts
+test-*.js
+
+# Local AI tooling and editor artefacts
+.cursor/
+.claude/
