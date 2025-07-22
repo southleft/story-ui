@@ -32,6 +32,47 @@ async function findAvailablePort(startPort: number): Promise<number> {
   return port;
 }
 
+/**
+ * Clean up default Storybook template components that could conflict with design system discovery
+ */
+function cleanupDefaultStorybookComponents() {
+  const storiesDir = path.join(process.cwd(), 'src', 'stories');
+  
+  // Common default Storybook files that cause conflicts
+  const defaultFiles = [
+    'Button.stories.ts',
+    'Button.stories.tsx', 
+    'Header.stories.ts',
+    'Header.stories.tsx',
+    'Page.stories.ts',
+    'Page.stories.tsx',
+    'button.css',
+    'header.css',
+    'page.css',
+    'Button.tsx',
+    'Header.tsx', 
+    'Page.tsx'
+  ];
+
+  let cleanedFiles = 0;
+
+  for (const fileName of defaultFiles) {
+    const filePath = path.join(storiesDir, fileName);
+    if (fs.existsSync(filePath)) {
+      try {
+        fs.unlinkSync(filePath);
+        cleanedFiles++;
+      } catch (error) {
+        console.warn(`Could not remove ${fileName}: ${error}`);
+      }
+    }
+  }
+
+  if (cleanedFiles > 0) {
+    console.log(chalk.green(`✅ Cleaned up ${cleanedFiles} default Storybook template files to prevent conflicts`));
+  }
+}
+
 interface SetupAnswers {
   designSystem: 'auto' | 'chakra' | 'antd' | 'mantine' | 'custom';
   installDesignSystem?: boolean;
@@ -513,6 +554,9 @@ export async function setupCommand() {
       console.log(chalk.green(`✅ Updated .gitignore with Story UI patterns`));
     }
   }
+
+  // Clean up default Storybook template components to prevent conflicts
+  cleanupDefaultStorybookComponents();
 
   // Update package.json with convenience scripts
   if (packageJson) {
