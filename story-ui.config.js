@@ -14,10 +14,5 @@ module.exports = {
   "storybookFramework": "@storybook/react-vite",
   "componentsPath": "/Users/tjpitre/Sites/story-ui/templates/StoryUI",
   "storyPrefix": "Generated/",
-  "defaultAuthor": "Story UI AI",
-  "context7": {
-    "enabled": true,
-    "cacheEnabled": true,
-    "timeout": 10000
-  }
+  "defaultAuthor": "Story UI AI"
 };

@@ -33,7 +33,7 @@ async function findAvailablePort(startPort: number): Promise<number> {
 }
 
 interface SetupAnswers {
-  designSystem: 'auto' | 'baseui' | 'chakra' | 'antd' | 'mantine' | 'custom';
+  designSystem: 'auto' | 'chakra' | 'antd' | 'mantine' | 'custom';
   installDesignSystem?: boolean;
   importPath?: string;
   componentPrefix?: string;
@@ -175,7 +175,6 @@ export async function setupCommand() {
         { name: '🐜 Ant Design (antd) - Install & Configure', value: 'antd' },
         { name: '🎯 Mantine (@mantine/core) - Install & Configure', value: 'mantine' },
         { name: '⚡ Chakra UI (@chakra-ui/react) - Install & Configure', value: 'chakra' },
-        { name: '🌊 Base Web (baseui)', value: 'baseui' },
         { name: '🔧 Custom/Other', value: 'custom' }
       ],
       default: autoDetected ? 'auto' : 'custom'
@@ -263,28 +262,6 @@ export async function setupCommand() {
 
   if (answers.designSystem === 'auto' && autoDetected) {
     config = autoDetected;
-  } else if (answers.designSystem === 'baseui') {
-    config = {
-      importPath: 'baseui',
-      componentPrefix: '',
-      layoutRules: {
-        multiColumnWrapper: 'div',
-        columnComponent: 'div',
-        containerComponent: 'div',
-        layoutExamples: {
-          twoColumn: `<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-  <div style={{ padding: '16px', border: '1px solid #e0e0e0', borderRadius: '8px' }}>
-    <h3>Left Card</h3>
-    <p>Left content</p>
-  </div>
-  <div style={{ padding: '16px', border: '1px solid #e0e0e0', borderRadius: '8px' }}>
-    <h3>Right Card</h3>
-    <p>Right content</p>
-  </div>
-</div>`
-        }
-      }
-    };
   } else if (answers.designSystem === 'chakra') {
     config = {
       importPath: '@chakra-ui/react',

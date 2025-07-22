@@ -13,11 +13,11 @@
           "correct": [
             "import React from 'react';",
             "import type { Meta, StoryObj } from '@storybook/react-webpack5';",
-            "import { Button, Card } from '@shopify/polaris';"
+            "import { Button, Card } from 'antd';"
           ],
           "incorrect": [
             "import type { Meta, StoryObj } from '@storybook/react-webpack5';",
-            "import { Button, Card } from '@shopify/polaris';",
+            "import { Button, Card } from 'antd';",
             "// Missing React import!"
           ]
         }

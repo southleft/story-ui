@@ -4,7 +4,7 @@ import { StoryUIConfig } from '../story-ui.config.js';
 
 export interface DesignSystemInfo {
   name: string;
-  type: 'base-ui' | 'chakra-ui' | 'antd' | 'mantine' | 'nextui' | 'generic';
+  type: 'chakra-ui' | 'antd' | 'mantine' | 'generic';
   scope?: string;
   primaryPackage: string;
   commonComponents: string[];
@@ -53,11 +53,9 @@ export class UniversalDesignSystemAdapter {
     this.detectedSystems = [];
 
     // Check for known design systems
-    this.checkForBaseUI(allDeps);
     this.checkForChakraUI(allDeps);
     this.checkForAntDesign(allDeps);
     this.checkForMantine(allDeps);
-    this.checkForNextUI(allDeps);
     this.checkForGenericReactComponents(allDeps);
 
     console.log(`🎨 Detected ${this.detectedSystems.length} design systems:`, 
@@ -77,39 +75,18 @@ export class UniversalDesignSystemAdapter {
     }
 
     switch (primarySystem.type) {
-      case 'base-ui':
-        return this.getBaseUIConfig();
       case 'chakra-ui':
         return this.getChakraUIConfig();
       case 'antd':
         return this.getAntDesignConfig();
       case 'mantine':
         return this.getMantineConfig();
-      case 'nextui':
-        return this.getNextUIConfig();
       default:
         return this.getGenericReactConfig();
     }
   }
 
   // Design system detection methods
-  private checkForBaseUI(deps: Record<string, string>): void {
-    if (deps['@base_ui/react']) {
-      this.detectedSystems.push({
-        name: 'Base UI',
-        type: 'base-ui',
-        scope: '@base_ui',
-        primaryPackage: '@base_ui/react',
-        commonComponents: ['Button', 'Input', 'Select', 'Checkbox', 'RadioGroup', 'Switch', 'Slider'],
-        layoutComponents: ['div', 'section', 'main', 'aside'],
-        formComponents: ['Input', 'Button', 'Select', 'Checkbox', 'RadioGroup', 'Switch'],
-        importPatterns: {
-          default: [],
-          named: ['Button', 'Input', 'Select', 'Checkbox', 'RadioGroup', 'Switch', 'Slider']
-        }
-      });
-    }
-  }
 
   private checkForChakraUI(deps: Record<string, string>): void {
     if (deps['@chakra-ui/react']) {
@@ -169,23 +146,6 @@ export class UniversalDesignSystemAdapter {
     }
   }
 
-  private checkForNextUI(deps: Record<string, string>): void {
-    if (deps['@nextui-org/react']) {
-      this.detectedSystems.push({
-        name: 'NextUI',
-        type: 'nextui',
-        scope: '@nextui-org',
-        primaryPackage: '@nextui-org/react',
-        commonComponents: ['Card', 'Button', 'Input', 'Link', 'Text', 'Spacer'],
-        layoutComponents: ['Card', 'Container', 'Grid', 'Spacer'],
-        formComponents: ['Input', 'Button', 'Select', 'Checkbox', 'Radio'],
-        importPatterns: {
-          default: [],
-          named: ['Card', 'Button', 'Input', 'Link', 'Text', 'Spacer']
-        }
-      });
-    }
-  }
 
   private checkForGenericReactComponents(deps: Record<string, string>): void {
     // Check for generic React component libraries
@@ -219,7 +179,7 @@ export class UniversalDesignSystemAdapter {
   // Configuration generators
   private getPrimaryDesignSystem(): DesignSystemInfo | null {
     // Prioritize based on completeness and popularity
-    const priorities = ['base-ui', 'chakra-ui', 'antd', 'mantine', 'nextui', 'generic'];
+    const priorities = ['chakra-ui', 'antd', 'mantine', 'generic'];
     
     for (const priority of priorities) {
       const system = this.detectedSystems.find(ds => ds.type === priority);
@@ -229,24 +189,6 @@ export class UniversalDesignSystemAdapter {
     return this.detectedSystems[0] || null;
   }
 
-
-  private getBaseUIConfig(): Partial<StoryUIConfig> {
-    return {
-      designSystemGuidelines: {
-        name: "Base UI",
-        preferredComponents: {
-          layout: "@base_ui/react",
-          buttons: "@base_ui/react",
-          forms: "@base_ui/react"
-        }
-      },
-      layoutRules: {
-        multiColumnWrapper: "div",
-        columnComponent: "div",
-        containerComponent: "div"
-      }
-    };
-  }
 
   private getChakraUIConfig(): Partial<StoryUIConfig> {
     return {
@@ -297,18 +239,6 @@ export class UniversalDesignSystemAdapter {
     };
   }
 
-  private getNextUIConfig(): Partial<StoryUIConfig> {
-    return {
-      designSystemGuidelines: {
-        name: "NextUI",
-        preferredComponents: {
-          layout: "@nextui-org/react",
-          buttons: "@nextui-org/react",
-          forms: "@nextui-org/react"
-        }
-      }
-    };
-  }
 
   private getGenericReactConfig(): Partial<StoryUIConfig> {
     return {

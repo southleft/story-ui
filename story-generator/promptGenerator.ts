@@ -68,8 +68,8 @@ If a component is not listed, DO NOT use it - choose an alternative from the ava
 
 🔴 IMPORT PATH RULE - MANDATORY 🔴
 ALWAYS use the EXACT import path shown in parentheses after each component name.
-For example: If the Available components list shows "Button (import from 'baseui/button')", 
-you MUST use: import { Button } from 'baseui/button';
+For example: If the Available components list shows "Button (import from 'antd')", 
+you MUST use: import { Button } from 'antd';
 NEVER use the main package import if a specific path is shown.
 This is critical for proper component resolution.
 
