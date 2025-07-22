@@ -1,3 +1,186 @@
+# [2.0.0](https://github.com/southleft/story-ui/compare/v1.7.0...v2.0.0) (2025-07-22)
+
+
+*  Guided Design System Installation with Auto-Configuration ([#2](https://github.com/southleft/story-ui/issues/2)) ([bc35023](https://github.com/southleft/story-ui/commit/bc3502355d9508313271fbaf210e60772b3ef671)), closes [#0052](https://github.com/southleft/story-ui/issues/0052)
+
+
+### Bug Fixes
+
+* **ci:** disable footer line length limit for semantic-release ([#3](https://github.com/southleft/story-ui/issues/3)) ([e7625d6](https://github.com/southleft/story-ui/commit/e7625d6cdc33506a3be5b2e1ede3344277c4a338))
+* remove all baseui references and fix protected branch workflow ([0cb2fe1](https://github.com/southleft/story-ui/commit/0cb2fe15fe86beb1cbdda4cc622b6893005c33a2))
+* remove hardcoded user paths from story-ui.config.js ([9494bd5](https://github.com/southleft/story-ui/commit/9494bd53d149fe2a37ee7744643d1f74d3b74bfb))
+
+
+### BREAKING CHANGES
+
+* Removed Playwright web scraping in favor of Context7 MCP integration
+
+- Replace Playwright documentation scraping with Context7 MCP server
+- Context7 provides real-time, curated documentation for popular libraries
+- No setup required - documentation is fetched automatically
+- Only current, valid components are provided (no deprecated components)
+- Remove 'scrape-docs' and 'clear-docs-cache' CLI commands
+- Add bundled documentation as fallback when Context7 is unavailable
+- Enhanced component validation to prevent deprecated component usage
+- Remove Playwright dependency from package.json
+
+Benefits:
+- Zero configuration required for documentation
+- Always up-to-date with latest library versions
+- No maintenance of web scrapers
+- Consistent, reliable documentation format
+- Better AI story generation with accurate component info
+
+Migration guide available in docs/MIGRATION_TO_CONTEXT7.md
+
+* feat: implement Context7 integration for real-time documentation
+
+- Add Context7 integration for up-to-date component documentation
+- Enhance story generation with multiple story variants
+- Fix toLowerCase() undefined errors in component discovery
+- Improve error handling and validation in story generation
+- Update prompt generation to leverage Context7 documentation
+
+* refactor: implement environment-specific Context7 integration
+
+- Move Context7 configuration from main app to environment-specific setup
+- Create context7-config.json files for each test environment
+- Update CLI setup to generate Context7 config during initialization
+- Remove hardcoded design system mappings from main application
+- Make Context7 integration truly environment-agnostic
+- Support custom design systems with local Context7 configuration
+- Maintain architectural separation between main app and test environments
+
+This ensures the main Story UI application remains agnostic while
+allowing each Storybook environment to have its own Context7 setup.
+
+* chore: remove .cursor and .claude from repository and add to .gitignore
+
+* refactor: remove multi-instance infrastructure and introduce auto port detection
+
+* feat: remove context7 integration and add documentation loader
+
+- Removed Context7 MCP tool integration and related files
+- Added new DocumentationLoader for directory-based documentation
+- Enhanced prompt generation to support both legacy considerations files and new documentation directories
+- Fixed async/await issues in buildClaudePrompt functions
+- Added glob dependency for file discovery
+- Created documentation structure for Material-UI test storybook
+- Updated configuration to remove Context7 references
+
+This sets the foundation for better design system documentation support and prepares for iteration improvements.
+
+* feat: implement story iteration support with version history
+
+- Added StoryHistoryManager to track all versions of generated stories
+- Enhanced buildClaudePromptWithContext to include previous code for iterations
+- AI now receives the actual generated code when modifying stories
+- Added explicit instructions to preserve existing code and only modify requested aspects
+- History files stored in .story-ui-history directory (git-ignored)
+- Each story version linked to parent for iteration tracking
+
+This ensures non-developers can safely iterate on layouts without fear of losing their original design.
+
+* docs: update README and remove Spectrum/Context7 references
+
+- Updated README with new documentation system and iteration features
+- Removed all Context7 integration references
+- Removed Adobe Spectrum from supported design systems
+- Added documentation for directory-based docs structure
+- Added production mode and CLI commands documentation
+- Cleaned up post-processing to remove Spectrum-specific code
+- Updated package.json keywords to reflect current features
+
+* chore: remove accidentally added StoryUI files from main project root
+
+These files should only exist in templates/ and test-storybooks/ directories
+
+* feat: clean up test storybook instances and fix story generation issues
+
+- Fix material-ui story using children in args anti-pattern
+- Overhaul shadcn-storybook-registry to be component-first instead of Tailwind-first
+- Update shadcn documentation to promote Alert components over custom divs
+- Replace Banner component references with proper Alert component usage
+- Align all test instances with Story UI's design-system-first philosophy
+- Add proper component composition examples and guidelines
+- Remove utility-first approaches that contradict Story UI principles
+
+🤖 Generated with [Claude Code](https://claude.ai/code)
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+
+* fix: add missing package.json files and Story UI dependencies
+
+- Create package.json for mantine-storybook (was missing entirely)
+- Add @tpitre/story-ui dependency to ant-design-storybook
+- Ensure all test storybooks are properly linked to core Story UI package
+- Fix npm run story-ui command execution in all test environments
+
+🤖 Generated with [Claude Code](https://claude.ai/code)
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+
+* fix: increase token limit and add truncation detection for story generation
+
+- Increase max_tokens from 4096 to 8192 to prevent story truncation
+- Add validation check for truncated stories with multiple closing tags
+- Add validation for missing export default meta statement
+- Fix manually truncated kanban dashboard story in Atlassian storybook
+
+This prevents incomplete story generation that causes Storybook syntax errors.
+
+🤖 Generated with [Claude Code](https://claude.ai/code)
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+
+* feat: add Atlassian branding to Storybook and update branding script
+* Auto-discovery no longer includes @base_ui, @shopify/polaris, and other
+unstable systems. Use guided installation for supported systems or manual configuration.
+
+🤖 Generated with [Claude Code](https://claude.ai/code)
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+
+* refactor: remove unsupported design systems and cleanup codebase
+
+- Remove @base_ui references from CLI and config files
+- Remove Shopify Polaris documentation and references
+- Clean up package.json dependencies (remove baseui, styletron, storybook)
+- Remove unnecessary scripts directory entirely
+- Simplify componentBlacklist.ts to remove Polaris-specific logic
+- Clean documentation-sources.ts of all bundled documentation
+- Update comments to reference only supported design systems
+
+This ensures the codebase only contains references to the 3 officially supported
+design systems: Chakra UI, Ant Design, and Mantine.
+
+🤖 Generated with [Claude Code](https://claude.ai/code)
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+
+* refactor: remove all remaining references to unsupported design systems
+
+- Remove baseui references from setup.ts interface and choices
+- Update promptGenerator.ts example to use antd instead of baseui
+- Clean universalDesignSystemAdapter.ts to only support Chakra UI, Ant Design, and Mantine
+- Remove context7 configuration from story-ui.config.js
+- Update react-import-rule.json examples to use antd instead of Shopify Polaris
+
+🤖 Generated with [Claude Code](https://claude.ai/code)
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+
+* fix: resolve contradictory rules in prompt generator
+
+- Remove Base UI specific UNSAFE_style prohibition
+- Update provider component rule to be design system agnostic
+- Clarify that theme providers should be at app level, not in stories
+- Resolves contradiction with ChakraProvider setup instructions
+
+🤖 Generated with [Claude Code](https://claude.ai/code)
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+
 # [1.7.0](https://github.com/southleft/story-ui/compare/v1.6.0...v1.7.0) (2025-06-19)
 
 
