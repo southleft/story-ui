@@ -110,6 +110,13 @@ function setupStorybookPreview(designSystem: string) {
         if (missingDeps.length > 0) {
           console.log(chalk.red(`❌ Cannot create preview.tsx - missing dependencies: ${missingDeps.join(', ')}`));
           console.log(chalk.yellow(`Please install them first: npm install ${missingDeps.join(' ')}`));
+          
+          // Clean up existing preview.tsx if it has broken imports
+          if (fs.existsSync(previewTsxPath)) {
+            fs.unlinkSync(previewTsxPath);
+            console.log(chalk.yellow('⚠️  Removed existing preview.tsx with broken imports'));
+          }
+          
           return;
         }
       }
@@ -391,7 +398,7 @@ export async function setupCommand() {
         const systemName = answers.designSystem === 'antd' ? 'Ant Design' : 
                           answers.designSystem === 'mantine' ? 'Mantine' :
                           answers.designSystem === 'chakra' ? 'Chakra UI' : 'the design system';
-        return `Would you like to install ${systemName} and its dependencies now?`;
+        return `🚨 IMPORTANT: Would you like to install ${systemName} packages now?\n   (Required for Storybook to work properly)`;
       },
       when: (answers) => ['antd', 'mantine', 'chakra'].includes(answers.designSystem),
       default: true
@@ -462,6 +469,14 @@ export async function setupCommand() {
       console.log(chalk.yellow('Please install manually and run setup again:'));
       const config = DESIGN_SYSTEM_CONFIGS[answers.designSystem as keyof typeof DESIGN_SYSTEM_CONFIGS];
       console.log(chalk.cyan(`npm install ${config.packages.join(' ')}`));
+      
+      // Clean up any existing preview.tsx that might cause issues
+      const previewTsxPath = path.join(process.cwd(), '.storybook', 'preview.tsx');
+      if (fs.existsSync(previewTsxPath)) {
+        fs.unlinkSync(previewTsxPath);
+        console.log(chalk.yellow('⚠️  Removed preview.tsx to prevent import errors'));
+      }
+      
       process.exit(1);
     }
     
@@ -480,6 +495,14 @@ export async function setupCommand() {
         console.log(chalk.red('❌ Required dependencies missing:'), missingDeps.join(', '));
         console.log(chalk.yellow('Please install them manually:'));
         console.log(chalk.cyan(`npm install ${missingDeps.join(' ')}`));
+        
+        // Clean up any existing preview.tsx that might cause issues
+        const previewTsxPath = path.join(process.cwd(), '.storybook', 'preview.tsx');
+        if (fs.existsSync(previewTsxPath)) {
+          fs.unlinkSync(previewTsxPath);
+          console.log(chalk.yellow('⚠️  Removed preview.tsx to prevent import errors'));
+        }
+        
         process.exit(1);
       } else {
         // Dependencies exist, set up Storybook preview
