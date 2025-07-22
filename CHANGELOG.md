@@ -1,3 +1,10 @@
+# [2.1.0](https://github.com/southleft/story-ui/compare/v2.0.1...v2.1.0) (2025-07-22)
+
+
+### Features
+
+* add guided design system installation and auto-configuration ([#5](https://github.com/southleft/story-ui/issues/5)) ([7fe706a](https://github.com/southleft/story-ui/commit/7fe706aeaca487cf4905be7598264bfc4bc2f902))
+
 ## [2.0.1](https://github.com/southleft/story-ui/compare/v2.0.0...v2.0.1) (2025-07-22)
 
 
