@@ -94,7 +94,7 @@ export default {
 
 ## 🌟 Officially Supported Design Systems
 
-Story UI provides guided installation and automatic configuration for these design systems:
+Story UI provides guided installation and automatic configuration for the following design systems:
 
 | Design System | Package | Auto Install | Pre-configured |
 |--------------|---------|--------------|----------------|
