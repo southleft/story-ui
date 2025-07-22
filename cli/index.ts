@@ -7,7 +7,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { setupProductionGitignore } from '../story-generator/productionGitignoreManager.js';
 import { createStoryUIConfig } from '../story-ui.config.js';
-import { setupCommand } from './setup.js';
+import { setupCommand, cleanupDefaultStorybookComponents } from './setup.js';
 import net from 'net';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -287,5 +287,14 @@ function writeConfig(config: any, type: 'json' | 'js', filename?: string) {
     fs.writeFileSync(outputFile, jsContent);
   }
 }
+
+program
+  .command('cleanup')
+  .description('Remove default Storybook template files that conflict with component discovery')
+  .action(() => {
+    console.log('🧹 Cleaning up default Storybook template files...');
+    cleanupDefaultStorybookComponents();
+    console.log('✅ Cleanup complete! Component discovery should now work properly.');
+  });
 
 program.parse(process.argv);

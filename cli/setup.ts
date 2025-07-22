@@ -35,42 +35,138 @@ async function findAvailablePort(startPort: number): Promise<number> {
 /**
  * Clean up default Storybook template components that could conflict with design system discovery
  */
-function cleanupDefaultStorybookComponents() {
-  const storiesDir = path.join(process.cwd(), 'src', 'stories');
+export function cleanupDefaultStorybookComponents() {
+  const possibleDirs = [
+    path.join(process.cwd(), 'src', 'stories'),
+    path.join(process.cwd(), 'stories'),
+    path.join(process.cwd(), '.storybook', 'stories')
+  ];
   
-  // Common default Storybook files that cause conflicts
+  // Comprehensive list of default Storybook files that cause conflicts
   const defaultFiles = [
-    'Button.stories.ts',
-    'Button.stories.tsx', 
-    'Header.stories.ts',
-    'Header.stories.tsx',
-    'Page.stories.ts',
-    'Page.stories.tsx',
-    'button.css',
-    'header.css',
-    'page.css',
-    'Button.tsx',
-    'Header.tsx', 
-    'Page.tsx'
+    // Component files
+    'Button.stories.ts', 'Button.stories.tsx', 'Button.stories.js', 'Button.stories.jsx',
+    'Header.stories.ts', 'Header.stories.tsx', 'Header.stories.js', 'Header.stories.jsx', 
+    'Page.stories.ts', 'Page.stories.tsx', 'Page.stories.js', 'Page.stories.jsx',
+    'Introduction.stories.ts', 'Introduction.stories.tsx', 'Introduction.stories.js', 'Introduction.stories.jsx',
+    'Configure.stories.ts', 'Configure.stories.tsx', 'Configure.stories.js', 'Configure.stories.jsx',
+    // Component implementation files
+    'Button.tsx', 'Button.ts', 'Button.jsx', 'Button.js',
+    'Header.tsx', 'Header.ts', 'Header.jsx', 'Header.js',
+    'Page.tsx', 'Page.ts', 'Page.jsx', 'Page.js',
+    // CSS files
+    'button.css', 'header.css', 'page.css', 'introduction.css',
+    // MDX files
+    'Introduction.stories.mdx', 'Configure.stories.mdx'
   ];
 
   let cleanedFiles = 0;
 
-  for (const fileName of defaultFiles) {
-    const filePath = path.join(storiesDir, fileName);
-    if (fs.existsSync(filePath)) {
-      try {
-        fs.unlinkSync(filePath);
-        cleanedFiles++;
-      } catch (error) {
-        console.warn(`Could not remove ${fileName}: ${error}`);
+  for (const storiesDir of possibleDirs) {
+    if (!fs.existsSync(storiesDir)) continue;
+
+    for (const fileName of defaultFiles) {
+      const filePath = path.join(storiesDir, fileName);
+      if (fs.existsSync(filePath)) {
+        try {
+          fs.unlinkSync(filePath);
+          cleanedFiles++;
+        } catch (error) {
+          console.warn(`Could not remove ${fileName}: ${error}`);
+        }
       }
     }
   }
 
   if (cleanedFiles > 0) {
-    console.log(chalk.green(`✅ Cleaned up ${cleanedFiles} default Storybook template files to prevent conflicts`));
+    console.log(chalk.green(`✅ Cleaned up ${cleanedFiles} default Storybook template files to prevent component discovery conflicts`));
   }
+}
+
+/**
+ * Set up Storybook preview file with appropriate providers for design systems
+ */
+function setupStorybookPreview(designSystem: string) {
+  const storybookDir = path.join(process.cwd(), '.storybook');
+  const previewTsPath = path.join(storybookDir, 'preview.ts');
+  const previewTsxPath = path.join(storybookDir, 'preview.tsx');
+  
+  if (!fs.existsSync(storybookDir)) {
+    console.log(chalk.yellow('⚠️  .storybook directory not found. Please run storybook init first.'));
+    return;
+  }
+
+  const designSystemConfigs = {
+    chakra: {
+      imports: [
+        "import type { Preview } from '@storybook/react-vite'",
+        "import { ChakraProvider, defaultSystem } from '@chakra-ui/react'",
+        "import React from 'react'"
+      ],
+      decorator: `(Story) => (
+      <ChakraProvider value={defaultSystem}>
+        <Story />
+      </ChakraProvider>
+    )`
+    },
+    antd: {
+      imports: [
+        "import type { Preview } from '@storybook/react-vite'",
+        "import { ConfigProvider } from 'antd'",
+        "import React from 'react'"
+      ],
+      decorator: `(Story) => (
+      <ConfigProvider>
+        <Story />
+      </ConfigProvider>
+    )`
+    },
+    mantine: {
+      imports: [
+        "import type { Preview } from '@storybook/react-vite'",
+        "import { MantineProvider } from '@mantine/core'",
+        "import React from 'react'"
+      ],
+      decorator: `(Story) => (
+      <MantineProvider>
+        <Story />
+      </MantineProvider>
+    )`
+    }
+  };
+
+  const config = designSystemConfigs[designSystem as keyof typeof designSystemConfigs];
+  if (!config) return;
+
+  // Create the preview content
+  const previewContent = `${config.imports.join('\n')}
+
+const preview: Preview = {
+  parameters: {
+    controls: {
+      matchers: {
+       color: /(background|color)$/i,
+       date: /Date$/i,
+      },
+    },
+  },
+  decorators: [
+    ${config.decorator},
+  ],
+};
+
+export default preview;
+`;
+
+  // Remove existing preview.ts if it exists
+  if (fs.existsSync(previewTsPath)) {
+    fs.unlinkSync(previewTsPath);
+  }
+
+  // Create preview.tsx with JSX support
+  fs.writeFileSync(previewTsxPath, previewContent);
+  
+  console.log(chalk.green(`✅ Created .storybook/preview.tsx with ${designSystem} provider setup`));
 }
 
 interface SetupAnswers {
@@ -294,7 +390,27 @@ export async function setupCommand() {
   if (answers.installDesignSystem && ['antd', 'mantine', 'chakra'].includes(answers.designSystem)) {
     const installSuccess = await installDesignSystem(answers.designSystem as keyof typeof DESIGN_SYSTEM_CONFIGS);
     if (!installSuccess) {
-      console.log(chalk.yellow('⚠️  Installation failed but continuing with configuration...'));
+      console.log(chalk.red('❌ Installation failed! Cannot continue without required dependencies.'));
+      console.log(chalk.yellow('Please install manually and run setup again:'));
+      const config = DESIGN_SYSTEM_CONFIGS[answers.designSystem as keyof typeof DESIGN_SYSTEM_CONFIGS];
+      console.log(chalk.cyan(`npm install ${config.packages.join(' ')}`));
+      process.exit(1);
+    }
+  } else if (['antd', 'mantine', 'chakra'].includes(answers.designSystem)) {
+    // User declined installation - verify dependencies exist
+    const packageJsonPath = path.join(process.cwd(), 'package.json');
+    if (fs.existsSync(packageJsonPath)) {
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+      const allDeps = { ...packageJson.dependencies, ...packageJson.devDependencies };
+      const config = DESIGN_SYSTEM_CONFIGS[answers.designSystem as keyof typeof DESIGN_SYSTEM_CONFIGS];
+      const missingDeps = config.packages.filter(pkg => !allDeps[pkg]);
+      
+      if (missingDeps.length > 0) {
+        console.log(chalk.red('❌ Required dependencies missing:'), missingDeps.join(', '));
+        console.log(chalk.yellow('Please install them manually:'));
+        console.log(chalk.cyan(`npm install ${missingDeps.join(' ')}`));
+        process.exit(1);
+      }
     }
   }
 
@@ -557,6 +673,11 @@ export async function setupCommand() {
 
   // Clean up default Storybook template components to prevent conflicts
   cleanupDefaultStorybookComponents();
+
+  // Set up Storybook preview file for design systems that require JSX
+  if (['chakra', 'antd', 'mantine'].includes(answers.designSystem)) {
+    setupStorybookPreview(answers.designSystem);
+  }
 
   // Update package.json with convenience scripts
   if (packageJson) {
