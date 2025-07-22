@@ -1,3 +1,10 @@
+## [2.0.1](https://github.com/southleft/story-ui/compare/v2.0.0...v2.0.1) (2025-07-22)
+
+
+### Bug Fixes
+
+* remove default Storybook components during init to prevent conflicts ([a1b1f27](https://github.com/southleft/story-ui/commit/a1b1f274d17ed91d2ff32b056cae2b50b861b81c))
+
 # [2.0.0](https://github.com/southleft/story-ui/compare/v1.7.0...v2.0.0) (2025-07-22)
 
 
