@@ -179,27 +179,6 @@ async function createTemplateConfig(template: string) {
   let config: any;
 
   switch (template) {
-    case 'base-ui':
-      config = {
-        importPath: '@base_ui/react',
-        componentPrefix: '',
-        layoutRules: {
-          multiColumnWrapper: 'div',
-          columnComponent: 'div',
-          layoutExamples: {
-            twoColumn: `<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-  <div style={{ padding: '16px', border: '1px solid #e0e0e0', borderRadius: '8px' }}>
-    Left content
-  </div>
-  <div style={{ padding: '16px', border: '1px solid #e0e0e0', borderRadius: '8px' }}>
-    Right content
-  </div>
-</div>`
-          }
-        }
-      };
-      break;
-
     case 'chakra-ui':
       config = {
         importPath: '@chakra-ui/react',

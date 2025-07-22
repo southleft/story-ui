@@ -24,10 +24,7 @@
     "release": "semantic-release",
     "release:dry-run": "semantic-release --dry-run",
     "commit": "cz",
-    "prepare": "husky",
-    "push": "./scripts/push.sh",
-    "storybook": "storybook dev -p 6006",
-    "build-storybook": "storybook build"
+    "prepare": "husky"
   },
   "keywords": [
     "storybook",
@@ -63,7 +60,6 @@
     "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
-    "baseui": "^15.0.0",
     "chalk": "^5.3.0",
     "commander": "^11.0.0",
     "cors": "^2.8.5",
@@ -72,8 +68,6 @@
     "glob": "^11.0.3",
     "inquirer": "^9.2.0",
     "node-fetch": "^2.6.7",
-    "styletron-engine-atomic": "^1.6.2",
-    "styletron-react": "^6.1.1",
     "typescript": "^5.8.3"
   },
   "devDependencies": {
@@ -85,8 +79,6 @@
     "@semantic-release/github": "^10.3.5",
     "@semantic-release/npm": "^12.0.1",
     "@semantic-release/release-notes-generator": "^14.0.1",
-    "@storybook/addon-docs": "^9.0.17",
-    "@storybook/react-vite": "^9.0.17",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/glob": "^8.1.0",
@@ -97,7 +89,6 @@
     "cz-conventional-changelog": "^3.3.0",
     "husky": "^9.1.7",
     "semantic-release": "^24.2.0",
-    "storybook": "^9.0.17",
     "ts-node": "^10.9.2"
   },
   "peerDependencies": {

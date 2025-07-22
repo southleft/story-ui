@@ -34,37 +34,24 @@ export const BLACKLISTED_COMPONENTS = [
   /^.*Card$/, // Except for specific known card components
 ];
 
-// Polaris deprecated components (v13+)
-const POLARIS_DEPRECATED_COMPONENTS = [
-  'Heading',        // Use Text with variant
-  'TextStyle',      // Use Text with appropriate props
-  'Stack',          // Use BlockStack or InlineStack
-  'FormLayout',     // Use Form with BlockStack
-  'DisplayText',    // Use Text with variant
-  'Subheading',     // Use Text with variant
-  'Caption',        // Use Text with variant
-  'VisuallyHidden', // Use the visuallyHidden prop on components
-];
+// Generic deprecated components (can be extended per design system)
+const DEPRECATED_COMPONENTS: Record<string, string[]> = {
+  // Add deprecated components for supported design systems as needed
+};
 
 export function isBlacklistedComponent(componentName: string, validComponents: Set<string>, importPath?: string): boolean {
-  // Handle Legacy prefix components (special case for Polaris)
-  if (componentName.startsWith('Legacy')) {
-    // Allow the exact name if it exists
-    if (validComponents.has(componentName)) {
-      return false;
-    }
-  }
-
   // Check if it's a known deprecated component from documentation
   if (importPath && isDeprecatedComponent(importPath, componentName)) {
     return true;
   }
 
-  // Check if it's a known deprecated component (fallback for when importPath not provided)
-  // Only apply Polaris deprecated components to Polaris imports
-  if (importPath && (importPath.includes('polaris') || importPath.includes('@shopify/polaris')) &&
-      POLARIS_DEPRECATED_COMPONENTS.includes(componentName)) {
-    return true;
+  // Check for deprecated components for specific design systems
+  if (importPath) {
+    for (const [systemPath, deprecatedList] of Object.entries(DEPRECATED_COMPONENTS)) {
+      if (importPath.includes(systemPath) && deprecatedList.includes(componentName)) {
+        return true;
+      }
+    }
   }
 
   // First check if it's in the allowed list - if so, it's not blacklisted
