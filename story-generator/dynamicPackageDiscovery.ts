@@ -284,15 +284,25 @@ export class DynamicPackageDiscovery {
    * Get the type of an export
    */
   private getExportType(value: any): 'function' | 'class' | 'object' | 'unknown' {
+    // Handle undefined/null values
+    if (value === undefined || value === null) {
+      return 'unknown';
+    }
+
     const type = typeof value;
 
     if (type === 'function') {
-      // Try to distinguish between function and class
-      const fnString = value.toString();
-      if (fnString.startsWith('class ') || /^function [A-Z]/.test(fnString)) {
-        return 'class';
+      try {
+        // Try to distinguish between function and class
+        const fnString = value.toString();
+        if (fnString.startsWith('class ') || /^function [A-Z]/.test(fnString)) {
+          return 'class';
+        }
+        return 'function';
+      } catch (error) {
+        // Some functions might not have toString() available
+        return 'function';
       }
-      return 'function';
     }
 
     if (type === 'object' && value !== null) {
