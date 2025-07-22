@@ -1,3 +1,10 @@
+## [2.1.3](https://github.com/southleft/story-ui/compare/v2.1.2...v2.1.3) (2025-07-22)
+
+
+### Bug Fixes
+
+* clean up broken preview.tsx files when dependencies are missing ([dd9e3d2](https://github.com/southleft/story-ui/commit/dd9e3d27951eeb47bad61a71b7217e844f244128))
+
 ## [2.1.2](https://github.com/southleft/story-ui/compare/v2.1.1...v2.1.2) (2025-07-22)
 
 
