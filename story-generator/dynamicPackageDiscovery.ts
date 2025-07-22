@@ -434,7 +434,7 @@ export class DynamicPackageDiscovery {
   }
 
   /**
-   * Scan package subdirectories for components (e.g., baseui/button, baseui/input)
+   * Scan package subdirectories for components (e.g., antd/button, chakra-ui/input)
    */
   private scanComponentSubdirectories(packagePath: string, result: any): void {
     try {

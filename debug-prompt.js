@@ -42,8 +42,7 @@ async function debugPromptGeneration() {
   console.log('\n🔍 Searching for import path mentions in prompt:');
   const importPathLines = lines.filter(line => 
     line.includes('import from') || 
-    line.includes('__componentPath') ||
-    line.includes('baseui/')
+    line.includes('__componentPath')
   );
   
   if (importPathLines.length > 0) {
