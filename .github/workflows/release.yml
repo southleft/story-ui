@@ -18,8 +18,11 @@ jobs:
     steps:
       # IMPORTANT: This workflow needs to push commits to the protected main branch.
       # To fix "GH006: Protected branch update failed" error, you must either:
-      # 1. Create a Personal Access Token with 'repo' scope and add it as GH_PAT secret, OR
-      # 2. In Settings > Branches > main protection rules, allow 'github-actions[bot]' to bypass
+      # 1. Create a Personal Access Token (classic) with these scopes:
+      #    - repo (all)
+      #    - workflow (if your release modifies workflows)
+      #    Add it as GH_PAT secret in Settings > Secrets > Actions
+      # 2. OR in Settings > Branches > main protection rules, allow 'github-actions[bot]' to bypass
       - name: Checkout
         uses: actions/checkout@v4
         with:
