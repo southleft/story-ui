@@ -95,7 +95,7 @@ export default {
 };
 ```
 
-## 🌟 Supported Design Systems
+## 🌟 Officially Supported Design Systems
 
 Story UI provides guided installation and automatic configuration for these design systems:
 
