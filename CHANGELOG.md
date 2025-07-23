@@ -1,3 +1,10 @@
+## [2.1.5](https://github.com/southleft/story-ui/compare/v2.1.4...v2.1.5) (2025-07-23)
+
+
+### Bug Fixes
+
+* handle story deletion with .stories.tsx extension in chat IDs ([5ee3dd0](https://github.com/southleft/story-ui/commit/5ee3dd0bc92d84b5a751226b2ee6f6fc9f798f28))
+
 ## [2.1.4](https://github.com/southleft/story-ui/compare/v2.1.3...v2.1.4) (2025-07-22)
 
 
