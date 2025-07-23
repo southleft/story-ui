@@ -145,15 +145,33 @@ const syncWithActualStories = async (): Promise<ChatSession[]> => {
 // Delete story and chat
 const deleteStoryAndChat = async (chatId: string): Promise<boolean> => {
   try {
+    // Remove .stories.tsx extension if present to get the actual story ID
+    const storyId = chatId.replace(/\.stories\.tsx$/, '');
+    console.log(`Attempting to delete story: chatId="${chatId}", storyId="${storyId}"`);
+    
     // First try to delete from backend
-    const response = await fetch(`${DELETE_API_BASE}/${chatId}`, {
+    const response = await fetch(`${DELETE_API_BASE}/${storyId}`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' }
     });
 
     if (!response.ok) {
-      console.error('Failed to delete story from backend');
-      return false;
+      console.error('Failed to delete story from backend, trying legacy endpoint');
+      
+      // Try legacy endpoint as fallback
+      const legacyResponse = await fetch(`http://localhost:${getApiPort()}/story-ui/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          chatId: storyId,
+          storyId: storyId 
+        })
+      });
+      
+      if (!legacyResponse.ok) {
+        console.error('Legacy delete endpoint also failed');
+        return false;
+      }
     }
 
     // Check if response is JSON
