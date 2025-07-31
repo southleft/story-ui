@@ -30,7 +30,13 @@ export function loadUserConfig(): StoryUIConfig {
   for (const configPath of configPaths) {
     if (fs.existsSync(configPath)) {
       try {
-        console.log(`Loading Story UI config from: ${configPath}`);
+        // Only log to stderr when in MCP mode to avoid corrupting JSON-RPC communication
+        const isMcpMode = process.argv.includes('mcp') || process.env.STORY_UI_MCP_MODE === 'true';
+        if (isMcpMode) {
+          console.error(`Loading Story UI config from: ${configPath}`);
+        } else {
+          console.log(`Loading Story UI config from: ${configPath}`);
+        }
         // Read and evaluate the config file
         const configContent = fs.readFileSync(configPath, 'utf-8');
 
@@ -86,7 +92,7 @@ export function loadUserConfig(): StoryUIConfig {
 
   // Create default config with detected framework
   const defaultConfig = { ...DEFAULT_CONFIG };
-  
+
   // Detect Storybook framework for default config
   const packageJsonPath = path.join(process.cwd(), 'package.json');
   if (fs.existsSync(packageJsonPath)) {
@@ -148,13 +154,13 @@ export function validateConfig(config: StoryUIConfig): { isValid: boolean; error
   }
 
   // Check import path - but allow it to be optional if auto-discovery will find local components
-  const hasManualImportPath = config.importPath && 
-    config.importPath !== 'your-component-library' && 
+  const hasManualImportPath = config.importPath &&
+    config.importPath !== 'your-component-library' &&
     config.importPath.trim() !== '';
-  
+
   const hasLocalComponents = checkForLocalComponents(config);
   const hasManualComponents = config.components && config.components.length > 0;
-  
+
   if (!hasManualImportPath && !hasLocalComponents && !hasManualComponents) {
     errors.push('Either importPath must be configured, or local components must be available for auto-discovery');
   }
@@ -171,7 +177,7 @@ export function validateConfig(config: StoryUIConfig): { isValid: boolean; error
 function checkForLocalComponents(config: StoryUIConfig): boolean {
   // Get project root from generated stories path
   let projectRoot = process.cwd();
-  
+
   if (config.generatedStoriesPath) {
     let currentPath = path.resolve(config.generatedStoriesPath);
     while (currentPath !== path.dirname(currentPath)) {
@@ -191,7 +197,7 @@ function checkForLocalComponents(config: StoryUIConfig): boolean {
   // Check for common React component directories
   const commonComponentDirs = [
     'src/components',
-    'src/ui', 
+    'src/ui',
     'components',
     'ui',
     'src/lib/components',
@@ -206,7 +212,7 @@ function checkForLocalComponents(config: StoryUIConfig): boolean {
       // Check if it contains React component files
       try {
         const files = fs.readdirSync(fullPath);
-        const hasComponents = files.some(file => 
+        const hasComponents = files.some(file =>
           file.endsWith('.tsx') || file.endsWith('.jsx')
         );
         if (hasComponents) {

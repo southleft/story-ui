@@ -297,4 +297,39 @@ program
     console.log('✅ Cleanup complete! Component discovery should now work properly.');
   });
 
+program
+  .command('mcp')
+  .description('Start Story UI as an MCP server (for use with Claude Desktop and other MCP clients)')
+  .option('--http-port <port>', 'Port for the HTTP server', '4001')
+  .action(async (options) => {
+    // For MCP mode, DO NOT output anything to stdout - it's reserved for JSON-RPC
+    // Use stderr for all logging
+    console.error('🚀 Starting Story UI as MCP server...');
+    console.error('📡 This server uses stdio transport for MCP communication');
+    console.error('⚠️  Note: The HTTP server must be running on port ' + options.httpPort);
+    console.error('    Run "story-ui start" in another terminal if not already running.\n');
+
+    // Use absolute path to MCP stdio server
+    const pkgRoot = path.resolve(__dirname, '..');
+    const mcpServerPath = path.join(pkgRoot, 'mcp-server/mcp-stdio-server.js');
+
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      STORY_UI_HTTP_PORT: options.httpPort
+    };
+
+    const mcpServer = spawn('node', [mcpServerPath], {
+      stdio: 'inherit',
+      env
+    });
+
+    mcpServer.on('close', (code) => {
+      console.error(`MCP server exited with code ${code}`);
+    });
+
+    process.on('SIGINT', () => {
+      mcpServer.kill('SIGINT');
+    });
+  });
+
 program.parse(process.argv);

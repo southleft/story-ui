@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { StoryUIConfig } from '../story-ui.config.js';
-
+import { logger } from './logger.js';
 export interface StoryMapping {
   title: string;
   fileName: string;
@@ -113,7 +113,7 @@ export class StoryTracker {
       // This prevents false positives like "card" matching "card layouts" vs "card animations"
       const similarityThreshold = Math.max(4, Math.floor(promptKeywords.length * 0.9));
       if (sharedKeywords.length >= similarityThreshold && promptKeywords.length >= 4) {
-        console.log(`🔄 Found similar story: "${mapping.title}" (${sharedKeywords.length}/${promptKeywords.length} keywords match)`);
+        logger.log(`🔄 Found similar story: "${mapping.title}" (${sharedKeywords.length}/${promptKeywords.length} keywords match)`);
         return mapping;
       }
     }

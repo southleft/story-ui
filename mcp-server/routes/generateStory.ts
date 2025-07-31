@@ -18,7 +18,7 @@ import { getDocumentation, isDeprecatedComponent, getComponentReplacement } from
 import { postProcessStory } from '../../story-generator/postProcessStory.js';
 import { validateStory, ValidationError } from '../../story-generator/storyValidator.js';
 import { StoryHistoryManager } from '../../story-generator/storyHistory.js';
-
+import { logger } from '../../story-generator/logger.js';
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514';
 
@@ -42,8 +42,8 @@ async function buildClaudePrompt(userPrompt: string) {
 
 // Enhanced function that includes conversation context and previous code
 async function buildClaudePromptWithContext(
-  userPrompt: string, 
-  config: any, 
+  userPrompt: string,
+  config: any,
   conversation?: any[],
   previousCode?: string
 ) {
@@ -51,15 +51,15 @@ async function buildClaudePromptWithContext(
   const components = await discovery.discoverAll();
 
   // Always start with component discovery as the authoritative source
-  console.log(`📦 Discovered ${components.length} components from ${config.importPath}`);
+  logger.log(`📦 Discovered ${components.length} components from ${config.importPath}`);
   const availableComponents = components.map(c => c.name).join(', ');
-  console.log(`✅ Available components: ${availableComponents}`);
+  logger.log(`✅ Available components: ${availableComponents}`);
 
   // Build base prompt with discovered components (always required)
   let prompt = await buildFlexiblePrompt(userPrompt, config, components);
 
 // Try to enhance with bundled documentation for usage patterns and design tokens
-  console.log('📋 Using bundled documentation for enhancement');
+  logger.log('📋 Using bundled documentation for enhancement');
   const documentation = getDocumentation(config.importPath);
   if (documentation) {
     const bundledEnhancement = `
@@ -276,6 +276,7 @@ async function preValidateImports(code: string, config: any, discovery: Enhanced
 
   // Check for blacklisted components first
   const allowedComponents = new Set<string>(discovery.getAvailableComponentNames());
+  
   for (const importName of componentImports) {
     if (isBlacklistedComponent(importName, allowedComponents, config.importPath)) {
       const errorMsg = getBlacklistErrorMessage(importName, config.importPath);
@@ -384,23 +385,23 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
 
     // Initialize story tracker for managing updates vs new creations
     const storyTracker = new StoryTracker(config);
-    
+
     // Initialize history manager - use the current working directory
     const historyManager = new StoryHistoryManager(process.cwd());
 
     // Check if this is an update to an existing story
     const isUpdate = fileName && conversation && conversation.length > 2;
-    
+
     // Get previous code if this is an update
     let previousCode: string | undefined;
     let parentVersionId: string | undefined;
-    
+
     if (isUpdate && fileName) {
       const currentVersion = historyManager.getCurrentVersion(fileName);
       if (currentVersion) {
         previousCode = currentVersion.code;
         parentVersionId = currentVersion.id;
-        console.log('🔄 Found previous version for iteration');
+        logger.log('🔄 Found previous version for iteration');
       }
     }
 
@@ -415,7 +416,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
 
     while (attempts < maxRetries) {
       attempts++;
-      console.log(`--- Story Generation Attempt ${attempts} ---`);
+      logger.log(`--- Story Generation Attempt ${attempts} ---`);
 
       const claudeResponse = await callClaude(messages);
       const extractedCode = extractCodeBlock(claudeResponse);
@@ -423,7 +424,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       if (!extractedCode) {
         aiText = claudeResponse; // Use raw response if no code block
         if (attempts < maxRetries) {
-          console.log('No code block found, retrying...');
+          logger.log('No code block found, retrying...');
           messages.push({ role: 'assistant', content: aiText });
           messages.push({ role: 'user', content: 'You did not provide a code block. Please provide the complete story in a single `tsx` code block.' });
           continue;
@@ -438,12 +439,12 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       validationErrors = validateStory(aiText);
 
       if (validationErrors.length === 0) {
-        console.log('✅ Validation successful!');
+        logger.log('✅ Validation successful!');
         break; // Exit loop on success
       }
 
-      console.log(`❌ Validation failed with ${validationErrors.length} errors:`);
-      validationErrors.forEach(err => console.log(`  - Line ${err.line}: ${err.message}`));
+      logger.log(`❌ Validation failed with ${validationErrors.length} errors:`);
+      validationErrors.forEach(err => logger.log(`  - Line ${err.line}: ${err.message}`));
 
       if (attempts < maxRetries) {
         const errorFeedback = validationErrors
@@ -464,7 +465,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
     }
     // --- End of Validation and Retry Loop ---
 
-    console.log('Claude final response:', aiText);
+    logger.log('Claude final response:', aiText);
 
     // Create enhanced component discovery for validation
     const discovery = new EnhancedComponentDiscovery(config);
@@ -472,6 +473,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
 
     // Pre-validate imports in the raw AI text to catch blacklisted components early
     const preValidation = await preValidateImports(aiText, config, discovery);
+    
     if (!preValidation.isValid) {
       console.error('Pre-validation failed - blacklisted components detected:', preValidation.errors);
 
@@ -489,7 +491,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
     let fileContents: string;
     let hasValidationWarnings = false;
 
-    console.log('Validation result:', {
+    logger.log('Validation result:', {
       isValid: validationResult.isValid,
       errors: validationResult.errors,
       warnings: validationResult.warnings,
@@ -500,7 +502,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       console.error('Generated code validation failed:', validationResult.errors);
 
       // Create fallback story only if we can't fix the code
-      console.log('Creating fallback story due to validation failure');
+      logger.log('Creating fallback story due to validation failure');
       fileContents = createFallbackStory(prompt, config);
       hasValidationWarnings = true;
     } else {
@@ -508,7 +510,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       if (validationResult.fixedCode) {
         fileContents = validationResult.fixedCode;
         hasValidationWarnings = true;
-        console.log('Using auto-fixed code');
+        logger.log('Using auto-fixed code');
       } else {
         // Extract the validated code
         const codeMatch = aiText.match(/```(?:tsx|jsx|typescript|ts|js|javascript)?\s*([\s\S]*?)\s*```/i);
@@ -527,7 +529,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
 
       if (validationResult.warnings && validationResult.warnings.length > 0) {
         hasValidationWarnings = true;
-        console.log('Validation warnings:', validationResult.warnings);
+        logger.log('Validation warnings:', validationResult.warnings);
       }
     }
 
@@ -642,7 +644,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         prompt
       };
       storyTracker.registerStory(mapping);
-      
+
       // Save to history
       historyManager.addVersion(
         finalFileName,
@@ -651,7 +653,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         parentVersionId
       );
 
-      console.log(`Story ${isActuallyUpdate ? 'updated' : 'stored'} in memory: ${storyId}`);
+      logger.log(`Story ${isActuallyUpdate ? 'updated' : 'stored'} in memory: ${storyId}`);
       res.json({
         success: true,
         fileName: finalFileName,
@@ -686,7 +688,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         prompt
       };
       storyTracker.registerStory(mapping);
-      
+
       // Save to history
       historyManager.addVersion(
         finalFileName,
@@ -695,7 +697,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         parentVersionId
       );
 
-      console.log(`Story ${isActuallyUpdate ? 'updated' : 'written'} to:`, outPath);
+      logger.log(`Story ${isActuallyUpdate ? 'updated' : 'written'} to:`, outPath);
       res.json({
         success: true,
         fileName: finalFileName,

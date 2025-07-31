@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
+import { logger } from './logger.js';
 
 export interface RealPackageComponent {
   name: string;
@@ -52,7 +53,7 @@ export class DynamicPackageDiscovery {
       const packageExports = await this.requirePackage(this.packageName);
 
       if (!packageExports) {
-        console.log(`🔄 Could not directly import ${this.packageName}, falling back to structure analysis`);
+        logger.log(`🔄 Could not directly import ${this.packageName}, falling back to structure analysis`);
         // Don't return null here - fall back to structure discovery
       }
 
@@ -73,24 +74,24 @@ export class DynamicPackageDiscovery {
           };
           components.push(component);
         }
-        
+
         // Check if we found any actual components
         const componentCount = components.filter(c => c.isComponent).length;
-        console.log(`📋 Found ${componentCount} components in main ${this.packageName} export`);
-        
+        logger.log(`📋 Found ${componentCount} components in main ${this.packageName} export`);
+
         // If no components found in main export, fall back to structure analysis
         if (componentCount === 0) {
-          console.log(`🔄 No components in main export, falling back to structure analysis for ${this.packageName}...`);
+          logger.log(`🔄 No components in main export, falling back to structure analysis for ${this.packageName}...`);
           const structureExports = this.discoverFromPackageStructure();
-          
+
           if (structureExports) {
             const structureComponentNames = Object.keys(structureExports);
-            console.log(`📁 Structure analysis found ${structureComponentNames.length} components`);
-            
+            logger.log(`📁 Structure analysis found ${structureComponentNames.length} components`);
+
             // Replace with structure-discovered components
             allExports = structureComponentNames;
             components.length = 0; // Clear the array
-            
+
             for (const exportName of structureComponentNames) {
               const structureExport = structureExports[exportName];
               const component: RealPackageComponent = {
@@ -105,12 +106,12 @@ export class DynamicPackageDiscovery {
         }
       } else {
         // Failed to import - fall back to structure analysis
-        console.log(`📁 Import failed, analyzing package structure for ${this.packageName}...`);
+        logger.log(`📁 Import failed, analyzing package structure for ${this.packageName}...`);
         const structureExports = this.discoverFromPackageStructure();
-        
+
         if (structureExports) {
           allExports = Object.keys(structureExports);
-          
+
           for (const exportName of allExports) {
             const structureExport = structureExports[exportName];
             const component: RealPackageComponent = {
@@ -124,7 +125,7 @@ export class DynamicPackageDiscovery {
         }
       }
 
-      console.log(`✅ Discovered ${components.filter(c => c.isComponent).length} components from ${this.packageName} v${packageVersion}`);
+      logger.log(`✅ Discovered ${components.filter(c => c.isComponent).length} components from ${this.packageName} v${packageVersion}`);
 
       return {
         components,
@@ -151,10 +152,15 @@ export class DynamicPackageDiscovery {
         // Check if this is a CSS import error (common with compiled design systems)
         const errorMessage = (importError as any)?.message || String(importError);
         if (errorMessage.includes('.css:') || errorMessage.includes('Unexpected token')) {
-          console.log(`🔄 ${packageName}: CSS detected, using static analysis (normal for design systems)`);
+          logger.log(`🔄 ${packageName}: CSS detected, using static analysis (normal for design systems)`);
           return this.discoverFromPackageStructure();
         }
         
+        if (errorMessage.includes('Invalid hook call') || errorMessage.includes('Hooks can only be called')) {
+          logger.log(`🔄 ${packageName}: React hooks detected outside component context, using static analysis`);
+          return this.discoverFromPackageStructure();
+        }
+
         // Fall back to require (for CommonJS)
         // Create require from the project root's package.json to ensure correct module resolution
         const projectPackageJson = path.join(this.projectRoot, 'package.json');
@@ -162,19 +168,24 @@ export class DynamicPackageDiscovery {
         return require(packageName);
       }
     } catch (error) {
-      // Check if this is a CSS import error 
+      // Check if this is a CSS import error
       const errorMessage = (error as any)?.message || String(error);
       if (errorMessage.includes('.css:') || errorMessage.includes('Unexpected token')) {
-        console.log(`🔄 ${packageName}: CSS detected, using static analysis (normal for design systems)`);
+        logger.log(`🔄 ${packageName}: CSS detected, using static analysis (normal for design systems)`);
         return this.discoverFromPackageStructure();
       }
-      
+
       if (errorMessage.includes('window is not defined')) {
-        console.log(`🔄 ${packageName}: Browser-only component, using static analysis`);
+        logger.log(`🔄 ${packageName}: Browser-only component, using static analysis`);
         return this.discoverFromPackageStructure();
       }
       
-      console.log(`📋 ${packageName}: Dynamic import failed, using static analysis`);
+      if (errorMessage.includes('Invalid hook call') || errorMessage.includes('Hooks can only be called')) {
+        logger.log(`🔄 ${packageName}: React hooks detected outside component context, using static analysis`);
+        return this.discoverFromPackageStructure();
+      }
+
+      logger.log(`📋 ${packageName}: Dynamic import failed, using static analysis`);
       return this.discoverFromPackageStructure();
     }
   }
@@ -404,9 +415,9 @@ export class DynamicPackageDiscovery {
     try {
       const packagePath = path.join(this.projectRoot, 'node_modules', this.packageName);
       const packageJsonPath = path.join(packagePath, 'package.json');
-      
+
       if (!fs.existsSync(packageJsonPath)) {
-        console.log(`📦 No package.json found for ${this.packageName}`);
+        logger.log(`📦 No package.json found for ${this.packageName}`);
         return null;
       }
 
@@ -415,22 +426,22 @@ export class DynamicPackageDiscovery {
 
       // Method 1: Analyze package.json exports field
       if (packageJson.exports) {
-        console.log(`📋 Analyzing exports field in ${this.packageName}/package.json`);
+        logger.log(`📋 Analyzing exports field in ${this.packageName}/package.json`);
         this.extractExportsFromPackageJson(packageJson.exports, exports);
       }
 
       // Method 2: Look for index.d.ts or main TypeScript declarations
       const typingsPath = packageJson.types || packageJson.typings || './dist/types/index.d.ts';
       const fullTypingsPath = path.join(packagePath, typingsPath);
-      
+
       if (fs.existsSync(fullTypingsPath)) {
-        console.log(`📋 Analyzing TypeScript declarations for ${this.packageName}`);
+        logger.log(`📋 Analyzing TypeScript declarations for ${this.packageName}`);
         this.extractExportsFromTypeDefinitions(fullTypingsPath, exports);
       }
 
       // Method 3: Scan for component subdirectories (for packages like Base Web)
       if (Object.keys(exports).length === 0) {
-        console.log(`📁 Scanning subdirectories for ${this.packageName} components...`);
+        logger.log(`📁 Scanning subdirectories for ${this.packageName} components...`);
         this.scanComponentSubdirectories(packagePath, exports);
       }
 
@@ -448,31 +459,31 @@ export class DynamicPackageDiscovery {
    */
   private scanComponentSubdirectories(packagePath: string, result: any): void {
     try {
-      console.log(`🔍 Scanning ${packagePath} for component subdirectories...`);
+      logger.log(`🔍 Scanning ${packagePath} for component subdirectories...`);
       const entries = fs.readdirSync(packagePath, { withFileTypes: true });
-      console.log(`📁 Found ${entries.length} entries in ${packagePath}`);
-      
+      logger.log(`📁 Found ${entries.length} entries in ${packagePath}`);
+
       let componentDirsFound = 0;
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
         if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
-        
+
         componentDirsFound++;
-        
+
         const subdirPath = path.join(packagePath, entry.name);
         const indexTypingsPath = path.join(subdirPath, 'index.d.ts');
-        
+
         // Check if this subdirectory has an index.d.ts (likely a component)
         if (fs.existsSync(indexTypingsPath)) {
           try {
             const typingsContent = fs.readFileSync(indexTypingsPath, 'utf-8');
-            
+
             // Look for component exports (functions/classes starting with uppercase)
             const componentExports = this.extractComponentsFromTypings(typingsContent);
-            
+
             if (componentExports.length > 0) {
-              console.log(`📦 Found ${componentExports.length} components in ${entry.name}/`);
-              
+              logger.log(`📦 Found ${componentExports.length} components in ${entry.name}/`);
+
               // Add each component to the result
               for (const componentName of componentExports) {
                 // Create a mock export function for this component
@@ -487,9 +498,9 @@ export class DynamicPackageDiscovery {
           }
         }
       }
-      
-      console.log(`✅ Scanned ${componentDirsFound} component directories for ${this.packageName}`);
-      console.log(`📦 Total components found in subdirectories: ${Object.keys(result).length}`);
+
+      logger.log(`✅ Scanned ${componentDirsFound} component directories for ${this.packageName}`);
+      logger.log(`📦 Total components found in subdirectories: ${Object.keys(result).length}`);
     } catch (error) {
       console.warn(`Failed to scan subdirectories for ${this.packageName}:`, error);
     }
@@ -500,19 +511,19 @@ export class DynamicPackageDiscovery {
    */
   private extractComponentsFromTypings(content: string): string[] {
     const components: string[] = [];
-    
+
     // Look for export statements with component-like names
     const exportRegex = /export\s+{\s*([^}]+)\s*}/g;
     const defaultExportRegex = /export\s+{\s*default\s+as\s+(\w+)\s*}/g;
     const namedExportRegex = /export\s+.*?\s+(\w+)\s*(?:,|$)/g;
-    
+
     let match;
-    
+
     // Extract from export { ... } statements
     while ((match = exportRegex.exec(content)) !== null) {
       const exportsList = match[1];
       const exports = exportsList.split(',').map(e => e.trim());
-      
+
       for (const exp of exports) {
         // Handle "default as ComponentName" pattern
         const defaultAsMatch = exp.match(/default\s+as\s+(\w+)/);
@@ -530,7 +541,7 @@ export class DynamicPackageDiscovery {
         }
       }
     }
-    
+
     return [...new Set(components)]; // Remove duplicates
   }
 
@@ -540,14 +551,14 @@ export class DynamicPackageDiscovery {
   private isComponentName(name: string): boolean {
     // Must start with uppercase letter
     if (!/^[A-Z]/.test(name)) return false;
-    
+
     // Skip constants and utilities
     if (name.toUpperCase() === name) return false; // ALL_CAPS constants
     if (name.startsWith('Styled')) return false; // Styled components (usually internal)
     if (name.endsWith('Provider')) return false; // Context providers
     if (name.endsWith('Context')) return false; // React contexts
     if (name.endsWith('Type') || name.endsWith('Types')) return false; // Type definitions
-    
+
     return true;
   }
 
@@ -566,13 +577,13 @@ export class DynamicPackageDiscovery {
           // Main export - we'll analyze this elsewhere
           continue;
         }
-        
+
         if (key.startsWith('./') && !key.includes('*')) {
           // Named export like "./Button" or "./components/Button"
           const componentName = key.replace('./', '').split('/').pop();
           if (componentName && /^[A-Z]/.test(componentName)) {
             result[componentName] = `Component_${componentName}`;
-            console.log(`📍 Found component export: ${componentName}`);
+            logger.log(`📍 Found component export: ${componentName}`);
           }
         }
       }
@@ -585,12 +596,12 @@ export class DynamicPackageDiscovery {
   private extractExportsFromTypeDefinitions(typingsPath: string, result: any): void {
     try {
       const content = fs.readFileSync(typingsPath, 'utf-8');
-      
+
       // Look for export declarations like:
       // export declare const Button: ...
       // export default Button
       // export { Button }
-      
+
       const exportPatterns = [
         /export\s+declare\s+const\s+([A-Z][a-zA-Z0-9]+)/g,
         /export\s+declare\s+function\s+([A-Z][a-zA-Z0-9]+)/g,
@@ -604,7 +615,7 @@ export class DynamicPackageDiscovery {
           const componentName = match[1];
           if (componentName && /^[A-Z]/.test(componentName)) {
             result[componentName] = `Component_${componentName}`;
-            console.log(`📍 Found component in .d.ts: ${componentName}`);
+            logger.log(`📍 Found component in .d.ts: ${componentName}`);
           }
         }
       }

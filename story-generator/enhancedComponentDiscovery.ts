@@ -3,6 +3,7 @@ import path from 'path';
 import { DiscoveredComponent } from './componentDiscovery.js';
 import { StoryUIConfig } from '../story-ui.config.js';
 import { DynamicPackageDiscovery } from './dynamicPackageDiscovery.js';
+import { logger } from './logger.js';
 
 export interface ComponentSource {
   type: 'npm' | 'local' | 'custom-elements' | 'typescript';
@@ -32,12 +33,12 @@ export class EnhancedComponentDiscovery {
    * Priority: 1. Dynamic Discovery 2. Static Lists 3. Manual Config
    */
   async discoverAll(): Promise<EnhancedComponent[]> {
-    console.log('🔍 Starting comprehensive component discovery...');
-    
+    logger.log('🔍 Starting comprehensive component discovery...');
+
     // Step 1: Discover from all sources
     const sources = this.identifySources();
-    console.log(`📁 Found ${sources.length} discovery sources:`, sources.map(s => `${s.type}:${s.path}`));
-    
+    logger.log(`📁 Found ${sources.length} discovery sources:`, sources.map(s => `${s.type}:${s.path}`));
+
     for (const source of sources) {
       try {
         switch (source.type) {
@@ -66,11 +67,11 @@ export class EnhancedComponentDiscovery {
     this.resolveComponentConflicts();
 
     const finalComponents = Array.from(this.discoveredComponents.values());
-    console.log(`✅ Discovery complete: ${finalComponents.length} components found`);
-    
+    logger.log(`✅ Discovery complete: ${finalComponents.length} components found`);
+
     // Log summary by source type
     this.logDiscoverySummary(finalComponents);
-    
+
     return finalComponents;
   }
 
@@ -80,7 +81,7 @@ export class EnhancedComponentDiscovery {
    */
   private resolveComponentConflicts(): void {
     const conflicts = new Map<string, EnhancedComponent[]>();
-    
+
     // Group components by name to find conflicts
     for (const component of this.discoveredComponents.values()) {
       const name = component.name;
@@ -93,8 +94,8 @@ export class EnhancedComponentDiscovery {
     // Resolve conflicts using priority system
     for (const [name, componentList] of conflicts) {
       if (componentList.length > 1) {
-        console.log(`⚠️  Resolving conflict for component "${name}" (${componentList.length} versions found)`);
-        
+        logger.log(`⚠️  Resolving conflict for component "${name}" (${componentList.length} versions found)`);
+
         // Priority order: local > manual config > npm
         const prioritized = componentList.sort((a, b) => {
           const getPriority = (comp: EnhancedComponent) => {
@@ -102,19 +103,19 @@ export class EnhancedComponentDiscovery {
             if (comp.source.type === 'npm') return 2;
             return 3; // Lowest priority for others
           };
-          
+
           return getPriority(a) - getPriority(b);
         });
 
         // Keep highest priority, remove others
         const winner = prioritized[0];
         const losers = prioritized.slice(1);
-        
+
         for (const loser of losers) {
           this.discoveredComponents.delete(loser.name);
         }
-        
-        console.log(`✅ Kept ${winner.source.type} version of "${name}" from ${winner.source.path}`);
+
+        logger.log(`✅ Kept ${winner.source.type} version of "${name}" from ${winner.source.path}`);
       }
     }
   }
@@ -130,7 +131,7 @@ export class EnhancedComponentDiscovery {
       return acc;
     }, {} as Record<string, number>);
 
-    console.log('📊 Component discovery summary:', summary);
+    logger.log('📊 Component discovery summary:', summary);
   }
 
       /**
@@ -180,7 +181,7 @@ export class EnhancedComponentDiscovery {
           layoutImportPaths.add(layoutComp.importPath);
         }
       }
-      
+
       for (const layoutPath of layoutImportPaths) {
         sources.push({
           type: 'npm',
@@ -239,7 +240,7 @@ export class EnhancedComponentDiscovery {
     const storiesDir = path.join(projectRoot, 'src/stories');
     if (fs.existsSync(storiesDir)) {
       sources.push({
-        type: 'local', 
+        type: 'local',
         path: storiesDir,
         patterns: ['*.tsx', '*.jsx'] // Only component files, not story files
       });
@@ -280,7 +281,7 @@ export class EnhancedComponentDiscovery {
    */
   private isLikelyComponentPackage(packageName: string): boolean {
     const name = packageName.toLowerCase();
-    
+
     // Skip obvious utility packages
     const utilityPatterns = [
       'types',
@@ -320,14 +321,14 @@ export class EnhancedComponentDiscovery {
       return;
     }
 
-    console.log(`🔍 Dynamically discovering components from ${source.path}...`);
+          logger.log(`🔍 Dynamically discovering components from ${source.path}...`);
 
     // Use dynamic discovery to get real exports
     const dynamicDiscovery = new DynamicPackageDiscovery(source.path, projectRoot);
     const packageExports = await dynamicDiscovery.getRealPackageExports();
 
     if (!packageExports) {
-      console.log(`📋 ${source.path}: Using static component list (design system detected)`);
+      logger.log(`📋 ${source.path}: Using static component list (design system detected)`);
       // Fallback to predefined components if dynamic discovery fails
       const knownComponents = this.getKnownDesignSystemComponents(source.path);
       if (knownComponents.length > 0) {
@@ -346,7 +347,7 @@ export class EnhancedComponentDiscovery {
     // Process the real components found in the package
     const realComponents = packageExports.components.filter(comp => comp.isComponent);
     console.log(`✅ Found ${realComponents.length} real components in ${source.path} v${packageExports.packageVersion}`);
-    console.log(`📦 Available components: ${realComponents.map(c => c.name).join(', ')}`);
+          logger.log(`📦 Available components: ${realComponents.map(c => c.name).join(', ')}`);
 
     for (const realComp of realComponents) {
       // Get enhanced metadata from predefined list if available
@@ -374,11 +375,54 @@ export class EnhancedComponentDiscovery {
 
   /**
    * Get known components for popular design systems
-   * Returns empty array to rely on dynamic discovery
+   * Returns a fallback list when dynamic discovery fails
    */
   private getKnownDesignSystemComponents(packageName: string): Partial<EnhancedComponent>[] {
-    // Return empty array to rely purely on dynamic component discovery
-    // This ensures we test the actual package scanning capabilities
+    // Chakra UI fallback components
+    if (packageName === '@chakra-ui/react') {
+      const basicComponents = [
+        // Layout
+        'Box', 'Flex', 'Grid', 'Stack', 'HStack', 'VStack', 'Container', 'Center', 'Square', 'Circle',
+        'SimpleGrid', 'Wrap', 'WrapItem', 'AspectRatio', 'Spacer', 'Divider',
+        // Typography
+        'Text', 'Heading', 'Badge', 'Code', 'Kbd', 'Mark',
+        // Forms
+        'Button', 'IconButton', 'Input', 'InputGroup', 'InputLeftElement', 'InputRightElement',
+        'Textarea', 'Select', 'Checkbox', 'Radio', 'RadioGroup', 'Switch', 'Slider',
+        'FormControl', 'FormLabel', 'FormHelperText', 'FormErrorMessage',
+        // Feedback
+        'Alert', 'AlertIcon', 'AlertTitle', 'AlertDescription', 'Progress', 'Skeleton', 'Spinner',
+        'Toast', 'useToast', 'CircularProgress', 'CircularProgressLabel',
+        // Data Display
+        'Avatar', 'AvatarGroup', 'Card', 'CardHeader', 'CardBody', 'CardFooter',
+        'Image', 'Badge', 'Stat', 'StatLabel', 'StatNumber', 'StatHelpText', 'StatArrow',
+        'Table', 'Thead', 'Tbody', 'Tfoot', 'Tr', 'Th', 'Td', 'TableCaption',
+        // Navigation
+        'Breadcrumb', 'BreadcrumbItem', 'BreadcrumbLink', 'Link', 'LinkBox', 'LinkOverlay',
+        'Tabs', 'TabList', 'TabPanels', 'Tab', 'TabPanel',
+        // Overlay
+        'Modal', 'ModalOverlay', 'ModalContent', 'ModalHeader', 'ModalFooter', 'ModalBody', 'ModalCloseButton',
+        'Drawer', 'DrawerBody', 'DrawerFooter', 'DrawerHeader', 'DrawerOverlay', 'DrawerContent', 'DrawerCloseButton',
+        'Menu', 'MenuButton', 'MenuList', 'MenuItem', 'MenuItemOption', 'MenuGroup', 'MenuOptionGroup', 'MenuDivider',
+        'Popover', 'PopoverTrigger', 'PopoverContent', 'PopoverHeader', 'PopoverBody', 'PopoverFooter', 'PopoverArrow', 'PopoverCloseButton',
+        'Tooltip', 'AlertDialog', 'AlertDialogBody', 'AlertDialogFooter', 'AlertDialogHeader', 'AlertDialogContent', 'AlertDialogOverlay',
+        // Disclosure
+        'Accordion', 'AccordionItem', 'AccordionButton', 'AccordionPanel', 'AccordionIcon',
+        'VisuallyHidden', 'Show', 'Hide', 'Collapse',
+        // Media
+        'Icon', 'CloseButton'
+      ];
+      
+      return basicComponents.map(name => ({
+        name,
+        description: `${name} component from Chakra UI`,
+        category: this.categorizeComponent(name, '') as any
+      }));
+    }
+    
+    // Add other design systems here as needed
+    
+    // Default: return empty array
     return [];
   }
 

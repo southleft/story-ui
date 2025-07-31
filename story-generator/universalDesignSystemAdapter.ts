@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { StoryUIConfig } from '../story-ui.config.js';
-
+import { logger } from './logger.js';
 export interface DesignSystemInfo {
   name: string;
   type: 'chakra-ui' | 'antd' | 'mantine' | 'generic';
@@ -39,7 +39,7 @@ export class UniversalDesignSystemAdapter {
     const packageJsonPath = path.join(this.projectRoot, 'package.json');
     
     if (!fs.existsSync(packageJsonPath)) {
-      console.log('📦 No package.json found for design system detection');
+      logger.log('📦 No package.json found for design system detection');
       return [];
     }
 
@@ -58,7 +58,7 @@ export class UniversalDesignSystemAdapter {
     this.checkForMantine(allDeps);
     this.checkForGenericReactComponents(allDeps);
 
-    console.log(`🎨 Detected ${this.detectedSystems.length} design systems:`, 
+    logger.log(`🎨 Detected ${this.detectedSystems.length} design systems:`, 
                 this.detectedSystems.map(ds => ds.name));
 
     return this.detectedSystems;

@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { glob } from 'glob';
-
+import { logger } from './logger.js';
 export interface DocumentationSource {
   type: 'markdown' | 'json' | 'html' | 'txt';
   path: string;
@@ -54,7 +54,7 @@ export class DocumentationLoader {
       return this.cache;
     }
 
-    console.log(`📚 Loading documentation from ${this.docsDir}`);
+    logger.log(`📚 Loading documentation from ${this.docsDir}`);
 
     const documentation: LoadedDocumentation = {
       sources: [],
@@ -84,7 +84,7 @@ export class DocumentationLoader {
     }
     const files = [...new Set(allFiles)]; // Remove duplicates
 
-    console.log(`📄 Found ${files.length} documentation files`);
+    logger.log(`📄 Found ${files.length} documentation files`);
 
     // Process each file
     for (const file of files) {
@@ -115,7 +115,7 @@ export class DocumentationLoader {
     this.cache = documentation;
     this.lastModified = stats.mtimeMs;
 
-    console.log(`✅ Loaded documentation with ${documentation.guidelines.length} guidelines, ${Object.keys(documentation.tokens).length} token categories, ${Object.keys(documentation.patterns).length} patterns`);
+    logger.log(`✅ Loaded documentation with ${documentation.guidelines.length} guidelines, ${Object.keys(documentation.tokens).length} token categories, ${Object.keys(documentation.patterns).length} patterns`);
 
     return documentation;
   }

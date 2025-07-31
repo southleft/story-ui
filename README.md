@@ -30,6 +30,7 @@ Story UI revolutionizes component documentation by automatically generating Stor
 - **Production Mode**: Clean deployment without generated stories
 - **Auto Port Detection**: Automatically finds available ports
 - **Hot Reload Integration**: Stories update automatically as you chat
+- **MCP Server Integration**: Use Story UI directly from Claude Desktop or other MCP clients
 
 ## 🚀 Quick Start
 
@@ -72,17 +73,17 @@ Story UI uses advanced AI to understand your component library and generate appr
 export default {
   // Component library import path
   importPath: 'your-component-library',
-  
+
   // Path to your local components (for custom libraries)
   componentsPath: './src/components',
-  
+
   // Generated stories location
   generatedStoriesPath: './src/stories/generated/',
-  
+
   // Story configuration
   storyPrefix: 'Generated/',
   defaultAuthor: 'Story UI AI',
-  
+
   // Layout rules for multi-column layouts
   layoutRules: {
     multiColumnWrapper: 'div',
@@ -146,6 +147,42 @@ AI: "I'll modify the existing story to make the buttons full width..."
 ```
 
 The AI will preserve your existing code and only modify what you requested!
+
+## 🤖 MCP Server Integration
+
+Story UI can be used as a Model Context Protocol (MCP) server, allowing you to generate stories directly from Claude Desktop or other MCP-compatible clients.
+
+### Quick Setup for Claude Desktop
+
+1. Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+
+```json
+{
+  "mcpServers": {
+    "story-ui": {
+      "command": "npx",
+      "args": ["@tpitre/story-ui", "mcp"],
+      "env": {
+        "CLAUDE_API_KEY": "your-claude-api-key-here"
+      }
+    }
+  }
+}
+```
+
+2. Start the Story UI HTTP server in your project:
+```bash
+story-ui start
+```
+
+3. Restart Claude Desktop
+
+Now you can generate stories directly in Claude Desktop! Just ask:
+- "Use Story UI to create a hero section with a title and CTA button"
+- "List all available components in Story UI"
+- "Show me the stories I've generated"
+
+For detailed MCP setup instructions, see [docs/MCP_INTEGRATION.md](docs/MCP_INTEGRATION.md).
 
 ## 📖 Documentation Support
 

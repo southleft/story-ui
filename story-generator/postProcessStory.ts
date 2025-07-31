@@ -1,23 +1,25 @@
+import { logger } from './logger.js';
+
 /**
  * Post-process generated stories to fix common issues
  * This module is completely design-system agnostic
  */
 
 export function postProcessStory(code: string, libraryPath: string): string {
-  console.log(`🔧 Post-processing story for library: ${libraryPath}`);
+  logger.log(`🔧 Post-processing story for library: ${libraryPath}`);
 
   let processedCode = code;
 
   // Fix ANY component with children prop - ALWAYS convert to render function
   if (processedCode.includes('children: (')) {
-    console.log('🚨 Detected children prop in args - converting to render function');
+    logger.log('🚨 Detected children prop in args - converting to render function');
     processedCode = convertLayoutToRenderFunction(processedCode);
   }
 
   // Leave inline styles as-is - let the AI use the available components naturally
   // Post-processing should be design-system agnostic
   if (processedCode.includes('style={{')) {
-    console.log('ℹ️  Inline styles detected - keeping as-is for design system agnosticism');
+    logger.log('ℹ️  Inline styles detected - keeping as-is for design system agnosticism');
   }
 
   return processedCode;
@@ -46,7 +48,7 @@ function convertLayoutToRenderFunction(code: string): string {
       const metaWithType = `const meta = {${newMetaContent}} satisfies Meta;`;
       processedCode = code.replace(/const meta = {[^}]+} satisfies Meta(?:<[^>]+>)?;/s, metaWithType);
       
-      console.log('✅ Removed component from meta object');
+      logger.log('✅ Removed component from meta object');
     }
   }
   
@@ -64,7 +66,7 @@ function convertLayoutToRenderFunction(code: string): string {
     // Replace the old story with the new one
     processedCode = processedCode.replace(match[0], newStory);
     
-    console.log(`✅ Converted ${storyName} from children prop to render function`);
+    logger.log(`✅ Converted ${storyName} from children prop to render function`);
   }
   
   return processedCode;
@@ -75,7 +77,7 @@ function convertLayoutToRenderFunction(code: string): string {
  */
 function convertAlertChildrenToExports(code: string): string {
   // For now, return the code as-is
-  console.log('Alert conversion not yet implemented');
+  logger.log('Alert conversion not yet implemented');
   return code;
 }
 
@@ -84,6 +86,6 @@ function convertAlertChildrenToExports(code: string): string {
  */
 function convertToastChildrenToExports(code: string): string {
   // For now, return the code as-is
-  console.log('Toast conversion not yet implemented');
+  logger.log('Toast conversion not yet implemented');
   return code;
 }

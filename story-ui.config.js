@@ -1,18 +1,18 @@
 module.exports = {
   "generatedStoriesPath": "./src/stories/generated",
-  "importPath": "@tpitre/story-ui",
+  "importPath": "@mui/material",
   "componentPrefix": "",
   "layoutRules": {
-    "multiColumnWrapper": "div",
-    "columnComponent": "div",
-    "containerComponent": "div",
+    "multiColumnWrapper": "Grid",
+    "columnComponent": "Grid",
+    "containerComponent": "Container",
     "layoutExamples": {
-      "twoColumn": "<div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem'}}>\n  <div>Column 1 content</div>\n  <div>Column 2 content</div>\n</div>"
+      "twoColumn": "<Grid container spacing={2}>\n  <Grid item xs={6}>Column 1 content</Grid>\n  <Grid item xs={6}>Column 2 content</Grid>\n</Grid>"
     },
     "prohibitedElements": []
   },
   "storybookFramework": "@storybook/react-vite",
-  "componentsPath": "./templates/StoryUI",
+  "componentsPath": "./src/components",
   "storyPrefix": "Generated/",
   "defaultAuthor": "Story UI AI"
 };

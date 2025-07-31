@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-
+import { logger } from './logger.js';
 export interface AIConsiderations {
   libraryName?: string;
   importPath?: string;
@@ -41,7 +41,7 @@ export function loadConsiderations(considerationsPath?: string): AIConsideration
     for (const possiblePath of possiblePaths) {
       if (fs.existsSync(possiblePath)) {
         considerationsPath = possiblePath;
-        console.log(`Found considerations file at: ${considerationsPath}`);
+        logger.log(`Found considerations file at: ${considerationsPath}`);
         break;
       }
     }
