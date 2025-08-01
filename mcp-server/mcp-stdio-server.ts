@@ -13,8 +13,23 @@ import { getInMemoryStoryService } from '../story-generator/inMemoryStoryService
 import dotenv from 'dotenv';
 import path from 'path';
 
+// Check for working directory override from environment or command line
+const workingDir = process.env.STORY_UI_CWD || process.argv.find(arg => arg.startsWith('--cwd='))?.split('=')[1];
+
+if (workingDir) {
+  console.error(`Story UI MCP Server: Changing working directory to ${workingDir}`);
+  process.chdir(workingDir);
+}
+
 // Load environment variables
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+
+// Set MCP mode to suppress emojis in logging
+process.env.STORY_UI_MCP_MODE = 'true';
+
+// Get HTTP server port from environment variables (check multiple possible names)
+const HTTP_PORT = process.env.VITE_STORY_UI_PORT || process.env.STORY_UI_HTTP_PORT || process.env.PORT || '4001';
+const HTTP_BASE_URL = `http://localhost:${HTTP_PORT}`;
 
 // Initialize configuration
 const config = loadUserConfig();
@@ -141,7 +156,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return {
           content: [{
             type: "text",
-            text: "✅ MCP connection is working! Story UI is connected and ready."
+            text: "MCP connection is working! Story UI is connected and ready."
           }]
         };
       }
@@ -150,7 +165,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const { prompt, chatId } = args as { prompt: string; chatId?: string };
 
         // Use the HTTP server endpoint to generate the story
-        const response = await fetch('http://localhost:4001/mcp/generate-story', {
+        const response = await fetch(`${HTTP_BASE_URL}/mcp/generate-story`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -164,11 +179,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         const result = await response.json();
+        
+        // Debug log to see what we're getting
+        console.error('Story generation result:', JSON.stringify(result, null, 2));
 
         return {
           content: [{
             type: "text",
-            text: `Story generated successfully!\n\nTitle: ${result.title}\nID: ${result.id}\n\nStory Code:\n\`\`\`tsx\n${result.content}\n\`\`\`\n\nOpen your Storybook instance to see the generated story.`
+            text: `Story generated successfully!\n\nTitle: ${result.title || 'Untitled'}\nID: ${result.storyId || result.fileName || 'Unknown'}\n\nStory Code:\n\`\`\`tsx\n${result.story || 'Story code not available'}\n\`\`\`\n\nOpen your Storybook instance to see the generated story.`
           }]
         };
       }
@@ -217,76 +235,114 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "list-stories": {
-        const stories = storyService.getAllStories();
+        try {
+          const response = await fetch(`${HTTP_BASE_URL}/mcp/stories`);
+          
+          if (!response.ok) {
+            throw new Error(`Failed to list stories: ${response.statusText}`);
+          }
+          
+          const stories = await response.json();
+          
+          if (!stories || stories.length === 0) {
+            return {
+              content: [{
+                type: "text",
+                text: "No stories have been generated yet."
+              }]
+            };
+          }
 
-        if (stories.length === 0) {
+          const storyList = stories.map((story: any) =>
+            `- ${story.title || story.fileName || 'Untitled'} (ID: ${story.id || story.storyId})\n  Created: ${story.timestamp || story.createdAt ? new Date(story.timestamp || story.createdAt).toLocaleString() : 'Unknown'}`
+          ).join('\n\n');
+
           return {
             content: [{
               type: "text",
-              text: "No stories have been generated yet."
+              text: `Found ${stories.length} generated stories:\n\n${storyList}`
             }]
           };
+        } catch (error) {
+          console.error('Error listing stories:', error);
+          return {
+            content: [{
+              type: "text",
+              text: `Error listing stories: ${error instanceof Error ? error.message : String(error)}`
+            }],
+            isError: true
+          };
         }
-
-        const storyList = stories.map((story: any) =>
-          `- ${story.title} (ID: ${story.id})\n  Created: ${story.timestamp ? new Date(story.timestamp).toLocaleString() : 'Unknown'}`
-        ).join('\n\n');
-
-        return {
-          content: [{
-            type: "text",
-            text: `Found ${stories.length} generated stories:\n\n${storyList}`
-          }]
-        };
       }
 
       case "get-story": {
         const { storyId } = args as { storyId: string };
-        const story = storyService.getStory(storyId);
+        
+        try {
+          // First try to get the story metadata
+          const response = await fetch(`${HTTP_BASE_URL}/mcp/stories/${storyId}`);
+          
+          if (!response.ok) {
+            throw new Error(`Story with ID ${storyId} not found`);
+          }
+          
+          const story = await response.json();
+          
+          // Then get the story content
+          const contentResponse = await fetch(`${HTTP_BASE_URL}/mcp/stories/${storyId}/content`);
+          const content = contentResponse.ok ? await contentResponse.text() : story.content || story.story || 'Content not available';
 
-        if (!story) {
           return {
             content: [{
               type: "text",
-              text: `Story with ID ${storyId} not found.`
+              text: `# ${story.title || story.fileName || 'Untitled'}\n\nID: ${story.id || story.storyId || storyId}\nCreated: ${story.timestamp || story.createdAt ? new Date(story.timestamp || story.createdAt).toLocaleString() : 'Unknown'}\n\n## Story Code:\n\`\`\`tsx\n${content}\n\`\`\``
+            }]
+          };
+        } catch (error) {
+          console.error('Error getting story:', error);
+          return {
+            content: [{
+              type: "text",
+              text: `Story with ID ${storyId} not found or error retrieving it: ${error instanceof Error ? error.message : String(error)}`
             }],
             isError: true
           };
         }
-
-        return {
-          content: [{
-            type: "text",
-            text: `# ${story.title}\n\nID: ${story.id}\nCreated: ${(story as any).timestamp ? new Date((story as any).timestamp).toLocaleString() : 'Unknown'}\n\n## Story Code:\n\`\`\`tsx\n${story.content}\n\`\`\``
-          }]
-        };
       }
 
       case "delete-story": {
         const { storyId } = args as { storyId: string };
-        const deleted = storyService.deleteStory(storyId);
+        
+        try {
+          const response = await fetch(`${HTTP_BASE_URL}/mcp/stories/${storyId}`, {
+            method: 'DELETE'
+          });
+          
+          if (!response.ok) {
+            throw new Error(`Failed to delete story: ${response.statusText}`);
+          }
 
-        if (!deleted) {
           return {
             content: [{
               type: "text",
-              text: `Story with ID ${storyId} not found.`
+              text: `Story ${storyId} has been deleted successfully.`
+            }]
+          };
+        } catch (error) {
+          console.error('Error deleting story:', error);
+          return {
+            content: [{
+              type: "text",
+              text: `Failed to delete story ${storyId}: ${error instanceof Error ? error.message : String(error)}`
             }],
             isError: true
           };
         }
-
-        return {
-          content: [{
-            type: "text",
-            text: `Story ${storyId} has been deleted successfully.`
-          }]
-        };
       }
 
       case "get-component-props": {
         const { componentName } = args as { componentName: string };
-        const response = await fetch(`http://localhost:4001/mcp/props?component=${encodeURIComponent(componentName)}`);
+        const response = await fetch(`${HTTP_BASE_URL}/mcp/props?component=${encodeURIComponent(componentName)}`);
 
         if (!response.ok) {
           throw new Error(`Failed to get component props: ${response.statusText}`);
@@ -339,7 +395,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   // Log to stderr so it doesn't interfere with stdio communication
   console.error("Story UI MCP Server starting...");
-  console.error("Note: This requires the Story UI HTTP server to be running on port 4001");
+  console.error(`Note: This requires the Story UI HTTP server to be running on port ${HTTP_PORT}`);
   console.error("Run 'story-ui start' in a separate terminal if not already running.\n");
 
   // Create stdio transport

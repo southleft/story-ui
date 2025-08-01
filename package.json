@@ -113,5 +113,14 @@
     "commitizen": {
       "path": "./node_modules/cz-conventional-changelog"
     }
+  },
+  "mcp": {
+    "name": "story-ui",
+    "description": "AI-powered Storybook story generator with dynamic component discovery",
+    "command": "node",
+    "args": ["dist/mcp-server/mcp-stdio-server.js"],
+    "env": {
+      "NODE_ENV": "production"
+    }
   }
 }
