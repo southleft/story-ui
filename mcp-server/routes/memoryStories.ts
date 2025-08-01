@@ -1,13 +1,14 @@
 import { Request, Response } from 'express';
 import { getInMemoryStoryService } from '../../story-generator/inMemoryStoryService.js';
-import { STORY_UI_CONFIG } from '../../story-ui.config.js';
+import { loadUserConfig } from '../../story-generator/configLoader.js';
 
 /**
  * Get all stories metadata
  */
 export function getStoriesMetadata(req: Request, res: Response) {
   try {
-    const storyService = getInMemoryStoryService(STORY_UI_CONFIG);
+    const config = loadUserConfig();
+    const storyService = getInMemoryStoryService(config);
     const metadata = storyService.getStoryMetadata();
 
     res.json({
@@ -29,7 +30,8 @@ export function getStoriesMetadata(req: Request, res: Response) {
 export function getStoryById(req: Request, res: Response) {
   try {
     const { id } = req.params;
-    const storyService = getInMemoryStoryService(STORY_UI_CONFIG);
+    const config = loadUserConfig();
+    const storyService = getInMemoryStoryService(config);
     const story = storyService.getStory(id);
 
     if (!story) {
@@ -57,7 +59,8 @@ export function getStoryById(req: Request, res: Response) {
 export function getStoryContent(req: Request, res: Response) {
   try {
     const { id } = req.params;
-    const storyService = getInMemoryStoryService(STORY_UI_CONFIG);
+    const config = loadUserConfig();
+    const storyService = getInMemoryStoryService(config);
     const content = storyService.getStoryContent(id);
 
     if (!content) {
@@ -84,7 +87,8 @@ export function getStoryContent(req: Request, res: Response) {
 export function deleteStory(req: Request, res: Response) {
   try {
     const { id } = req.params;
-    const storyService = getInMemoryStoryService(STORY_UI_CONFIG);
+    const config = loadUserConfig();
+    const storyService = getInMemoryStoryService(config);
     const deleted = storyService.deleteStory(id);
 
     if (!deleted) {
@@ -111,7 +115,8 @@ export function deleteStory(req: Request, res: Response) {
  */
 export function clearAllStories(req: Request, res: Response) {
   try {
-    const storyService = getInMemoryStoryService(STORY_UI_CONFIG);
+    const config = loadUserConfig();
+    const storyService = getInMemoryStoryService(config);
     storyService.clearAllStories();
 
     res.json({
@@ -131,7 +136,8 @@ export function clearAllStories(req: Request, res: Response) {
  */
 export function getMemoryStats(req: Request, res: Response) {
   try {
-    const storyService = getInMemoryStoryService(STORY_UI_CONFIG);
+    const config = loadUserConfig();
+    const storyService = getInMemoryStoryService(config);
     const stats = storyService.getMemoryStats();
 
     res.json({

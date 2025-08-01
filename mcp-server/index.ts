@@ -16,12 +16,18 @@ import { claudeProxy } from './routes/claude.js';
 import { generateStoryFromPrompt } from './routes/generateStory.js';
 import {
   getStoriesMetadata,
-  getStoryById,
-  getStoryContent,
-  deleteStory,
+  getStoryById as getMemoryStoryById,
+  getStoryContent as getMemoryStoryContent,
+  deleteStory as deleteMemoryStory,
   clearAllStories,
   getMemoryStats
 } from './routes/memoryStories.js';
+import {
+  getAllStories,
+  getStoryById,
+  getStoryContent,
+  deleteStory
+} from './routes/hybridStories.js';
 import {
   getSyncedStories,
   deleteSyncedStory,
@@ -47,8 +53,8 @@ app.get('/mcp/props', getProps);
 app.post('/mcp/claude', claudeProxy);
 app.post('/mcp/generate-story', generateStoryFromPrompt);
 
-// In-memory story management routes (production)
-app.get('/mcp/stories', getStoriesMetadata);
+// Hybrid story management routes (works in both dev and production)
+app.get('/mcp/stories', getAllStories);
 app.get('/mcp/stories/:id', getStoryById);
 app.get('/mcp/stories/:id/content', getStoryContent);
 app.delete('/mcp/stories/:id', deleteStory);
@@ -64,7 +70,7 @@ app.get('/mcp/sync/chat-history', syncChatHistory);
 app.get('/mcp/sync/validate/:id', validateChatSession);
 
 // Proxy routes for frontend compatibility (maps /story-ui/ to /mcp/)
-app.get('/story-ui/stories', getStoriesMetadata);
+app.get('/story-ui/stories', getAllStories);
 app.get('/story-ui/stories/:id', getStoryById);
 app.get('/story-ui/stories/:id/content', getStoryContent);
 app.delete('/story-ui/stories/:id', deleteStory);

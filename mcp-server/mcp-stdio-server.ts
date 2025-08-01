@@ -10,8 +10,11 @@ import fetch from 'node-fetch';
 import { loadUserConfig } from '../story-generator/configLoader.js';
 import { EnhancedComponentDiscovery } from '../story-generator/enhancedComponentDiscovery.js';
 import { getInMemoryStoryService } from '../story-generator/inMemoryStoryService.js';
+import { SessionManager } from './sessionManager.js';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
+import crypto from 'crypto';
 
 // Check for working directory override from environment or command line
 const workingDir = process.env.STORY_UI_CWD || process.argv.find(arg => arg.startsWith('--cwd='))?.split('=')[1];
@@ -34,6 +37,11 @@ const HTTP_BASE_URL = `http://localhost:${HTTP_PORT}`;
 // Initialize configuration
 const config = loadUserConfig();
 const storyService = getInMemoryStoryService(config);
+const sessionManager = SessionManager.getInstance();
+
+// Generate a session ID for this MCP connection
+const sessionId = crypto.randomBytes(16).toString('hex');
+console.error(`[MCP] Session ID: ${sessionId}`);
 
 // Create MCP server instance
 const server = new Server(
@@ -139,6 +147,24 @@ const TOOLS = [
       required: ["componentName"],
     },
   },
+  {
+    name: "update-story",
+    description: "Update an existing Storybook story with modifications. If no storyId is provided, I'll update the most recent story or find the right one based on context.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        storyId: {
+          type: "string",
+          description: "Optional: The ID of the story to update. If not provided, will use context to find the right story.",
+        },
+        prompt: {
+          type: "string",
+          description: "Description of the changes to make to the story",
+        },
+      },
+      required: ["prompt"],
+    },
+  },
 ];
 
 // Set up request handlers
@@ -183,10 +209,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Debug log to see what we're getting
         console.error('Story generation result:', JSON.stringify(result, null, 2));
 
+        // Track the story in session
+        if (result.storyId && result.fileName && result.title) {
+          sessionManager.trackStory(sessionId, {
+            id: result.storyId,
+            fileName: result.fileName,
+            title: result.title,
+            prompt: prompt
+          });
+        }
+
         return {
           content: [{
             type: "text",
-            text: `Story generated successfully!\n\nTitle: ${result.title || 'Untitled'}\nID: ${result.storyId || result.fileName || 'Unknown'}\n\nStory Code:\n\`\`\`tsx\n${result.story || 'Story code not available'}\n\`\`\`\n\nOpen your Storybook instance to see the generated story.`
+            text: `Story generated successfully!\n\nTitle: ${result.title || 'Untitled'}\nStory ID: ${result.storyId || 'Unknown'}\nFile Name: ${result.fileName || 'Unknown'}\n\nStory Code:\n\`\`\`tsx\n${result.story || 'Story code not available'}\n\`\`\`\n\nOpen your Storybook instance to see the generated story.\n\nTo update this story later, use the Story ID: ${result.storyId}`
           }]
         };
       }
@@ -236,31 +272,89 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "list-stories": {
         try {
-          const response = await fetch(`${HTTP_BASE_URL}/mcp/stories`);
+          // Get session stories
+          const sessionStories = sessionManager.getSessionStories(sessionId);
           
-          if (!response.ok) {
-            throw new Error(`Failed to list stories: ${response.statusText}`);
+          // Also try to get file system stories
+          let fileStories: any[] = [];
+          if (config.generatedStoriesPath && fs.existsSync(config.generatedStoriesPath)) {
+            const files = fs.readdirSync(config.generatedStoriesPath);
+            fileStories = files
+              .filter(file => file.endsWith('.stories.tsx'))
+              .map(file => {
+                const hash = file.match(/-([a-f0-9]{8})\.stories\.tsx$/)?.[1] || '';
+                const storyId = hash ? `story-${hash}` : file.replace('.stories.tsx', '');
+                
+                // Try to read title from file
+                let title = file.replace('.stories.tsx', '').replace(/-/g, ' ');
+                try {
+                  const filePath = path.join(config.generatedStoriesPath, file);
+                  const content = fs.readFileSync(filePath, 'utf-8');
+                  const titleMatch = content.match(/title:\s*['"]([^'"]+)['"]/);
+                  if (titleMatch) {
+                    title = titleMatch[1].replace('Generated/', '');
+                  }
+                } catch (e) {
+                  // Use filename as fallback
+                }
+                
+                return {
+                  id: storyId,
+                  fileName: file,
+                  title,
+                  source: 'file-system',
+                  isInSession: sessionStories.some(s => s.id === storyId)
+                };
+              });
           }
           
-          const stories = await response.json();
-          
-          if (!stories || stories.length === 0) {
+          if (sessionStories.length === 0 && fileStories.length === 0) {
             return {
               content: [{
                 type: "text",
-                text: "No stories have been generated yet."
+                text: "No stories have been generated yet.\n\nGenerate your first story by describing what UI component you'd like to create!"
               }]
             };
           }
 
-          const storyList = stories.map((story: any) =>
-            `- ${story.title || story.fileName || 'Untitled'} (ID: ${story.id || story.storyId})\n  Created: ${story.timestamp || story.createdAt ? new Date(story.timestamp || story.createdAt).toLocaleString() : 'Unknown'}`
-          ).join('\n\n');
+          let responseText = '';
+          
+          // Show session stories first
+          if (sessionStories.length > 0) {
+            responseText += `**Stories in current session:**\n`;
+            const currentStory = sessionManager.getCurrentStory(sessionId);
+            
+            sessionStories.forEach(story => {
+              const isCurrent = currentStory?.id === story.id;
+              responseText += `\n${isCurrent ? '→ ' : '  '}${story.title}\n`;
+              responseText += `  ID: ${story.id}\n`;
+              responseText += `  File: ${story.fileName}\n`;
+              if (isCurrent) {
+                responseText += `  (Currently discussing this story)\n`;
+              }
+            });
+          }
+          
+          // Show other available stories
+          const nonSessionFiles = fileStories.filter(f => !f.isInSession);
+          if (nonSessionFiles.length > 0) {
+            responseText += `\n\n**Other available stories:**\n`;
+            nonSessionFiles.forEach(story => {
+              responseText += `\n- ${story.title}\n`;
+              responseText += `  ID: ${story.id}\n`;
+              responseText += `  File: ${story.fileName}\n`;
+            });
+          }
+          
+          responseText += `\n\n**Tips:**\n`;
+          responseText += `- To update a story, just describe what changes you want\n`;
+          responseText += `- I'll automatically work with the most recent story or find the right one based on context\n`;
+          responseText += `- You can also specify a story ID directly if needed`;
 
           return {
             content: [{
               type: "text",
-              text: `Found ${stories.length} generated stories:\n\n${storyList}`
+              text: responseText
             }]
           };
         } catch (error) {
@@ -314,12 +408,55 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const { storyId } = args as { storyId: string };
         
         try {
+          // Try to delete from file system directly
+          if (config.generatedStoriesPath && fs.existsSync(config.generatedStoriesPath)) {
+            const files = fs.readdirSync(config.generatedStoriesPath);
+            
+            // Extract hash from story ID
+            const hashMatch = storyId.match(/^story-([a-f0-9]{8})$/);
+            const hash = hashMatch ? hashMatch[1] : null;
+            
+            // Find matching file
+            const matchingFile = files.find(file => {
+              if (hash && file.includes(`-${hash}.stories.tsx`)) return true;
+              if (file === `${storyId}.stories.tsx`) return true;
+              if (file === storyId) return true;
+              return false;
+            });
+            
+            if (matchingFile) {
+              const filePath = path.join(config.generatedStoriesPath, matchingFile);
+              fs.unlinkSync(filePath);
+              console.error(`[MCP] Deleted story file: ${filePath}`);
+              
+              // Also remove from session
+              const sessionStories = sessionManager.getSessionStories(sessionId);
+              const storyInSession = sessionStories.find(s => s.id === storyId);
+              if (storyInSession) {
+                // Note: SessionManager doesn't have a removeStory method yet
+                // For now, just clear current if it matches
+                const current = sessionManager.getCurrentStory(sessionId);
+                if (current?.id === storyId) {
+                  sessionManager.setCurrentStory(sessionId, '');
+                }
+              }
+              
+              return {
+                content: [{
+                  type: "text",
+                  text: `Story "${matchingFile}" has been deleted successfully.`
+                }]
+              };
+            }
+          }
+          
+          // Fallback to HTTP endpoint
           const response = await fetch(`${HTTP_BASE_URL}/mcp/stories/${storyId}`, {
             method: 'DELETE'
           });
           
           if (!response.ok) {
-            throw new Error(`Failed to delete story: ${response.statusText}`);
+            throw new Error(`Story not found in file system or via HTTP endpoint`);
           }
 
           return {
@@ -369,6 +506,117 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             text: `Props for ${componentName}:\n\n${propsList}`
           }]
         };
+      }
+
+      case "update-story": {
+        let { storyId, prompt } = args as { storyId?: string; prompt: string };
+        
+        try {
+          // If no storyId provided, try to find the right story
+          if (!storyId) {
+            // First check current story in session
+            const currentStory = sessionManager.getCurrentStory(sessionId);
+            if (currentStory) {
+              storyId = currentStory.id;
+              console.error(`[MCP] Using current story: ${currentStory.title} (${storyId})`);
+            } else {
+              // Try to find by context
+              const contextStory = sessionManager.findStoryByContext(sessionId, prompt);
+              if (contextStory) {
+                storyId = contextStory.id;
+                console.error(`[MCP] Found story by context: ${contextStory.title} (${storyId})`);
+              } else {
+                // Use the most recent story
+                const sessionStories = sessionManager.getSessionStories(sessionId);
+                if (sessionStories.length > 0) {
+                  const recentStory = sessionStories[sessionStories.length - 1];
+                  storyId = recentStory.id;
+                  console.error(`[MCP] Using most recent story: ${recentStory.title} (${storyId})`);
+                } else {
+                  return {
+                    content: [{
+                      type: "text",
+                      text: "No story found to update. Please generate a story first or specify which story you'd like to update."
+                    }],
+                    isError: true
+                  };
+                }
+              }
+            }
+          }
+          
+          // First, get the existing story content
+          const storyResponse = await fetch(`${HTTP_BASE_URL}/mcp/stories/${storyId}`);
+          
+          if (!storyResponse.ok) {
+            throw new Error(`Story with ID ${storyId} not found`);
+          }
+          
+          const storyMetadata = await storyResponse.json();
+          
+          // Get the actual story content
+          const contentResponse = await fetch(`${HTTP_BASE_URL}/mcp/stories/${storyId}/content`);
+          if (!contentResponse.ok) {
+            throw new Error(`Could not retrieve content for story ${storyId}`);
+          }
+          
+          const existingCode = await contentResponse.text();
+          
+          // Build conversation context for the update
+          const conversation = [
+            {
+              role: 'user',
+              content: storyMetadata.prompt || 'Generate a story'
+            },
+            {
+              role: 'assistant', 
+              content: existingCode
+            },
+            {
+              role: 'user',
+              content: prompt
+            }
+          ];
+          
+          // Send update request to the generation endpoint
+          const response = await fetch(`${HTTP_BASE_URL}/mcp/generate-story`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ 
+              prompt,
+              fileName: storyMetadata.fileName || storyId,
+              conversation
+            }),
+          });
+
+          if (!response.ok) {
+            const error = await response.text();
+            throw new Error(`Failed to update story: ${error}`);
+          }
+
+          const result = await response.json();
+          
+          // Debug log to see what we're getting
+          console.error('Story update result:', JSON.stringify(result, null, 2));
+
+          return {
+            content: [{
+              type: "text",
+              text: `Story updated successfully!\n\nTitle: ${result.title || 'Untitled'}\nID: ${result.storyId || result.fileName || 'Unknown'}\n\nUpdated Story Code:\n\`\`\`tsx\n${result.story || 'Story code not available'}\n\`\`\`\n\nThe story has been updated in your Storybook instance.`
+            }]
+          };
+        } catch (error) {
+          console.error('Error updating story:', error);
+          return {
+            content: [{
+              type: "text",
+              text: `Failed to update story: ${error instanceof Error ? error.message : String(error)}`
+            }],
+            isError: true
+          };
+        }
       }
 
       default:

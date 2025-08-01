@@ -701,6 +701,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       res.json({
         success: true,
         fileName: finalFileName,
+        storyId,
         outPath,
         title: aiTitle,
         story: fileContents,
