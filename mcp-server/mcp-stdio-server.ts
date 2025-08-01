@@ -545,22 +545,60 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             }
           }
           
-          // First, get the existing story content
-          const storyResponse = await fetch(`${HTTP_BASE_URL}/mcp/stories/${storyId}`);
+          // Try to get story content directly from file system first
+          let existingCode = '';
+          let storyMetadata: any = {};
+          let foundLocally = false;
           
-          if (!storyResponse.ok) {
-            throw new Error(`Story with ID ${storyId} not found`);
+          if (config.generatedStoriesPath && fs.existsSync(config.generatedStoriesPath)) {
+            const files = fs.readdirSync(config.generatedStoriesPath);
+            
+            // Extract hash from story ID
+            const hashMatch = storyId.match(/^story-([a-f0-9]{8})$/);
+            const hash = hashMatch ? hashMatch[1] : null;
+            
+            // Find matching file
+            const matchingFile = files.find(file => {
+              if (hash && file.includes(`-${hash}.stories.tsx`)) return true;
+              if (file === `${storyId}.stories.tsx`) return true;
+              return false;
+            });
+            
+            if (matchingFile) {
+              const filePath = path.join(config.generatedStoriesPath, matchingFile);
+              existingCode = fs.readFileSync(filePath, 'utf-8');
+              
+              // Extract metadata from the story content
+              const titleMatch = existingCode.match(/title:\s*['"]([^'"]+)['"]/);
+              storyMetadata = {
+                fileName: matchingFile,
+                title: titleMatch ? titleMatch[1].replace('Generated/', '') : 'Untitled',
+                prompt: prompt // Use the update prompt as context
+              };
+              foundLocally = true;
+              console.error(`[MCP] Found story locally: ${filePath}`);
+            }
           }
           
-          const storyMetadata = await storyResponse.json();
-          
-          // Get the actual story content
-          const contentResponse = await fetch(`${HTTP_BASE_URL}/mcp/stories/${storyId}/content`);
-          if (!contentResponse.ok) {
-            throw new Error(`Could not retrieve content for story ${storyId}`);
+          // If not found locally, fall back to HTTP endpoint
+          if (!foundLocally) {
+            console.error(`[MCP] Story not found locally, trying HTTP endpoint`);
+            const storyResponse = await fetch(`${HTTP_BASE_URL}/mcp/stories/${storyId}`);
+            
+            if (!storyResponse.ok) {
+              throw new Error(`Story with ID ${storyId} not found`);
+            }
+            
+            storyMetadata = await storyResponse.json();
+            
+            // Get the actual story content
+            const contentResponse = await fetch(`${HTTP_BASE_URL}/mcp/stories/${storyId}/content`);
+            if (!contentResponse.ok) {
+              throw new Error(`Could not retrieve content for story ${storyId}`);
+            }
+            
+            existingCode = await contentResponse.text();
           }
-          
-          const existingCode = await contentResponse.text();
           
           // Build conversation context for the update
           const conversation = [
