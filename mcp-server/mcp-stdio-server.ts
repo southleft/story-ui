@@ -625,7 +625,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             body: JSON.stringify({ 
               prompt,
               fileName: storyMetadata.fileName || storyId,
-              conversation
+              conversation,
+              isUpdate: true,
+              originalTitle: storyMetadata.title,
+              storyId: storyId
             }),
           });
 
@@ -638,6 +641,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           
           // Debug log to see what we're getting
           console.error('Story update result:', JSON.stringify(result, null, 2));
+
+          // Update session tracking with preserved metadata
+          if (result.storyId && result.fileName && result.title) {
+            sessionManager.trackStory(sessionId, {
+              id: result.storyId,
+              fileName: result.fileName,
+              title: result.title,
+              prompt: prompt
+            });
+          }
 
           return {
             content: [{

@@ -363,7 +363,7 @@ function fileNameFromTitle(title: string, hash: string): string {
 }
 
 export async function generateStoryFromPrompt(req: Request, res: Response) {
-  const { prompt, fileName, conversation } = req.body;
+  const { prompt, fileName, conversation, isUpdate, originalTitle, storyId: providedStoryId } = req.body;
   if (!prompt) return res.status(400).json({ error: 'Missing prompt' });
 
   try {
@@ -390,13 +390,14 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
     const historyManager = new StoryHistoryManager(process.cwd());
 
     // Check if this is an update to an existing story
-    const isUpdate = fileName && conversation && conversation.length > 2;
+    // Use the explicit isUpdate flag from request, or fallback to old logic
+    const isActualUpdate = req.body.isUpdate || (fileName && conversation && conversation.length > 2);
 
     // Get previous code if this is an update
     let previousCode: string | undefined;
     let parentVersionId: string | undefined;
 
-    if (isUpdate && fileName) {
+    if (isActualUpdate && fileName) {
       const currentVersion = historyManager.getCurrentVersion(fileName);
       if (currentVersion) {
         previousCode = currentVersion.code;
@@ -548,11 +549,16 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
 
     // Generate title based on conversation context
     let aiTitle;
-    if (isUpdate) {
-      // For updates, try to keep the original title or modify it slightly
+    if (isActualUpdate && originalTitle) {
+      // For updates, preserve the original title
+      aiTitle = originalTitle;
+      logger.log('📝 Preserving original title for update:', aiTitle);
+    } else if (isActualUpdate) {
+      // For updates without original title, try to keep the original title or modify it slightly
       const originalPrompt = conversation.find((msg: any) => msg.role === 'user')?.content || prompt;
       aiTitle = await getClaudeTitle(originalPrompt);
     } else {
+      // For new stories, generate a new title
       aiTitle = await getClaudeTitle(prompt);
     }
 
@@ -587,7 +593,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
     // Check if this is an update to an existing story
     // ONLY consider it an update if we're in the same conversation context
     let existingStory = null;
-    if (isUpdate && fileName) {
+    if (isActualUpdate && fileName) {
       // When updating within a conversation, look for the story by fileName
       existingStory = storyTracker.findByTitle(aiTitle);
       if (existingStory && existingStory.fileName !== fileName) {
@@ -599,23 +605,32 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
 
     // Generate unique ID and filename
     let hash, finalFileName, storyId;
-    let isActuallyUpdate = false;
 
-    if (isUpdate && fileName) {
-      // For conversation-based updates, use existing fileName and ID
+    if (isActualUpdate && (fileName || providedStoryId)) {
+      // For updates, preserve the existing fileName and ID
       finalFileName = fileName;
-      // Extract hash from existing fileName if possible
-      const hashMatch = fileName.match(/-([a-f0-9]{8})(?:\.stories\.tsx)?$/);
-      hash = hashMatch ? hashMatch[1] : crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 8);
-      storyId = `story-${hash}`;
-      isActuallyUpdate = true;
+      
+      // Use provided storyId or extract from fileName
+      if (providedStoryId) {
+        storyId = providedStoryId;
+        // Extract hash from storyId
+        const hashMatch = providedStoryId.match(/^story-([a-f0-9]{8})$/);
+        hash = hashMatch ? hashMatch[1] : crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 8);
+      } else {
+        // Extract hash from existing fileName if possible
+        const hashMatch = fileName.match(/-([a-f0-9]{8})(?:\.stories\.tsx)?$/);
+        hash = hashMatch ? hashMatch[1] : crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 8);
+        storyId = `story-${hash}`;
+      }
+      
+      logger.log('📌 Preserving story identity for update:', { storyId, fileName: finalFileName });
     } else {
       // For new stories, ALWAYS generate new IDs with timestamp to ensure uniqueness
       const timestamp = Date.now();
       hash = crypto.createHash('sha1').update(prompt + timestamp).digest('hex').slice(0, 8);
       finalFileName = fileName || fileNameFromTitle(aiTitle, hash);
       storyId = `story-${hash}`;
-      isActuallyUpdate = false;
+      logger.log('🆕 Creating new story:', { storyId, fileName: finalFileName });
     }
 
     if (isProduction) {
@@ -623,11 +638,11 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       const generatedStory: GeneratedStory = {
         id: storyId,
         title: aiTitle,
-        description: isActuallyUpdate ? `Updated: ${prompt}` : prompt,
+        description: isActualUpdate ? `Updated: ${prompt}` : prompt,
         content: fixedFileContents,
-        createdAt: isActuallyUpdate ? (new Date()) : new Date(),
+        createdAt: isActualUpdate ? (new Date()) : new Date(),
         lastAccessed: new Date(),
-        prompt: isActuallyUpdate ? conversation.map((msg: any) => `${msg.role}: ${msg.content}`).join('\n\n') : prompt,
+        prompt: isActualUpdate ? conversation.map((msg: any) => `${msg.role}: ${msg.content}`).join('\n\n') : prompt,
         components: extractComponentsFromContent(fixedFileContents)
       };
 
@@ -653,7 +668,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         parentVersionId
       );
 
-      logger.log(`Story ${isActuallyUpdate ? 'updated' : 'stored'} in memory: ${storyId}`);
+      logger.log(`Story ${isActualUpdate ? 'updated' : 'stored'} in memory: ${storyId}`);
       res.json({
         success: true,
         fileName: finalFileName,
@@ -662,7 +677,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         story: fileContents,
         environment: 'production',
         storage: 'in-memory',
-        isUpdate: isActuallyUpdate,
+        isUpdate: isActualUpdate,
         validation: {
           hasWarnings: hasValidationWarnings,
           errors: validationResult?.errors || [],
@@ -697,7 +712,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         parentVersionId
       );
 
-      logger.log(`Story ${isActuallyUpdate ? 'updated' : 'written'} to:`, outPath);
+      logger.log(`Story ${isActualUpdate ? 'updated' : 'written'} to:`, outPath);
       res.json({
         success: true,
         fileName: finalFileName,
@@ -707,7 +722,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         story: fileContents,
         environment: 'development',
         storage: 'file-system',
-        isUpdate: isActuallyUpdate,
+        isUpdate: isActualUpdate,
         validation: {
           hasWarnings: hasValidationWarnings,
           errors: validationResult?.errors || [],
