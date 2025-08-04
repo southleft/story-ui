@@ -572,7 +572,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               const titleMatch = existingCode.match(/title:\s*['"]([^'"]+)['"]/);
               storyMetadata = {
                 fileName: matchingFile,
-                title: titleMatch ? titleMatch[1].replace('Generated/', '') : 'Untitled',
+                title: titleMatch ? titleMatch[1] : 'Untitled', // Keep the full title with prefix
                 prompt: prompt // Use the update prompt as context
               };
               foundLocally = true;

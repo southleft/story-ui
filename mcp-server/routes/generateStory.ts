@@ -19,6 +19,7 @@ import { postProcessStory } from '../../story-generator/postProcessStory.js';
 import { validateStory, ValidationError } from '../../story-generator/storyValidator.js';
 import { StoryHistoryManager } from '../../story-generator/storyHistory.js';
 import { logger } from '../../story-generator/logger.js';
+import { UrlRedirectService } from '../../story-generator/urlRedirectService.js';
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514';
 
@@ -388,6 +389,11 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
 
     // Initialize history manager - use the current working directory
     const historyManager = new StoryHistoryManager(process.cwd());
+    
+    // Initialize URL redirect service
+    // Use the same directory as the stories to ensure consistency
+    const redirectDir = isProduction ? process.cwd() : path.dirname(config.generatedStoriesPath);
+    const redirectService = new UrlRedirectService(redirectDir);
 
     // Check if this is an update to an existing story
     // Use the explicit isUpdate flag from request, or fallback to old logic
@@ -396,6 +402,8 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
     // Get previous code if this is an update
     let previousCode: string | undefined;
     let parentVersionId: string | undefined;
+    let oldTitle: string | undefined;
+    let oldStoryUrl: string | undefined;
 
     if (isActualUpdate && fileName) {
       const currentVersion = historyManager.getCurrentVersion(fileName);
@@ -403,6 +411,19 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         previousCode = currentVersion.code;
         parentVersionId = currentVersion.id;
         logger.log('🔄 Found previous version for iteration');
+        
+        // Extract the old title from previous code
+        const titleMatch = previousCode.match(/title:\s*["']([^"']+)['"]/);
+        if (titleMatch) {
+          oldTitle = titleMatch[1];
+          // Remove the prefix to get clean title for URL generation
+          const cleanOldTitle = oldTitle.replace(config.storyPrefix || 'Generated/', '');
+          // Convert title to Storybook URL format
+          oldStoryUrl = `/story/${cleanOldTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-')}--primary`;
+          logger.log('📌 Previous title:', oldTitle);
+          logger.log('📌 Clean title for URL:', cleanOldTitle);
+          logger.log('📌 Previous URL:', oldStoryUrl);
+        }
       }
     }
 
@@ -574,8 +595,11 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
     fixedFileContents = fixedFileContents.replace(
       /(const\s+meta\s*=\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
       (match, p1, oldTitle, p3) => {
-        const title = config.storyPrefix + prettyPrompt;
-        return p1 + title + p3;
+        // Check if the title already has the prefix to avoid double prefixing
+        const titleToUse = prettyPrompt.startsWith(config.storyPrefix) 
+          ? prettyPrompt 
+          : config.storyPrefix + prettyPrompt;
+        return p1 + titleToUse + p3;
       }
     );
 
@@ -584,8 +608,11 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       fixedFileContents = fixedFileContents.replace(
         /(export\s+default\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
         (match, p1, oldTitle, p3) => {
-          const title = config.storyPrefix + prettyPrompt;
-          return p1 + title + p3;
+          // Check if the title already has the prefix to avoid double prefixing
+          const titleToUse = prettyPrompt.startsWith(config.storyPrefix) 
+            ? prettyPrompt 
+            : config.storyPrefix + prettyPrompt;
+          return p1 + titleToUse + p3;
         }
       );
     }
@@ -669,6 +696,24 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       );
 
       logger.log(`Story ${isActualUpdate ? 'updated' : 'stored'} in memory: ${storyId}`);
+      
+      // Track URL redirect if this is an update and the title changed
+      if (isActualUpdate && oldTitle && oldStoryUrl) {
+        // Extract the new title from the fixed content
+        const newTitleMatch = fixedFileContents.match(/title:\s*["']([^"']+)['"]/);
+        if (newTitleMatch) {
+          const newTitle = newTitleMatch[1];
+          // Remove the prefix to get clean title for URL
+          const cleanNewTitle = newTitle.replace(config.storyPrefix, '');
+          const cleanOldTitle = oldTitle.replace(config.storyPrefix, '');
+          const newStoryUrl = `/story/${cleanNewTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-')}--primary`;
+          
+          if (oldStoryUrl !== newStoryUrl) {
+            redirectService.addRedirect(oldStoryUrl, newStoryUrl, cleanOldTitle, cleanNewTitle, storyId);
+            logger.log(`🔀 Added redirect: ${oldStoryUrl} → ${newStoryUrl}`);
+          }
+        }
+      }
       res.json({
         success: true,
         fileName: finalFileName,
@@ -713,6 +758,24 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       );
 
       logger.log(`Story ${isActualUpdate ? 'updated' : 'written'} to:`, outPath);
+      
+      // Track URL redirect if this is an update and the title changed
+      if (isActualUpdate && oldTitle && oldStoryUrl) {
+        // Extract the new title from the fixed content
+        const newTitleMatch = fixedFileContents.match(/title:\s*["']([^"']+)['"]/);
+        if (newTitleMatch) {
+          const newTitle = newTitleMatch[1];
+          // Remove the prefix to get clean title for URL
+          const cleanNewTitle = newTitle.replace(config.storyPrefix, '');
+          const cleanOldTitle = oldTitle.replace(config.storyPrefix, '');
+          const newStoryUrl = `/story/${cleanNewTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-')}--primary`;
+          
+          if (oldStoryUrl !== newStoryUrl) {
+            redirectService.addRedirect(oldStoryUrl, newStoryUrl, cleanOldTitle, cleanNewTitle, storyId);
+            logger.log(`🔀 Added redirect: ${oldStoryUrl} → ${newStoryUrl}`);
+          }
+        }
+      }
       res.json({
         success: true,
         fileName: finalFileName,

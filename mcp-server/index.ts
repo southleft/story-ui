@@ -40,6 +40,7 @@ import { setupProductionGitignore, ProductionGitignoreManager } from '../story-g
 import { getInMemoryStoryService } from '../story-generator/inMemoryStoryService.js';
 import { loadUserConfig } from '../story-generator/configLoader.js';
 import fs from 'fs';
+import { UrlRedirectService } from '../story-generator/urlRedirectService.js';
 
 const app = express();
 app.use(cors());
@@ -147,10 +148,25 @@ app.delete('/story-ui/sync/stories', clearAllSyncedStories);
 app.get('/story-ui/sync/chat-history', syncChatHistory);
 app.get('/story-ui/sync/validate/:id', validateChatSession);
 
+// Redirect service endpoint
+app.get('/mcp/redirects.js', (req, res) => {
+  res.set('Content-Type', 'application/javascript');
+  res.send(redirectService.getRedirectScript());
+});
+
+// Also serve at story-ui path for compatibility
+app.get('/story-ui/redirects.js', (req, res) => {
+  res.set('Content-Type', 'application/javascript');
+  res.send(redirectService.getRedirectScript());
+});
+
 // Set up production-ready gitignore and directory structure on startup
 const config = loadUserConfig();
 const gitignoreManager = setupProductionGitignore(config);
 const storyService = getInMemoryStoryService(config);
+
+// Initialize URL redirect service
+const redirectService = new UrlRedirectService(process.cwd());
 
 const PORT = parseInt(process.env.PORT || '4001', 10);
 
