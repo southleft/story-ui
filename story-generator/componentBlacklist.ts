@@ -92,6 +92,10 @@ export const ICON_CORRECTIONS: Record<string, string> = {
   'ForkIcon': 'RepoForkedIcon',
   'CloseIcon': 'XIcon',
   'CheckmarkIcon': 'CheckIcon',
+  // Ant Design icon corrections
+  'ExclamationTriangleOutlined': 'ExclamationCircleOutlined',
+  'WarningTriangleOutlined': 'WarningOutlined',
+  'ErrorCircleOutlined': 'CloseCircleOutlined',
   'CrossIcon': 'XIcon',
   'EditIcon': 'PencilIcon',
   'DeleteIcon': 'TrashIcon',

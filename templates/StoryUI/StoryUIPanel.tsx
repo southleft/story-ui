@@ -93,19 +93,28 @@ const syncWithActualStories = async (): Promise<ChatSession[]> => {
     // Load existing chats
     const existingChats = loadChats();
 
-    // Create a map for quick lookup
+    // Create a map for quick lookup - using chat.id as the primary key
     const chatMap = new Map<string, ChatSession>();
     existingChats.forEach(chat => {
       chatMap.set(chat.id, chat);
-      if (chat.fileName) {
-        chatMap.set(chat.fileName, chat);
-      }
     });
 
     // Update or add memory stories
     memoryStories.forEach((story: any) => {
       const storyId = story.storyId || story.fileName;
-      const existingChat = chatMap.get(storyId) || chatMap.get(story.fileName);
+      
+      // Look for existing chat by ID or by matching fileName
+      let existingChat = chatMap.get(storyId);
+      
+      // If not found by ID, search by fileName
+      if (!existingChat && story.fileName) {
+        for (const [id, chat] of chatMap.entries()) {
+          if (chat.fileName === story.fileName) {
+            existingChat = chat;
+            break;
+          }
+        }
+      }
 
       if (existingChat) {
         // Update existing chat with latest info
