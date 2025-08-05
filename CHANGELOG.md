@@ -1,3 +1,20 @@
+# [2.2.0](https://github.com/southleft/story-ui/compare/v2.1.5...v2.2.0) (2025-08-05)
+
+
+### Bug Fixes
+
+* implement direct file system reading for update-story operation ([df01bed](https://github.com/southleft/story-ui/commit/df01bed8116e8a6527407e1f4fc8f5345a520956))
+* implement session management and direct file system operations for MCP server ([931b9ba](https://github.com/southleft/story-ui/commit/931b9baf8b790254074801a2c6286ac99c09a7c7))
+* preserve story identity during updates to prevent URL changes ([dd830f4](https://github.com/southleft/story-ui/commit/dd830f4c0c3df250a9907ab7143a793756498c6d))
+* resolve duplicate chat entries and Ant Design icon errors ([65fee01](https://github.com/southleft/story-ui/commit/65fee019f945e412657f518bcdb70632979c477b))
+
+
+### Features
+
+* add MCP (Model Context Protocol) integration for Story UI ([fb35f1d](https://github.com/southleft/story-ui/commit/fb35f1d6ba8248ac8fb4f24879ac8c89ad5759c3))
+* add working MCP server integration with Claude Desktop ([ed359ee](https://github.com/southleft/story-ui/commit/ed359eeabe9d256d77515ab5b81cc84db0755cc7))
+* implement URL redirect system for story updates ([4c8e54e](https://github.com/southleft/story-ui/commit/4c8e54e1186c92b9378137d5fa59d24ba4674125))
+
 ## [2.1.5](https://github.com/southleft/story-ui/compare/v2.1.4...v2.1.5) (2025-07-23)
 
 
