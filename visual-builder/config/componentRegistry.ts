@@ -271,6 +271,30 @@ export const MANTINE_COMPONENTS: VisualBuilderComponentConfig[] = [
         description: 'Show border'
       }
     ]
+  },
+  {
+    type: 'Card.Section',
+    displayName: 'Card Section',
+    category: 'Layout',
+    defaultProps: {
+      inheritPadding: false,
+      withBorder: false,
+      children: []
+    },
+    properties: [
+      {
+        name: 'inheritPadding',
+        type: 'boolean',
+        defaultValue: false,
+        description: 'Inherit padding from parent Card'
+      },
+      {
+        name: 'withBorder',
+        type: 'boolean',
+        defaultValue: false,
+        description: 'Show top border'
+      }
+    ]
   }
 ];
 

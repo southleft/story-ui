@@ -179,8 +179,8 @@ const extractTopLevelComponents = (jsx: string): string[] => {
  * Parse individual component string into ComponentDefinition
  */
 const parseComponentString = (componentString: string, index: number): ComponentDefinition | null => {
-  // Extract component type
-  const typeMatch = componentString.match(/<(\w+)/);
+  // Extract component type (including compound components like Card.Section)
+  const typeMatch = componentString.match(/<([\w.]+)/);
   if (!typeMatch) return null;
   
   const type = typeMatch[1];

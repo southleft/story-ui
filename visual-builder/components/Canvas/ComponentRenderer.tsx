@@ -11,6 +11,9 @@ import {
   Stack, 
   Card 
 } from '@mantine/core';
+
+// Destructure Card.Section for use
+const CardSection = Card.Section;
 import { ComponentDefinition } from '../../types';
 import { useSelection } from '../../hooks/useSelection';
 
@@ -44,7 +47,7 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
   });
 
   // Droppable setup for container components
-  const isContainer = ['Container', 'Group', 'Stack', 'Card'].includes(component.type);
+  const isContainer = ['Container', 'Group', 'Stack', 'Card', 'Card.Section'].includes(component.type);
   const { setNodeRef: dropRef, isOver } = useDroppable({
     id: `${component.id}-drop`,
     data: {
@@ -241,6 +244,35 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
               <Text c="dimmed" ta="center">Drop components here</Text>
             )}
           </Card>
+        );
+
+      case 'Card.Section':
+        return (
+          <CardSection
+            {...commonProps}
+            inheritPadding={props.inheritPadding}
+            withBorder={props.withBorder}
+            ref={dropRef}
+            style={{
+              ...commonProps.style,
+              minHeight: children?.length === 0 ? '80px' : 'auto',
+              border: isOver ? '2px dashed #3b82f6' : 
+                     selected ? '2px solid #3b82f6' : undefined,
+              padding: props.inheritPadding ? undefined : '1rem'
+            }}
+          >
+            {children?.map((child, idx) => (
+              <ComponentRenderer
+                key={child.id}
+                component={child}
+                index={idx}
+                isChild={true}
+              />
+            ))}
+            {children?.length === 0 && (
+              <Text c="dimmed" ta="center">Drop card content here</Text>
+            )}
+          </CardSection>
         );
 
       default:

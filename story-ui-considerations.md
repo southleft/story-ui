@@ -9,6 +9,37 @@ This file contains specific instructions and considerations for the AI when gene
 
 ## Framework-Specific Considerations
 
+### Mantine Projects - Component Usage Guidelines
+
+**Card Component and Subcomponents**:
+1. **Card.Section Usage**: When using Mantine Card components, Card.Section should be properly imported and used
+   ```javascript
+   // ✅ CORRECT - Import Card and use Card.Section
+   import { Card, Text, Image, Group } from '@mantine/core';
+   
+   <Card shadow="sm" padding="lg" radius="md" withBorder>
+     <Card.Section>
+       <Image src="image.jpg" height={160} alt="Description" />
+     </Card.Section>
+     
+     <Group justify="space-between" mt="md" mb="xs">
+       <Text fw={500}>Card Title</Text>
+     </Group>
+     
+     <Text size="sm" c="dimmed">
+       Card description content
+     </Text>
+   </Card>
+   
+   // ❌ WRONG - Don't use 'section' as a separate component
+   import { Card, section } from '@mantine/core';
+   ```
+
+2. **Visual Builder Support**: The Visual Builder now supports Card.Section as a draggable component:
+   - Use "Card Section" from the Layout category in the component palette
+   - Card.Section should typically be placed inside a Card component
+   - Supports `inheritPadding` and `withBorder` props
+
 ### Tamagui Projects - CRITICAL IMPORT CONFIGURATION
 
 **⚠️ IMPORTANT**: There is a known issue where Story UI ignores the configured `importPath` and generates imports from `@tamagui/core` or other package paths. This MUST be addressed:
