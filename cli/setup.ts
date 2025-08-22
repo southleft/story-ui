@@ -10,6 +10,21 @@ import { execSync } from 'child_process';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Utility: recursively copy a directory
+function copyDirRecursive(srcDir: string, destDir: string) {
+  if (!fs.existsSync(srcDir)) return;
+  fs.mkdirSync(destDir, { recursive: true });
+  for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+    const srcPath = path.join(srcDir, entry.name);
+    const destPath = path.join(destDir, entry.name);
+    if (entry.isDirectory()) {
+      copyDirRecursive(srcPath, destPath);
+    } else {
+      fs.copyFileSync(srcPath, destPath);
+    }
+  }
+}
+
 // FIRST_EDIT: helper functions to check for free ports
 async function isPortAvailable(port: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -678,6 +693,16 @@ export async function setupCommand() {
     }
   }
 
+  // Install Visual Builder MVP into stories for interactive editing
+  const visualBuilderTemplates = path.resolve(__dirname, '../../templates/VisualBuilder');
+  const visualBuilderTargetDir = path.join(storiesDir, 'VisualBuilder');
+  if (fs.existsSync(visualBuilderTemplates)) {
+    copyDirRecursive(visualBuilderTemplates, visualBuilderTargetDir);
+    console.log(chalk.green(`✅ Installed Visual Builder to ${path.relative(process.cwd(), visualBuilderTargetDir)}`));
+  } else {
+    console.log(chalk.yellow('⚠️  Visual Builder templates not found. Skipping.'));
+  }
+
   // Create considerations file
   const considerationsTemplatePath = path.resolve(__dirname, '../../templates/story-ui-considerations.md');
   const considerationsPath = path.join(process.cwd(), 'story-ui-considerations.md');
@@ -775,7 +800,7 @@ export async function setupCommand() {
   // Update package.json with convenience scripts
   if (packageJson) {
     const scripts = packageJson.scripts || {};
-    // FIRST_EDIT: include chosen port in script
+    // Include chosen port in script
     const portFlag = `--port ${answers.mcpPort || '4001'}`;
 
     if (!scripts['story-ui']) {
@@ -800,6 +825,18 @@ export async function setupCommand() {
     if (!dependencies['concurrently'] && !devDependencies['concurrently']) {
       console.log(chalk.blue('📦 Adding concurrently dependency...'));
       devDependencies['concurrently'] = '^8.2.0';
+      needsInstall = true;
+    }
+
+    // Visual Builder dependencies
+    if (!dependencies['zustand']) {
+      console.log(chalk.blue('📦 Adding zustand dependency for Visual Builder state...'));
+      dependencies['zustand'] = '^4.5.5';
+      needsInstall = true;
+    }
+    if (!dependencies['@dnd-kit/core']) {
+      console.log(chalk.blue('📦 Adding @dnd-kit/core dependency for drag & drop...'));
+      dependencies['@dnd-kit/core'] = '^6.0.11';
       needsInstall = true;
     }
     
