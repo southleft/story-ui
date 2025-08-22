@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { EmbeddedVisualBuilder } from '../../visual-builder/components/EmbeddedVisualBuilder';
 
 // Message type
 interface Message {
@@ -234,6 +235,53 @@ const STYLES = {
     overflow: 'hidden',
     background: 'linear-gradient(135deg, #1e293b 0%, #334155 100%)',
     color: '#e2e8f0',
+  },
+
+  // Tab navigation
+  tabContainer: {
+    display: 'flex',
+    borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    padding: '0 24px',
+  },
+
+  tab: {
+    padding: '12px 24px',
+    background: 'none',
+    border: 'none',
+    color: '#94a3b8',
+    fontSize: '14px',
+    fontWeight: '500',
+    cursor: 'pointer',
+    borderBottom: '2px solid transparent',
+    transition: 'all 0.2s ease',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif',
+  },
+
+  tabActive: {
+    color: '#3b82f6',
+    borderBottomColor: '#3b82f6',
+  },
+
+  sendToBuilderButton: {
+    background: 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)',
+    color: 'white',
+    border: 'none',
+    borderRadius: '6px',
+    padding: '6px 12px',
+    fontSize: '12px',
+    fontWeight: '500',
+    cursor: 'pointer',
+    marginTop: '8px',
+    transition: 'all 0.2s ease',
+    boxShadow: '0 2px 4px rgba(139, 92, 246, 0.3)',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif',
+  },
+
+  visualBuilderContainer: {
+    flex: 1,
+    overflow: 'hidden',
+    backgroundColor: '#f8f9fa',
   },
 
   // Sidebar
@@ -541,6 +589,8 @@ export function StoryUIPanel() {
   const [activeTitle, setActiveTitle] = useState<string>('');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState<{ connected: boolean; error?: string }>({ connected: false });
+  const [activeTab, setActiveTab] = useState<'chat' | 'visual'>('chat');
+  const [lastGeneratedCode, setLastGeneratedCode] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -648,7 +698,7 @@ export function StoryUIPanel() {
 
         if (data.validation.errors.length > 0) {
           responseMessage += `🔧 **Auto-fixed ${data.validation.errors.length} syntax error(s):**\n`;
-          responseMessage += data.validation.errors.slice(0, 3).map(error => `  • ${error}`).join('\n');
+          responseMessage += data.validation.errors.slice(0, 3).map((error: string) => `  • ${error}`).join('\n');
           if (data.validation.errors.length > 3) {
             responseMessage += `\n  • ... and ${data.validation.errors.length - 3} more`;
           }
@@ -657,7 +707,7 @@ export function StoryUIPanel() {
 
         if (data.validation.warnings.length > 0) {
           responseMessage += `⚠️ **Warnings:**\n`;
-          responseMessage += data.validation.warnings.slice(0, 2).map(warning => `  • ${warning}`).join('\n');
+          responseMessage += data.validation.warnings.slice(0, 2).map((warning: string) => `  • ${warning}`).join('\n');
           if (data.validation.warnings.length > 2) {
             responseMessage += `\n  • ... and ${data.validation.warnings.length - 2} more`;
           }
@@ -667,6 +717,11 @@ export function StoryUIPanel() {
       const aiMsg = { role: 'ai' as const, content: responseMessage };
       const updatedConversation = [...newConversation, aiMsg];
       setConversation(updatedConversation);
+
+      // Store the generated code for Visual Builder integration
+      if (data.generatedCode || data.content) {
+        setLastGeneratedCode(data.generatedCode || data.content);
+      }
 
       // Determine if this is an update or new chat
       // Check if we have an active chat AND the backend indicates this is an update
@@ -822,6 +877,23 @@ export function StoryUIPanel() {
     }
   };
 
+  const handleSendToVisualBuilder = () => {
+    setActiveTab('visual');
+  };
+
+  const handleVisualBuilderExport = (code: string) => {
+    // Update the last generated code with the exported code from Visual Builder
+    setLastGeneratedCode(code);
+    
+    // Optionally add a message to the conversation indicating the code was exported
+    const exportMessage: Message = {
+      role: 'ai',
+      content: '✅ Code exported from Visual Builder and updated in chat session.'
+    };
+    
+    setConversation(prev => [...prev, exportMessage]);
+  };
+
   return (
     <div style={STYLES.container}>
       {/* Sidebar */}
@@ -975,7 +1047,41 @@ export function StoryUIPanel() {
           </div>
         </div>
 
-        <div style={STYLES.chatContainer}>
+        {/* Tab Navigation */}
+        <div style={STYLES.tabContainer}>
+          <button
+            style={{
+              ...STYLES.tab,
+              ...(activeTab === 'chat' ? STYLES.tabActive : {})
+            }}
+            onClick={() => setActiveTab('chat')}
+          >
+            💬 AI Chat
+          </button>
+          <button
+            style={{
+              ...STYLES.tab,
+              ...(activeTab === 'visual' ? STYLES.tabActive : {})
+            }}
+            onClick={() => setActiveTab('visual')}
+          >
+            🎨 Visual Builder
+            {lastGeneratedCode && activeTab !== 'visual' && (
+              <span style={{
+                marginLeft: '8px',
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                backgroundColor: '#8b5cf6',
+                display: 'inline-block'
+              }}></span>
+            )}
+          </button>
+        </div>
+
+        {/* Tab Content */}
+        {activeTab === 'chat' && (
+          <div style={STYLES.chatContainer}>
           {error && (
             <div style={STYLES.errorMessage}>
               {error}
@@ -995,6 +1101,23 @@ export function StoryUIPanel() {
             <div key={i} style={STYLES.messageContainer}>
               <div style={msg.role === 'user' ? STYLES.userMessage : STYLES.aiMessage}>
                 {msg.content}
+                {/* Show "Send to Visual Builder" button for AI messages that contain component generation */}
+                {msg.role === 'ai' && lastGeneratedCode && i === conversation.length - 1 && (
+                  <button
+                    style={STYLES.sendToBuilderButton}
+                    onClick={handleSendToVisualBuilder}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.transform = 'translateY(-1px)';
+                      e.currentTarget.style.boxShadow = '0 4px 8px rgba(139, 92, 246, 0.4)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.transform = 'translateY(0)';
+                      e.currentTarget.style.boxShadow = '0 2px 4px rgba(139, 92, 246, 0.3)';
+                    }}
+                  >
+                    🎨 Edit in Visual Builder
+                  </button>
+                )}
               </div>
             </div>
           ))}
@@ -1008,10 +1131,24 @@ export function StoryUIPanel() {
             </div>
           )}
 
-          <div ref={chatEndRef} />
-        </div>
+            <div ref={chatEndRef} />
+          </div>
+        )}
 
-        <form onSubmit={handleSend} style={STYLES.inputForm}>
+        {activeTab === 'visual' && (
+          <div style={STYLES.visualBuilderContainer}>
+            <EmbeddedVisualBuilder
+              initialCode={lastGeneratedCode || undefined}
+              height="calc(100vh - 200px)"
+              onCodeExport={handleVisualBuilderExport}
+              compact={true}
+            />
+          </div>
+        )}
+
+        {/* Input form - only show in chat tab */}
+        {activeTab === 'chat' && (
+          <form onSubmit={handleSend} style={STYLES.inputForm}>
           <input
             ref={inputRef}
             type="text"
@@ -1055,8 +1192,9 @@ export function StoryUIPanel() {
             <svg width={16} height={16} viewBox="0 0 24 24" fill="currentColor">
               <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
             </svg>
-          </button>
-        </form>
+            </button>
+          </form>
+        )}
       </div>
     </div>
   );

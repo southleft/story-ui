@@ -54,3 +54,17 @@ export {
   SyncedStory,
   ChatSyncResult
 } from './story-generator/storySync.js';
+
+// Visual Builder exports
+export {
+  VisualBuilder,
+  useVisualBuilderStore
+} from './visual-builder/index.js';
+
+export type {
+  ComponentDefinition,
+  BuilderState,
+  SelectedComponent,
+  PropertyDefinition,
+  VisualBuilderComponentConfig
+} from './visual-builder/index.js';

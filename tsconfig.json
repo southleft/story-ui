@@ -7,8 +7,10 @@
     "forceConsistentCasingInFileNames": true,
     "strict": true,
     "skipLibCheck": true,
-    "outDir": "dist"
+    "outDir": "dist",
+    "jsx": "react-jsx",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"]
   },
-  "include": ["./**/*.ts"],
-  "exclude": ["test-storybooks/**/*", "node_modules/**/*"]
+  "include": ["./**/*.ts", "./**/*.tsx"],
+  "exclude": ["test-storybooks/**/*", "node_modules/**/*", "temp/**/*", "templates/**/*"]
 }
