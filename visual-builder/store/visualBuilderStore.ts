@@ -280,31 +280,17 @@ export const useVisualBuilderStore = create<VisualBuilderStore>()(
 
       importFromStoryUI: async (storyCode) => {
         try {
-          const { parseStoryUIToBuilder, validateParsedComponents } = await import('../utils/storyToBuilder');
+          const { parseStoryUIToBuilder, validateParsedComponents, extractStoryName } = await import('../utils/storyToBuilder');
           const parseResult = parseStoryUIToBuilder(storyCode);
           
           // Validate the parsed components
           const validationIssues = validateParsedComponents(parseResult.components);
           const allWarnings = [...parseResult.warnings, ...validationIssues];
           
-          // Extract story name from the story code
-          let storyName = 'Imported Story';
-          
-          // Try to extract the export name (e.g., export const MyStory = {...})
-          const exportMatch = storyCode.match(/export\s+const\s+(\w+)\s*=/);
-          if (exportMatch && exportMatch[1]) {
-            // Convert PascalCase or camelCase to readable format
-            storyName = exportMatch[1]
-              .replace(/([A-Z])/g, ' $1')
-              .replace(/^\s+/, '')
-              .trim();
-          }
-          
-          // Alternative: Try to extract from comment or title
-          const titleMatch = storyCode.match(/\/\/\s*@title\s+(.+)|title:\s*['"]([^'"]+)['"]/);
-          if (titleMatch) {
-            storyName = titleMatch[1] || titleMatch[2];
-          }
+          // Extract story name using the improved extraction function
+          const storyName = extractStoryName(storyCode);
+          // Determine if this is an existing story (has a valid extracted name)
+          const isEditingExistingStory = storyName !== 'Imported Story' && storyName !== 'Untitled Story';
           
           if (parseResult.errors.length === 0) {
             // Generate or use existing story ID
@@ -317,7 +303,7 @@ export const useVisualBuilderStore = create<VisualBuilderStore>()(
               isImportedFromStory: true, // Mark as imported from story
               currentStoryName: storyName, // Set the extracted story name
               currentStoryId: storyId, // Set the story ID
-              isDirty: false // Start clean since we just imported
+              isDirty: isEditingExistingStory ? false : true // Start clean for existing stories, dirty for new imports
             });
           }
           

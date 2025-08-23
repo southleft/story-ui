@@ -893,6 +893,16 @@ export function StoryUIPanel() {
     
     setConversation(prev => [...prev, exportMessage]);
   };
+  
+  // Enhanced context for Visual Builder - pass story metadata
+  const getStoryMetadata = () => {
+    return {
+      chatId: activeChatId,
+      title: activeTitle,
+      isExisting: !!(activeChatId && conversation.length > 0),
+      fileName: recentChats.find(chat => chat.id === activeChatId)?.fileName
+    };
+  };
 
   return (
     <div style={STYLES.container}>
@@ -1142,6 +1152,7 @@ export function StoryUIPanel() {
               height="calc(100vh - 200px)"
               onCodeExport={handleVisualBuilderExport}
               compact={true}
+              storyMetadata={getStoryMetadata()}
             />
           </div>
         )}

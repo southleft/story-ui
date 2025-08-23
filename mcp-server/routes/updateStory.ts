@@ -22,17 +22,42 @@ export async function updateStoryFromVisualBuilder(req: Request, res: Response) 
     // Load the Story UI configuration to get the stories path
     const config = loadUserConfig();
     
-    // Determine the target file path - always save to main directory
+    // Determine the target file path - save edited stories to edited/ subdirectory
     let targetPath: string;
+    let cleanFileName: string;
     
     if (filePath) {
-      // If full path is provided, use it (with validation)
-      targetPath = path.join(config.generatedStoriesPath, path.basename(filePath));
+      // If full path is provided, extract the filename
+      cleanFileName = path.basename(filePath);
     } else {
       // Use fileName to construct path
-      const cleanFileName = fileName.includes('.stories.tsx') 
+      cleanFileName = fileName.includes('.stories.tsx') 
         ? fileName 
         : `${fileName}.stories.tsx`;
+    }
+    
+    // Check if this is an edited story (filename starts with 'edited-' or was previously in generated/)
+    const isEditedStory = cleanFileName.startsWith('edited-') || 
+                         cleanFileName.startsWith('generated-') ||
+                         req.body.isEdited === true;
+    
+    if (isEditedStory) {
+      // Save edited stories to the edited/ subdirectory
+      const editedPath = path.join(config.generatedStoriesPath, '..', 'edited');
+      
+      // Ensure the edited directory exists
+      if (!fs.existsSync(editedPath)) {
+        fs.mkdirSync(editedPath, { recursive: true });
+      }
+      
+      // Replace 'generated-' prefix with 'edited-' if present
+      if (cleanFileName.startsWith('generated-')) {
+        cleanFileName = cleanFileName.replace(/^generated-/, 'edited-');
+      }
+      
+      targetPath = path.join(editedPath, cleanFileName);
+    } else {
+      // Save generated stories to the main generated directory
       targetPath = path.join(config.generatedStoriesPath, cleanFileName);
     }
     

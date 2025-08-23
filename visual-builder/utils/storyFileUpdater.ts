@@ -13,8 +13,9 @@ export function generateStoryFileContent(
   const jsxCode = generateComponentJSX(components);
   const imports = generateImports(components);
   
-  // Extract the story title from the name
+  // Extract the story title from the name, removing any existing prefix
   const baseTitle = storyName
+    .replace(/^(Generated|Edited)\//i, '') // Remove existing prefix
     .replace(/([A-Z])/g, ' $1')
     .replace(/^\s+/, '')
     .trim();
@@ -243,8 +244,17 @@ export async function updateStoryFile(
   storyName: string
 ): Promise<{ success: boolean; error?: string; message?: string }> {
   try {
-    // Extract fileName from filePath
-    const fileName = filePath.split('/').pop() || filePath;
+    // Extract fileName from filePath and ensure it's for edited stories
+    let fileName = filePath.split('/').pop() || filePath;
+    
+    // If the filename starts with 'generated-', replace with 'edited-'
+    // Otherwise, add 'edited-' prefix if not already present
+    if (fileName.startsWith('generated-')) {
+      fileName = fileName.replace(/^generated-/, 'edited-');
+    } else if (!fileName.startsWith('edited-')) {
+      // Remove any other common prefixes and add 'edited-'
+      fileName = 'edited-' + fileName.replace(/^(workflow-|test-|demo-)/, '');
+    }
     
     // Determine the API port from environment or default
     const apiPort = (window as any).STORY_UI_MCP_PORT || 
@@ -262,6 +272,7 @@ export async function updateStoryFile(
         filePath,
         components,
         storyName,
+        isEdited: true, // Flag to indicate this is an edited story
         createBackup: false // Never create backups from Visual Builder
       })
     });

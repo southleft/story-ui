@@ -781,6 +781,86 @@ export function isViteTransformedCode(code: string): boolean {
 }
 
 /**
+ * Enhanced story name extraction that handles multiple story formats
+ */
+export function extractStoryName(storyCode: string): string {
+  console.log('🔍 Extracting story name from code...');
+  
+  // Method 1: Extract from story title property (title: "My Story") - HIGHEST PRIORITY
+  const titleMatch = storyCode.match(/title:\s*['"]([^'"]+)['"]/);
+  if (titleMatch && titleMatch[1]) {
+    console.log(`✅ Found title property: "${titleMatch[1]}"`);
+    return titleMatch[1];
+  }
+  
+  // Method 2: Extract from meta title (export default { title: "My Story" })
+  const metaTitleMatch = storyCode.match(/export\s+default\s*{[^}]*title:\s*['"]([^'"]+)['"]/);
+  if (metaTitleMatch && metaTitleMatch[1]) {
+    console.log(`✅ Found meta title: "${metaTitleMatch[1]}"`);
+    return metaTitleMatch[1];
+  }
+  
+  // Method 3: Extract from comment annotation (// @title My Story)
+  const commentMatch = storyCode.match(/\/\/\s*@title\s+(.+)/);
+  if (commentMatch && commentMatch[1]) {
+    const title = commentMatch[1].trim();
+    console.log(`✅ Found comment title: "${title}"`);
+    return title;
+  }
+  
+  // Method 4: Extract from JSDoc comment (@title My Story)
+  const jsDocMatch = storyCode.match(/\*\s*@title\s+(.+)/);
+  if (jsDocMatch && jsDocMatch[1]) {
+    const title = jsDocMatch[1].trim();
+    console.log(`✅ Found JSDoc title: "${title}"`);
+    return title;
+  }
+  
+  // Method 5: Extract from export const statement (e.g., export const MyStory = {...})
+  const exportMatch = storyCode.match(/export\s+const\s+(\w+)\s*=/);
+  if (exportMatch && exportMatch[1]) {
+    const rawName = exportMatch[1];
+    // Convert PascalCase or camelCase to readable format, but keep it clean
+    const readable = rawName
+      .replace(/([A-Z])/g, ' $1')
+      .replace(/^\s+/, '')
+      .trim();
+    console.log(`✅ Found export const name: "${rawName}" → "${readable}"`);
+    return readable;
+  }
+  
+  // Method 6: Extract from component name in JSX (return <MyComponent />)
+  const componentMatch = storyCode.match(/return\s*\(?\s*<(\w+)/);
+  if (componentMatch && componentMatch[1]) {
+    const componentName = componentMatch[1];
+    // Only use this if it's not a generic HTML element
+    if (!['div', 'span', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(componentName.toLowerCase())) {
+      const readable = componentName
+        .replace(/([A-Z])/g, ' $1')
+        .replace(/^\s+/, '')
+        .trim();
+      console.log(`✅ Found component name: "${componentName}" → "${readable}"`);
+      return readable;
+    }
+  }
+  
+  // Method 7: Extract from function name (export function MyStory())
+  const functionMatch = storyCode.match(/export\s+function\s+(\w+)/);
+  if (functionMatch && functionMatch[1]) {
+    const funcName = functionMatch[1];
+    const readable = funcName
+      .replace(/([A-Z])/g, ' $1')
+      .replace(/^\s+/, '')
+      .trim();
+    console.log(`✅ Found function name: "${funcName}" → "${readable}"`);
+    return readable;
+  }
+  
+  console.log('❌ No story name found, using fallback');
+  return 'Imported Story';
+}
+
+/**
  * Utility function to clean up code and provide helpful error messages
  */
 export function preprocessStoryCode(code: string): { code: string; warnings: string[]; errors: string[] } {

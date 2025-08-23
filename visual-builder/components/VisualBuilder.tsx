@@ -6,7 +6,6 @@ import { Canvas } from './Canvas/Canvas';
 import { ComponentPalette } from './ComponentPalette/ComponentPalette';
 import { PropertyEditor } from './PropertyEditor/PropertyEditor';
 import { CodeExporter } from './CodeExporter/CodeExporter';
-import { SaveOnlyManager } from './StoryManager/SaveOnlyManager';
 import { useDragAndDrop } from '../hooks/useDragAndDrop';
 import { useVisualBuilderStore } from '../store/visualBuilderStore';
 import { getStoryIdFromURL, saveDraft, restoreDraft, getVisualBuilderEditURL } from '../utils/storyPersistence';
@@ -53,12 +52,12 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
     saveCurrentStory,
     loadStoryById,
     currentStoryName,
-    currentStoryId,
-    isDirty
+    isDirty,
+    isImportedFromStory
   } = useVisualBuilderStore();
 
   // Create a stable story ID for drafts
-  const [storyId, setStoryId] = React.useState(() => {
+  const [storyId] = React.useState(() => {
     const urlStoryId = getStoryIdFromURL();
     const urlParams = new URLSearchParams(window.location.search);
     const editId = urlParams.get('edit');
@@ -241,19 +240,43 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
                 color={isDirty ? 'blue' : 'gray'}
                 leftSection={<IconDeviceFloppy size={16} />}
                 onClick={async () => {
-                  // Check if we have a meaningful story name
-                  const hasValidName = currentStoryName && 
-                    currentStoryName !== 'Untitled Story' && 
-                    currentStoryName !== 'Imported Story';
+                  // Enhanced logic to determine if we need to prompt for a name
+                  const isGenericName = !currentStoryName || 
+                    currentStoryName === 'Untitled Story' || 
+                    currentStoryName === 'Imported Story';
+                  
+                  // CRITICAL FIX: If we're editing an existing story (imported from "Edit in Visual Builder"), 
+                  // NEVER prompt for a name, even if extraction failed
+                  const isEditingExistingStory = isImportedFromStory;
                   
                   let finalName = currentStoryName;
-                  if (!hasValidName) {
-                    // Only prompt if we don't have a valid name
-                    const name = prompt('Enter story name:', currentStoryName);
+                  
+                  // Only prompt for name if:
+                  // 1. We're NOT editing an existing story, AND
+                  // 2. The name is generic or missing
+                  if (!isEditingExistingStory && isGenericName) {
+                    const name = prompt('Enter story name:', currentStoryName || '');
                     if (name && name.trim()) {
                       finalName = name.trim();
                     } else {
                       return; // User cancelled
+                    }
+                  } else if (isEditingExistingStory && isGenericName) {
+                    // For existing stories where name extraction failed,
+                    // try to use the source file name from sessionStorage
+                    const sourceFile = sessionStorage.getItem('visualBuilderSourceFile');
+                    if (sourceFile) {
+                      // Extract a clean name from the file name
+                      finalName = sourceFile
+                        .replace(/\.stories\.(tsx?|jsx?)$/, '')
+                        .replace(/[_-]/g, ' ')
+                        .split(' ')
+                        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                        .join(' ');
+                      console.log(`Using name from source file: ${sourceFile} → ${finalName}`);
+                    } else {
+                      // Last resort fallback
+                      finalName = 'Updated Story';
                     }
                   }
                   

@@ -22,6 +22,13 @@ interface EmbeddedVisualBuilderProps {
   onCodeExport?: (code: string) => void;
   /** Whether the builder is in a modal/compact mode */
   compact?: boolean;
+  /** Story metadata for better name extraction */
+  storyMetadata?: {
+    chatId?: string | null;
+    title?: string;
+    isExisting?: boolean;
+    fileName?: string;
+  };
 }
 
 export const EmbeddedVisualBuilder: React.FC<EmbeddedVisualBuilderProps> = ({
@@ -30,7 +37,8 @@ export const EmbeddedVisualBuilder: React.FC<EmbeddedVisualBuilderProps> = ({
   showPalette = true,
   showProperties = true,
   onCodeExport,
-  compact = false
+  compact = false,
+  storyMetadata
 }) => {
   const {
     sensors,
@@ -46,7 +54,8 @@ export const EmbeddedVisualBuilder: React.FC<EmbeddedVisualBuilderProps> = ({
     openCodeModal,
     loadFromCode,
     loadFromAI,
-    importFromStoryUI 
+    importFromStoryUI,
+    setCurrentStoryName
   } = useVisualBuilderStore();
 
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -70,6 +79,14 @@ export const EmbeddedVisualBuilder: React.FC<EmbeddedVisualBuilderProps> = ({
         const storyResult = await importFromStoryUI(code);
         
         if (storyResult.success) {
+          // Use story metadata if available and story name extraction failed
+          if (storyMetadata?.title && storyMetadata.isExisting) {
+            const { currentStoryName } = useVisualBuilderStore.getState();
+            if (currentStoryName === 'Imported Story') {
+              setCurrentStoryName(storyMetadata.title);
+            }
+          }
+          
           if (storyResult.warnings.length > 0) {
             setLoadWarnings(storyResult.warnings);
             setShowLoadDialog(true);
