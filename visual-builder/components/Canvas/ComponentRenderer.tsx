@@ -486,6 +486,58 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
           </Card>
         );
 
+      case 'CardSection':
+        const cardSectionRef = (node: HTMLDivElement | null) => {
+          dropRef(node);
+        };
+        
+        return (
+          <Card.Section
+            {...commonProps}
+            withBorder={props.withBorder}
+            inheritPadding={props.inheritPadding}
+            ref={cardSectionRef}
+            style={{
+              ...commonProps.style,
+              ...(preserveOriginalLayout ? {} : {
+                minHeight: children?.length === 0 ? '80px' : 'auto',
+                borderWidth: isOver || selected ? '2px' : '1px',
+                borderStyle: isOver || !selected ? 'dashed' : 'solid',
+                borderColor: isOver || selected ? '#3b82f6' : '#e9ecef',
+                padding: props.inheritPadding ? undefined : '1rem',
+                backgroundColor: isOver ? '#f0f9ff' : 'transparent'
+              })
+            }}
+          >
+            {children?.map((child, idx) => (
+              <React.Fragment key={child.id}>
+                <DropZone 
+                  parentId={component.id} 
+                  insertIndex={idx} 
+                  isVisible={showDropZones && isContainer}
+                />
+                <ComponentRenderer
+                  component={child}
+                  index={idx}
+                  isChild={true}
+                  parentId={component.id}
+                  preserveOriginalLayout={preserveOriginalLayout}
+                />
+              </React.Fragment>
+            ))}
+            {showDropZones && isContainer && (
+              <DropZone 
+                parentId={component.id} 
+                insertIndex={children?.length || 0} 
+                isVisible={true}
+              />
+            )}
+            {children?.length === 0 && (
+              <Text c="dimmed" ta="center">Drop components here</Text>
+            )}
+          </Card.Section>
+        );
+
       case 'Badge':
         return (
           <Badge
