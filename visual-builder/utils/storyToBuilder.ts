@@ -63,6 +63,12 @@ export function extractJSXFromStory(storyCode: string): string {
       throw new Error('Received Vite-transformed code instead of source code. Cannot parse transformed JSX.');
     }
     
+    // Check if this is the placeholder template
+    if (storyCode.includes('Component ready for editing in Visual Builder')) {
+      console.error('❌ Detected placeholder template - source code fetch failed');
+      throw new Error('Received placeholder template instead of actual story source. Please check if the Story UI server is running correctly.');
+    }
+    
     // Match the render function and extract its return JSX
     const renderMatch = storyCode.match(/render:\s*\(\)\s*=>\s*\(([\s\S]*?)\)\s*[,}]/);
     if (renderMatch) {
@@ -663,7 +669,24 @@ export function parseStoryUIToBuilder(storyCode: string): ParseResult {
   };
   
   try {
-    console.log('🚀 Starting to parse story code for Visual Builder');
+    console.log('🚀 Starting to parse story code for Visual Builder', {
+      codeLength: storyCode.length,
+      hasCard: storyCode.includes('<Card'),
+      hasCardSection: storyCode.includes('Card.Section'),
+      hasBadge: storyCode.includes('<Badge'),
+      hasStack: storyCode.includes('<Stack'),
+      hasImage: storyCode.includes('<Image'),
+      firstLine: storyCode.split('\n')[0],
+      preview: storyCode.substring(0, 300)
+    });
+    
+    // Check for placeholder template
+    if (storyCode.includes('Component ready for editing in Visual Builder')) {
+      const error = '⚠️ Received placeholder template instead of actual story source. The source code was not properly fetched from the server.';
+      console.error('❌ Placeholder template detected');
+      result.errors.push(error);
+      return result;
+    }
     
     // Check for transformed code early and provide clear error
     if (storyCode.includes('__vite__cjsImport') || storyCode.includes('_jsxDEV') || storyCode.includes('import.meta.hot')) {
@@ -675,6 +698,11 @@ export function parseStoryUIToBuilder(storyCode: string): ParseResult {
     
     // Extract JSX from the story
     const jsx = extractJSXFromStory(storyCode);
+    console.log('📝 Extracted JSX:', {
+      hasJSX: !!jsx,
+      jsxLength: jsx?.length || 0,
+      jsxPreview: jsx?.substring(0, 200)
+    });
     
     if (!jsx) {
       result.errors.push('No JSX content found in story');

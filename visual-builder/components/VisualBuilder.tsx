@@ -78,6 +78,8 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
 
   // Load story from URL or initial code
   React.useEffect(() => {
+    console.log('🚀 Visual Builder initializing...');
+    
     // Check for story ID in URL first
     const storyIdFromURL = getStoryIdFromURL();
     if (storyIdFromURL) {
@@ -89,24 +91,51 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
       }
     }
     
-    // Try to restore draft if available
-    const draftComponents = restoreDraft(storyId);
-    if (draftComponents && draftComponents.length > 0) {
-      console.log('📝 Restored draft from localStorage');
-      loadFromAI(draftComponents);
-      setIsInitialLoadComplete(true);
-      return;
+    // Check for sessionStorage content from Visual Builder button
+    let sessionStorageCode = '';
+    try {
+      sessionStorageCode = sessionStorage.getItem('visualBuilderInitialCode') || '';
+      console.log('📂 SessionStorage check:', {
+        hasCode: !!sessionStorageCode,
+        codeLength: sessionStorageCode.length,
+        sourceFile: sessionStorage.getItem('visualBuilderSourceFile'),
+        preview: sessionStorageCode.substring(0, 100) + '...'
+      });
+    } catch (e) {
+      console.error('❌ Error reading from sessionStorage:', e);
     }
     
-    // Fallback to loading initial code if provided
-    const codeToLoad = initialContent || initialCode;
+    // Prioritize sessionStorage code over props
+    const codeToLoad = sessionStorageCode || initialContent || initialCode;
+    
+    // Try to restore draft if no explicit code to load
+    if (!codeToLoad) {
+      const draftComponents = restoreDraft(storyId);
+      if (draftComponents && draftComponents.length > 0) {
+        console.log('📝 Restored draft from localStorage');
+        loadFromAI(draftComponents);
+        setIsInitialLoadComplete(true);
+        return;
+      }
+    }
+    
+    // Load the code if available
     if (codeToLoad) {
+      console.log('📎 Loading code into Visual Builder:', {
+        source: sessionStorageCode ? 'sessionStorage' : 'props',
+        length: codeToLoad.length,
+        hasRender: codeToLoad.includes('render:'),
+        hasStories: codeToLoad.includes('.stories'),
+        isTemplate: codeToLoad.includes('Component ready for editing')
+      });
+      
       // Try Story UI import first if content looks like a story
-      if (codeToLoad.includes('render:') || codeToLoad.includes('.stories.')) {
-        importFromStoryUI(codeToLoad).then(() => {
+      if (codeToLoad.includes('render:') || codeToLoad.includes('.stories')) {
+        importFromStoryUI(codeToLoad).then((result) => {
+          console.log('🎉 Story UI import result:', result);
           setIsInitialLoadComplete(true);
         }).catch((error) => {
-          console.error('Story UI import failed, falling back to regular load:', error);
+          console.error('❌ Story UI import failed, falling back to regular load:', error);
           loadFromCode(codeToLoad).then(() => {
             setIsInitialLoadComplete(true);
           }).catch(console.error);
@@ -117,6 +146,7 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
         }).catch(console.error);
       }
     } else {
+      console.log('🎨 No code to load, starting with empty canvas');
       setIsInitialLoadComplete(true);
     }
   }, []); // Run only once on mount
