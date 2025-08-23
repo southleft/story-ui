@@ -19,8 +19,9 @@ export function generateStoryFileContent(
     .replace(/^\s+/, '')
     .trim();
   
-  // Use the base title without any editing suffix
+  // Use "Edited" prefix for stories that have been edited in Visual Builder
   const storyTitle = baseTitle;
+  const storyPrefix = 'Edited'; // Changed from 'Generated' to distinguish edited stories
   
   // Always use the standard decorator path
   const decoratorPath = '../decorators/VisualBuilderDecorator';
@@ -31,11 +32,12 @@ ${imports}
 import { withVisualBuilderButton } from '${decoratorPath}';
 
 const meta = {
-  title: 'Generated/${storyTitle}',
+  title: '${storyPrefix}/${storyTitle}',
   parameters: {
     layout: 'centered',
     visualBuilder: true,
     fileName: '${fileName}',
+    isEdited: true,
   },
   decorators: [withVisualBuilderButton],
 } satisfies Meta;
