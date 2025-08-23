@@ -34,7 +34,7 @@ export const ComponentPaletteItem: React.FC<ComponentPaletteItemProps> = ({ conf
       ref={setNodeRef}
       style={{
         ...style,
-        padding: '0.75rem',
+        padding: '.75rem',
         backgroundColor: '#f8f9fa',
         borderRadius: '6px',
         border: '1px solid #e9ecef',
@@ -78,6 +78,6 @@ const getComponentDescription = (type: string): string => {
     Stack: 'Vertical layout',
     Card: 'Card container'
   };
-  
+
   return descriptions[type] || 'Component';
 };

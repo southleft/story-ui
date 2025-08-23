@@ -10,6 +10,7 @@ import { SaveOnlyManager } from './StoryManager/SaveOnlyManager';
 import { useDragAndDrop } from '../hooks/useDragAndDrop';
 import { useVisualBuilderStore } from '../store/visualBuilderStore';
 import { getStoryIdFromURL, saveDraft, restoreDraft, getVisualBuilderEditURL } from '../utils/storyPersistence';
+import { updateStoryFile } from '../utils/storyFileUpdater';
 
 interface VisualBuilderProps {
   /** Optional custom styling */
@@ -22,6 +23,8 @@ interface VisualBuilderProps {
   initialContent?: string;
   /** Callback when code is exported */
   onCodeExport?: (code: string) => void;
+  /** Story file path for saving back to source */
+  storyFilePath?: string;
 }
 
 export const VisualBuilder: React.FC<VisualBuilderProps> = ({
@@ -29,7 +32,8 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
   height = '100vh',
   initialCode,
   initialContent,
-  onCodeExport
+  onCodeExport,
+  storyFilePath
 }) => {
   const {
     sensors,
@@ -49,16 +53,29 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
     saveCurrentStory,
     loadStoryById,
     currentStoryName,
+    currentStoryId,
     isDirty
   } = useVisualBuilderStore();
 
   // Create a stable story ID for drafts
-  const [storyId] = React.useState(() => {
+  const [storyId, setStoryId] = React.useState(() => {
     const urlStoryId = getStoryIdFromURL();
     const urlParams = new URLSearchParams(window.location.search);
     const editId = urlParams.get('edit');
     return editId || urlStoryId || `story-${Date.now()}`;
   });
+
+  // Update URL when story ID changes
+  React.useEffect(() => {
+    if (storyId) {
+      const url = new URL(window.location.href);
+      url.searchParams.set('story', storyId);
+      window.history.replaceState({}, '', url.toString());
+    }
+  }, [storyId]);
+
+  // Track if initial load is complete
+  const [isInitialLoadComplete, setIsInitialLoadComplete] = React.useState(false);
 
   // Load story from URL or initial code
   React.useEffect(() => {
@@ -67,6 +84,8 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
     if (storyIdFromURL) {
       const success = loadStoryById(storyIdFromURL);
       if (success) {
+        console.log('✅ Loaded story from URL:', storyIdFromURL);
+        setIsInitialLoadComplete(true);
         return; // Successfully loaded story from URL
       }
     }
@@ -76,6 +95,7 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
     if (draftComponents && draftComponents.length > 0) {
       console.log('📝 Restored draft from localStorage');
       loadFromAI(draftComponents);
+      setIsInitialLoadComplete(true);
       return;
     }
     
@@ -84,19 +104,36 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
     if (codeToLoad) {
       // Try Story UI import first if content looks like a story
       if (codeToLoad.includes('render:') || codeToLoad.includes('.stories.')) {
-        importFromStoryUI(codeToLoad).catch((error) => {
+        importFromStoryUI(codeToLoad).then(() => {
+          setIsInitialLoadComplete(true);
+        }).catch((error) => {
           console.error('Story UI import failed, falling back to regular load:', error);
-          loadFromCode(codeToLoad).catch(console.error);
+          loadFromCode(codeToLoad).then(() => {
+            setIsInitialLoadComplete(true);
+          }).catch(console.error);
         });
       } else {
-        loadFromCode(codeToLoad).catch(console.error);
+        loadFromCode(codeToLoad).then(() => {
+          setIsInitialLoadComplete(true);
+        }).catch(console.error);
       }
+    } else {
+      setIsInitialLoadComplete(true);
     }
-  }, [initialCode, initialContent, loadFromCode, loadFromAI, importFromStoryUI, loadStoryById, storyId]);
+  }, []); // Run only once on mount
 
-  // Auto-save drafts
+  // Save components to draft when they change after initial load
   React.useEffect(() => {
-    if (components.length > 0 && isDirty) {
+    if (isInitialLoadComplete && components.length > 0) {
+      // Save immediately when components are loaded from initial content
+      saveDraft(storyId, components);
+      console.log('💾 Saved story to draft with ID:', storyId);
+    }
+  }, [components, isInitialLoadComplete, storyId]);
+
+  // Auto-save drafts when dirty
+  React.useEffect(() => {
+    if (components.length > 0 && isDirty && isInitialLoadComplete) {
       const timer = setTimeout(() => {
         saveDraft(storyId, components);
         console.log('💾 Auto-saved draft');
@@ -203,17 +240,40 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
                 variant={isDirty ? 'filled' : 'outline'}
                 color={isDirty ? 'blue' : 'gray'}
                 leftSection={<IconDeviceFloppy size={16} />}
-                onClick={() => {
-                  if (currentStoryName === 'Untitled Story') {
-                    // Trigger save modal for unnamed stories
-                    const name = prompt('Enter story name:');
+                onClick={async () => {
+                  // Check if we have a meaningful story name
+                  const hasValidName = currentStoryName && 
+                    currentStoryName !== 'Untitled Story' && 
+                    currentStoryName !== 'Imported Story';
+                  
+                  let finalName = currentStoryName;
+                  if (!hasValidName) {
+                    // Only prompt if we don't have a valid name
+                    const name = prompt('Enter story name:', currentStoryName);
                     if (name && name.trim()) {
-                      saveCurrentStory(name.trim());
+                      finalName = name.trim();
+                    } else {
+                      return; // User cancelled
+                    }
+                  }
+                  
+                  // Save to store
+                  saveCurrentStory(finalName);
+                  
+                  // If we have a story file path, update the actual file
+                  if (storyFilePath) {
+                    const result = await updateStoryFile(storyFilePath, components, finalName);
+                    if (result.success) {
+                      console.log(`✅ Updated story file: ${storyFilePath}`);
+                      alert('Story saved successfully! Refresh Storybook to see changes.');
+                    } else {
+                      console.error('Failed to update story file:', result.error);
                     }
                   } else {
-                    saveCurrentStory();
+                    console.log(`✅ Saved story: ${finalName}`);
                   }
                 }}
+                disabled={!isDirty && !components.length}
               >
                 Save Story
               </Button>

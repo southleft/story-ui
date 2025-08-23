@@ -287,12 +287,37 @@ export const useVisualBuilderStore = create<VisualBuilderStore>()(
           const validationIssues = validateParsedComponents(parseResult.components);
           const allWarnings = [...parseResult.warnings, ...validationIssues];
           
+          // Extract story name from the story code
+          let storyName = 'Imported Story';
+          
+          // Try to extract the export name (e.g., export const MyStory = {...})
+          const exportMatch = storyCode.match(/export\s+const\s+(\w+)\s*=/);
+          if (exportMatch && exportMatch[1]) {
+            // Convert PascalCase or camelCase to readable format
+            storyName = exportMatch[1]
+              .replace(/([A-Z])/g, ' $1')
+              .replace(/^\s+/, '')
+              .trim();
+          }
+          
+          // Alternative: Try to extract from comment or title
+          const titleMatch = storyCode.match(/\/\/\s*@title\s+(.+)|title:\s*['"]([^'"]+)['"]/);
+          if (titleMatch) {
+            storyName = titleMatch[1] || titleMatch[2];
+          }
+          
           if (parseResult.errors.length === 0) {
+            // Generate or use existing story ID
+            const state = _get();
+            const storyId = state.currentStoryId || `story-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+            
             set({ 
               components: parseResult.components, 
               selectedComponent: null,
               isImportedFromStory: true, // Mark as imported from story
-              isDirty: true
+              currentStoryName: storyName, // Set the extracted story name
+              currentStoryId: storyId, // Set the story ID
+              isDirty: false // Start clean since we just imported
             });
           }
           
