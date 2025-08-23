@@ -183,13 +183,19 @@ const parseComponentString = (componentString: string, index: number): Component
   const typeMatch = componentString.match(/<([\w.]+)/);
   if (!typeMatch) return null;
   
-  const type = typeMatch[1];
+  let type = typeMatch[1];
+  
+  // Normalize CardSection to Card.Section for backward compatibility
+  if (type === 'CardSection') {
+    type = 'Card.Section';
+  }
+  
   const config = getComponentConfig(type);
   
   if (!config) {
     // Return a basic definition even for unknown components
     return {
-      id: `${type.toLowerCase()}-${Date.now()}-${index}`,
+      id: `${type.toLowerCase().replace('.', '-')}-${Date.now()}-${index}`,
       type,
       displayName: type,
       category: 'Unknown',
@@ -205,7 +211,7 @@ const parseComponentString = (componentString: string, index: number): Component
   const children = extractChildren(componentString, index);
   
   return {
-    id: `${type.toLowerCase()}-${Date.now()}-${index}`,
+    id: `${type.toLowerCase().replace('.', '-')}-${Date.now()}-${index}`,
     type,
     displayName: config.displayName,
     category: config.category,

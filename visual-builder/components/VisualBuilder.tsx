@@ -1,12 +1,16 @@
 import React from 'react';
 import { DndContext } from '@dnd-kit/core';
-import { Box, Group, Button } from '@mantine/core';
+import { Box, Group, Button, Badge, Text, Tooltip } from '@mantine/core';
+import { IconDeviceFloppy, IconCheck } from '@tabler/icons-react';
+import { notifications } from '@mantine/notifications';
 import { Canvas } from './Canvas/Canvas';
 import { ComponentPalette } from './ComponentPalette/ComponentPalette';
 import { PropertyEditor } from './PropertyEditor/PropertyEditor';
 import { CodeExporter } from './CodeExporter/CodeExporter';
+import { StoryManager } from './StoryManager/StoryManager';
 import { useDragAndDrop } from '../hooks/useDragAndDrop';
 import { useVisualBuilderStore } from '../store/visualBuilderStore';
+import { parseStoryFromUrl, importStoryFromShareableFormat } from '../utils/storyPersistence';
 
 interface VisualBuilderProps {
   /** Optional custom styling */
@@ -33,14 +37,76 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
     handleDragCancel
   } = useDragAndDrop();
 
-  const { clearCanvas, openCodeModal, loadFromCode } = useVisualBuilderStore();
+  const { 
+    clearCanvas, 
+    openCodeModal, 
+    loadFromCode,
+    loadFromAI,
+    initAutoSave,
+    destroyAutoSave,
+    currentStoryId,
+    currentStoryName,
+    isDirty,
+    saveStory
+  } = useVisualBuilderStore();
 
-  // Load initial code if provided
+  // Initialize auto-save on mount
   React.useEffect(() => {
-    if (initialCode) {
+    initAutoSave();
+    return () => {
+      destroyAutoSave();
+    };
+  }, [initAutoSave, destroyAutoSave]);
+
+  // Handle URL parameters for loading stories
+  React.useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const storyInfo = parseStoryFromUrl(urlParams);
+    
+    if (storyInfo.type === 'data' && storyInfo.value) {
+      // Load story from embedded data
+      const importedStory = importStoryFromShareableFormat(storyInfo.value);
+      if (importedStory && importedStory.components) {
+        loadFromAI(importedStory.components);
+        notifications.show({
+          title: 'Story Imported',
+          message: 'Story has been imported from the URL',
+          color: 'green'
+        });
+      }
+    } else if (initialCode) {
+      // Load from initial code if provided
       loadFromCode(initialCode).catch(console.error);
     }
-  }, [initialCode, loadFromCode]);
+  }, [initialCode, loadFromCode, loadFromAI]);
+
+  const handleSave = () => {
+    // Use the StoryManager's save logic through the store
+    if (currentStoryId) {
+      const saved = saveStory();
+      if (saved) {
+        notifications.show({
+          title: 'Story Saved',
+          message: `"${saved.name}" has been saved successfully`,
+          color: 'green',
+          icon: <IconCheck />
+        });
+      } else {
+        notifications.show({
+          title: 'Save Failed',
+          message: 'Failed to save the story. Please try again.',
+          color: 'red'
+        });
+      }
+    } else {
+      // For new stories, the user needs to go through the StoryManager
+      notifications.show({
+        title: 'Use Save Button',
+        message: 'Use the save button in the Components panel to name your story',
+        color: 'blue'
+      });
+    }
+  };
 
   return (
     <DndContext
@@ -102,6 +168,9 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
                 Export
               </Button>
             </Group>
+            <Box mt="sm">
+              <StoryManager />
+            </Box>
           </Box>
           <Box style={{ flex: 1, overflow: 'auto' }}>
             <ComponentPalette />
@@ -111,7 +180,31 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
         {/* Main Canvas Area */}
         <Box style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
           <Box p="md" style={{ borderBottom: '1px solid #e9ecef', backgroundColor: 'white' }}>
-            <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Canvas</h3>
+            <Group justify="space-between">
+              <Group gap="xs">
+                <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Canvas</h3>
+                <Text size="sm" c="dimmed">
+                  {currentStoryName}
+                </Text>
+                {isDirty && (
+                  <Badge size="sm" color="orange" variant="light">
+                    Unsaved
+                  </Badge>
+                )}
+              </Group>
+              <Tooltip label={isDirty ? 'Save your story' : 'No changes to save'}>
+                <Button
+                  leftSection={<IconDeviceFloppy size={16} />}
+                  variant={isDirty ? 'filled' : 'light'}
+                  color={isDirty ? 'blue' : 'gray'}
+                  size="sm"
+                  onClick={handleSave}
+                  disabled={!isDirty}
+                >
+                  Save Story
+                </Button>
+              </Tooltip>
+            </Group>
           </Box>
           <Box style={{ flex: 1, overflow: 'auto' }}>
             <Canvas />

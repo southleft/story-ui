@@ -66,7 +66,7 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
   });
 
   // Droppable setup for container components
-  const isContainer = ['Container', 'Group', 'Stack', 'Card', 'Card.Section'].includes(component.type);
+  const isContainer = ['Container', 'Group', 'Stack', 'Card', 'Card.Section', 'CardSection'].includes(component.type);
   const { setNodeRef: dropRef, isOver } = useDroppable({
     id: `${component.id}-drop`,
     data: {
@@ -360,6 +360,7 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
         );
 
       case 'Card.Section':
+      case 'CardSection': // Handle both variants for backward compatibility
         return (
           <CardSection
             {...canvasInteraction}

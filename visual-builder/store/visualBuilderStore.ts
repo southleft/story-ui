@@ -1,8 +1,20 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { ComponentDefinition, SelectedComponent, BuilderState } from '../types';
+import { 
+  SavedStory, 
+  saveStory as saveStoryToPersistence, 
+  loadStory as loadStoryFromPersistence,
+  AutoSave 
+} from '../utils/storyPersistence';
 
 interface VisualBuilderStore extends BuilderState {
+  // Story state
+  currentStoryId: string | null;
+  currentStoryName: string;
+  isDirty: boolean;
+  autoSave: AutoSave | null;
+  
   // Actions
   addComponent: (component: ComponentDefinition, targetId?: string) => void;
   removeComponent: (id: string) => void;
@@ -15,6 +27,16 @@ interface VisualBuilderStore extends BuilderState {
   moveComponent: (activeId: string, overId: string) => void;
   loadFromAI: (components: ComponentDefinition[]) => void;
   loadFromCode: (code: string) => Promise<{ success: boolean; errors: string[]; warnings: string[] }>;
+  
+  // Story persistence actions
+  saveStory: (name?: string, description?: string) => SavedStory | null;
+  saveAsNewStory: (name: string, description?: string) => SavedStory | null;
+  newStory: () => void;
+  setStoryName: (name: string) => void;
+  markDirty: () => void;
+  markClean: () => void;
+  initAutoSave: () => void;
+  destroyAutoSave: () => void;
 }
 
 export const useVisualBuilderStore = create<VisualBuilderStore>()(
@@ -25,6 +47,12 @@ export const useVisualBuilderStore = create<VisualBuilderStore>()(
       selectedComponent: null,
       draggedComponent: null,
       isCodeModalOpen: false,
+      
+      // Story state
+      currentStoryId: null,
+      currentStoryName: 'Untitled Story',
+      isDirty: false,
+      autoSave: null,
 
       // Actions
       addComponent: (component, targetId) => {
@@ -50,12 +78,16 @@ export const useVisualBuilderStore = create<VisualBuilderStore>()(
                 return comp;
               });
             };
-            return { components: updateComponents(state.components) };
+            return { components: updateComponents(state.components), isDirty: true };
           } else {
             // Add to root level
-            return { components: [...state.components, newComponent] };
+            return { components: [...state.components, newComponent], isDirty: true };
           }
         });
+        
+        // Trigger auto-save
+        const { autoSave } = get();
+        autoSave?.trigger();
       },
 
       removeComponent: (id) => {
@@ -71,9 +103,14 @@ export const useVisualBuilderStore = create<VisualBuilderStore>()(
           
           return {
             components: removeFromComponents(state.components),
-            selectedComponent: state.selectedComponent?.id === id ? null : state.selectedComponent
+            selectedComponent: state.selectedComponent?.id === id ? null : state.selectedComponent,
+            isDirty: true
           };
         });
+        
+        // Trigger auto-save
+        const { autoSave } = get();
+        autoSave?.trigger();
       },
 
       updateComponent: (id, updates) => {
@@ -93,8 +130,12 @@ export const useVisualBuilderStore = create<VisualBuilderStore>()(
             });
           };
           
-          return { components: updateComponents(state.components) };
+          return { components: updateComponents(state.components), isDirty: true };
         });
+        
+        // Trigger auto-save
+        const { autoSave } = get();
+        autoSave?.trigger();
       },
 
       selectComponent: (component) => {
@@ -116,8 +157,13 @@ export const useVisualBuilderStore = create<VisualBuilderStore>()(
       clearCanvas: () => {
         set({ 
           components: [], 
-          selectedComponent: null 
+          selectedComponent: null,
+          isDirty: true
         });
+        
+        // Trigger auto-save
+        const { autoSave } = get();
+        autoSave?.trigger();
       },
 
       moveComponent: (activeId, overId) => {
@@ -150,7 +196,8 @@ export const useVisualBuilderStore = create<VisualBuilderStore>()(
           if (result.errors.length === 0) {
             set({ 
               components: result.components, 
-              selectedComponent: null 
+              selectedComponent: null,
+              isDirty: true
             });
           }
           
@@ -166,6 +213,132 @@ export const useVisualBuilderStore = create<VisualBuilderStore>()(
             warnings: []
           };
         }
+      },
+      
+      // Story persistence methods
+      saveStory: (name, description) => {
+        const state = get();
+        
+        // If it's an existing story (has currentStoryId), save directly without prompts
+        if (state.currentStoryId) {
+          const storyName = state.currentStoryName || 'Untitled Story';
+          
+          try {
+            const savedStory = saveStoryToPersistence(
+              storyName,
+              state.components,
+              description || undefined,
+              state.currentStoryId
+            );
+            
+            set({
+              currentStoryId: savedStory.id,
+              currentStoryName: savedStory.name,
+              isDirty: false
+            });
+            
+            return savedStory;
+          } catch (error) {
+            console.error('Failed to save story:', error);
+            return null;
+          }
+        }
+        
+        // For new stories, use provided name or current name
+        const storyName = name || state.currentStoryName || 'Untitled Story';
+        
+        try {
+          const savedStory = saveStoryToPersistence(
+            storyName,
+            state.components,
+            description
+          );
+          
+          set({
+            currentStoryId: savedStory.id,
+            currentStoryName: savedStory.name,
+            isDirty: false
+          });
+          
+          return savedStory;
+        } catch (error) {
+          console.error('Failed to save story:', error);
+          return null;
+        }
+      },
+      
+      saveAsNewStory: (name, description) => {
+        const state = get();
+        
+        try {
+          const savedStory = saveStoryToPersistence(
+            name,
+            state.components,
+            description
+          );
+          
+          set({
+            currentStoryId: savedStory.id,
+            currentStoryName: savedStory.name,
+            isDirty: false
+          });
+          
+          return savedStory;
+        } catch (error) {
+          console.error('Failed to save story:', error);
+          return null;
+        }
+      },
+      
+      newStory: () => {
+        set({
+          components: [],
+          currentStoryId: null,
+          currentStoryName: 'Untitled Story',
+          selectedComponent: null,
+          isDirty: false
+        });
+      },
+      
+      setStoryName: (name) => {
+        set({ 
+          currentStoryName: name,
+          isDirty: true
+        });
+        
+        // Trigger auto-save
+        const { autoSave } = get();
+        autoSave?.trigger();
+      },
+      
+      markDirty: () => {
+        set({ isDirty: true });
+      },
+      
+      markClean: () => {
+        set({ isDirty: false });
+      },
+      
+      initAutoSave: () => {
+        const state = get();
+        
+        // Clean up existing auto-save if any
+        state.autoSave?.cancel();
+        
+        const autoSave = new AutoSave(() => {
+          const currentState = get();
+          if (currentState.isDirty && currentState.components.length > 0) {
+            currentState.saveStory();
+          }
+        }, 3000); // Auto-save after 3 seconds of inactivity
+        
+        set({ autoSave });
+      },
+      
+      destroyAutoSave: () => {
+        const state = get();
+        state.autoSave?.cancel();
+        set({ autoSave: null });
       }
     }),
     { name: 'visual-builder-store' }
