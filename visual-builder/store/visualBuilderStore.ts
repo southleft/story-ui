@@ -1,22 +1,23 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
-import { ComponentDefinition, SelectedComponent, BuilderState } from '../types';
+import type { ComponentDefinition, SelectedComponent, BuilderState } from '../types/index';
 import { 
-  SavedStory, 
-  saveStory as saveStoryToPersistence, 
-  loadStory as loadStoryFromPersistence,
-  AutoSave 
-} from '../utils/storyPersistence';
+  removeComponentFromTree, 
+  insertComponentInTree, 
+  findComponentWithParent,
+  isDescendant 
+} from '../utils/componentTreeUtils';
+import { saveStory, loadStory, type SavedStory, scheduleAutoSave, cancelAutoSave } from '../utils/storyPersistence';
 
 interface VisualBuilderStore extends BuilderState {
-  // Story state
+  // Additional state
+  isImportedFromStory: boolean; // Track if components came from story parsing
+  // Story management state
   currentStoryId: string | null;
   currentStoryName: string;
   isDirty: boolean;
-  autoSave: AutoSave | null;
-  
   // Actions
-  addComponent: (component: ComponentDefinition, targetId?: string) => void;
+  addComponent: (component: ComponentDefinition, targetId?: string, insertIndex?: number) => void;
   removeComponent: (id: string) => void;
   updateComponent: (id: string, updates: Partial<ComponentDefinition>) => void;
   selectComponent: (component: SelectedComponent | null) => void;
@@ -24,49 +25,52 @@ interface VisualBuilderStore extends BuilderState {
   openCodeModal: () => void;
   closeCodeModal: () => void;
   clearCanvas: () => void;
-  moveComponent: (activeId: string, overId: string) => void;
+  moveComponent: (activeId: string, overId: string, insertIndex?: number, insertPosition?: 'before' | 'after') => void;
+  moveComponentBetweenContainers: (activeId: string, fromParentId: string | null, toParentId: string | null, insertIndex?: number) => void;
   loadFromAI: (components: ComponentDefinition[]) => void;
   loadFromCode: (code: string) => Promise<{ success: boolean; errors: string[]; warnings: string[] }>;
-  
-  // Story persistence actions
-  saveStory: (name?: string, description?: string) => SavedStory | null;
-  saveAsNewStory: (name: string, description?: string) => SavedStory | null;
-  newStory: () => void;
-  setStoryName: (name: string) => void;
+  importFromStoryUI: (storyCode: string) => Promise<{ success: boolean; errors: string[]; warnings: string[] }>;
+  // Story management actions
+  saveCurrentStory: (name?: string) => SavedStory;
+  loadStoryById: (id: string) => boolean;
   markDirty: () => void;
   markClean: () => void;
-  initAutoSave: () => void;
-  destroyAutoSave: () => void;
+  setCurrentStoryName: (name: string) => void;
+  newStory: () => void;
 }
 
 export const useVisualBuilderStore = create<VisualBuilderStore>()(
   devtools(
-    (set, get) => ({
+    (set, _get) => ({
       // Initial state
       components: [],
       selectedComponent: null,
       draggedComponent: null,
       isCodeModalOpen: false,
-      
-      // Story state
+      isImportedFromStory: false,
+      // Story management state
       currentStoryId: null,
       currentStoryName: 'Untitled Story',
       isDirty: false,
-      autoSave: null,
 
       // Actions
-      addComponent: (component, targetId) => {
+      addComponent: (component, targetId, insertIndex) => {
         set((state) => {
           const newComponent = { ...component, id: `${component.type}-${Date.now()}` };
           
+          let newComponents;
           if (targetId) {
             // Add as child to target component
             const updateComponents = (components: ComponentDefinition[]): ComponentDefinition[] => {
               return components.map(comp => {
                 if (comp.id === targetId) {
+                  const children = comp.children || [];
+                  const newChildren = insertIndex !== undefined 
+                    ? [...children.slice(0, insertIndex), newComponent, ...children.slice(insertIndex)]
+                    : [...children, newComponent];
                   return {
                     ...comp,
-                    children: [...(comp.children || []), newComponent]
+                    children: newChildren
                   };
                 }
                 if (comp.children) {
@@ -78,16 +82,18 @@ export const useVisualBuilderStore = create<VisualBuilderStore>()(
                 return comp;
               });
             };
-            return { components: updateComponents(state.components), isDirty: true };
+            newComponents = updateComponents(state.components);
           } else {
             // Add to root level
-            return { components: [...state.components, newComponent], isDirty: true };
+            newComponents = insertIndex !== undefined 
+              ? [...state.components.slice(0, insertIndex), newComponent, ...state.components.slice(insertIndex)]
+              : [...state.components, newComponent];
           }
+          
+          // Mark as dirty and schedule auto-save
+          scheduleAutoSave(state.currentStoryName, newComponents, state.currentStoryId || undefined);
+          return { components: newComponents, isDirty: true };
         });
-        
-        // Trigger auto-save
-        const { autoSave } = get();
-        autoSave?.trigger();
       },
 
       removeComponent: (id) => {
@@ -101,16 +107,17 @@ export const useVisualBuilderStore = create<VisualBuilderStore>()(
               }));
           };
           
+          const newComponents = removeFromComponents(state.components);
+          
+          // Mark as dirty and schedule auto-save
+          scheduleAutoSave(state.currentStoryName, newComponents, state.currentStoryId || undefined);
+          
           return {
-            components: removeFromComponents(state.components),
+            components: newComponents,
             selectedComponent: state.selectedComponent?.id === id ? null : state.selectedComponent,
             isDirty: true
           };
         });
-        
-        // Trigger auto-save
-        const { autoSave } = get();
-        autoSave?.trigger();
       },
 
       updateComponent: (id, updates) => {
@@ -130,12 +137,13 @@ export const useVisualBuilderStore = create<VisualBuilderStore>()(
             });
           };
           
-          return { components: updateComponents(state.components), isDirty: true };
+          const newComponents = updateComponents(state.components);
+          
+          // Mark as dirty and schedule auto-save
+          scheduleAutoSave(state.currentStoryName, newComponents, state.currentStoryId || undefined);
+          
+          return { components: newComponents, isDirty: true };
         });
-        
-        // Trigger auto-save
-        const { autoSave } = get();
-        autoSave?.trigger();
       },
 
       selectComponent: (component) => {
@@ -158,33 +166,87 @@ export const useVisualBuilderStore = create<VisualBuilderStore>()(
         set({ 
           components: [], 
           selectedComponent: null,
+          isImportedFromStory: false,
           isDirty: true
         });
-        
-        // Trigger auto-save
-        const { autoSave } = get();
-        autoSave?.trigger();
       },
 
-      moveComponent: (activeId, overId) => {
+      moveComponent: (activeId, overId, insertIndex, insertPosition) => {
         set((state) => {
-          const components = [...state.components];
-          const activeIndex = components.findIndex(comp => comp.id === activeId);
-          const overIndex = components.findIndex(comp => comp.id === overId);
-          
-          if (activeIndex !== -1 && overIndex !== -1) {
-            const [removed] = components.splice(activeIndex, 1);
-            components.splice(overIndex, 0, removed);
+          // Prevent moving a component into itself or its descendants
+          if (activeId === overId || isDescendant(state.components, activeId, overId)) {
+            return state;
           }
+
+          // Remove the component from its current location
+          const { components: updatedComponents, removed } = removeComponentFromTree(state.components, activeId);
           
-          return { components };
+          if (!removed) {
+            return state; // Component not found
+          }
+
+          // Determine insertion target and index
+          let targetContainerId: string | null = null;
+          let insertionIndex = insertIndex;
+
+          if (insertIndex !== undefined) {
+            // Direct insertion at specific index (root level)
+            targetContainerId = null;
+          } else {
+            // Insert relative to another component
+            const overComponent = findComponentWithParent(updatedComponents, overId);
+            if (overComponent) {
+              if (overComponent.parent) {
+                targetContainerId = overComponent.parent.id;
+                insertionIndex = overComponent.index + (insertPosition === 'after' ? 1 : 0);
+              } else {
+                // Insert at root level
+                targetContainerId = null;
+                insertionIndex = overComponent.index + (insertPosition === 'after' ? 1 : 0);
+              }
+            }
+          }
+
+          // Insert the component at the new location
+          const finalComponents = insertComponentInTree(updatedComponents, removed, targetContainerId, insertionIndex);
+          
+          // Mark as dirty and schedule auto-save
+          scheduleAutoSave(state.currentStoryName, finalComponents, state.currentStoryId || undefined);
+          
+          return { components: finalComponents, isDirty: true };
+        });
+      },
+
+      moveComponentBetweenContainers: (activeId, _fromParentId, toParentId, insertIndex) => {
+        set((state) => {
+          // Prevent moving a component into itself or its descendants
+          if (activeId === toParentId || (toParentId && isDescendant(state.components, activeId, toParentId))) {
+            return state;
+          }
+
+          // Remove component from its current location
+          const { components: afterRemoval, removed } = removeComponentFromTree(state.components, activeId);
+          
+          if (!removed) {
+            return state; // Component not found
+          }
+
+          // Add component to new location
+          const finalComponents = insertComponentInTree(afterRemoval, removed, toParentId, insertIndex);
+          
+          // Mark as dirty and schedule auto-save
+          scheduleAutoSave(state.currentStoryName, finalComponents, state.currentStoryId || undefined);
+          
+          return { components: finalComponents, isDirty: true };
         });
       },
 
       loadFromAI: (components) => {
         set({ 
           components, 
-          selectedComponent: null 
+          selectedComponent: null,
+          isImportedFromStory: false,
+          isDirty: true
         });
       },
 
@@ -197,6 +259,7 @@ export const useVisualBuilderStore = create<VisualBuilderStore>()(
             set({ 
               components: result.components, 
               selectedComponent: null,
+              isImportedFromStory: false,
               isDirty: true
             });
           }
@@ -214,131 +277,103 @@ export const useVisualBuilderStore = create<VisualBuilderStore>()(
           };
         }
       },
-      
-      // Story persistence methods
-      saveStory: (name, description) => {
-        const state = get();
-        
-        // If it's an existing story (has currentStoryId), save directly without prompts
-        if (state.currentStoryId) {
-          const storyName = state.currentStoryName || 'Untitled Story';
+
+      importFromStoryUI: async (storyCode) => {
+        try {
+          const { parseStoryUIToBuilder, validateParsedComponents } = await import('../utils/storyToBuilder');
+          const parseResult = parseStoryUIToBuilder(storyCode);
           
-          try {
-            const savedStory = saveStoryToPersistence(
-              storyName,
-              state.components,
-              description || undefined,
-              state.currentStoryId
-            );
-            
-            set({
-              currentStoryId: savedStory.id,
-              currentStoryName: savedStory.name,
-              isDirty: false
+          // Validate the parsed components
+          const validationIssues = validateParsedComponents(parseResult.components);
+          const allWarnings = [...parseResult.warnings, ...validationIssues];
+          
+          if (parseResult.errors.length === 0) {
+            set({ 
+              components: parseResult.components, 
+              selectedComponent: null,
+              isImportedFromStory: true, // Mark as imported from story
+              isDirty: true
             });
-            
-            return savedStory;
-          } catch (error) {
-            console.error('Failed to save story:', error);
-            return null;
           }
-        }
-        
-        // For new stories, use provided name or current name
-        const storyName = name || state.currentStoryName || 'Untitled Story';
-        
-        try {
-          const savedStory = saveStoryToPersistence(
-            storyName,
-            state.components,
-            description
-          );
           
-          set({
-            currentStoryId: savedStory.id,
-            currentStoryName: savedStory.name,
-            isDirty: false
-          });
-          
-          return savedStory;
+          return {
+            success: parseResult.errors.length === 0,
+            errors: parseResult.errors,
+            warnings: allWarnings
+          };
         } catch (error) {
-          console.error('Failed to save story:', error);
-          return null;
+          return {
+            success: false,
+            errors: [`Failed to import from Story UI: ${error instanceof Error ? error.message : 'Unknown error'}`],
+            warnings: []
+          };
         }
       },
-      
-      saveAsNewStory: (name, description) => {
-        const state = get();
+
+      // Story management actions
+      saveCurrentStory: (name) => {
+        const state = _get();
+        const storyName = name || state.currentStoryName;
+        const savedStory = saveStory(storyName, state.components, state.currentStoryId || undefined);
         
-        try {
-          const savedStory = saveStoryToPersistence(
-            name,
-            state.components,
-            description
-          );
-          
-          set({
-            currentStoryId: savedStory.id,
-            currentStoryName: savedStory.name,
-            isDirty: false
-          });
-          
-          return savedStory;
-        } catch (error) {
-          console.error('Failed to save story:', error);
-          return null;
-        }
-      },
-      
-      newStory: () => {
         set({
-          components: [],
-          currentStoryId: null,
-          currentStoryName: 'Untitled Story',
-          selectedComponent: null,
+          currentStoryId: savedStory.id,
+          currentStoryName: savedStory.name,
           isDirty: false
         });
-      },
-      
-      setStoryName: (name) => {
-        set({ 
-          currentStoryName: name,
-          isDirty: true
-        });
         
-        // Trigger auto-save
-        const { autoSave } = get();
-        autoSave?.trigger();
+        // Update URL with story ID
+        const url = new URL(window.location.href);
+        url.searchParams.set('story', savedStory.id);
+        window.history.replaceState({}, '', url.toString());
+        
+        return savedStory;
       },
-      
+
+      loadStoryById: (id) => {
+        const story = loadStory(id);
+        if (story) {
+          cancelAutoSave(); // Cancel any pending auto-save
+          set({
+            components: story.components,
+            currentStoryId: story.id,
+            currentStoryName: story.name,
+            isDirty: false,
+            selectedComponent: null,
+            isImportedFromStory: false
+          });
+          return true;
+        }
+        return false;
+      },
+
       markDirty: () => {
         set({ isDirty: true });
       },
-      
+
       markClean: () => {
         set({ isDirty: false });
       },
-      
-      initAutoSave: () => {
-        const state = get();
-        
-        // Clean up existing auto-save if any
-        state.autoSave?.cancel();
-        
-        const autoSave = new AutoSave(() => {
-          const currentState = get();
-          if (currentState.isDirty && currentState.components.length > 0) {
-            currentState.saveStory();
-          }
-        }, 3000); // Auto-save after 3 seconds of inactivity
-        
-        set({ autoSave });
+
+      setCurrentStoryName: (name) => {
+        set({ currentStoryName: name, isDirty: true });
       },
-      
-      destroyAutoSave: () => {
-        const state = get();
-        state.autoSave?.cancel();
-        set({ autoSave: null });
+
+      newStory: () => {
+        cancelAutoSave();
+        set({
+          components: [],
+          selectedComponent: null,
+          currentStoryId: null,
+          currentStoryName: 'Untitled Story',
+          isDirty: false,
+          isImportedFromStory: false
+        });
+        
+        // Remove story parameter from URL
+        const url = new URL(window.location.href);
+        url.searchParams.delete('story');
+        window.history.replaceState({}, '', url.toString());
       }
     }),
     { name: 'visual-builder-store' }

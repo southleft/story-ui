@@ -45,7 +45,8 @@ export const EmbeddedVisualBuilder: React.FC<EmbeddedVisualBuilderProps> = ({
     clearCanvas, 
     openCodeModal,
     loadFromCode,
-    loadFromAI 
+    loadFromAI,
+    importFromStoryUI 
   } = useVisualBuilderStore();
 
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -64,6 +65,23 @@ export const EmbeddedVisualBuilder: React.FC<EmbeddedVisualBuilderProps> = ({
     setLoadWarnings([]);
 
     try {
+      // First try to parse as Story UI content
+      if (code.includes('render:') || code.includes('.stories.')) {
+        const storyResult = await importFromStoryUI(code);
+        
+        if (storyResult.success) {
+          if (storyResult.warnings.length > 0) {
+            setLoadWarnings(storyResult.warnings);
+            setShowLoadDialog(true);
+          }
+          return;
+        } else {
+          // If Story UI parsing fails, fall back to AI parser
+          console.warn('Story UI parsing failed, falling back to AI parser:', storyResult.errors);
+        }
+      }
+      
+      // Fall back to AI generated code parser
       const result = parseAIGeneratedCode(code);
       
       if (result.errors.length > 0) {

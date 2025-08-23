@@ -1,16 +1,15 @@
 import React from 'react';
 import { DndContext } from '@dnd-kit/core';
-import { Box, Group, Button, Badge, Text, Tooltip } from '@mantine/core';
-import { IconDeviceFloppy, IconCheck } from '@tabler/icons-react';
-import { notifications } from '@mantine/notifications';
+import { Box, Group, Button, Badge, Text } from '@mantine/core';
+import { IconDeviceFloppy } from '@tabler/icons-react';
 import { Canvas } from './Canvas/Canvas';
 import { ComponentPalette } from './ComponentPalette/ComponentPalette';
 import { PropertyEditor } from './PropertyEditor/PropertyEditor';
 import { CodeExporter } from './CodeExporter/CodeExporter';
-import { StoryManager } from './StoryManager/StoryManager';
+import { StoryManager } from './StoryManager';
 import { useDragAndDrop } from '../hooks/useDragAndDrop';
 import { useVisualBuilderStore } from '../store/visualBuilderStore';
-import { parseStoryFromUrl, importStoryFromShareableFormat } from '../utils/storyPersistence';
+import { getStoryIdFromURL } from '../utils/storyPersistence';
 
 interface VisualBuilderProps {
   /** Optional custom styling */
@@ -19,6 +18,8 @@ interface VisualBuilderProps {
   height?: string | number;
   /** Initial code to load */
   initialCode?: string;
+  /** Initial content (alias for initialCode for Story UI integration) */
+  initialContent?: string;
   /** Callback when code is exported */
   onCodeExport?: (code: string) => void;
 }
@@ -27,6 +28,7 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
   style,
   height = '100vh',
   initialCode,
+  initialContent,
   onCodeExport
 }) => {
   const {
@@ -40,73 +42,39 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
   const { 
     clearCanvas, 
     openCodeModal, 
-    loadFromCode,
-    loadFromAI,
-    initAutoSave,
-    destroyAutoSave,
-    currentStoryId,
+    loadFromCode, 
+    importFromStoryUI,
+    saveCurrentStory,
+    loadStoryById,
     currentStoryName,
-    isDirty,
-    saveStory
+    isDirty
   } = useVisualBuilderStore();
 
-  // Initialize auto-save on mount
+  // Load story from URL or initial code
   React.useEffect(() => {
-    initAutoSave();
-    return () => {
-      destroyAutoSave();
-    };
-  }, [initAutoSave, destroyAutoSave]);
-
-  // Handle URL parameters for loading stories
-  React.useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const storyInfo = parseStoryFromUrl(urlParams);
-    
-    if (storyInfo.type === 'data' && storyInfo.value) {
-      // Load story from embedded data
-      const importedStory = importStoryFromShareableFormat(storyInfo.value);
-      if (importedStory && importedStory.components) {
-        loadFromAI(importedStory.components);
-        notifications.show({
-          title: 'Story Imported',
-          message: 'Story has been imported from the URL',
-          color: 'green'
-        });
+    // Check for story ID in URL first
+    const storyIdFromURL = getStoryIdFromURL();
+    if (storyIdFromURL) {
+      const success = loadStoryById(storyIdFromURL);
+      if (success) {
+        return; // Successfully loaded story from URL
       }
-    } else if (initialCode) {
-      // Load from initial code if provided
-      loadFromCode(initialCode).catch(console.error);
     }
-  }, [initialCode, loadFromCode, loadFromAI]);
-
-  const handleSave = () => {
-    // Use the StoryManager's save logic through the store
-    if (currentStoryId) {
-      const saved = saveStory();
-      if (saved) {
-        notifications.show({
-          title: 'Story Saved',
-          message: `"${saved.name}" has been saved successfully`,
-          color: 'green',
-          icon: <IconCheck />
+    
+    // Fallback to loading initial code if provided
+    const codeToLoad = initialContent || initialCode;
+    if (codeToLoad) {
+      // Try Story UI import first if content looks like a story
+      if (codeToLoad.includes('render:') || codeToLoad.includes('.stories.')) {
+        importFromStoryUI(codeToLoad).catch((error) => {
+          console.error('Story UI import failed, falling back to regular load:', error);
+          loadFromCode(codeToLoad).catch(console.error);
         });
       } else {
-        notifications.show({
-          title: 'Save Failed',
-          message: 'Failed to save the story. Please try again.',
-          color: 'red'
-        });
+        loadFromCode(codeToLoad).catch(console.error);
       }
-    } else {
-      // For new stories, the user needs to go through the StoryManager
-      notifications.show({
-        title: 'Use Save Button',
-        message: 'Use the save button in the Components panel to name your story',
-        color: 'blue'
-      });
     }
-  };
+  }, [initialCode, initialContent, loadFromCode, importFromStoryUI, loadStoryById]);
 
   return (
     <DndContext
@@ -168,8 +136,9 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
                 Export
               </Button>
             </Group>
-            <Box mt="sm">
-              <StoryManager />
+            
+            <Box mt="md">
+              <StoryManager size="sm" />
             </Box>
           </Box>
           <Box style={{ flex: 1, overflow: 'auto' }}>
@@ -180,30 +149,41 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
         {/* Main Canvas Area */}
         <Box style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
           <Box p="md" style={{ borderBottom: '1px solid #e9ecef', backgroundColor: 'white' }}>
-            <Group justify="space-between">
-              <Group gap="xs">
-                <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Canvas</h3>
-                <Text size="sm" c="dimmed">
-                  {currentStoryName}
-                </Text>
-                {isDirty && (
-                  <Badge size="sm" color="orange" variant="light">
-                    Unsaved
-                  </Badge>
+            <Group justify="space-between" align="center">
+              <Group align="center" gap="sm">
+                <Text fw={500} size="lg">Canvas</Text>
+                {currentStoryName && currentStoryName !== 'Untitled Story' && (
+                  <Group gap="xs" align="center">
+                    <Text size="sm" c="dimmed">•</Text>
+                    <Text size="sm" c="dimmed">{currentStoryName}</Text>
+                    {isDirty && (
+                      <Badge size="xs" color="orange" variant="filled">
+                        Unsaved
+                      </Badge>
+                    )}
+                  </Group>
                 )}
               </Group>
-              <Tooltip label={isDirty ? 'Save your story' : 'No changes to save'}>
-                <Button
-                  leftSection={<IconDeviceFloppy size={16} />}
-                  variant={isDirty ? 'filled' : 'light'}
-                  color={isDirty ? 'blue' : 'gray'}
-                  size="sm"
-                  onClick={handleSave}
-                  disabled={!isDirty}
-                >
-                  Save Story
-                </Button>
-              </Tooltip>
+              
+              <Button
+                size="sm"
+                variant={isDirty ? 'filled' : 'outline'}
+                color={isDirty ? 'blue' : 'gray'}
+                leftSection={<IconDeviceFloppy size={16} />}
+                onClick={() => {
+                  if (currentStoryName === 'Untitled Story') {
+                    // Trigger save modal for unnamed stories
+                    const name = prompt('Enter story name:');
+                    if (name && name.trim()) {
+                      saveCurrentStory(name.trim());
+                    }
+                  } else {
+                    saveCurrentStory();
+                  }
+                }}
+              >
+                Save Story
+              </Button>
             </Group>
           </Box>
           <Box style={{ flex: 1, overflow: 'auto' }}>

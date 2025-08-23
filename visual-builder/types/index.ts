@@ -18,14 +18,16 @@ export interface BuilderState {
   selectedComponent: SelectedComponent | null;
   draggedComponent: ComponentDefinition | null;
   isCodeModalOpen: boolean;
+  isImportedFromStory?: boolean;
 }
 
 export interface PropertyDefinition {
   name: string;
-  type: 'string' | 'number' | 'boolean' | 'color' | 'select';
+  type: 'string' | 'number' | 'boolean' | 'color' | 'select' | 'spacing';
   defaultValue?: any;
   options?: string[]; // for select type
   description?: string;
+  category?: 'spacing' | 'appearance' | 'behavior' | 'content';
 }
 
 export interface VisualBuilderComponentConfig {

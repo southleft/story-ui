@@ -1,4 +1,4 @@
-import { ComponentDefinition } from '../../types';
+import type { ComponentDefinition } from '../../types/index';
 
 export const generateJSXCode = (components: ComponentDefinition[]): string => {
   if (components.length === 0) {

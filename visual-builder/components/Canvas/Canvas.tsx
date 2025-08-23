@@ -5,8 +5,56 @@ import { ComponentRenderer } from './ComponentRenderer';
 import { useVisualBuilderStore } from '../../store/visualBuilderStore';
 import { useSelection } from '../../hooks/useSelection';
 
+// Drop zone component for canvas-level insertions
+interface CanvasDropZoneProps {
+  insertIndex: number;
+  isVisible: boolean;
+}
+
+const CanvasDropZone: React.FC<CanvasDropZoneProps> = ({ insertIndex, isVisible }) => {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `canvas-dropzone-${insertIndex}`,
+    data: {
+      isInsertionPoint: true,
+      parentId: null, // Root level
+      insertIndex,
+      insertPosition: 'before'
+    }
+  });
+
+  if (!isVisible) return null;
+
+  return (
+    <Box
+      ref={setNodeRef}
+      style={{
+        height: isOver ? '12px' : '4px',
+        backgroundColor: isOver ? '#3b82f6' : 'transparent',
+        border: isOver ? '3px dashed #3b82f6' : '2px dashed #e5e7eb',
+        borderRadius: '4px',
+        margin: '8px 0',
+        transition: 'all 0.2s ease-in-out',
+        opacity: isOver ? 1 : 0.6
+      }}
+    >
+      {isOver && (
+        <Box
+          style={{
+            height: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}
+        >
+          <Text size="xs" c="blue" fw={500}>Drop here</Text>
+        </Box>
+      )}
+    </Box>
+  );
+};
+
 export const Canvas: React.FC = () => {
-  const { components } = useVisualBuilderStore();
+  const { components, draggedComponent, isImportedFromStory } = useVisualBuilderStore();
   const { handleCanvasClick } = useSelection();
 
   const { setNodeRef, isOver } = useDroppable({
@@ -26,7 +74,9 @@ export const Canvas: React.FC = () => {
         minHeight: '100%',
         padding: '2rem',
         backgroundColor: isOver ? '#f0f9ff' : 'white',
-        border: isOver ? '2px dashed #3b82f6' : '2px dashed transparent',
+        borderWidth: '2px',
+        borderStyle: 'dashed',
+        borderColor: isOver ? '#3b82f6' : 'transparent',
         transition: 'all 0.2s ease',
         position: 'relative'
       }}
@@ -43,14 +93,54 @@ export const Canvas: React.FC = () => {
           </Box>
         </Center>
       ) : (
-        <Box style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          {components.map((component, index) => (
-            <ComponentRenderer
-              key={component.id}
-              component={component}
-              index={index}
-            />
-          ))}
+        <Box style={{ position: 'relative' }}>
+          {/* Preserve original layout structure - don't force flex column */}
+          {components.length === 1 ? (
+            // Single root component - render naturally to preserve story structure
+            <React.Fragment>
+              <CanvasDropZone 
+                insertIndex={0} 
+                isVisible={Boolean(draggedComponent && draggedComponent.id !== components[0].id)}
+              />
+              <ComponentRenderer
+                component={components[0]}
+                index={0}
+                parentId={null}
+                preserveOriginalLayout={isImportedFromStory}
+              />
+              {Boolean(draggedComponent) && (
+                <CanvasDropZone 
+                  insertIndex={1} 
+                  isVisible={true}
+                />
+              )}
+            </React.Fragment>
+          ) : (
+            // Multiple root components - use minimal flex layout for builder mode
+            <Box style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              {components.map((component, index) => (
+                <React.Fragment key={component.id}>
+                  <CanvasDropZone 
+                    insertIndex={index} 
+                    isVisible={Boolean(draggedComponent && draggedComponent.id !== component.id)}
+                  />
+                  <ComponentRenderer
+                    component={component}
+                    index={index}
+                    parentId={null}
+                    preserveOriginalLayout={false}
+                  />
+                </React.Fragment>
+              ))}
+              {/* Final drop zone at the end */}
+              {Boolean(draggedComponent) && (
+                <CanvasDropZone 
+                  insertIndex={components.length} 
+                  isVisible={true}
+                />
+              )}
+            </Box>
+          )}
         </Box>
       )}
 

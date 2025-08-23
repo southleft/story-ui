@@ -1,7 +1,7 @@
 import React from 'react';
 import { useDraggable } from '@dnd-kit/core';
 import { Box, Text } from '@mantine/core';
-import { VisualBuilderComponentConfig } from '../../types';
+import type { VisualBuilderComponentConfig } from '../../types/index';
 
 interface ComponentPaletteItemProps {
   config: VisualBuilderComponentConfig;

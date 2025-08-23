@@ -1,4 +1,4 @@
-import { ComponentDefinition } from '../types';
+import type { ComponentDefinition } from '../types/index';
 import { MANTINE_COMPONENTS, getComponentConfig } from '../config/componentRegistry';
 
 /**
@@ -179,23 +179,17 @@ const extractTopLevelComponents = (jsx: string): string[] => {
  * Parse individual component string into ComponentDefinition
  */
 const parseComponentString = (componentString: string, index: number): ComponentDefinition | null => {
-  // Extract component type (including compound components like Card.Section)
-  const typeMatch = componentString.match(/<([\w.]+)/);
+  // Extract component type
+  const typeMatch = componentString.match(/<(\w+)/);
   if (!typeMatch) return null;
   
-  let type = typeMatch[1];
-  
-  // Normalize CardSection to Card.Section for backward compatibility
-  if (type === 'CardSection') {
-    type = 'Card.Section';
-  }
-  
+  const type = typeMatch[1];
   const config = getComponentConfig(type);
   
   if (!config) {
     // Return a basic definition even for unknown components
     return {
-      id: `${type.toLowerCase().replace('.', '-')}-${Date.now()}-${index}`,
+      id: `${type.toLowerCase()}-${Date.now()}-${index}`,
       type,
       displayName: type,
       category: 'Unknown',
@@ -211,7 +205,7 @@ const parseComponentString = (componentString: string, index: number): Component
   const children = extractChildren(componentString, index);
   
   return {
-    id: `${type.toLowerCase().replace('.', '-')}-${Date.now()}-${index}`,
+    id: `${type.toLowerCase()}-${Date.now()}-${index}`,
     type,
     displayName: config.displayName,
     category: config.category,

@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { useVisualBuilderStore } from '../store/visualBuilderStore';
-import { ComponentDefinition } from '../types';
+import type { ComponentDefinition } from '../types/index';
 
 export const useSelection = () => {
   const { selectedComponent, selectComponent } = useVisualBuilderStore();

@@ -1,22 +1,24 @@
 import { useCallback } from 'react';
 import {
-  DndContext,
-  DragEndEvent,
-  DragOverEvent,
-  DragStartEvent,
   PointerSensor,
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
+import type {
+  DragEndEvent,
+  DragStartEvent,
+  DragOverEvent,
+} from '@dnd-kit/core';
 import { useVisualBuilderStore } from '../store/visualBuilderStore';
-import { ComponentDefinition } from '../types';
-import { getComponentConfig } from '../config/componentRegistry';
+import type { ComponentDefinition } from '../types/index';
+import { getComponentConfig, CONTAINER_COMPONENTS } from '../config/componentRegistry';
 
 export const useDragAndDrop = () => {
   const {
     setDraggedComponent,
     addComponent,
     moveComponent,
+    moveComponentBetweenContainers,
     selectComponent
   } = useVisualBuilderStore();
 
@@ -52,9 +54,10 @@ export const useDragAndDrop = () => {
     }
   }, [setDraggedComponent]);
 
-  const handleDragOver = useCallback((event: DragOverEvent) => {
+  const handleDragOver = useCallback((_event: DragOverEvent) => {
     // Handle drag over for visual feedback
-    // Could add hover effects here
+    // Add visual feedback logic here if needed
+    // This could include highlighting valid drop zones
   }, []);
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
@@ -78,13 +81,34 @@ export const useDragAndDrop = () => {
           displayName: config.displayName,
           category: config.category,
           props: { ...config.defaultProps },
-          children: config.type === 'Container' || config.type === 'Group' || 
-                   config.type === 'Stack' || config.type === 'Card' ? [] : undefined
+          children: CONTAINER_COMPONENTS.includes(config.type) ? [] : undefined
         };
 
-        // Add to canvas or as child of container
-        const targetId = dropData?.isContainer ? dropData.componentId : undefined;
-        addComponent(component, targetId);
+        // Determine the target for drop
+        let targetId: string | undefined = undefined;
+        let insertIndex: number | undefined = undefined;
+        
+        // Check if dropped on an insertion point
+        if (dropData?.isInsertionPoint) {
+          // Insert at specific index in specific parent (or root)
+          targetId = dropData.parentId || undefined; // null means root level
+          insertIndex = dropData.insertIndex;
+        }
+        // Check if dropped on a container drop zone
+        else if (dropData?.isContainer && dropData?.componentId) {
+          targetId = dropData.componentId;
+          insertIndex = dropData.insertIndex; // Append to end
+        }
+        // Check if dropped on canvas
+        else if (dropData?.isCanvas || over.id === 'canvas') {
+          targetId = undefined; // Root level
+        }
+        // Check if over.id ends with '-drop' (container drop zone)
+        else if (typeof over.id === 'string' && over.id.endsWith('-drop')) {
+          targetId = over.id.replace('-drop', '');
+        }
+
+        addComponent(component, targetId, insertIndex);
         
         // Auto-select the new component
         selectComponent({
@@ -93,9 +117,38 @@ export const useDragAndDrop = () => {
           props: component.props
         });
       }
-    } else if (dragData?.component && dropData?.componentId) {
+    } else if (dragData?.component) {
       // Reordering existing components
-      moveComponent(dragData.component.id, dropData.componentId);
+      const componentId = dragData.component.id;
+      
+      if (dropData?.isInsertionPoint) {
+        // Handle insertion point drops for precise positioning
+        const targetParentId = dropData.parentId;
+        const insertIndex = dropData.insertIndex;
+        
+        // Move to the specific insertion point
+        moveComponentBetweenContainers(componentId, dragData.parentId || null, targetParentId, insertIndex);
+      } else if (dropData?.isContainer && dropData?.componentId) {
+        // Move to container - determine if it's between containers or within same container
+        const targetContainerId = dropData.componentId;
+        const insertIndex = dropData.insertIndex;
+        
+        // Use the enhanced move function for better container handling
+        moveComponentBetweenContainers(componentId, dragData.parentId || null, targetContainerId, insertIndex);
+      } else if (dropData?.isCanvas || over.id === 'canvas') {
+        // Move to root level (canvas)
+        moveComponentBetweenContainers(componentId, dragData.parentId || null, null, undefined);
+      } else if (typeof over.id === 'string' && over.id.endsWith('-drop')) {
+        // Handle container drop zones
+        const containerId = over.id.replace('-drop', '');
+        moveComponentBetweenContainers(componentId, dragData.parentId || null, containerId, undefined);
+      } else {
+        // Default: try to move relative to the over component
+        const overComponentId = typeof over.id === 'string' ? over.id : String(over.id);
+        if (overComponentId !== componentId) {
+          moveComponent(componentId, overComponentId, undefined, 'after');
+        }
+      }
     }
 
     setDraggedComponent(null);

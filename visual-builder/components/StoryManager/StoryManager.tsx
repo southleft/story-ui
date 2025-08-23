@@ -1,161 +1,208 @@
 import React, { useState } from 'react';
-import {
-  Modal,
-  Button,
-  TextInput,
-  Textarea,
-  Group,
-  Stack,
-  ActionIcon,
-  Tooltip
-} from '@mantine/core';
-import { notifications } from '@mantine/notifications';
-import {
-  IconDeviceFloppy,
-  IconPlus,
-  IconCheck
-} from '@tabler/icons-react';
+import { Group, ActionIcon, Tooltip, Modal, TextInput, Button, Text, Stack, List } from '@mantine/core';
+import { IconDeviceFloppy, IconFolderOpen, IconPlus, IconTrash } from '@tabler/icons-react';
 import { useVisualBuilderStore } from '../../store/visualBuilderStore';
+import { getSavedStories, deleteStory, type SavedStory } from '../../utils/storyPersistence';
 
 interface StoryManagerProps {
-  onClose?: () => void;
+  /** Size of the action icons */
+  size?: 'xs' | 'sm' | 'md' | 'lg';
 }
 
-export const StoryManager: React.FC<StoryManagerProps> = ({ onClose }) => {
-  const [isSaveAsModalOpen, setIsSaveAsModalOpen] = useState(false);
-  const [newStoryName, setNewStoryName] = useState('');
-  const [newStoryDescription, setNewStoryDescription] = useState('');
+export const StoryManager: React.FC<StoryManagerProps> = ({ size = 'xs' }) => {
+  const [isLoadModalOpen, setIsLoadModalOpen] = useState(false);
+  const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+  const [savedStories, setSavedStories] = useState<SavedStory[]>([]);
+  const [saveStoryName, setSaveStoryName] = useState('');
 
-  const {
+  const { 
+    saveCurrentStory, 
+    loadStoryById, 
+    newStory, 
+    currentStoryName, 
     currentStoryId,
-    currentStoryName,
-    isDirty,
-    saveStory,
-    saveAsNewStory,
-    newStory
+    isDirty
   } = useVisualBuilderStore();
 
-  const handleSave = () => {
-    // For existing stories, save directly
-    if (currentStoryId) {
-      const saved = saveStory();
-      if (saved) {
-        notifications.show({
-          title: 'Story Saved',
-          message: `"${saved.name}" has been saved successfully`,
-          color: 'green',
-          icon: <IconCheck />
-        });
-      } else {
-        notifications.show({
-          title: 'Save Failed',
-          message: 'Failed to save the story. Please try again.',
-          color: 'red'
-        });
-      }
+  const refreshSavedStories = () => {
+    setSavedStories(getSavedStories());
+  };
+
+  const handleOpenLoadModal = () => {
+    refreshSavedStories();
+    setIsLoadModalOpen(true);
+  };
+
+  const handleOpenSaveModal = () => {
+    setSaveStoryName(currentStoryName);
+    setIsSaveModalOpen(true);
+  };
+
+  const handleQuickSave = () => {
+    if (currentStoryId || currentStoryName !== 'Untitled Story') {
+      saveCurrentStory();
     } else {
-      // For new stories, prompt for name
-      setNewStoryName(currentStoryName === 'Untitled Story' ? '' : currentStoryName);
-      setNewStoryDescription('');
-      setIsSaveAsModalOpen(true);
+      handleOpenSaveModal();
     }
   };
 
-  const handleSaveAs = () => {
-    if (!newStoryName.trim()) {
-      notifications.show({
-        title: 'Name Required',
-        message: 'Please enter a name for your story',
-        color: 'orange'
-      });
-      return;
+  const handleSaveStory = () => {
+    if (saveStoryName.trim()) {
+      saveCurrentStory(saveStoryName.trim());
+      setIsSaveModalOpen(false);
+      setSaveStoryName('');
     }
+  };
 
-    const saved = saveAsNewStory(newStoryName.trim(), newStoryDescription.trim() || undefined);
-    if (saved) {
-      notifications.show({
-        title: 'Story Saved',
-        message: `"${saved.name}" has been saved successfully`,
-        color: 'green',
-        icon: <IconCheck />
-      });
-      setIsSaveAsModalOpen(false);
-      setNewStoryName('');
-      setNewStoryDescription('');
-    } else {
-      notifications.show({
-        title: 'Save Failed',
-        message: 'Failed to save the story. Please try again.',
-        color: 'red'
-      });
+  const handleLoadStory = (storyId: string) => {
+    const success = loadStoryById(storyId);
+    if (success) {
+      setIsLoadModalOpen(false);
+    }
+  };
+
+  const handleDeleteStory = (storyId: string, event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (confirm('Are you sure you want to delete this story?')) {
+      deleteStory(storyId);
+      refreshSavedStories();
+      
+      // If we deleted the current story, create a new one
+      if (currentStoryId === storyId) {
+        newStory();
+      }
     }
   };
 
   const handleNewStory = () => {
+    if (isDirty && !confirm('You have unsaved changes. Are you sure you want to create a new story?')) {
+      return;
+    }
     newStory();
-    notifications.show({
-      title: 'New Story Created',
-      message: 'Started a new story',
-      color: 'blue'
-    });
   };
 
   return (
     <>
       <Group gap="xs">
-        <Tooltip label={currentStoryId ? "Save Story" : "Save Story As..."}>
+        <Tooltip label="New Story">
           <ActionIcon
-            variant={isDirty ? "filled" : "outline"}
-            color={isDirty ? "blue" : "gray"}
-            onClick={handleSave}
-            disabled={!isDirty}
+            size={size}
+            variant="subtle"
+            onClick={handleNewStory}
           >
-            <IconDeviceFloppy size={18} />
+            <IconPlus size={14} />
           </ActionIcon>
         </Tooltip>
 
-        <Tooltip label="New Story">
+        <Tooltip label="Save Story">
           <ActionIcon
-            variant="outline"
-            onClick={handleNewStory}
+            size={size}
+            variant={isDirty ? 'filled' : 'subtle'}
+            color={isDirty ? 'blue' : 'gray'}
+            onClick={handleQuickSave}
           >
-            <IconPlus size={18} />
+            <IconDeviceFloppy size={14} />
+          </ActionIcon>
+        </Tooltip>
+
+        <Tooltip label="Load Story">
+          <ActionIcon
+            size={size}
+            variant="subtle"
+            onClick={handleOpenLoadModal}
+          >
+            <IconFolderOpen size={14} />
           </ActionIcon>
         </Tooltip>
       </Group>
 
-      {/* Save As Modal */}
+      {/* Save Modal */}
       <Modal
-        opened={isSaveAsModalOpen}
-        onClose={() => setIsSaveAsModalOpen(false)}
-        title="Save Story As"
-        size="md"
+        opened={isSaveModalOpen}
+        onClose={() => setIsSaveModalOpen(false)}
+        title="Save Story"
+        size="sm"
       >
-        <Stack>
+        <Stack gap="md">
           <TextInput
             label="Story Name"
-            value={newStoryName}
-            onChange={(e) => setNewStoryName(e.target.value)}
-            placeholder="Enter story name"
+            placeholder="Enter story name..."
+            value={saveStoryName}
+            onChange={(event) => setSaveStoryName(event.currentTarget.value)}
             data-autofocus
           />
-          <Textarea
-            label="Description (optional)"
-            value={newStoryDescription}
-            onChange={(e) => setNewStoryDescription(e.target.value)}
-            placeholder="Enter story description"
-            rows={3}
-          />
-          <Group justify="flex-end">
-            <Button variant="subtle" onClick={() => setIsSaveAsModalOpen(false)}>
+          
+          <Group justify="flex-end" gap="xs">
+            <Button
+              variant="outline"
+              onClick={() => setIsSaveModalOpen(false)}
+            >
               Cancel
             </Button>
             <Button
-              leftSection={<IconDeviceFloppy size={16} />}
-              onClick={handleSaveAs}
-              disabled={!newStoryName.trim()}
+              onClick={handleSaveStory}
+              disabled={!saveStoryName.trim()}
             >
-              Save Story
+              Save
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      {/* Load Modal */}
+      <Modal
+        opened={isLoadModalOpen}
+        onClose={() => setIsLoadModalOpen(false)}
+        title="Load Story"
+        size="md"
+      >
+        <Stack gap="md">
+          {savedStories.length === 0 ? (
+            <Text c="dimmed" ta="center" py="lg">
+              No saved stories found
+            </Text>
+          ) : (
+            <List spacing="xs" size="sm">
+              {savedStories.map((story) => (
+                <List.Item key={story.id} style={{ listStyle: 'none', padding: 0 }}>
+                  <Group
+                    justify="space-between"
+                    p="sm"
+                    style={{
+                      border: '1px solid #e9ecef',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      backgroundColor: story.id === currentStoryId ? '#f1f3f4' : 'white'
+                    }}
+                    onClick={() => handleLoadStory(story.id)}
+                  >
+                    <Stack gap="xs" style={{ flex: 1 }}>
+                      <Text fw={500}>{story.name}</Text>
+                      <Text size="xs" c="dimmed">
+                        {story.components.length} components • Updated {new Date(story.updatedAt).toLocaleDateString()}
+                      </Text>
+                    </Stack>
+                    
+                    <ActionIcon
+                      size="sm"
+                      variant="subtle"
+                      color="red"
+                      onClick={(e) => handleDeleteStory(story.id, e)}
+                    >
+                      <IconTrash size={14} />
+                    </ActionIcon>
+                  </Group>
+                </List.Item>
+              ))}
+            </List>
+          )}
+          
+          <Group justify="flex-end">
+            <Button
+              variant="outline"
+              onClick={() => setIsLoadModalOpen(false)}
+            >
+              Close
             </Button>
           </Group>
         </Stack>
