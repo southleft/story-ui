@@ -14,15 +14,21 @@ export function generateStoryFileContent(
   const imports = generateImports(components);
   
   // Extract the story title from the name
-  const storyTitle = storyName
+  const baseTitle = storyName
     .replace(/([A-Z])/g, ' $1')
     .replace(/^\s+/, '')
     .trim();
   
-  return `import React from 'react';
+  // Use the base title without any editing suffix
+  const storyTitle = baseTitle;
+  
+  // Always use the standard decorator path
+  const decoratorPath = '../decorators/VisualBuilderDecorator';
+  
+  const content = `import React from 'react';
 import type { Meta, StoryObj } from '@storybook/react';
 ${imports}
-import { withVisualBuilderButton } from '../decorators/VisualBuilderDecorator';
+import { withVisualBuilderButton } from '${decoratorPath}';
 
 const meta = {
   title: 'Generated/${storyTitle}',
@@ -42,6 +48,11 @@ export const Default: Story = {
 ${jsxCode.split('\n').map(line => '    ' + line).join('\n')}
   )
 };`;
+
+  // Validate that the generated content doesn't contain incorrect style syntax
+  validateGeneratedContent(content);
+
+  return content;
 }
 
 /**
@@ -125,7 +136,7 @@ ${indentStr}</${componentName}>`;
 /**
  * Generate props string for a component
  */
-function generatePropsString(props: Record<string, any>, componentType: string): string {
+export function generatePropsString(props: Record<string, any>, componentType: string): string {
   const propEntries = Object.entries(props);
   
   // Filter out children prop for components that handle text content between tags
@@ -152,27 +163,67 @@ function generatePropsString(props: Record<string, any>, componentType: string):
   const propsString = filteredProps
     .map(([key, value]) => {
       // Handle special cases
-      if (key === 'style' && typeof value === 'object') {
-        const styleEntries = Object.entries(value)
-          .map(([k, v]) => {
-            // Convert camelCase to proper CSS property names if needed
-            const cssKey = k;
-            const cssValue = typeof v === 'string' ? `'${v}'` : v;
-            return `${cssKey}: ${cssValue}`;
-          })
-          .join(', ');
-        return `style={{ ${styleEntries} }}`;
+      if (key === 'style') {
+        // Check if value is already a string (incorrectly formatted)
+        if (typeof value === 'string') {
+          console.warn('Style prop received as string:', value);
+          // Try to parse it if it looks like an object string
+          if (value.startsWith('{') && value.endsWith('}')) {
+            try {
+              // Remove outer braces and parse
+              const styleStr = value.slice(1, -1).trim();
+              const stylePairs = styleStr.split(',').map(pair => {
+                const [k, v] = pair.split(':').map(s => s.trim());
+                const cssValue = v && v.includes("'") ? v : `'${v}'`;
+                return `${k}: ${cssValue}`;
+              }).join(', ');
+              return `style={{ ${stylePairs} }}`;
+            } catch (e) {
+              console.error('Failed to parse style string:', e);
+            }
+          }
+          // If we can't parse it, just wrap it properly
+          return `style={{ ${value.replace(/[{}]/g, '')} }}`;
+        } else if (typeof value === 'object') {
+          const styleEntries = Object.entries(value)
+            .map(([k, v]) => {
+              // Convert camelCase to proper CSS property names if needed
+              const cssKey = k;
+              const cssValue = typeof v === 'string' ? `'${v}'` : v;
+              return `${cssKey}: ${cssValue}`;
+            })
+            .join(', ');
+          return `style={{ ${styleEntries} }}`;
+        }
       }
       
       if (typeof value === 'boolean') {
         return value ? key : `${key}={false}`;
       } else if (typeof value === 'string') {
+        // Special check: if key is 'style' and value looks like an object string, handle it
+        if (key === 'style' && (value.includes('{') || value.includes(':'))) {
+          console.warn('Style prop detected as string in fallback:', value);
+          // Try to clean it up
+          const cleanStyle = value.replace(/^["']|["']$/g, '').replace(/[{}]/g, '').trim();
+          return `style={{ ${cleanStyle} }}`;
+        }
         return `${key}="${value}"`;
       } else if (typeof value === 'number') {
         return `${key}={${value}}`;
       } else if (Array.isArray(value)) {
         return `${key}={${JSON.stringify(value)}}`;
       } else {
+        // Check if this is a style object that wasn't caught earlier
+        if (key === 'style' && typeof value === 'object') {
+          console.warn('Style object detected in fallback:', value);
+          const styleEntries = Object.entries(value)
+            .map(([k, v]) => {
+              const cssValue = typeof v === 'string' ? `'${v}'` : v;
+              return `${k}: ${cssValue}`;
+            })
+            .join(', ');
+          return `style={{ ${styleEntries} }}`;
+        }
         return `${key}={${JSON.stringify(value)}}`;
       }
     })
@@ -208,7 +259,8 @@ export async function updateStoryFile(
         fileName,
         filePath,
         components,
-        storyName
+        storyName,
+        createBackup: false // Never create backups from Visual Builder
       })
     });
     
@@ -243,5 +295,28 @@ export async function updateStoryFile(
       success: false, 
       error: 'Story UI server not available. Changes saved locally.' 
     };
+  }
+}
+
+/**
+ * Validate that generated content doesn't contain incorrect style syntax
+ */
+function validateGeneratedContent(content: string): void {
+  // Check for incorrect style syntax: style="{ ... }"
+  const incorrectStylePattern = /style="\{[^}]*\}"/g;
+  const matches = content.match(incorrectStylePattern);
+  
+  if (matches) {
+    console.error('❌ Detected incorrect style syntax in generated content:');
+    matches.forEach(match => {
+      console.error(`   ${match}`);
+    });
+    console.error('   Style props should use JSX object syntax: style={{ ... }}');
+    
+    throw new Error(
+      `Invalid style syntax detected in generated content. ` +
+      `Found ${matches.length} occurrence(s) of style="{ ... }" ` +
+      `instead of style={{ ... }}. This would cause React errors.`
+    );
   }
 }

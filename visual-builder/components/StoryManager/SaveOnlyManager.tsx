@@ -2,6 +2,7 @@ import React from 'react';
 import { ActionIcon, Tooltip } from '@mantine/core';
 import { IconDeviceFloppy } from '@tabler/icons-react';
 import { useVisualBuilderStore } from '../../store/visualBuilderStore';
+import { saveStoryFile, getCleanFileName, filePathToStoryName } from '../../utils/storyFileManager';
 
 interface SaveOnlyManagerProps {
   /** Story file path to save to */
@@ -34,22 +35,21 @@ export const SaveOnlyManager: React.FC<SaveOnlyManagerProps> = ({
     }
 
     try {
-      // In production, this would save to the actual story file
-      // For now, we save to sessionStorage with the story path as key
-      const storyData = {
-        components,
-        filePath: storyFilePath,
-        timestamp: Date.now()
-      };
+      // Use the new simplified save system
+      const cleanFileName = getCleanFileName(storyFilePath.split('/').pop() || storyFilePath);
+      const storyName = filePathToStoryName(cleanFileName);
       
-      const key = `visualBuilder-story-${storyFilePath.replace(/[^a-zA-Z0-9]/g, '-')}`;
-      localStorage.setItem(key, JSON.stringify(storyData));
+      const result = await saveStoryFile(storyFilePath, components, {
+        storyName,
+        createBackup: false // Visual Builder never creates backups
+      });
       
-      // Also save to sessionStorage for immediate access
-      sessionStorage.setItem('visualBuilderComponents', JSON.stringify(storyData));
-      
-      markClean();
-      console.log(`✅ Saved to story: ${storyFilePath}`);
+      if (result.success) {
+        markClean();
+        console.log(`✅ Saved story: ${result.fileName}`);
+      } else {
+        console.error(`❌ Failed to save: ${result.error}`);
+      }
     } catch (error) {
       console.error('Failed to save story:', error);
     }

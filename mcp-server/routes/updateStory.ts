@@ -9,7 +9,7 @@ import { logger } from '../../story-generator/logger.js';
  * This uses the same file system access that Story UI already uses for generation
  */
 export async function updateStoryFromVisualBuilder(req: Request, res: Response) {
-  const { filePath, components, storyName, fileName, preserveOriginal = true } = req.body;
+  const { filePath, components, storyName, fileName, createBackup = false } = req.body;
   
   if (!fileName && !filePath) {
     return res.status(400).json({ 
@@ -22,69 +22,53 @@ export async function updateStoryFromVisualBuilder(req: Request, res: Response) 
     // Load the Story UI configuration to get the stories path
     const config = loadUserConfig();
     
-    // Determine the full file path
-    let fullPath: string;
-    let originalPath: string;
+    // Determine the target file path - always save to main directory
+    let targetPath: string;
     
     if (filePath) {
       // If full path is provided, use it (with validation)
-      originalPath = path.join(config.generatedStoriesPath, path.basename(filePath));
+      targetPath = path.join(config.generatedStoriesPath, path.basename(filePath));
     } else {
       // Use fileName to construct path
       const cleanFileName = fileName.includes('.stories.tsx') 
         ? fileName 
         : `${fileName}.stories.tsx`;
-      originalPath = path.join(config.generatedStoriesPath, cleanFileName);
+      targetPath = path.join(config.generatedStoriesPath, cleanFileName);
     }
     
-    // If preserveOriginal is true, save edited version in 'edited' subdirectory
-    if (preserveOriginal) {
-      const editedDir = path.join(config.generatedStoriesPath, 'edited');
-      // Ensure edited directory exists
-      if (!fs.existsSync(editedDir)) {
-        fs.mkdirSync(editedDir, { recursive: true });
-        logger.log(`📁 Created edited stories directory: ${editedDir}`);
-      }
-      
-      // Save to edited directory with same filename
-      fullPath = path.join(editedDir, path.basename(originalPath));
-      logger.log(`📝 Saving edited version to: ${fullPath}`);
-    } else {
-      // Overwrite original file
-      fullPath = originalPath;
-      logger.log(`📝 Overwriting original story: ${fullPath}`);
+    // Optional backup creation (only if explicitly requested)
+    if (createBackup && fs.existsSync(targetPath)) {
+      const backupPath = targetPath.replace('.stories.tsx', '.backup.stories.tsx');
+      fs.copyFileSync(targetPath, backupPath);
+      logger.log(`📦 Created backup: ${backupPath}`);
     }
     
-    logger.log(`📝 Updating story file: ${fullPath}`);
+    logger.log(`📝 Updating story file: ${targetPath}`);
     
     // Generate the new story content from components
     const { generateStoryFileContent } = await import('../../visual-builder/utils/storyFileUpdater.js');
     const newContent = generateStoryFileContent(
       components,
       storyName || 'Updated Story',
-      path.basename(fullPath)
+      path.basename(targetPath)
     );
     
     // Check if file exists (for updates) or create new (for saves)
-    const fileExists = fs.existsSync(fullPath);
-    const originalExists = fs.existsSync(originalPath);
+    const fileExists = fs.existsSync(targetPath);
     
-    // Write the file using the same mechanism as story generation
-    fs.writeFileSync(fullPath, newContent, 'utf-8');
+    // Write the file - always overwrite
+    fs.writeFileSync(targetPath, newContent, 'utf-8');
     
     logger.log(`✅ Successfully ${fileExists ? 'updated' : 'created'} story file`);
     
-    // Return success response with additional metadata
+    // Return success response
     res.json({
       success: true,
-      filePath: fullPath,
-      fileName: path.basename(fullPath),
+      filePath: targetPath,
+      fileName: path.basename(targetPath),
       action: fileExists ? 'updated' : 'created',
-      isEdited: preserveOriginal,
-      originalExists,
-      message: preserveOriginal 
-        ? `Story saved to edited directory. Original preserved.`
-        : `Story ${fileExists ? 'updated' : 'saved'} successfully`
+      hasBackup: createBackup && fileExists,
+      message: `Story ${fileExists ? 'updated' : 'created'} successfully`
     });
     
   } catch (error: any) {
