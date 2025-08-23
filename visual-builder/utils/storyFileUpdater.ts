@@ -16,7 +16,7 @@ export function generateStoryFileContent(
   // Extract the story title from the name
   const storyTitle = storyName
     .replace(/([A-Z])/g, ' $1')
-    .replace(/^\\s+/, '')
+    .replace(/^\s+/, '')
     .trim();
   
   return `import React from 'react';
@@ -95,13 +95,26 @@ ${indentStr}</${componentName}>`;
     } else if (hasTextContent) {
       // Component with text content
       const textContent = props.children as string;
-      // Check if text content should be on the same line
-      if (textContent.length < 50 && !textContent.includes('\n')) {
+      // For multi-line text, preserve line breaks and handle indentation properly
+      if (textContent.includes('\n')) {
+        const lines = textContent.split('\n');
+        const indentedLines = lines.map((line, index) => {
+          if (index === 0 && line.trim() === '') return '';
+          return line.trim() === '' ? '' : `${indentStr}  ${line.trim()}`;
+        }).filter((line, index, arr) => {
+          // Remove empty lines at the start and end
+          if (index === 0 || index === arr.length - 1) {
+            return line.trim() !== '';
+          }
+          return true;
+        });
+        return `${indentStr}<${componentName}${propsString}>\n${indentedLines.join('\n')}\n${indentStr}</${componentName}>`;
+      }
+      // Single line text - check if it should be on the same line
+      else if (textContent.length < 50) {
         return `${indentStr}<${componentName}${propsString}>${textContent}</${componentName}>`;
       }
-      return `${indentStr}<${componentName}${propsString}>
-${indentStr}  ${textContent}
-${indentStr}</${componentName}>`;
+      return `${indentStr}<${componentName}${propsString}>\n${indentStr}  ${textContent}\n${indentStr}</${componentName}>`;
     } else {
       // Self-closing component
       return `${indentStr}<${componentName}${propsString} />`;
@@ -115,11 +128,15 @@ ${indentStr}</${componentName}>`;
 function generatePropsString(props: Record<string, any>, componentType: string): string {
   const propEntries = Object.entries(props);
   
-  // Filter out children prop for components that don't use it as text content
+  // Filter out children prop for components that handle text content between tags
   const filteredProps = propEntries.filter(([key, value]) => {
     if (key === 'children') {
-      // Keep children prop only for text-based components
-      return ['Button', 'Text', 'Title', 'Badge', 'Code', 'Mark', 'Anchor'].includes(componentType) && 
+      // Never include children as a prop for Text components - they use content between tags
+      if (componentType === 'Text' || componentType === 'Title') {
+        return false;
+      }
+      // Keep children prop only for other text-based components that use it as a prop
+      return ['Button', 'Badge', 'Code', 'Mark', 'Anchor'].includes(componentType) && 
              typeof value === 'string';
     }
     // Filter out undefined, null, empty string
@@ -136,7 +153,15 @@ function generatePropsString(props: Record<string, any>, componentType: string):
     .map(([key, value]) => {
       // Handle special cases
       if (key === 'style' && typeof value === 'object') {
-        return `style={{ ${Object.entries(value).map(([k, v]) => `${k}: ${typeof v === 'string' ? `"${v}"` : v}`).join(', ')} }}`;
+        const styleEntries = Object.entries(value)
+          .map(([k, v]) => {
+            // Convert camelCase to proper CSS property names if needed
+            const cssKey = k;
+            const cssValue = typeof v === 'string' ? `'${v}'` : v;
+            return `${cssKey}: ${cssValue}`;
+          })
+          .join(', ');
+        return `style={{ ${styleEntries} }}`;
       }
       
       if (typeof value === 'boolean') {
@@ -157,44 +182,66 @@ function generatePropsString(props: Record<string, any>, componentType: string):
 }
 
 /**
- * Update story file endpoint (for API integration)
+ * Update story file via Story UI MCP server
  */
 export async function updateStoryFile(
   filePath: string,
   components: ComponentDefinition[],
   storyName: string
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; message?: string }> {
   try {
     // Extract fileName from filePath
     const fileName = filePath.split('/').pop() || filePath;
     
-    // Generate the new story content
+    // Determine the API port from environment or default
+    const apiPort = (window as any).STORY_UI_MCP_PORT || 
+                   (window as any).__STORY_UI_PORT__ || 
+                   '4001';
+    
+    // Call the Story UI server to update the file
+    const response = await fetch(`http://localhost:${apiPort}/story-ui/visual-builder/update`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        fileName,
+        filePath,
+        components,
+        storyName
+      })
+    });
+    
+    const result = await response.json();
+    
+    if (result.success) {
+      console.log(`✅ Story file updated via MCP server: ${result.fileName}`);
+      return { 
+        success: true,
+        message: result.message || 'Story updated successfully'
+      };
+    } else {
+      console.error('Failed to update story file:', result.error);
+      return { 
+        success: false, 
+        error: result.error || 'Unknown error' 
+      };
+    }
+  } catch (error) {
+    console.error('Failed to connect to Story UI server:', error);
+    
+    // Fallback to localStorage if server is not available
+    const fileName = filePath.split('/').pop() || filePath;
     const newContent = generateStoryFileContent(components, storyName, fileName);
     
-    // In a real implementation, this would make an API call to update the file
-    // For now, we'll save it to localStorage with a special key
     const updateKey = `story-update-${filePath.replace(/[^a-zA-Z0-9]/g, '-')}`;
     localStorage.setItem(updateKey, newContent);
     
-    // Also save metadata about the update
-    const updates = JSON.parse(localStorage.getItem('story-updates') || '[]');
-    updates.push({
-      filePath,
-      storyName,
-      timestamp: Date.now(),
-      content: newContent
-    });
-    localStorage.setItem('story-updates', JSON.stringify(updates));
+    console.warn('⚠️ Server unavailable, saved to localStorage as fallback');
     
-    console.log(`📝 Story file update prepared for: ${filePath}`);
-    console.log('Generated content:', newContent);
-    
-    return { success: true };
-  } catch (error) {
-    console.error('Failed to update story file:', error);
     return { 
       success: false, 
-      error: error instanceof Error ? error.message : 'Unknown error' 
+      error: 'Story UI server not available. Changes saved locally.' 
     };
   }
 }

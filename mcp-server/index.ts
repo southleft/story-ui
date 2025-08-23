@@ -14,6 +14,7 @@ import cors from 'cors';
 import { getComponents, getProps } from './routes/components.js';
 import { claudeProxy } from './routes/claude.js';
 import { generateStoryFromPrompt } from './routes/generateStory.js';
+import { updateStoryFromVisualBuilder, getStoryForVisualBuilder } from './routes/updateStory.js';
 import {
   getStoriesMetadata,
   getStoryById as getMemoryStoryById,
@@ -81,6 +82,10 @@ app.post('/story-ui/claude', claudeProxy);
 app.get('/story-ui/components', getComponents);
 app.get('/story-ui/props', getProps);
 app.get('/story-ui/memory-stats', getMemoryStats);
+
+// Visual Builder update routes
+app.post('/story-ui/visual-builder/update', updateStoryFromVisualBuilder);
+app.get('/story-ui/visual-builder/load', getStoryForVisualBuilder);
 
 // Legacy delete route for backwards compatibility
 app.post('/story-ui/delete', async (req, res) => {

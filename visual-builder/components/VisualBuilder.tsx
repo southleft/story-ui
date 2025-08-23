@@ -260,14 +260,25 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
                   // Save to store
                   saveCurrentStory(finalName);
                   
-                  // If we have a story file path, update the actual file
-                  if (storyFilePath) {
-                    const result = await updateStoryFile(storyFilePath, components, finalName);
+                  // Always try to update the story file if we have components
+                  if (components.length > 0) {
+                    // Use the story file path or generate one from the story name
+                    const fileToUpdate = storyFilePath || `${finalName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.stories.tsx`;
+                    const result = await updateStoryFile(fileToUpdate, components, finalName);
+                    
                     if (result.success) {
-                      console.log(`✅ Updated story file: ${storyFilePath}`);
-                      alert('Story saved successfully! Refresh Storybook to see changes.');
+                      console.log(`✅ Updated story file: ${fileToUpdate}`);
+                      // Show success message
+                      const message = result.message || 'Story saved successfully!';
+                      alert(`${message}\n\nRefresh Storybook to see your changes.`);
                     } else {
                       console.error('Failed to update story file:', result.error);
+                      // Show error but reassure user that changes are saved locally
+                      if (result.error?.includes('server not available')) {
+                        alert('Story UI server is not running.\n\nYour changes have been saved locally.\nMake sure the Story UI server is running to save to files.');
+                      } else {
+                        alert(`Failed to save story: ${result.error}\n\nPlease try again.`);
+                      }
                     }
                   } else {
                     console.log(`✅ Saved story: ${finalName}`);
