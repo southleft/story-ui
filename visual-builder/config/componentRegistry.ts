@@ -426,6 +426,30 @@ export const MANTINE_COMPONENTS: VisualBuilderComponentConfig[] = [
     ])
   },
   {
+    type: 'CardSection',
+    displayName: 'Card Section',
+    category: 'Layout',
+    defaultProps: {
+      children: []
+    },
+    properties: addSpacingProperties([
+      {
+        name: 'withBorder',
+        type: 'boolean',
+        defaultValue: false,
+        description: 'Show border around section',
+        category: 'appearance'
+      },
+      {
+        name: 'inheritPadding',
+        type: 'boolean',
+        defaultValue: false,
+        description: 'Inherit card padding',
+        category: 'appearance'
+      }
+    ])
+  },
+  {
     type: 'Badge',
     displayName: 'Badge',
     category: 'Display',
@@ -1732,4 +1756,4 @@ export const getComponentsByCategory = () => {
 };
 
 // List of container components that can accept children
-export const CONTAINER_COMPONENTS = ['Container', 'Group', 'Stack', 'Card', 'Paper', 'Box', 'Flex', 'Grid', 'GridCol', 'SimpleGrid', 'Tabs', 'Indicator', 'Tooltip', 'Popover'];
+export const CONTAINER_COMPONENTS = ['Container', 'Group', 'Stack', 'Card', 'CardSection', 'Paper', 'Box', 'Flex', 'Grid', 'GridCol', 'SimpleGrid', 'Tabs', 'Indicator', 'Tooltip', 'Popover'];

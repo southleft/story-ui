@@ -130,9 +130,12 @@ export const SpacingControl: React.FC<SpacingControlProps> = ({ values, onChange
         data={SPACING_OPTIONS}
         placeholder={placeholder}
         size="xs"
-        w={60}
+        w={75}
         clearable
         allowDeselect
+        styles={{
+          dropdown: { zIndex: 1000 }
+        }}
       />
     );
   };
@@ -193,7 +196,8 @@ export const SpacingControl: React.FC<SpacingControlProps> = ({ values, onChange
             position: 'relative',
             border: '1px dashed #228be6',
             borderRadius: '4px',
-            padding: '12px'
+            padding: '20px',
+            minHeight: '120px'
           }}
         >
           {/* Margin Top */}
@@ -308,7 +312,8 @@ export const SpacingControl: React.FC<SpacingControlProps> = ({ values, onChange
             position: 'relative',
             border: '1px dashed #40c057',
             borderRadius: '4px',
-            padding: '12px'
+            padding: '20px',
+            minHeight: '120px'
           }}
         >
           {/* Padding Top */}

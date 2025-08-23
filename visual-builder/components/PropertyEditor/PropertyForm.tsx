@@ -89,7 +89,7 @@ export const PropertyForm: React.FC<PropertyFormProps> = ({
     }
 
     return (
-      <Box key={property.name} mb="md">
+      <Box key={property.name} mb="xs">
         <Group justify="space-between" mb="xs">
           <Text size="sm" fw={500}>
             {property.name.charAt(0).toUpperCase() + property.name.slice(1)}
@@ -205,7 +205,7 @@ export const PropertyForm: React.FC<PropertyFormProps> = ({
                       <Box key={property.name}>
                         {renderedInput}
                         {propertyIndex < groupedProperties[category].length - 1 && (
-                          <Divider mb="md" />
+                          <Divider mb="xs" />
                         )}
                       </Box>
                     );

@@ -7,7 +7,7 @@ export const ComponentPalette: React.FC = () => {
   const componentsByCategory = getComponentsByCategory();
 
   return (
-    <Box p="md">
+    <Box p="sm">
       <Accordion defaultValue={['Layout', 'Inputs', 'Typography']} multiple>
         {Object.entries(componentsByCategory).map(([category, components]) => (
           <Accordion.Item key={category} value={category}>

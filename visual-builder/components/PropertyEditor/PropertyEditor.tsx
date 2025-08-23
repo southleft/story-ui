@@ -8,7 +8,7 @@ export const PropertyEditor: React.FC = () => {
 
   if (!selectedComponent) {
     return (
-      <Box p="md">
+      <Box p="sm">
         <Text c="dimmed" ta="center" mt="xl">
           Select a component to edit its properties
         </Text>
@@ -23,7 +23,7 @@ export const PropertyEditor: React.FC = () => {
   };
 
   return (
-    <Box p="md">
+    <Box p="sm">
       <Box mb="lg">
         <Group justify="space-between" align="center" mb="sm">
           <Text fw={600} size="sm">

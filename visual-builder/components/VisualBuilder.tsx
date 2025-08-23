@@ -6,10 +6,10 @@ import { Canvas } from './Canvas/Canvas';
 import { ComponentPalette } from './ComponentPalette/ComponentPalette';
 import { PropertyEditor } from './PropertyEditor/PropertyEditor';
 import { CodeExporter } from './CodeExporter/CodeExporter';
-import { StoryManager } from './StoryManager';
+import { SaveOnlyManager } from './StoryManager/SaveOnlyManager';
 import { useDragAndDrop } from '../hooks/useDragAndDrop';
 import { useVisualBuilderStore } from '../store/visualBuilderStore';
-import { getStoryIdFromURL } from '../utils/storyPersistence';
+import { getStoryIdFromURL, saveDraft, restoreDraft, getVisualBuilderEditURL } from '../utils/storyPersistence';
 
 interface VisualBuilderProps {
   /** Optional custom styling */
@@ -40,15 +40,25 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
   } = useDragAndDrop();
 
   const { 
+    components,
     clearCanvas, 
     openCodeModal, 
     loadFromCode, 
+    loadFromAI,
     importFromStoryUI,
     saveCurrentStory,
     loadStoryById,
     currentStoryName,
     isDirty
   } = useVisualBuilderStore();
+
+  // Create a stable story ID for drafts
+  const [storyId] = React.useState(() => {
+    const urlStoryId = getStoryIdFromURL();
+    const urlParams = new URLSearchParams(window.location.search);
+    const editId = urlParams.get('edit');
+    return editId || urlStoryId || `story-${Date.now()}`;
+  });
 
   // Load story from URL or initial code
   React.useEffect(() => {
@@ -59,6 +69,14 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
       if (success) {
         return; // Successfully loaded story from URL
       }
+    }
+    
+    // Try to restore draft if available
+    const draftComponents = restoreDraft(storyId);
+    if (draftComponents && draftComponents.length > 0) {
+      console.log('📝 Restored draft from localStorage');
+      loadFromAI(draftComponents);
+      return;
     }
     
     // Fallback to loading initial code if provided
@@ -74,7 +92,26 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
         loadFromCode(codeToLoad).catch(console.error);
       }
     }
-  }, [initialCode, initialContent, loadFromCode, importFromStoryUI, loadStoryById]);
+  }, [initialCode, initialContent, loadFromCode, loadFromAI, importFromStoryUI, loadStoryById, storyId]);
+
+  // Auto-save drafts
+  React.useEffect(() => {
+    if (components.length > 0 && isDirty) {
+      const timer = setTimeout(() => {
+        saveDraft(storyId, components);
+        console.log('💾 Auto-saved draft');
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [components, isDirty, storyId]);
+
+  // Update URL when editing
+  React.useEffect(() => {
+    if (window.location.pathname.includes('visual-builder')) {
+      const editURL = getVisualBuilderEditURL(storyId);
+      window.history.replaceState({}, '', editURL);
+    }
+  }, [storyId]);
 
   return (
     <DndContext
@@ -102,7 +139,7 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
             flexDirection: 'column'
           }}
         >
-          <Box p="md" style={{ borderBottom: '1px solid #e9ecef' }}>
+          <Box p="sm" style={{ borderBottom: '1px solid #e9ecef' }}>
             <Group justify="space-between" mb="sm">
               <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Components</h3>
             </Group>
@@ -136,10 +173,6 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
                 Export
               </Button>
             </Group>
-            
-            <Box mt="md">
-              <StoryManager size="sm" />
-            </Box>
           </Box>
           <Box style={{ flex: 1, overflow: 'auto' }}>
             <ComponentPalette />
@@ -148,7 +181,7 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
 
         {/* Main Canvas Area */}
         <Box style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-          <Box p="md" style={{ borderBottom: '1px solid #e9ecef', backgroundColor: 'white' }}>
+          <Box p="sm" style={{ borderBottom: '1px solid #e9ecef', backgroundColor: 'white' }}>
             <Group justify="space-between" align="center">
               <Group align="center" gap="sm">
                 <Text fw={500} size="lg">Canvas</Text>
@@ -201,7 +234,7 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
             flexDirection: 'column'
           }}
         >
-          <Box p="md" style={{ borderBottom: '1px solid #e9ecef' }}>
+          <Box p="sm" style={{ borderBottom: '1px solid #e9ecef' }}>
             <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Properties</h3>
           </Box>
           <Box style={{ flex: 1, overflow: 'auto' }}>

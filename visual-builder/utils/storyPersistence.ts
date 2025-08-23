@@ -136,3 +136,63 @@ export function cancelAutoSave(): void {
     autoSaveTimer = null;
   }
 }
+
+/**
+ * Save draft to localStorage (for recovery on refresh)
+ */
+export function saveDraft(storyId: string, components: ComponentDefinition[]): void {
+  const draftKey = `visual-builder-draft-${storyId}`;
+  const draft = {
+    components,
+    timestamp: Date.now(),
+    storyId
+  };
+  try {
+    localStorage.setItem(draftKey, JSON.stringify(draft));
+  } catch (error) {
+    console.error('Failed to save draft:', error);
+  }
+}
+
+/**
+ * Restore draft from localStorage
+ */
+export function restoreDraft(storyId: string): ComponentDefinition[] | null {
+  const draftKey = `visual-builder-draft-${storyId}`;
+  try {
+    const stored = localStorage.getItem(draftKey);
+    if (stored) {
+      const draft = JSON.parse(stored);
+      // Check if draft is recent (within last 24 hours)
+      const ageInHours = (Date.now() - draft.timestamp) / (1000 * 60 * 60);
+      if (ageInHours < 24) {
+        return draft.components;
+      }
+      // Clean up old draft
+      localStorage.removeItem(draftKey);
+    }
+  } catch (error) {
+    console.error('Failed to restore draft:', error);
+  }
+  return null;
+}
+
+/**
+ * Clear draft from localStorage
+ */
+export function clearDraft(storyId: string): void {
+  const draftKey = `visual-builder-draft-${storyId}`;
+  try {
+    localStorage.removeItem(draftKey);
+  } catch (error) {
+    console.error('Failed to clear draft:', error);
+  }
+}
+
+/**
+ * Get Visual Builder edit URL
+ */
+export function getVisualBuilderEditURL(storyId: string): string {
+  const baseURL = window.location.origin + window.location.pathname;
+  return `${baseURL}?path=/visual-builder&edit=${storyId}`;
+}
