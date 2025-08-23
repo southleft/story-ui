@@ -123,20 +123,46 @@ export async function getStoryForVisualBuilder(req: Request, res: Response) {
     const cleanFileName = String(fileName).includes('.stories.tsx') 
       ? String(fileName) 
       : `${fileName}.stories.tsx`;
-    const fullPath = path.join(config.generatedStoriesPath, cleanFileName);
     
+    // First, try to find the file in the generated directory
+    let fullPath = path.join(config.generatedStoriesPath, cleanFileName);
+    
+    // If not found and it's an edited file, check the edited directory
     if (!fs.existsSync(fullPath)) {
-      return res.status(404).json({ 
-        error: 'Story file not found',
-        fileName: cleanFileName 
-      });
+      const editedPath = path.join(config.generatedStoriesPath, '..', 'edited', cleanFileName);
+      if (fs.existsSync(editedPath)) {
+        fullPath = editedPath;
+      } else {
+        // Also try to find files with a hash suffix (e.g., basic-card-781ccd01.stories.tsx)
+        const baseFileName = cleanFileName.replace('.stories.tsx', '');
+        const generatedDir = config.generatedStoriesPath;
+        
+        // Check if there's a file that starts with the base name
+        if (fs.existsSync(generatedDir)) {
+          const files = fs.readdirSync(generatedDir);
+          const matchingFile = files.find(file => 
+            file.startsWith(baseFileName) && file.endsWith('.stories.tsx')
+          );
+          
+          if (matchingFile) {
+            fullPath = path.join(generatedDir, matchingFile);
+          } else {
+            return res.status(404).json({ 
+              error: 'Story file not found',
+              fileName: cleanFileName,
+              searched: [fullPath, editedPath],
+              baseFileName
+            });
+          }
+        }
+      }
     }
     
     const content = fs.readFileSync(fullPath, 'utf-8');
     
     res.json({
       success: true,
-      fileName: cleanFileName,
+      fileName: path.basename(fullPath),
       content,
       filePath: fullPath
     });
