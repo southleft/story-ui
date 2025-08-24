@@ -1362,13 +1362,25 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
   // DEBUG: Wrapper styling decision
   console.log(`🔵 [Wrapper] ${component.type} - preserveOriginalLayout: ${preserveOriginalLayout}, selected: ${selected}, isContainer: ${isContainer}`);
   
-  // When preserving original layout, use minimal wrapper styling
+  // Hover state management
+  const [isHovered, setIsHovered] = React.useState(false);
+  
+  // When preserving original layout, use minimal wrapper styling with hover/selection indicators
   const wrapperStyle: React.CSSProperties = preserveOriginalLayout ? {
     ...style,
-    outline: 'none',
     position: 'relative' as const,
-    // Remove any display/layout properties that might interfere
-    display: 'contents' // This makes the wrapper "invisible" to layout
+    // Use box-shadow instead of outline for selection/hover - doesn't affect layout
+    boxShadow: selected ? 'inset 0 0 0 2px #3b82f6' : 
+               isHovered ? 'inset 0 0 0 2px rgba(59, 130, 246, 0.3)' : 'none',
+    // Subtle background for hover - very light tint
+    backgroundColor: isHovered && !selected ? 'rgba(59, 130, 246, 0.02)' : 'transparent',
+    // Smooth transitions
+    transition: 'box-shadow 0.2s ease, background-color 0.2s ease',
+    // Keep borders at exactly 0 to not affect layout
+    borderWidth: 0,
+    borderStyle: 'none',
+    padding: 0,
+    margin: 0
   } : {
     ...style,
     borderWidth: selected && !isContainer ? '2px' : '0',
@@ -1384,6 +1396,8 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
     <Box
       ref={dragRef}
       style={wrapperStyle}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
       {...attributes}
       {...listeners}
     >
