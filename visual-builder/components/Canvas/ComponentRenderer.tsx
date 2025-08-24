@@ -254,6 +254,7 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
           <Title
             {...commonProps}
             order={Number(props.order) as 1 | 2 | 3 | 4 | 5 | 6}
+            fw={props.fw || props.weight || undefined}
             c={props.color || undefined}
           >
             {props.children}
@@ -824,9 +825,7 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
             ref={boxRef}
             style={{
               ...commonProps.style,
-              ...(preserveOriginalLayout ? {
-                backgroundColor: props.bg || (commonProps.style as any)?.backgroundColor || 'transparent'
-              } : {
+              ...(preserveOriginalLayout ? {} : {
                 minHeight: children?.length === 0 ? '100px' : 'auto',
                 borderWidth: isOver || selected ? '2px' : '1px',
                 borderStyle: isOver || !selected ? 'dashed' : 'solid',
