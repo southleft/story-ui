@@ -115,7 +115,7 @@ export async function updateStoryFromVisualBuilder(req: Request, res: Response) 
  * This allows Visual Builder to load existing stories
  */
 export async function getStoryForVisualBuilder(req: Request, res: Response) {
-  const { fileName } = req.query;
+  const { fileName, isEdited } = req.query;
   
   if (!fileName) {
     return res.status(400).json({ 
@@ -129,15 +129,68 @@ export async function getStoryForVisualBuilder(req: Request, res: Response) {
       ? String(fileName) 
       : `${fileName}.stories.tsx`;
     
-    // First, try to find the file in the generated directory
-    let fullPath = path.join(config.generatedStoriesPath, cleanFileName);
+    const isEditedStory = isEdited === 'true' || String(fileName).startsWith('edited-');
     
-    // If not found and it's an edited file, check the edited directory
-    if (!fs.existsSync(fullPath)) {
+    let fullPath: string;
+    
+    // Priority-based lookup: edited stories get priority in edited/ directory  
+    if (isEditedStory) {
+      // For edited stories, check edited/ directory first
       const editedPath = path.join(config.generatedStoriesPath, '..', 'edited', cleanFileName);
+      const generatedPath = path.join(config.generatedStoriesPath, cleanFileName);
+      
       if (fs.existsSync(editedPath)) {
         fullPath = editedPath;
+      } else if (fs.existsSync(generatedPath)) {
+        fullPath = generatedPath;
       } else {
+        // Try hash suffix matching in both directories
+        const baseFileName = cleanFileName.replace('.stories.tsx', '');
+        
+        // Check edited directory first
+        const editedDir = path.join(config.generatedStoriesPath, '..', 'edited');
+        if (fs.existsSync(editedDir)) {
+          const editedFiles = fs.readdirSync(editedDir);
+          const matchingEditedFile = editedFiles.find(file => 
+            file.startsWith(baseFileName) && file.endsWith('.stories.tsx')
+          );
+          if (matchingEditedFile) {
+            fullPath = path.join(editedDir, matchingEditedFile);
+          }
+        }
+        
+        // If still not found, check generated directory
+        if (!fullPath) {
+          const generatedDir = config.generatedStoriesPath;
+          if (fs.existsSync(generatedDir)) {
+            const generatedFiles = fs.readdirSync(generatedDir);
+            const matchingGeneratedFile = generatedFiles.find(file => 
+              file.startsWith(baseFileName) && file.endsWith('.stories.tsx')
+            );
+            if (matchingGeneratedFile) {
+              fullPath = path.join(generatedDir, matchingGeneratedFile);
+            }
+          }
+        }
+        
+        if (!fullPath) {
+          return res.status(404).json({ 
+            error: 'Story file not found',
+            fileName: cleanFileName,
+            searched: ['edited/', 'generated/'],
+            baseFileName
+          });
+        }
+      }
+    } else {
+      // For generated stories, check generated/ directory first
+      fullPath = path.join(config.generatedStoriesPath, cleanFileName);
+      
+      if (!fs.existsSync(fullPath)) {
+        const editedPath = path.join(config.generatedStoriesPath, '..', 'edited', cleanFileName);
+        if (fs.existsSync(editedPath)) {
+          fullPath = editedPath;
+        } else {
         // Also try to find files with a hash suffix (e.g., basic-card-781ccd01.stories.tsx)
         const baseFileName = cleanFileName.replace('.stories.tsx', '');
         const generatedDir = config.generatedStoriesPath;
@@ -155,7 +208,7 @@ export async function getStoryForVisualBuilder(req: Request, res: Response) {
             return res.status(404).json({ 
               error: 'Story file not found',
               fileName: cleanFileName,
-              searched: [fullPath, editedPath],
+              searched: ['generated/', 'edited/'],
               baseFileName
             });
           }
