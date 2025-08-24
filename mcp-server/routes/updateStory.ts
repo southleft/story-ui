@@ -41,7 +41,7 @@ export async function updateStoryFromVisualBuilder(req: Request, res: Response) 
       cleanFileName = cleanFileName + '.stories.tsx';
     }
     
-    // Check if this is an edited story (filename starts with 'edited-' or was previously in generated/)
+    // Determine if this should be saved as an edited story
     const isEditedStory = cleanFileName.startsWith('edited-') || 
                          cleanFileName.startsWith('generated-') ||
                          req.body.isEdited === true;
@@ -55,12 +55,28 @@ export async function updateStoryFromVisualBuilder(req: Request, res: Response) 
         fs.mkdirSync(editedPath, { recursive: true });
       }
       
-      // Replace 'generated-' prefix with 'edited-' if present
+      // Smart file name handling to prevent duplicate prefixes
+      let finalFileName = cleanFileName;
+      
+      // If it's a generated story being edited for the first time, convert the prefix
       if (cleanFileName.startsWith('generated-')) {
-        cleanFileName = cleanFileName.replace(/^generated-/, 'edited-');
+        finalFileName = cleanFileName.replace(/^generated-/, 'edited-');
+      }
+      // If it doesn't start with 'edited-', add the prefix (for new stories)
+      else if (!cleanFileName.startsWith('edited-')) {
+        finalFileName = `edited-${cleanFileName}`;
+      }
+      // If it already starts with 'edited-', keep it as is (re-editing existing edited story)
+      
+      // Check if a file already exists in the edited directory with the original name
+      // This handles re-editing scenarios where we want to update the existing file
+      const originalNamePath = path.join(editedPath, cleanFileName);
+      if (fs.existsSync(originalNamePath) && !cleanFileName.startsWith('edited-')) {
+        // Use the original filename to update the existing edited file
+        finalFileName = cleanFileName;
       }
       
-      targetPath = path.join(editedPath, cleanFileName);
+      targetPath = path.join(editedPath, finalFileName);
     } else {
       // Save generated stories to the main generated directory
       targetPath = path.join(config.generatedStoriesPath, cleanFileName);
@@ -74,6 +90,7 @@ export async function updateStoryFromVisualBuilder(req: Request, res: Response) 
     }
     
     logger.log(`📝 Updating story file: ${targetPath}`);
+    logger.log(`🔍 File name resolution: ${fileName} → ${cleanFileName} → ${path.basename(targetPath)}`);
     
     // Generate the new story content from components
     const { generateStoryFileContent } = await import('../../visual-builder/utils/storyFileUpdater.js');
@@ -131,7 +148,7 @@ export async function getStoryForVisualBuilder(req: Request, res: Response) {
     
     const isEditedStory = isEdited === 'true' || String(fileName).startsWith('edited-');
     
-    let fullPath: string;
+    let fullPath: string | undefined;
     
     // Priority-based lookup: edited stories get priority in edited/ directory  
     if (isEditedStory) {
@@ -191,29 +208,37 @@ export async function getStoryForVisualBuilder(req: Request, res: Response) {
         if (fs.existsSync(editedPath)) {
           fullPath = editedPath;
         } else {
-        // Also try to find files with a hash suffix (e.g., basic-card-781ccd01.stories.tsx)
-        const baseFileName = cleanFileName.replace('.stories.tsx', '');
-        const generatedDir = config.generatedStoriesPath;
-        
-        // Check if there's a file that starts with the base name
-        if (fs.existsSync(generatedDir)) {
-          const files = fs.readdirSync(generatedDir);
-          const matchingFile = files.find(file => 
-            file.startsWith(baseFileName) && file.endsWith('.stories.tsx')
-          );
+          // Also try to find files with a hash suffix (e.g., basic-card-781ccd01.stories.tsx)
+          const baseFileName = cleanFileName.replace('.stories.tsx', '');
+          const generatedDir = config.generatedStoriesPath;
           
-          if (matchingFile) {
-            fullPath = path.join(generatedDir, matchingFile);
-          } else {
-            return res.status(404).json({ 
-              error: 'Story file not found',
-              fileName: cleanFileName,
-              searched: ['generated/', 'edited/'],
-              baseFileName
-            });
+          // Check if there's a file that starts with the base name
+          if (fs.existsSync(generatedDir)) {
+            const files = fs.readdirSync(generatedDir);
+            const matchingFile = files.find(file => 
+              file.startsWith(baseFileName) && file.endsWith('.stories.tsx')
+            );
+            
+            if (matchingFile) {
+              fullPath = path.join(generatedDir, matchingFile);
+            } else {
+              return res.status(404).json({ 
+                error: 'Story file not found',
+                fileName: cleanFileName,
+                searched: ['generated/', 'edited/'],
+                baseFileName
+              });
+            }
           }
         }
       }
+    }
+    
+    if (!fullPath) {
+      return res.status(404).json({ 
+        error: 'Story file not found',
+        fileName: cleanFileName
+      });
     }
     
     const content = fs.readFileSync(fullPath, 'utf-8');

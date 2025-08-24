@@ -52,10 +52,10 @@ ${jsxCode.split('\n').map(line => '    ' + line).join('\n')}
   )
 };`;
 
-  // Validate that the generated content doesn't contain incorrect style syntax
-  validateGeneratedContent(content);
+  // Fix and validate the generated content to ensure correct style syntax
+  const fixedContent = validateGeneratedContent(content);
 
-  return content;
+  return fixedContent;
 }
 
 /**
@@ -336,24 +336,25 @@ export async function updateStoryFile(
 }
 
 /**
- * Validate that generated content doesn't contain incorrect style syntax
+ * Fix and validate generated content to ensure correct style syntax
  */
-function validateGeneratedContent(content: string): void {
-  // Check for incorrect style syntax: style="{ ... }"
-  const incorrectStylePattern = /style="\{[^}]*\}"/g;
-  const matches = content.match(incorrectStylePattern);
+function validateGeneratedContent(content: string): string {
+  // Check for incorrect style syntax: style="{ ... }" and fix it
+  const incorrectStylePattern = /style="(\{[^}]*\})"/g;
   
-  if (matches) {
-    console.error('❌ Detected incorrect style syntax in generated content:');
-    matches.forEach(match => {
-      console.error(`   ${match}`);
-    });
-    console.error('   Style props should use JSX object syntax: style={{ ... }}');
-    
-    throw new Error(
-      `Invalid style syntax detected in generated content. ` +
-      `Found ${matches.length} occurrence(s) of style="{ ... }" ` +
-      `instead of style={{ ... }}. This would cause React errors.`
-    );
+  let fixedContent = content;
+  let matchFound = false;
+  
+  fixedContent = content.replace(incorrectStylePattern, (match, styleContent) => {
+    matchFound = true;
+    console.warn(`⚠️ Fixing style syntax: ${match} → style={${styleContent}}`);
+    // Convert style="{ ... }" to style={{ ... }}
+    return `style={${styleContent}}`;
+  });
+  
+  if (matchFound) {
+    console.log('✅ Automatically fixed style syntax issues in generated content');
   }
+  
+  return fixedContent;
 }
