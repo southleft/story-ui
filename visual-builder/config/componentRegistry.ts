@@ -174,6 +174,13 @@ export const MANTINE_COMPONENTS: VisualBuilderComponentConfig[] = [
         defaultValue: false,
         description: 'Disable button interaction',
         category: 'behavior'
+      },
+      {
+        name: 'fullWidth',
+        type: 'boolean',
+        defaultValue: false,
+        description: 'Make button full width',
+        category: 'appearance'
       }
     ])
   },

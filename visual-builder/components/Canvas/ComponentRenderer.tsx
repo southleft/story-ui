@@ -211,6 +211,7 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
             size={props.size}
             color={props.color}
             disabled={props.disabled}
+            fullWidth={props.fullWidth}
           >
             {props.children}
           </Button>
@@ -232,8 +233,17 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
           <Text
             {...commonProps}
             size={props.size}
-            fw={props.weight === 'bold' ? 700 : props.weight === 'lighter' ? 300 : 400}
-            c={props.color || undefined}
+            fw={
+              typeof props.weight === 'number' ? props.weight :
+              typeof props.fw === 'number' ? props.fw :
+              props.weight === 'bold' ? 700 :
+              props.weight === 'semibold' ? 600 :
+              props.weight === 'medium' ? 500 :
+              props.weight === 'normal' ? 400 :
+              props.weight === 'lighter' ? 300 :
+              props.fw || props.weight || 400
+            }
+            c={props.c || props.color || undefined}
           >
             {props.children}
           </Text>
@@ -1277,11 +1287,14 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
       ref={dragRef}
       style={{
         ...style,
-        borderWidth: selected && !isContainer ? '2px' : '0',
-        borderStyle: selected && !isContainer ? 'solid' : 'none',
-        borderColor: selected && !isContainer ? '#3b82f6' : 'transparent',
-        borderRadius: selected ? '4px' : '0',
-        padding: selected && !isContainer ? '2px' : '0',
+        // Only apply selection styling when NOT preserving original layout
+        ...(preserveOriginalLayout ? {} : {
+          borderWidth: selected && !isContainer ? '2px' : '0',
+          borderStyle: selected && !isContainer ? 'solid' : 'none',
+          borderColor: selected && !isContainer ? '#3b82f6' : 'transparent',
+          borderRadius: selected ? '4px' : '0',
+          padding: selected && !isContainer ? '2px' : '0',
+        }),
         outline: 'none',
         position: 'relative'
       }}

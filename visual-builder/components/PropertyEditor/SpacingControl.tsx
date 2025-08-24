@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { 
-  Box, 
-  Group, 
-  Text, 
-  ActionIcon, 
-  NumberInput, 
-  Select, 
+import {
+  Box,
+  Group,
+  Text,
+  ActionIcon,
+  NumberInput,
+  Select,
   Stack,
   Paper,
   Tooltip,
@@ -86,7 +86,7 @@ export const SpacingControl: React.FC<SpacingControlProps> = ({ values, onChange
 
   const renderSpacingInput = (property: string, placeholder: string) => {
     const value = values[property as keyof typeof values];
-    
+
     if (useNumbers) {
       return (
         <Group gap={2}>
@@ -196,8 +196,8 @@ export const SpacingControl: React.FC<SpacingControlProps> = ({ values, onChange
             position: 'relative',
             border: '1px dashed #228be6',
             borderRadius: '4px',
-            padding: '20px',
-            minHeight: '120px'
+            padding: '25px',
+            minHeight: '140px'
           }}
         >
           {/* Margin Top */}
@@ -206,7 +206,8 @@ export const SpacingControl: React.FC<SpacingControlProps> = ({ values, onChange
               position: 'absolute',
               top: '-8px',
               left: '50%',
-              transform: 'translateX(-50%)'
+              transform: 'translateX(-50%)',
+              zIndex: 2
             }}
           >
             {renderSpacingInput('mt', 'top')}
@@ -216,9 +217,10 @@ export const SpacingControl: React.FC<SpacingControlProps> = ({ values, onChange
           <Box
             style={{
               position: 'absolute',
-              right: '-32px',
+              right: '-20px',
               top: '50%',
-              transform: 'translateY(-50%)'
+              transform: 'translateY(-50%)',
+              zIndex: 2
             }}
           >
             {renderSpacingInput('mr', 'right')}
@@ -228,9 +230,10 @@ export const SpacingControl: React.FC<SpacingControlProps> = ({ values, onChange
           <Box
             style={{
               position: 'absolute',
-              bottom: '-8px',
+              bottom: '-4px',
               left: '50%',
-              transform: 'translateX(-50%)'
+              transform: 'translateX(-50%)',
+              zIndex: 2
             }}
           >
             {renderSpacingInput('mb', 'bottom')}
@@ -240,23 +243,32 @@ export const SpacingControl: React.FC<SpacingControlProps> = ({ values, onChange
           <Box
             style={{
               position: 'absolute',
-              left: '-32px',
+              left: '-20px',
               top: '50%',
-              transform: 'translateY(-50%)'
+              transform: 'translateY(-50%)',
+              zIndex: 2
             }}
           >
             {renderSpacingInput('ml', 'left')}
           </Box>
 
-          {/* All margins input */}
-          <Box ta="center">
+          {/* All margins input - positioned above center */}
+          <Box
+            style={{
+              position: 'absolute',
+              top: '26%',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              textAlign: 'center'
+            }}
+          >
             <Text size="xs" c="dimmed" mb={2}>All</Text>
             {renderSpacingInput('m', 'all')}
           </Box>
         </Box>
 
         {/* Axis shortcuts */}
-        <Group justify="center" mt={4} gap="xs">
+        <Group justify="center" mt={10} gap="xs">
           <Box ta="center">
             <Text size="xs" c="dimmed">X</Text>
             {renderSpacingInput('mx', 'x')}
@@ -312,8 +324,8 @@ export const SpacingControl: React.FC<SpacingControlProps> = ({ values, onChange
             position: 'relative',
             border: '1px dashed #40c057',
             borderRadius: '4px',
-            padding: '20px',
-            minHeight: '120px'
+            padding: '25px',
+            minHeight: '140px'
           }}
         >
           {/* Padding Top */}
@@ -322,7 +334,8 @@ export const SpacingControl: React.FC<SpacingControlProps> = ({ values, onChange
               position: 'absolute',
               top: '-8px',
               left: '50%',
-              transform: 'translateX(-50%)'
+              transform: 'translateX(-50%)',
+              zIndex: 2
             }}
           >
             {renderSpacingInput('pt', 'top')}
@@ -332,9 +345,10 @@ export const SpacingControl: React.FC<SpacingControlProps> = ({ values, onChange
           <Box
             style={{
               position: 'absolute',
-              right: '-32px',
+              right: '-20px',
               top: '50%',
-              transform: 'translateY(-50%)'
+              transform: 'translateY(-50%)',
+              zIndex: 2
             }}
           >
             {renderSpacingInput('pr', 'right')}
@@ -344,9 +358,10 @@ export const SpacingControl: React.FC<SpacingControlProps> = ({ values, onChange
           <Box
             style={{
               position: 'absolute',
-              bottom: '-8px',
+              bottom: '-4px',
               left: '50%',
-              transform: 'translateX(-50%)'
+              transform: 'translateX(-50%)',
+              zIndex: 2
             }}
           >
             {renderSpacingInput('pb', 'bottom')}
@@ -356,23 +371,32 @@ export const SpacingControl: React.FC<SpacingControlProps> = ({ values, onChange
           <Box
             style={{
               position: 'absolute',
-              left: '-32px',
+              left: '-20px',
               top: '50%',
-              transform: 'translateY(-50%)'
+              transform: 'translateY(-50%)',
+              zIndex: 2
             }}
           >
             {renderSpacingInput('pl', 'left')}
           </Box>
 
-          {/* All paddings input */}
-          <Box ta="center">
+          {/* All paddings input - positioned above center */}
+          <Box
+            style={{
+              position: 'absolute',
+              top: '26%',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              textAlign: 'center'
+            }}
+          >
             <Text size="xs" c="dimmed" mb={2}>All</Text>
             {renderSpacingInput('p', 'all')}
           </Box>
         </Box>
 
         {/* Axis shortcuts */}
-        <Group justify="center" mt={4} gap="xs">
+        <Group justify="center" mt={10} gap="xs">
           <Box ta="center">
             <Text size="xs" c="dimmed">X</Text>
             {renderSpacingInput('px', 'x')}
