@@ -140,12 +140,13 @@ export function cancelAutoSave(): void {
 /**
  * Save draft to localStorage (for recovery on refresh)
  */
-export function saveDraft(storyId: string, components: ComponentDefinition[]): void {
+export function saveDraft(storyId: string, components: ComponentDefinition[], isImportedFromStory: boolean = false): void {
   const draftKey = `visual-builder-draft-${storyId}`;
   const draft = {
     components,
     timestamp: Date.now(),
-    storyId
+    storyId,
+    isImportedFromStory
   };
   try {
     localStorage.setItem(draftKey, JSON.stringify(draft));
@@ -157,7 +158,7 @@ export function saveDraft(storyId: string, components: ComponentDefinition[]): v
 /**
  * Restore draft from localStorage
  */
-export function restoreDraft(storyId: string): ComponentDefinition[] | null {
+export function restoreDraft(storyId: string): { components: ComponentDefinition[], isImportedFromStory: boolean } | null {
   const draftKey = `visual-builder-draft-${storyId}`;
   try {
     const stored = localStorage.getItem(draftKey);
@@ -166,7 +167,10 @@ export function restoreDraft(storyId: string): ComponentDefinition[] | null {
       // Check if draft is recent (within last 24 hours)
       const ageInHours = (Date.now() - draft.timestamp) / (1000 * 60 * 60);
       if (ageInHours < 24) {
-        return draft.components;
+        return {
+          components: draft.components,
+          isImportedFromStory: draft.isImportedFromStory || false
+        };
       }
       // Clean up old draft
       localStorage.removeItem(draftKey);

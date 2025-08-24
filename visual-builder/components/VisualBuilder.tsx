@@ -119,10 +119,15 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
     
     // Try to restore draft if no explicit code to load
     if (!codeToLoad) {
-      const draftComponents = restoreDraft(storyId);
-      if (draftComponents && draftComponents.length > 0) {
+      const draft = restoreDraft(storyId);
+      if (draft && draft.components && draft.components.length > 0) {
         console.log('📝 Restored draft from localStorage');
-        loadFromAI(draftComponents);
+        // Load components and restore the isImportedFromStory flag
+        loadFromAI(draft.components);
+        // Restore the isImportedFromStory flag if it was saved
+        if (draft.isImportedFromStory) {
+          useVisualBuilderStore.setState({ isImportedFromStory: true });
+        }
         setIsInitialLoadComplete(true);
         return;
       }
@@ -164,21 +169,21 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
   React.useEffect(() => {
     if (isInitialLoadComplete && components.length > 0) {
       // Save immediately when components are loaded from initial content
-      saveDraft(storyId, components);
+      saveDraft(storyId, components, isImportedFromStory);
       console.log('💾 Saved story to draft with ID:', storyId);
     }
-  }, [components, isInitialLoadComplete, storyId]);
+  }, [components, isInitialLoadComplete, storyId, isImportedFromStory]);
 
   // Auto-save drafts when dirty
   React.useEffect(() => {
     if (components.length > 0 && isDirty && isInitialLoadComplete) {
       const timer = setTimeout(() => {
-        saveDraft(storyId, components);
+        saveDraft(storyId, components, isImportedFromStory);
         console.log('💾 Auto-saved draft');
       }, 2000);
       return () => clearTimeout(timer);
     }
-  }, [components, isDirty, storyId]);
+  }, [components, isDirty, storyId, isImportedFromStory, isInitialLoadComplete]);
 
   // Update URL when editing
   React.useEffect(() => {
@@ -279,53 +284,57 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
                 color={isDirty ? 'blue' : 'gray'}
                 leftSection={<IconDeviceFloppy size={16} />}
                 onClick={async () => {
-                  // Enhanced logic to determine if we need to prompt for a name
-                  const isGenericName = !currentStoryName || 
-                    currentStoryName === 'Untitled Story' || 
-                    currentStoryName === 'Imported Story';
-                  
-                  // CRITICAL FIX: If we're editing an existing story (imported from "Edit in Visual Builder"), 
-                  // NEVER prompt for a name, even if extraction failed
-                  const isEditingExistingStory = isImportedFromStory;
+                  // Check if we're editing an existing story (came from Storybook)
+                  const sourceFile = sessionStorage.getItem('visualBuilderSourceFile');
+                  const isEditingExistingStory = Boolean(sourceFile) || isImportedFromStory || Boolean(storyFilePath);
                   
                   let finalName = currentStoryName;
+                  let fileToUpdate = storyFilePath;
                   
-                  // Only prompt for name if:
-                  // 1. We're NOT editing an existing story, AND
-                  // 2. The name is generic or missing
-                  if (!isEditingExistingStory && isGenericName) {
-                    const name = prompt('Enter story name:', currentStoryName || '');
-                    if (name && name.trim()) {
-                      finalName = name.trim();
-                    } else {
-                      return; // User cancelled
-                    }
-                  } else if (isEditingExistingStory && isGenericName) {
-                    // For existing stories where name extraction failed,
-                    // try to use the source file name from sessionStorage
-                    const sourceFile = sessionStorage.getItem('visualBuilderSourceFile');
+                  if (isEditingExistingStory) {
+                    // We're editing an existing story - NEVER prompt for a name
+                    // Use the source file as the file to update
                     if (sourceFile) {
-                      // Extract a clean name from the file name
-                      finalName = sourceFile
-                        .replace(/\.stories\.(tsx?|jsx?)$/, '')
-                        .replace(/[_-]/g, ' ')
-                        .split(' ')
-                        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-                        .join(' ');
-                      console.log(`Using name from source file: ${sourceFile} → ${finalName}`);
-                    } else {
-                      // Last resort fallback
-                      finalName = 'Updated Story';
+                      fileToUpdate = sourceFile;
+                      // Extract a clean name from the file if we don't have one
+                      if (!currentStoryName || currentStoryName === 'Untitled Story' || currentStoryName === 'Imported Story') {
+                        finalName = sourceFile
+                          .replace(/^(edited-|generated-)/, '') // Remove prefixes
+                          .replace(/\.stories\.(tsx?|jsx?)$/, '') // Remove extension
+                          .replace(/[_-]/g, ' ')
+                          .split(' ')
+                          .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                          .join(' ');
+                        console.log(`Using name from source file: ${sourceFile} → ${finalName}`);
+                      }
+                    } else if (!fileToUpdate) {
+                      // Fallback: use the current story name to generate a file path
+                      fileToUpdate = `${(currentStoryName || 'updated-story').toLowerCase().replace(/[^a-z0-9]+/g, '-')}.stories.tsx`;
                     }
+                  } else {
+                    // We're creating a new story - may need to prompt for a name
+                    const isGenericName = !currentStoryName || 
+                      currentStoryName === 'Untitled Story' || 
+                      currentStoryName === 'Imported Story';
+                    
+                    if (isGenericName) {
+                      const name = prompt('Enter story name:', currentStoryName || '');
+                      if (name && name.trim()) {
+                        finalName = name.trim();
+                      } else {
+                        return; // User cancelled
+                      }
+                    }
+                    
+                    // Generate file path from the story name
+                    fileToUpdate = `${finalName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.stories.tsx`;
                   }
                   
                   // Save to store
                   saveCurrentStory(finalName);
                   
                   // Always try to update the story file if we have components
-                  if (components.length > 0) {
-                    // Use the story file path or generate one from the story name
-                    const fileToUpdate = storyFilePath || `${finalName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.stories.tsx`;
+                  if (components.length > 0 && fileToUpdate) {
                     const result = await updateStoryFile(fileToUpdate, components, finalName);
                     
                     if (result.success) {
