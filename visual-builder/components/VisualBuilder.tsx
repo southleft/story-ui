@@ -93,14 +93,23 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
     
     // Check for sessionStorage content from Visual Builder button
     let sessionStorageCode = '';
+    let sourceFile = '';
     try {
       sessionStorageCode = sessionStorage.getItem('visualBuilderInitialCode') || '';
+      sourceFile = sessionStorage.getItem('visualBuilderSourceFile') || '';
       console.log('📂 SessionStorage check:', {
         hasCode: !!sessionStorageCode,
         codeLength: sessionStorageCode.length,
-        sourceFile: sessionStorage.getItem('visualBuilderSourceFile'),
+        sourceFile: sourceFile,
         preview: sessionStorageCode.substring(0, 100) + '...'
       });
+      
+      // Clear sessionStorage after reading to prevent re-loading
+      if (sessionStorageCode) {
+        sessionStorage.removeItem('visualBuilderInitialCode');
+        sessionStorage.removeItem('visualBuilderSourceFile');
+        sessionStorage.removeItem('visualBuilderStoryVariant');
+      }
     } catch (e) {
       console.error('❌ Error reading from sessionStorage:', e);
     }

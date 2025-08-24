@@ -36,6 +36,11 @@ export async function updateStoryFromVisualBuilder(req: Request, res: Response) 
         : `${fileName}.stories.tsx`;
     }
     
+    // Ensure the filename has the .stories.tsx extension
+    if (!cleanFileName.endsWith('.stories.tsx')) {
+      cleanFileName = cleanFileName + '.stories.tsx';
+    }
+    
     // Check if this is an edited story (filename starts with 'edited-' or was previously in generated/)
     const isEditedStory = cleanFileName.startsWith('edited-') || 
                          cleanFileName.startsWith('generated-') ||

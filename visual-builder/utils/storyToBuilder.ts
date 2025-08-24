@@ -215,13 +215,28 @@ function parseAttributes(attributeString: string): Record<string, any> {
               const colonIndex = pair.indexOf(':');
               if (colonIndex > -1) {
                 const styleProp = pair.substring(0, colonIndex).trim().replace(/['"]/g, '');
-                let styleValue = pair.substring(colonIndex + 1).trim().replace(/['"]/g, '');
+                let styleValue: any = pair.substring(colonIndex + 1).trim();
                 
                 // Check if value looks like an array (e.g., "[14, 16, 18]")
                 if (styleValue.startsWith('[') && styleValue.endsWith(']')) {
                   // Extract first value from array
                   const arrayContent = styleValue.slice(1, -1).split(',')[0].trim();
                   styleValue = arrayContent;
+                }
+                
+                // Remove quotes if present
+                if ((styleValue.startsWith('"') && styleValue.endsWith('"')) ||
+                    (styleValue.startsWith("'") && styleValue.endsWith("'"))) {
+                  styleValue = styleValue.slice(1, -1);
+                } else if (/^\d+$/.test(styleValue)) {
+                  // Preserve numeric values as numbers
+                  styleValue = parseInt(styleValue, 10);
+                } else if (/^\d*\.\d+$/.test(styleValue)) {
+                  // Preserve decimal values as numbers
+                  styleValue = parseFloat(styleValue);
+                } else {
+                  // Remove any remaining quotes
+                  styleValue = styleValue.replace(/['"]/g, '');
                 }
                 
                 // Convert camelCase to kebab-case for CSS properties if needed

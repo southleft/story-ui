@@ -153,6 +153,14 @@ export function generatePropsString(props: Record<string, any>, componentType: s
       return ['Button', 'Badge', 'Code', 'Mark', 'Anchor'].includes(componentType) && 
              typeof value === 'string';
     }
+    
+    // IMPORTANT: Skip problematic style props that are strings
+    // These cause repeated JSX syntax errors and aren't essential
+    if (key === 'style' && typeof value === 'string') {
+      console.warn('Skipping string style prop to prevent JSX syntax errors:', value);
+      return false;
+    }
+    
     // Filter out undefined, null, empty string
     if (value === undefined || value === null || value === '') return false;
     // Filter out default values for specific props
@@ -177,16 +185,32 @@ export function generatePropsString(props: Record<string, any>, componentType: s
               const styleStr = value.slice(1, -1).trim();
               const stylePairs = styleStr.split(',').map(pair => {
                 const [k, v] = pair.split(':').map(s => s.trim());
-                const cssValue = v && v.includes("'") ? v : `'${v}'`;
+                // Keep numeric values as numbers, quote strings
+                let cssValue: any = v;
+                if (v && !v.includes("'") && !v.includes('"')) {
+                  // Check if it's a number
+                  if (/^\d+$/.test(v)) {
+                    cssValue = v; // Keep as numeric string for now
+                  } else if (/^\d*\.\d+$/.test(v)) {
+                    cssValue = v; // Keep as numeric string for now
+                  } else {
+                    cssValue = `'${v}'`; // Quote non-numeric strings
+                  }
+                }
                 return `${k}: ${cssValue}`;
               }).join(', ');
+              // Return properly formatted JSX style prop
               return `style={{ ${stylePairs} }}`;
             } catch (e) {
               console.error('Failed to parse style string:', e);
+              // Fallback: clean up the string and wrap properly
+              const cleanStyle = value.replace(/[{}]/g, '').trim();
+              return `style={{ ${cleanStyle} }}`;
             }
           }
-          // If we can't parse it, just wrap it properly
-          return `style={{ ${value.replace(/[{}]/g, '')} }}`;
+          // If it doesn't look like an object, try to clean it up
+          const cleanStyle = value.replace(/[{}]/g, '').trim();
+          return `style={{ ${cleanStyle} }}`;
         } else if (typeof value === 'object') {
           const styleEntries = Object.entries(value)
             .map(([k, v]) => {
