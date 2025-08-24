@@ -124,9 +124,16 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
         console.log('📝 Restored draft from localStorage');
         // Load components and restore the isImportedFromStory flag
         loadFromAI(draft.components);
-        // Restore the isImportedFromStory flag if it was saved
+        // Restore the isImportedFromStory flag and other metadata
         if (draft.isImportedFromStory) {
           useVisualBuilderStore.setState({ isImportedFromStory: true });
+        }
+        if (draft.storyName) {
+          useVisualBuilderStore.setState({ currentStoryName: draft.storyName });
+        }
+        if (draft.sourceFile) {
+          // Store source file in sessionStorage for later use
+          sessionStorage.setItem('visualBuilderSourceFile', draft.sourceFile);
         }
         setIsInitialLoadComplete(true);
         return;
@@ -169,21 +176,23 @@ export const VisualBuilder: React.FC<VisualBuilderProps> = ({
   React.useEffect(() => {
     if (isInitialLoadComplete && components.length > 0) {
       // Save immediately when components are loaded from initial content
-      saveDraft(storyId, components, isImportedFromStory);
+      const sourceFile = sessionStorage.getItem('visualBuilderSourceFile') || storyFilePath || undefined;
+      saveDraft(storyId, components, isImportedFromStory, currentStoryName, sourceFile);
       console.log('💾 Saved story to draft with ID:', storyId);
     }
-  }, [components, isInitialLoadComplete, storyId, isImportedFromStory]);
+  }, [components, isInitialLoadComplete, storyId, isImportedFromStory, currentStoryName, storyFilePath]);
 
   // Auto-save drafts when dirty
   React.useEffect(() => {
     if (components.length > 0 && isDirty && isInitialLoadComplete) {
       const timer = setTimeout(() => {
-        saveDraft(storyId, components, isImportedFromStory);
+        const sourceFile = sessionStorage.getItem('visualBuilderSourceFile') || storyFilePath || undefined;
+        saveDraft(storyId, components, isImportedFromStory, currentStoryName, sourceFile);
         console.log('💾 Auto-saved draft');
       }, 2000);
       return () => clearTimeout(timer);
     }
-  }, [components, isDirty, storyId, isImportedFromStory, isInitialLoadComplete]);
+  }, [components, isDirty, storyId, isImportedFromStory, isInitialLoadComplete, currentStoryName, storyFilePath]);
 
   // Update URL when editing
   React.useEffect(() => {

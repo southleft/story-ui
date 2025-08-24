@@ -575,12 +575,19 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
           return ratios[aspectRatio] || '16 / 9';
         };
 
-        const imageStyle = {
+        // Extract height from props if it exists
+        const imageHeight = props.height || props.h;
+        
+        const imageStyle: React.CSSProperties = {
           ...commonProps.style,
           width: '100%',
-          aspectRatio: props.aspectRatio ? getAspectRatioStyle(props.aspectRatio) : undefined,
-          objectFit: props.fit || 'cover'
+          objectFit: (props.fit || 'cover') as React.CSSProperties['objectFit']
         };
+        
+        // Apply aspect ratio only if no explicit height is set
+        if (!imageHeight && props.aspectRatio) {
+          imageStyle.aspectRatio = getAspectRatioStyle(props.aspectRatio);
+        }
 
         return (
           <Image
@@ -588,6 +595,7 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
             src={props.src}
             alt={props.alt}
             radius={props.radius}
+            height={imageHeight}
             style={imageStyle}
           />
         );

@@ -140,13 +140,15 @@ export function cancelAutoSave(): void {
 /**
  * Save draft to localStorage (for recovery on refresh)
  */
-export function saveDraft(storyId: string, components: ComponentDefinition[], isImportedFromStory: boolean = false): void {
+export function saveDraft(storyId: string, components: ComponentDefinition[], isImportedFromStory: boolean = false, storyName?: string, sourceFile?: string): void {
   const draftKey = `visual-builder-draft-${storyId}`;
   const draft = {
     components,
     timestamp: Date.now(),
     storyId,
-    isImportedFromStory
+    isImportedFromStory,
+    storyName,
+    sourceFile
   };
   try {
     localStorage.setItem(draftKey, JSON.stringify(draft));
@@ -158,7 +160,7 @@ export function saveDraft(storyId: string, components: ComponentDefinition[], is
 /**
  * Restore draft from localStorage
  */
-export function restoreDraft(storyId: string): { components: ComponentDefinition[], isImportedFromStory: boolean } | null {
+export function restoreDraft(storyId: string): { components: ComponentDefinition[], isImportedFromStory: boolean, storyName?: string, sourceFile?: string } | null {
   const draftKey = `visual-builder-draft-${storyId}`;
   try {
     const stored = localStorage.getItem(draftKey);
@@ -169,7 +171,9 @@ export function restoreDraft(storyId: string): { components: ComponentDefinition
       if (ageInHours < 24) {
         return {
           components: draft.components,
-          isImportedFromStory: draft.isImportedFromStory || false
+          isImportedFromStory: draft.isImportedFromStory || false,
+          storyName: draft.storyName,
+          sourceFile: draft.sourceFile
         };
       }
       // Clean up old draft
