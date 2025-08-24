@@ -30,14 +30,18 @@ export async function updateStoryFromVisualBuilder(req: Request, res: Response) 
       // If full path is provided, extract the filename
       cleanFileName = path.basename(filePath);
     } else {
-      // Use fileName to construct path
-      cleanFileName = fileName.includes('.stories.tsx') 
-        ? fileName 
-        : `${fileName}.stories.tsx`;
+      // Use fileName to construct path and ensure proper extension
+      cleanFileName = fileName;
     }
     
-    // Ensure the filename has the .stories.tsx extension
-    if (!cleanFileName.endsWith('.stories.tsx')) {
+    // Smart extension handling to prevent double .stories extensions
+    if (cleanFileName.endsWith('.stories.tsx')) {
+      // Already has the correct extension
+    } else if (cleanFileName.endsWith('.stories')) {
+      // Has .stories but missing .tsx
+      cleanFileName = cleanFileName + '.tsx';
+    } else {
+      // Missing the entire .stories.tsx extension
       cleanFileName = cleanFileName + '.stories.tsx';
     }
     

@@ -21,7 +21,8 @@ export function generateStoryFileContent(
     .trim();
   
   // Use "Edited" prefix for stories that have been edited in Visual Builder
-  const storyTitle = baseTitle;
+  // Properly escape apostrophes and quotes in the title for JavaScript strings
+  const storyTitle = baseTitle.replace(/'/g, "\\'").replace(/"/g, '\\"');
   const storyPrefix = 'Edited'; // Changed from 'Generated' to distinguish edited stories
   
   // Always use the standard decorator path
