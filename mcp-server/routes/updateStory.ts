@@ -35,15 +35,14 @@ export async function updateStoryFromVisualBuilder(req: Request, res: Response) 
     }
     
     // Smart extension handling to prevent double .stories extensions
-    if (cleanFileName.endsWith('.stories.tsx')) {
-      // Already has the correct extension
-    } else if (cleanFileName.endsWith('.stories')) {
-      // Has .stories but missing .tsx
-      cleanFileName = cleanFileName + '.tsx';
-    } else {
-      // Missing the entire .stories.tsx extension
-      cleanFileName = cleanFileName + '.stories.tsx';
-    }
+    // First, remove any existing .stories.tsx or .stories.stories.tsx patterns
+    cleanFileName = cleanFileName
+      .replace(/\.stories\.stories\.tsx$/, '') // Remove double extension if present
+      .replace(/\.stories\.tsx$/, '') // Remove single extension if present
+      .replace(/\.stories$/, ''); // Remove partial extension if present
+    
+    // Now add the correct extension
+    cleanFileName = cleanFileName + '.stories.tsx';
     
     // Determine if this should be saved as an edited story
     const isEditedStory = cleanFileName.startsWith('edited-') || 
@@ -146,9 +145,20 @@ export async function getStoryForVisualBuilder(req: Request, res: Response) {
 
   try {
     const config = loadUserConfig();
-    const cleanFileName = String(fileName).includes('.stories.tsx') 
-      ? String(fileName) 
-      : `${fileName}.stories.tsx`;
+    
+    // Clean the filename - remove any double extensions first
+    let cleanFileName = String(fileName)
+      .replace(/\.stories\.stories\.tsx$/, '.stories.tsx') // Fix double extension
+      .replace(/\.stories\.tsx$/, '.stories.tsx'); // Keep single extension
+    
+    // If no extension, add it
+    if (!cleanFileName.endsWith('.stories.tsx')) {
+      if (cleanFileName.endsWith('.stories')) {
+        cleanFileName = cleanFileName + '.tsx';
+      } else {
+        cleanFileName = cleanFileName + '.stories.tsx';
+      }
+    }
     
     const isEditedStory = isEdited === 'true' || String(fileName).startsWith('edited-');
     
@@ -157,26 +167,46 @@ export async function getStoryForVisualBuilder(req: Request, res: Response) {
     // Priority-based lookup: edited stories get priority in edited/ directory  
     if (isEditedStory) {
       // For edited stories, check edited/ directory first
-      const editedPath = path.join(config.generatedStoriesPath, '..', 'edited', cleanFileName);
-      const generatedPath = path.join(config.generatedStoriesPath, cleanFileName);
+      const editedDir = path.join(config.generatedStoriesPath, '..', 'edited');
       
-      if (fs.existsSync(editedPath)) {
-        fullPath = editedPath;
-      } else if (fs.existsSync(generatedPath)) {
-        fullPath = generatedPath;
-      } else {
-        // Try hash suffix matching in both directories
+      // Try multiple filename patterns to handle existing double-extension files
+      const filenamesToTry = [
+        cleanFileName, // Correct format: filename.stories.tsx
+        cleanFileName.replace('.stories.tsx', '.stories.stories.tsx'), // Double extension format
+      ];
+      
+      // Check edited directory with all possible filenames
+      for (const tryFileName of filenamesToTry) {
+        const editedPath = path.join(editedDir, tryFileName);
+        if (fs.existsSync(editedPath)) {
+          fullPath = editedPath;
+          console.log(`✅ Found edited story at: ${editedPath}`);
+          break;
+        }
+      }
+      
+      // If not found in edited, try generated directory
+      if (!fullPath) {
+        const generatedPath = path.join(config.generatedStoriesPath, cleanFileName);
+        if (fs.existsSync(generatedPath)) {
+          fullPath = generatedPath;
+          console.log(`⚠️ Edited story not found, falling back to generated: ${generatedPath}`);
+        }
+      }
+      
+      // If still not found, try pattern matching
+      if (!fullPath) {
         const baseFileName = cleanFileName.replace('.stories.tsx', '');
         
-        // Check edited directory first
-        const editedDir = path.join(config.generatedStoriesPath, '..', 'edited');
+        // Check edited directory first with pattern matching
         if (fs.existsSync(editedDir)) {
           const editedFiles = fs.readdirSync(editedDir);
           const matchingEditedFile = editedFiles.find(file => 
-            file.startsWith(baseFileName) && file.endsWith('.stories.tsx')
+            file.startsWith(baseFileName) && (file.endsWith('.stories.tsx') || file.endsWith('.stories.stories.tsx'))
           );
           if (matchingEditedFile) {
             fullPath = path.join(editedDir, matchingEditedFile);
+            console.log(`✅ Found edited story by pattern: ${fullPath}`);
           }
         }
         
