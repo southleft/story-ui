@@ -268,17 +268,14 @@ export async function updateStoryFile(
   storyName: string
 ): Promise<{ success: boolean; error?: string; message?: string }> {
   try {
-    // Extract fileName from filePath and ensure it's for edited stories
+    // Extract fileName from filePath - let the MCP server handle file naming logic
     let fileName = filePath.split('/').pop() || filePath;
     
-    // If the filename starts with 'generated-', replace with 'edited-'
-    // Otherwise, add 'edited-' prefix if not already present
-    if (fileName.startsWith('generated-')) {
-      fileName = fileName.replace(/^generated-/, 'edited-');
-    } else if (!fileName.startsWith('edited-')) {
-      // Remove any other common prefixes and add 'edited-'
-      fileName = 'edited-' + fileName.replace(/^(workflow-|test-|demo-)/, '');
-    }
+    // Remove file extension if present - MCP server will add it back
+    fileName = fileName.replace(/\.stories\.(tsx?|jsx?)$/, '');
+    
+    // Don't apply any prefix transformations here - let the MCP server handle it
+    // The MCP server has the smart logic to detect existing files and update them properly
     
     // Determine the API port from environment or default
     const apiPort = (window as any).STORY_UI_MCP_PORT || 
