@@ -201,12 +201,36 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
       },
       ...spacingProps
     };
+    
+    // Special handling for Button components when preserveOriginalLayout is true
+    const buttonProps = type === 'Button' && preserveOriginalLayout ? {
+      onClick: (e: React.MouseEvent) => {
+        e.stopPropagation();
+        handleComponentSelect(component);
+      },
+      style: {
+        cursor: 'pointer',
+        ...styleObject,
+        // Ensure fullWidth is properly applied
+        width: props.fullWidth ? '100%' : styleObject.width || 'auto'
+      },
+      ...spacingProps
+    } : commonProps;
 
     switch (type) {
       case 'Button':
+        const finalButtonProps = type === 'Button' ? buttonProps : commonProps;
+        console.log(`🔵 [Button] fullWidth: ${props.fullWidth}, preserveOriginalLayout: ${preserveOriginalLayout}`);
+        console.log(`🔵 [Button] Final props width:`, (finalButtonProps.style as any)?.width);
+        console.log(`🔵 [Button] All props:`, { 
+          fullWidth: props.fullWidth, 
+          variant: props.variant, 
+          children: props.children 
+        });
+        
         return (
           <Button
-            {...commonProps}
+            {...finalButtonProps}
             variant={props.variant}
             size={props.size}
             color={props.color}
@@ -229,20 +253,36 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
         );
 
       case 'Text':
+        const computedFw = 
+          typeof props.weight === 'number' ? props.weight :
+          typeof props.fw === 'number' ? props.fw :
+          props.weight === 'bold' ? 700 :
+          props.weight === 'semibold' ? 600 :
+          props.weight === 'medium' ? 500 :
+          props.weight === 'normal' ? 400 :
+          props.weight === 'lighter' ? 300 :
+          props.fw || props.weight || 400;
+        
+        // Debug log for Text components with "Premium" or "Sport" in content
+        if (props.children && typeof props.children === 'string' && 
+            (props.children.includes('Premium') || props.children.includes('Sport'))) {
+          console.log('📝 [Text Component Title]', {
+            content: props.children,
+            preserveOriginalLayout,
+            propsWeight: props.weight,
+            propsFw: props.fw,
+            computedFw,
+            size: props.size,
+            parentId,
+            componentId: component.id
+          });
+        }
+        
         return (
           <Text
             {...commonProps}
             size={props.size}
-            fw={
-              typeof props.weight === 'number' ? props.weight :
-              typeof props.fw === 'number' ? props.fw :
-              props.weight === 'bold' ? 700 :
-              props.weight === 'semibold' ? 600 :
-              props.weight === 'medium' ? 500 :
-              props.weight === 'normal' ? 400 :
-              props.weight === 'lighter' ? 300 :
-              props.fw || props.weight || 400
-            }
+            fw={computedFw}
             c={props.c || props.color || undefined}
           >
             {props.children}
@@ -250,6 +290,7 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
         );
 
       case 'Title':
+        console.log(`🗞 [Title] preserveOriginalLayout: ${preserveOriginalLayout}, props:`, props, 'fw calculated:', props.fw || props.weight || undefined);
         return (
           <Title
             {...commonProps}
@@ -328,13 +369,15 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
             ref={groupRef}
             style={{
               ...commonProps.style,
-              minHeight: children?.length === 0 ? '80px' : 'auto',
-              borderWidth: isOver || selected ? '2px' : '1px',
-              borderStyle: isOver || !selected ? 'dashed' : 'solid',
-              borderColor: isOver || selected ? '#3b82f6' : '#e9ecef',
-              borderRadius: '8px',
-              padding: '1rem',
-              backgroundColor: isOver ? '#f0f9ff' : 'transparent'
+              ...(preserveOriginalLayout ? {} : {
+                minHeight: children?.length === 0 ? '80px' : 'auto',
+                borderWidth: isOver || selected ? '2px' : '1px',
+                borderStyle: isOver || !selected ? 'dashed' : 'solid',
+                borderColor: isOver || selected ? '#3b82f6' : '#e9ecef',
+                borderRadius: '8px',
+                padding: '1rem',
+                backgroundColor: isOver ? '#f0f9ff' : 'transparent'
+              })
             }}
           >
             {children?.map((child, idx) => (
@@ -371,24 +414,30 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
           dropRef(node);
         };
         
+        console.log(`📚 [Stack] preserveOriginalLayout: ${preserveOriginalLayout}, gap: ${props.gap}`);
+        
+        // Stack styling - preserve original when needed
+        const stackStyle = preserveOriginalLayout ? {
+          ...commonProps.style
+          // No additional styling that might interfere with original layout
+        } : {
+          ...commonProps.style,
+          minHeight: children?.length === 0 ? '100px' : 'auto',
+          borderWidth: isOver || selected ? '2px' : '1px',
+          borderStyle: isOver || !selected ? 'dashed' : 'solid',
+          borderColor: isOver || selected ? '#3b82f6' : '#e9ecef',
+          borderRadius: '8px',
+          padding: '1rem',
+          backgroundColor: isOver ? '#f0f9ff' : 'transparent'
+        };
+        
         return (
           <Stack
             {...commonProps}
             gap={props.gap}
             align={props.align}
             ref={stackRef}
-            style={{
-              ...commonProps.style,
-              ...(preserveOriginalLayout ? {} : {
-                minHeight: children?.length === 0 ? '100px' : 'auto',
-                borderWidth: isOver || selected ? '2px' : '1px',
-                borderStyle: isOver || !selected ? 'dashed' : 'solid',
-                borderColor: isOver || selected ? '#3b82f6' : '#e9ecef',
-                borderRadius: '8px',
-                padding: '1rem',
-                backgroundColor: isOver ? '#f0f9ff' : 'transparent'
-              })
-            }}
+            style={stackStyle}
           >
             {children?.map((child, idx) => (
               <React.Fragment key={child.id}>
@@ -502,23 +551,44 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
           dropRef(node);
         };
         
+        console.log(`🖼️ [CardSection] preserveOriginalLayout: ${preserveOriginalLayout}, inheritPadding: ${props.inheritPadding}`);
+        
+        // Special styling for CardSection when preserving original layout
+        const cardSectionStyle = preserveOriginalLayout ? {
+          ...commonProps.style,
+          // Remove any extra margins/padding that might be added
+          margin: 0,
+          padding: props.inheritPadding ? undefined : 0
+        } : {
+          ...commonProps.style,
+          minHeight: children?.length === 0 ? '80px' : 'auto',
+          borderWidth: isOver || selected ? '2px' : '1px',
+          borderStyle: isOver || !selected ? 'dashed' : 'solid',
+          borderColor: isOver || selected ? '#3b82f6' : '#e9ecef',
+          padding: props.inheritPadding ? undefined : '1rem',
+          backgroundColor: isOver ? '#f0f9ff' : 'transparent'
+        };
+        
+        // For CardSection, we need to be more selective about which props to pass
+        const cardSectionProps = preserveOriginalLayout ? {
+          onClick: commonProps.onClick,
+          style: cardSectionStyle,
+          // Only pass spacing props that are actually set
+          ...Object.keys(spacingProps).reduce((acc, key) => {
+            if (spacingProps[key] !== undefined && spacingProps[key] !== null && spacingProps[key] !== '') {
+              acc[key] = spacingProps[key];
+            }
+            return acc;
+          }, {} as Record<string, any>)
+        } : commonProps;
+        
         return (
           <Card.Section
-            {...commonProps}
+            {...cardSectionProps}
             withBorder={props.withBorder}
             inheritPadding={props.inheritPadding}
             ref={cardSectionRef}
-            style={{
-              ...commonProps.style,
-              ...(preserveOriginalLayout ? {} : {
-                minHeight: children?.length === 0 ? '80px' : 'auto',
-                borderWidth: isOver || selected ? '2px' : '1px',
-                borderStyle: isOver || !selected ? 'dashed' : 'solid',
-                borderColor: isOver || selected ? '#3b82f6' : '#e9ecef',
-                padding: props.inheritPadding ? undefined : '1rem',
-                backgroundColor: isOver ? '#f0f9ff' : 'transparent'
-              })
-            }}
+            style={cardSectionStyle}
           >
             {children?.map((child, idx) => (
               <React.Fragment key={child.id}>
@@ -630,11 +700,11 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
         // Use specific border properties to avoid conflicts
         const paperStyles: React.CSSProperties = {
           ...commonProps.style,
-          minHeight: children?.length === 0 ? '100px' : 'auto',
+          ...(preserveOriginalLayout ? {} : { minHeight: children?.length === 0 ? '100px' : 'auto' })
         };
         
-        // Only apply border styles when withBorder is false
-        if (!props.withBorder) {
+        // Only apply editor styling when not preserving original layout
+        if (!preserveOriginalLayout && !props.withBorder) {
           if (isOver) {
             paperStyles.borderWidth = '2px';
             paperStyles.borderStyle = 'dashed';
@@ -648,7 +718,7 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
             paperStyles.borderStyle = 'dashed';
             paperStyles.borderColor = '#e9ecef';
           }
-        } else if (selected || isOver) {
+        } else if (!preserveOriginalLayout && (selected || isOver)) {
           // When withBorder is true, use outline for selection
           if (isOver) {
             paperStyles.outline = '2px dashed #3b82f6';
@@ -881,13 +951,15 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
             ref={flexRef}
             style={{
               ...commonProps.style,
-              minHeight: children?.length === 0 ? '100px' : 'auto',
-              borderWidth: isOver || selected ? '2px' : '1px',
-              borderStyle: isOver || !selected ? 'dashed' : 'solid',
-              borderColor: isOver || selected ? '#3b82f6' : '#e9ecef',
-              borderRadius: '8px',
-              padding: '1rem',
-              backgroundColor: isOver ? '#f0f9ff' : 'transparent'
+              ...(preserveOriginalLayout ? {} : {
+                minHeight: children?.length === 0 ? '100px' : 'auto',
+                borderWidth: isOver || selected ? '2px' : '1px',
+                borderStyle: isOver || !selected ? 'dashed' : 'solid',
+                borderColor: isOver || selected ? '#3b82f6' : '#e9ecef',
+                borderRadius: '8px',
+                padding: '1rem',
+                backgroundColor: isOver ? '#f0f9ff' : 'transparent'
+              })
             }}
           >
             {children?.map((child, idx) => (
@@ -933,13 +1005,15 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
             ref={gridRef}
             style={{
               ...commonProps.style,
-              minHeight: children?.length === 0 ? '100px' : 'auto',
-              borderWidth: isOver || selected ? '2px' : '1px',
-              borderStyle: isOver || !selected ? 'dashed' : 'solid',
-              borderColor: isOver || selected ? '#3b82f6' : '#e9ecef',
-              borderRadius: '8px',
-              padding: '1rem',
-              backgroundColor: isOver ? '#f0f9ff' : 'transparent'
+              ...(preserveOriginalLayout ? {} : {
+                minHeight: children?.length === 0 ? '100px' : 'auto',
+                borderWidth: isOver || selected ? '2px' : '1px',
+                borderStyle: isOver || !selected ? 'dashed' : 'solid',
+                borderColor: isOver || selected ? '#3b82f6' : '#e9ecef',
+                borderRadius: '8px',
+                padding: '1rem',
+                backgroundColor: isOver ? '#f0f9ff' : 'transparent'
+              })
             }}
           >
             {children?.map((child, idx) => (
@@ -984,13 +1058,15 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
             ref={gridColRef}
             style={{
               ...commonProps.style,
-              minHeight: children?.length === 0 ? '80px' : 'auto',
-              borderWidth: isOver || selected ? '2px' : '1px',
-              borderStyle: isOver || !selected ? 'dashed' : 'solid',
-              borderColor: isOver || selected ? '#3b82f6' : '#e9ecef',
-              borderRadius: '8px',
-              padding: '1rem',
-              backgroundColor: isOver ? '#f0f9ff' : 'transparent'
+              ...(preserveOriginalLayout ? {} : {
+                minHeight: children?.length === 0 ? '80px' : 'auto',
+                borderWidth: isOver || selected ? '2px' : '1px',
+                borderStyle: isOver || !selected ? 'dashed' : 'solid',
+                borderColor: isOver || selected ? '#3b82f6' : '#e9ecef',
+                borderRadius: '8px',
+                padding: '1rem',
+                backgroundColor: isOver ? '#f0f9ff' : 'transparent'
+              })
             }}
           >
             {children?.map((child, idx) => (
@@ -1165,13 +1241,15 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
             ref={tabsRef}
             style={{
               ...commonProps.style,
-              minHeight: children?.length === 0 ? '120px' : 'auto',
-              borderWidth: isOver || selected ? '2px' : '1px',
-              borderStyle: isOver || !selected ? 'dashed' : 'solid',
-              borderColor: isOver || selected ? '#3b82f6' : '#e9ecef',
-              borderRadius: '8px',
-              padding: '1rem',
-              backgroundColor: isOver ? '#f0f9ff' : 'transparent'
+              ...(preserveOriginalLayout ? {} : {
+                minHeight: children?.length === 0 ? '120px' : 'auto',
+                borderWidth: isOver || selected ? '2px' : '1px',
+                borderStyle: isOver || !selected ? 'dashed' : 'solid',
+                borderColor: isOver || selected ? '#3b82f6' : '#e9ecef',
+                borderRadius: '8px',
+                padding: '1rem',
+                backgroundColor: isOver ? '#f0f9ff' : 'transparent'
+              })
             }}
           >
             <Tabs.List>
@@ -1281,22 +1359,31 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
     }
   };
 
+  // DEBUG: Wrapper styling decision
+  console.log(`🔵 [Wrapper] ${component.type} - preserveOriginalLayout: ${preserveOriginalLayout}, selected: ${selected}, isContainer: ${isContainer}`);
+  
+  // When preserving original layout, use minimal wrapper styling
+  const wrapperStyle: React.CSSProperties = preserveOriginalLayout ? {
+    ...style,
+    outline: 'none',
+    position: 'relative' as const,
+    // Remove any display/layout properties that might interfere
+    display: 'contents' // This makes the wrapper "invisible" to layout
+  } : {
+    ...style,
+    borderWidth: selected && !isContainer ? '2px' : '0',
+    borderStyle: selected && !isContainer ? 'solid' : 'none',
+    borderColor: selected && !isContainer ? '#3b82f6' : 'transparent',
+    borderRadius: selected ? '4px' : '0',
+    padding: selected && !isContainer ? '2px' : '0',
+    outline: 'none',
+    position: 'relative' as const
+  };
+  
   return (
     <Box
       ref={dragRef}
-      style={{
-        ...style,
-        // Only apply selection styling when NOT preserving original layout
-        ...(preserveOriginalLayout ? {} : {
-          borderWidth: selected && !isContainer ? '2px' : '0',
-          borderStyle: selected && !isContainer ? 'solid' : 'none',
-          borderColor: selected && !isContainer ? '#3b82f6' : 'transparent',
-          borderRadius: selected ? '4px' : '0',
-          padding: selected && !isContainer ? '2px' : '0',
-        }),
-        outline: 'none',
-        position: 'relative'
-      }}
+      style={wrapperStyle}
       {...attributes}
       {...listeners}
     >

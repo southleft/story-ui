@@ -56,6 +56,9 @@ const CanvasDropZone: React.FC<CanvasDropZoneProps> = ({ insertIndex, isVisible 
 export const Canvas: React.FC = () => {
   const { components, draggedComponent, isImportedFromStory } = useVisualBuilderStore();
   const { handleCanvasClick } = useSelection();
+  
+  // DEBUG: Log the preserveOriginalLayout value
+  console.log('🔍 [Canvas] isImportedFromStory:', isImportedFromStory, 'components.length:', components.length);
 
   const { setNodeRef, isOver } = useDroppable({
     id: 'canvas',
@@ -108,6 +111,8 @@ export const Canvas: React.FC = () => {
                 parentId={null}
                 preserveOriginalLayout={isImportedFromStory}
               />
+              {/* DEBUG: Log what we're passing */}
+              {(() => { console.log('🎯 [Canvas] Single component - preserveOriginalLayout:', isImportedFromStory, 'componentType:', components[0].type); return null; })()}
               {Boolean(draggedComponent) && (
                 <CanvasDropZone 
                   insertIndex={1} 
@@ -128,8 +133,10 @@ export const Canvas: React.FC = () => {
                     component={component}
                     index={index}
                     parentId={null}
-                    preserveOriginalLayout={false}
+                    preserveOriginalLayout={isImportedFromStory}
                   />
+                  {/* DEBUG: Log for each component */}
+                  {(() => { console.log('🎯 [Canvas] Multiple components - preserveOriginalLayout:', isImportedFromStory, 'componentType:', component.type, 'index:', index); return null; })()}
                 </React.Fragment>
               ))}
               {/* Final drop zone at the end */}
