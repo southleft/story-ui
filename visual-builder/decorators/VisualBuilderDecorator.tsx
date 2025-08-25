@@ -65,7 +65,7 @@ const VisualBuilderButton: React.FC<{ fileName: string; title?: string; storyVar
                 }
               }
             } catch (nameError) {
-              console.log(`❌ Failed to fetch "${name}":`, nameError.message);
+              console.log(`❌ Failed to fetch "${name}":`, nameError instanceof Error ? nameError.message : String(nameError));
             }
           }
         } catch (mpcError) {
@@ -116,10 +116,9 @@ export const Default: Story = {
       preview: sourceCode.substring(0, 200) + '...'
     });
     
-    // Open Visual Builder in a new tab
-    const visualBuilderUrl = `${window.location.origin}${window.location.pathname}?path=/story/story-ui--generator`;
-    // Navigate to the Visual Builder story
-    window.location.href = visualBuilderUrl;
+    // Open Visual Builder in a new tab to avoid breaking Storybook navigation
+    const visualBuilderUrl = `${window.location.origin}${window.location.pathname}?path=/story/visualbuilder--default&full=1`;
+    window.open(visualBuilderUrl, '_blank');
   };
   
   return (
@@ -145,9 +144,9 @@ export const Default: Story = {
         boxShadow: isHovered ? '0 2px 8px rgba(139, 92, 246, 0.3)' : '0 1px 3px rgba(0, 0, 0, 0.1)',
         backdropFilter: 'blur(8px)',
       }}
-      title="Open in Visual Builder for advanced editing"
+      title="Open in Visual Builder in a new tab for advanced editing"
     >
-      🎨 Edit in Visual Builder
+      🎨 Edit in Visual Builder ↗
     </button>
   );
 };

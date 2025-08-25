@@ -1,8 +1,5 @@
-import { fileURLToPath } from 'url';
-import path from 'path';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Browser-compatible configuration - no Node.js modules
+// Path operations should be handled server-side only
 
 // Component configuration interface
 export interface ComponentConfig {
@@ -87,7 +84,7 @@ export interface StoryUIConfig {
 
 // Default generic configuration
 export const DEFAULT_CONFIG: StoryUIConfig = {
-  generatedStoriesPath: path.resolve(process.cwd(), './src/stories/generated/'),
+  generatedStoriesPath: './src/stories/generated/',
   componentsPath: undefined, // No default path - should be set only for local component libraries
   componentsMetadataPath: undefined,
   storyPrefix: 'Generated/',

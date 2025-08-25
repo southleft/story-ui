@@ -281,6 +281,7 @@ export async function updateStoryFile(
     // Determine the API port from environment or default
     const apiPort = (window as any).STORY_UI_MCP_PORT || 
                    (window as any).__STORY_UI_PORT__ || 
+                   (import.meta as any).env?.VITE_STORY_UI_PORT ||
                    '4001';
     
     // Call the Story UI server to update the file

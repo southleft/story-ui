@@ -33,7 +33,8 @@ export class StoryUIConfigLoader {
         userConfig = JSON.parse(configContent);
       } else {
         // Dynamic import for .js/.ts files
-        const configModule = await import(configPath);
+        // @ts-ignore - Dynamic import path
+        const configModule = await import(/* @vite-ignore */ configPath);
         userConfig = configModule.default || configModule.config || configModule;
       }
 

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { EmbeddedVisualBuilder } from '@tpitre/story-ui/dist/visual-builder';
+import { EmbeddedVisualBuilder } from '../../visual-builder/components/EmbeddedVisualBuilder';
 
 // Message type
 interface Message {

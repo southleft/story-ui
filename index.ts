@@ -2,7 +2,8 @@
 export * from './story-ui.config.js';
 export * from './story-ui.config.loader.js';
 export * from './story-generator/componentDiscovery.js';
-export * from './story-generator/promptGenerator.js';
+// Server-side only - not exported for browser
+// export * from './story-generator/promptGenerator.js';
 
 // Re-export key types and functions
 export type {
@@ -29,10 +30,11 @@ export {
   discoverComponentsFromPackage
 } from './story-generator/componentDiscovery.js';
 
-export {
-  generatePrompt,
-  buildClaudePrompt
-} from './story-generator/promptGenerator.js';
+// Server-side only exports - not for browser
+// export {
+//   generatePrompt,
+//   buildClaudePrompt
+// } from './story-generator/promptGenerator.js';
 
 
 export {
@@ -58,7 +60,9 @@ export {
 // Visual Builder exports
 export {
   VisualBuilder,
-  useVisualBuilderStore
+  EmbeddedVisualBuilder,
+  useVisualBuilderStore,
+  withVisualBuilderButton
 } from './visual-builder/index.js';
 
 export type {

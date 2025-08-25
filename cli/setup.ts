@@ -678,6 +678,102 @@ export async function setupCommand() {
     }
   }
 
+  // Copy Visual Builder component to the project
+  const visualBuilderTargetDir = path.join(storiesDir, 'VisualBuilder');
+  if (!fs.existsSync(visualBuilderTargetDir)) {
+    fs.mkdirSync(visualBuilderTargetDir, { recursive: true });
+  }
+
+  // Copy Visual Builder files
+  const visualBuilderTemplatesDir = path.resolve(__dirname, '../../templates/VisualBuilder');
+  const visualBuilderFiles = ['VisualBuilder.stories.tsx'];
+
+  console.log(chalk.blue('\n🎨 Installing Visual Builder component...'));
+
+  for (const file of visualBuilderFiles) {
+    const sourcePath = path.join(visualBuilderTemplatesDir, file);
+    const targetPath = path.join(visualBuilderTargetDir, file);
+
+    if (fs.existsSync(sourcePath)) {
+      let content = fs.readFileSync(sourcePath, 'utf-8');
+
+      // Add framework-specific provider if needed
+      if (file === 'VisualBuilder.stories.tsx') {
+        // Add framework-specific imports and decorators based on design system
+        // Check for Mantine (could be auto-detected as custom but using mantine imports)
+        if (config.importPath?.includes('mantine')) {
+          content = `import { MantineProvider } from '@mantine/core';
+import '@mantine/core/styles.css';
+${content}`;
+          // Update the meta decorators
+          content = content.replace(
+            'const meta = {',
+            `const meta = {
+  decorators: [
+    (Story) => (
+      <MantineProvider>
+        <Story />
+      </MantineProvider>
+    ),
+  ],`
+          );
+        } else if (answers.designSystem === 'chakra' || config.importPath?.includes('chakra')) {
+          content = `import { ChakraProvider } from '@chakra-ui/react';
+${content}`;
+          content = content.replace(
+            'const meta = {',
+            `const meta = {
+  decorators: [
+    (Story) => (
+      <ChakraProvider>
+        <Story />
+      </ChakraProvider>
+    ),
+  ],`
+          );
+        } else if (answers.designSystem === 'antd' || config.importPath === 'antd') {
+          content = `import { ConfigProvider } from 'antd';
+${content}`;
+          content = content.replace(
+            'const meta = {',
+            `const meta = {
+  decorators: [
+    (Story) => (
+      <ConfigProvider>
+        <Story />
+      </ConfigProvider>
+    ),
+  ],`
+          );
+        }
+      }
+
+      fs.writeFileSync(targetPath, content);
+      console.log(chalk.green(`✅ Copied ${file}`));
+    } else {
+      console.warn(chalk.yellow(`⚠️  Template file not found: ${file}`));
+    }
+  }
+
+  // Copy Visual Builder decorator
+  const decoratorsTargetDir = path.join(storiesDir, 'decorators');
+  if (!fs.existsSync(decoratorsTargetDir)) {
+    fs.mkdirSync(decoratorsTargetDir, { recursive: true });
+  }
+
+  const decoratorTemplatesDir = path.resolve(__dirname, '../../templates/decorators');
+  const decoratorFile = 'VisualBuilderDecorator.tsx';
+  const decoratorSourcePath = path.join(decoratorTemplatesDir, decoratorFile);
+  const decoratorTargetPath = path.join(decoratorsTargetDir, decoratorFile);
+
+  if (fs.existsSync(decoratorSourcePath)) {
+    const decoratorContent = fs.readFileSync(decoratorSourcePath, 'utf-8');
+    fs.writeFileSync(decoratorTargetPath, decoratorContent);
+    console.log(chalk.green(`✅ Copied ${decoratorFile} decorator`));
+  } else {
+    console.warn(chalk.yellow(`⚠️  Decorator template file not found: ${decoratorFile}`));
+  }
+
   // Create considerations file
   const considerationsTemplatePath = path.resolve(__dirname, '../../templates/story-ui-considerations.md');
   const considerationsPath = path.join(process.cwd(), 'story-ui-considerations.md');

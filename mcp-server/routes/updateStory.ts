@@ -71,15 +71,35 @@ export async function updateStoryFromVisualBuilder(req: Request, res: Response) 
       }
       // If it already starts with 'edited-', keep it as is (re-editing existing edited story)
       
-      // Check if a file already exists in the edited directory with the original name
-      // This handles re-editing scenarios where we want to update the existing file
-      const originalNamePath = path.join(editedPath, cleanFileName);
-      if (fs.existsSync(originalNamePath) && !cleanFileName.startsWith('edited-')) {
-        // Use the original filename to update the existing edited file
-        finalFileName = cleanFileName;
+      // Check if this file already exists in the edited directory
+      // This is critical for re-editing scenarios to prevent duplicates
+      const existingEditedPath = path.join(editedPath, finalFileName);
+      if (fs.existsSync(existingEditedPath)) {
+        // Update the existing edited file with the same name
+        logger.log(`🔄 Updating existing edited story: ${finalFileName}`);
+        targetPath = existingEditedPath;
+      } else {
+        // Check if there's an edited version with a different naming pattern
+        // This handles edge cases where the file might exist with/without hash
+        if (fs.existsSync(editedPath)) {
+          const editedFiles = fs.readdirSync(editedPath);
+          const baseNameWithoutHash = cleanFileName.replace(/-[a-f0-9]{8}/, '');
+          
+          // Find any existing file that matches the base name
+          const existingFile = editedFiles.find(file => {
+            const fileBase = file.replace(/-[a-f0-9]{8}/, '');
+            return fileBase.includes(baseNameWithoutHash) || baseNameWithoutHash.includes(fileBase);
+          });
+          
+          if (existingFile) {
+            // Use the existing file name to prevent duplicates
+            finalFileName = existingFile;
+            logger.log(`🔄 Found existing edited story with different pattern: ${existingFile}`);
+          }
+        }
+        
+        targetPath = path.join(editedPath, finalFileName);
       }
-      
-      targetPath = path.join(editedPath, finalFileName);
     } else {
       // Save generated stories to the main generated directory
       targetPath = path.join(config.generatedStoriesPath, cleanFileName);
