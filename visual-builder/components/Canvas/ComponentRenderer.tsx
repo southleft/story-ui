@@ -210,9 +210,8 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
       },
       style: {
         cursor: 'pointer',
-        ...styleObject,
-        // Ensure fullWidth is properly applied
-        width: props.fullWidth ? '100%' : styleObject.width || 'auto'
+        ...styleObject
+        // Let Mantine handle fullWidth natively via prop
       },
       ...spacingProps
     } : commonProps;
@@ -220,12 +219,16 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
     switch (type) {
       case 'Button':
         const finalButtonProps = type === 'Button' ? buttonProps : commonProps;
-        console.log(`🔵 [Button] fullWidth: ${props.fullWidth}, preserveOriginalLayout: ${preserveOriginalLayout}`);
-        console.log(`🔵 [Button] Final props width:`, (finalButtonProps.style as any)?.width);
-        console.log(`🔵 [Button] All props:`, { 
-          fullWidth: props.fullWidth, 
-          variant: props.variant, 
-          children: props.children 
+        console.log('🔵 [ComponentRenderer] Button component rendering');
+        console.log('🔵 [ComponentRenderer] Original component props:', component.props);
+        console.log('🔵 [ComponentRenderer] fullWidth prop value:', component.props.fullWidth, typeof component.props.fullWidth);
+        console.log('🔵 [ComponentRenderer] Final button props being passed to Mantine:', {
+          fullWidth: props.fullWidth,
+          variant: props.variant,
+          size: props.size,
+          color: props.color,
+          disabled: props.disabled,
+          children: props.children
         });
         
         return (
@@ -263,10 +266,16 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
           props.weight === 'lighter' ? 300 :
           props.fw || props.weight || 400;
         
+        console.log('📝 [ComponentRenderer] Text component rendering');
+        console.log('📝 [ComponentRenderer] Original component props:', component.props);
+        console.log('📝 [ComponentRenderer] fw prop value:', component.props.fw, typeof component.props.fw);
+        console.log('📝 [ComponentRenderer] weight prop value:', component.props.weight, typeof component.props.weight);
+        console.log('📝 [ComponentRenderer] computedFw result:', computedFw, typeof computedFw);
+        
         // Debug log for Text components with "Premium" or "Sport" in content
         if (props.children && typeof props.children === 'string' && 
-            (props.children.includes('Premium') || props.children.includes('Sport'))) {
-          console.log('📝 [Text Component Title]', {
+            (props.children.includes('Premium') || props.children.includes('Sport') || props.children.includes('Servings') || props.children.includes('Difficulty') || props.children.includes('Calories'))) {
+          console.log('📝 [Text Component Title/Label]', {
             content: props.children,
             preserveOriginalLayout,
             propsWeight: props.weight,
@@ -514,6 +523,12 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
             padding={props.padding}
             radius={props.radius}
             withBorder={props.withBorder}
+            w={props.w}
+            maw={props.maw}
+            miw={props.miw}
+            h={props.h}
+            mah={props.mah}
+            mih={props.mih}
             ref={cardRef}
             style={cardStyles}
           >

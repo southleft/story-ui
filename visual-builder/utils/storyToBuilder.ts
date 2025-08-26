@@ -111,13 +111,16 @@ export function extractJSXFromStory(storyCode: string): string {
 function parseAttributes(attributeString: string): Record<string, any> {
   const props: Record<string, any> = {};
   
+  console.log('🔧 [PARSE ATTRIBUTES] INPUT:', { attributeString, length: attributeString.length });
+  
   if (!attributeString.trim()) {
+    console.log('🔧 [PARSE ATTRIBUTES] Empty string - returning empty props');
     return props;
   }
 
   try {
     // Improved attribute parsing to handle nested braces in style objects
-    const parseAttributeString = (str: string) => {
+        const parseAttributeString = (str: string) => {
       const attrs = [];
       let current = '';
       let braceDepth = 0;
@@ -135,9 +138,12 @@ function parseAttributes(attributeString: string): Record<string, any> {
             braceDepth++;
           } else if (char === '}') {
             braceDepth--;
-          } else if (char === ' ' && braceDepth === 0 && current && current.includes('=')) {
-            attrs.push(current);
-            current = '';
+          } else if (char === ' ' && braceDepth === 0) {
+            // Always push current when we hit a space (outside quotes/braces)
+            if (current.trim()) {
+              attrs.push(current.trim());
+              current = '';
+            }
             continue;
           }
         } else if (char === quoteChar && str[i - 1] !== '\\') {
@@ -148,14 +154,15 @@ function parseAttributes(attributeString: string): Record<string, any> {
         current += char;
       }
       
-      if (current) {
-        attrs.push(current);
+      if (current.trim()) {
+        attrs.push(current.trim());
       }
       
       return attrs;
     };
     
     const attributes = parseAttributeString(attributeString);
+    console.log('🔧 [PARSE ATTRIBUTES] Parsed attributes array:', attributes);
     
     for (const attr of attributes) {
       if (!attr.trim()) continue;
@@ -163,21 +170,27 @@ function parseAttributes(attributeString: string): Record<string, any> {
       const eqIndex = attr.indexOf('=');
       if (eqIndex === -1) {
         // Boolean attribute
-        props[attr.trim()] = true;
+        const boolKey = attr.trim();
+        props[boolKey] = true;
+        console.log('🔧 [PARSE ATTRIBUTES] Boolean attribute:', { key: boolKey, value: true });
         continue;
       }
       
       const key = attr.substring(0, eqIndex).trim();
       let value = attr.substring(eqIndex + 1).trim();
       
+      console.log('🔧 [PARSE ATTRIBUTES] Processing attribute:', { key, rawValue: value });
+      
       // Remove quotes
       if ((value.startsWith('"') && value.endsWith('"')) || 
           (value.startsWith("'") && value.endsWith("'"))) {
         value = value.slice(1, -1);
         props[key] = value;
+        console.log('🔧 [PARSE ATTRIBUTES] String value:', { key, value });
       } else if (value.startsWith('{') && value.endsWith('}')) {
         // Handle JSX expressions
         const expression = value.slice(1, -1);
+        console.log('🔧 [PARSE ATTRIBUTES] JSX expression:', { key, expression });
         
         // Special handling for style prop - parse as object
         if (key === 'style' && expression.startsWith('{') && expression.endsWith('}')) {
@@ -219,9 +232,20 @@ function parseAttributes(attributeString: string): Record<string, any> {
                 
                 // Check if value looks like an array (e.g., "[14, 16, 18]")
                 if (styleValue.startsWith('[') && styleValue.endsWith(']')) {
-                  // Extract first value from array
-                  const arrayContent = styleValue.slice(1, -1).split(',')[0].trim();
-                  styleValue = arrayContent;
+                  try {
+                    // Try to parse as proper JSON array for Mantine responsive values
+                    styleValue = JSON.parse(styleValue.replace(/'/g, '"'));
+                  } catch {
+                    // If parsing fails, keep the original array string
+                    // Some arrays might need special handling
+                    const arrayContent = styleValue.slice(1, -1).split(',').map((v: string) => v.trim());
+                    // If it's numeric values, convert them
+                    if (arrayContent.every((v: string) => /^\d+$/.test(v))) {
+                      styleValue = arrayContent.map((v: string) => parseInt(v, 10));
+                    } else {
+                      styleValue = arrayContent;
+                    }
+                  }
                 }
                 
                 // Remove quotes if present
@@ -249,22 +273,30 @@ function parseAttributes(attributeString: string): Record<string, any> {
           }
         } else if (expression === 'true' || expression === 'false') {
           props[key] = expression === 'true';
+          console.log('🔧 [PARSE ATTRIBUTES] Boolean JSX expression:', { key, value: props[key] });
         } else if (/^\d+$/.test(expression)) {
           props[key] = parseInt(expression, 10);
+          console.log('🔧 [PARSE ATTRIBUTES] Numeric JSX expression:', { key, value: props[key] });
         } else if (/^\d*\.\d+$/.test(expression)) {
           props[key] = parseFloat(expression);
+          console.log('🔧 [PARSE ATTRIBUTES] Float JSX expression:', { key, value: props[key] });
         } else if (expression.startsWith('"') && expression.endsWith('"')) {
           props[key] = expression.slice(1, -1);
+          console.log('🔧 [PARSE ATTRIBUTES] String JSX expression:', { key, value: props[key] });
         } else {
           // Keep as string for complex expressions
           props[key] = expression;
+          console.log('🔧 [PARSE ATTRIBUTES] Complex JSX expression (as string):', { key, value: props[key] });
         }
       } else {
         props[key] = value;
+        console.log('🔧 [PARSE ATTRIBUTES] Direct value:', { key, value });
       }
     }
+    
+    console.log('🔧 [PARSE ATTRIBUTES] FINAL PROPS:', props);
   } catch (error) {
-    console.error('Error parsing attributes:', error);
+    console.error('❌ [PARSE ATTRIBUTES] Error parsing attributes:', error);
   }
   
   return props;
@@ -346,6 +378,10 @@ function tokenizeJSX(jsx: string): JSXToken[] {
         continue;
       }
       
+      // Skip whitespace before attributes
+      while (i < jsx.length && /\s/.test(jsx[i])) {
+        i++;
+      }
       // Extract attributes for opening tag
       let attributes = '';
       let inString = false;
@@ -479,6 +515,26 @@ function parseJSXElement(jsx: string, idCounter: { value: number }): ComponentDe
             category,
             props
           };
+          
+          console.log(`📦 [COMPONENT CREATION] Created component: ${component.type} (${component.id})`);
+          console.log(`📦 [COMPONENT CREATION] Component props:`, component.props);
+          
+          // Special logging for Button and Text components
+          if (componentType === 'Button' && component.props.fullWidth !== undefined) {
+            console.log(`🔵 [BUTTON CREATION] fullWidth prop detected:`, { 
+              fullWidth: component.props.fullWidth, 
+              type: typeof component.props.fullWidth 
+            });
+          }
+          
+          if (componentType === 'Text' && (component.props.fw !== undefined || component.props.weight !== undefined)) {
+            console.log(`📝 [TEXT CREATION] font weight prop detected:`, { 
+              fw: component.props.fw, 
+              fwType: typeof component.props.fw,
+              weight: component.props.weight,
+              weightType: typeof component.props.weight
+            });
+          }
           
           console.log(`📦 Created component: ${component.type} (${component.id})`);
           

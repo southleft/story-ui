@@ -249,10 +249,10 @@ export const MANTINE_COMPONENTS: VisualBuilderComponentConfig[] = [
         category: 'appearance'
       },
       {
-        name: 'weight',
+        name: 'fw',
         type: 'select',
-        defaultValue: 'normal',
-        options: ['normal', 'bold', 'lighter'],
+        defaultValue: '400',
+        options: ['100', '200', '300', '400', '500', '600', '700', '800', '900', 'normal', 'bold', 'lighter', 'bolder'],
         description: 'Font weight',
         category: 'appearance'
       },
@@ -428,6 +428,48 @@ export const MANTINE_COMPONENTS: VisualBuilderComponentConfig[] = [
         type: 'boolean',
         defaultValue: true,
         description: 'Show border',
+        category: 'appearance'
+      },
+      {
+        name: 'w',
+        type: 'string',
+        defaultValue: undefined,
+        description: 'Width',
+        category: 'appearance'
+      },
+      {
+        name: 'maw',
+        type: 'string',
+        defaultValue: undefined,
+        description: 'Maximum width',
+        category: 'appearance'
+      },
+      {
+        name: 'miw',
+        type: 'string',
+        defaultValue: undefined,
+        description: 'Minimum width',
+        category: 'appearance'
+      },
+      {
+        name: 'h',
+        type: 'string',
+        defaultValue: undefined,
+        description: 'Height',
+        category: 'appearance'
+      },
+      {
+        name: 'mah',
+        type: 'string',
+        defaultValue: undefined,
+        description: 'Maximum height',
+        category: 'appearance'
+      },
+      {
+        name: 'mih',
+        type: 'string',
+        defaultValue: undefined,
+        description: 'Minimum height',
         category: 'appearance'
       }
     ])
