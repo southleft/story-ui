@@ -91,7 +91,7 @@ export const useVisualBuilderStore = create<VisualBuilderStore>()(
           }
           
           // Mark as dirty and schedule auto-save
-          scheduleAutoSave(state.currentStoryName, newComponents, state.currentStoryId || undefined);
+          scheduleAutoSave(state.currentStoryName, newComponents, state.currentStoryId || undefined, state.isImportedFromStory);
           return { components: newComponents, isDirty: true };
         });
       },
@@ -110,7 +110,7 @@ export const useVisualBuilderStore = create<VisualBuilderStore>()(
           const newComponents = removeFromComponents(state.components);
           
           // Mark as dirty and schedule auto-save
-          scheduleAutoSave(state.currentStoryName, newComponents, state.currentStoryId || undefined);
+          scheduleAutoSave(state.currentStoryName, newComponents, state.currentStoryId || undefined, state.isImportedFromStory);
           
           return {
             components: newComponents,
@@ -140,7 +140,7 @@ export const useVisualBuilderStore = create<VisualBuilderStore>()(
           const newComponents = updateComponents(state.components);
           
           // Mark as dirty and schedule auto-save
-          scheduleAutoSave(state.currentStoryName, newComponents, state.currentStoryId || undefined);
+          scheduleAutoSave(state.currentStoryName, newComponents, state.currentStoryId || undefined, state.isImportedFromStory);
           
           return { components: newComponents, isDirty: true };
         });
@@ -211,7 +211,7 @@ export const useVisualBuilderStore = create<VisualBuilderStore>()(
           const finalComponents = insertComponentInTree(updatedComponents, removed, targetContainerId, insertionIndex);
           
           // Mark as dirty and schedule auto-save
-          scheduleAutoSave(state.currentStoryName, finalComponents, state.currentStoryId || undefined);
+          scheduleAutoSave(state.currentStoryName, finalComponents, state.currentStoryId || undefined, state.isImportedFromStory);
           
           return { components: finalComponents, isDirty: true };
         });
@@ -235,7 +235,7 @@ export const useVisualBuilderStore = create<VisualBuilderStore>()(
           const finalComponents = insertComponentInTree(afterRemoval, removed, toParentId, insertIndex);
           
           // Mark as dirty and schedule auto-save
-          scheduleAutoSave(state.currentStoryName, finalComponents, state.currentStoryId || undefined);
+          scheduleAutoSave(state.currentStoryName, finalComponents, state.currentStoryId || undefined, state.isImportedFromStory);
           
           return { components: finalComponents, isDirty: true };
         });
@@ -325,7 +325,7 @@ export const useVisualBuilderStore = create<VisualBuilderStore>()(
       saveCurrentStory: (name) => {
         const state = _get();
         const storyName = name || state.currentStoryName;
-        const savedStory = saveStory(storyName, state.components, state.currentStoryId || undefined);
+        const savedStory = saveStory(storyName, state.components, state.currentStoryId || undefined, state.isImportedFromStory);
         
         set({
           currentStoryId: savedStory.id,
@@ -351,7 +351,7 @@ export const useVisualBuilderStore = create<VisualBuilderStore>()(
             currentStoryName: story.name,
             isDirty: false,
             selectedComponent: null,
-            isImportedFromStory: false
+            isImportedFromStory: story.isImportedFromStory || false
           });
           return true;
         }

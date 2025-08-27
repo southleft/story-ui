@@ -375,6 +375,7 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
             justify={props.justify}
             align={props.align}
             gap={props.gap}
+            wrap={props.wrap || 'wrap'}
             ref={groupRef}
             style={{
               ...commonProps.style,

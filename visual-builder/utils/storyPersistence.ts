@@ -6,6 +6,7 @@ export interface SavedStory {
   components: ComponentDefinition[];
   createdAt: string;
   updatedAt: string;
+  isImportedFromStory?: boolean; // Track if this was originally imported from a story
 }
 
 const STORAGE_KEY = 'visual-builder-stories';
@@ -26,7 +27,7 @@ export function getSavedStories(): SavedStory[] {
 /**
  * Save a story to localStorage
  */
-export function saveStory(name: string, components: ComponentDefinition[], existingId?: string): SavedStory {
+export function saveStory(name: string, components: ComponentDefinition[], existingId?: string, isImportedFromStory?: boolean): SavedStory {
   const stories = getSavedStories();
   const now = new Date().toISOString();
   
@@ -38,7 +39,8 @@ export function saveStory(name: string, components: ComponentDefinition[], exist
         ...stories[existingIndex],
         name,
         components,
-        updatedAt: now
+        updatedAt: now,
+        isImportedFromStory: isImportedFromStory !== undefined ? isImportedFromStory : stories[existingIndex].isImportedFromStory
       };
       stories[existingIndex] = updatedStory;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(stories));
@@ -52,7 +54,8 @@ export function saveStory(name: string, components: ComponentDefinition[], exist
     name,
     components,
     createdAt: now,
-    updatedAt: now
+    updatedAt: now,
+    isImportedFromStory: isImportedFromStory || false
   };
   
   stories.push(newStory);
@@ -109,6 +112,7 @@ export function scheduleAutoSave(
   name: string, 
   components: ComponentDefinition[], 
   storyId?: string,
+  isImportedFromStory?: boolean,
   delay: number = 2000
 ): void {
   // Clear existing timer
@@ -119,7 +123,7 @@ export function scheduleAutoSave(
   // Schedule new save
   autoSaveTimer = setTimeout(() => {
     try {
-      saveStory(name, components, storyId);
+      saveStory(name, components, storyId, isImportedFromStory);
       console.debug('Auto-saved story:', name);
     } catch (error) {
       console.error('Auto-save failed:', error);
