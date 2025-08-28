@@ -1,0 +1,96 @@
+{
+  "iconLibraries": [
+    {
+      "packageName": "@workday/canvas-system-icons-web",
+      "type": "data",
+      "description": "Canvas Kit system icons as data objects",
+      "wrapper": "SystemIcon",
+      "wrapperImport": "@workday/canvas-kit-react/icon"
+    },
+    {
+      "packageName": "@heroicons/react",
+      "type": "component",
+      "description": "Heroicons as React components",
+      "variations": [
+        {
+          "path": "@heroicons/react/24/solid",
+          "category": "solid"
+        },
+        {
+          "path": "@heroicons/react/24/outline",
+          "category": "outline"
+        }
+      ]
+    },
+    {
+      "packageName": "lucide-react",
+      "type": "component",
+      "description": "Lucide icons as React components"
+    },
+    {
+      "packageName": "react-icons",
+      "type": "component",
+      "description": "Multiple icon sets as React components",
+      "subsets": [
+        {
+          "prefix": "Fa",
+          "path": "react-icons/fa",
+          "name": "Font Awesome"
+        },
+        {
+          "prefix": "Md",
+          "path": "react-icons/md",
+          "name": "Material Design"
+        },
+        {
+          "prefix": "Hi",
+          "path": "react-icons/hi",
+          "name": "Heroicons v1"
+        }
+      ]
+    },
+    {
+      "packageName": "@tabler/icons-react",
+      "type": "component",
+      "description": "Tabler icons as React components"
+    },
+    {
+      "packageName": "feather-icons",
+      "type": "svg",
+      "description": "Feather icons as SVG files"
+    },
+    {
+      "packageName": "bootstrap-icons",
+      "type": "font",
+      "description": "Bootstrap icons as font icons",
+      "cssFile": "bootstrap-icons/font/bootstrap-icons.css"
+    }
+  ],
+  "customIconSources": [
+    {
+      "name": "Project Icons",
+      "path": "./src/icons",
+      "type": "svg",
+      "pattern": "*.svg"
+    },
+    {
+      "name": "Brand Icons",
+      "path": "./src/assets/brand-icons",
+      "type": "component",
+      "pattern": "*.tsx"
+    }
+  ],
+  "iconAliases": {
+    "check": "CheckIcon",
+    "close": "XIcon",
+    "menu": "MenuIcon",
+    "search": "SearchIcon",
+    "user": "UserIcon",
+    "settings": "CogIcon",
+    "home": "HomeIcon",
+    "arrow-left": "ChevronLeftIcon",
+    "arrow-right": "ChevronRightIcon",
+    "arrow-up": "ChevronUpIcon",
+    "arrow-down": "ChevronDownIcon"
+  }
+}
