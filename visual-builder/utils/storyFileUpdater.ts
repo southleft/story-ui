@@ -235,6 +235,28 @@ export function generatePropsString(props: Record<string, any>, componentType: s
           const cleanStyle = value.replace(/^["']|["']$/g, '').replace(/[{}]/g, '').trim();
           return `style={{ ${cleanStyle} }}`;
         }
+        
+        // Special check: if key is 'data' and value looks like an array string, parse it
+        if (key === 'data' && value.trim().startsWith('[') && value.trim().endsWith(']')) {
+          try {
+            // Try to parse it as JSON
+            const parsed = JSON.parse(value.replace(/'/g, '"'));
+            if (Array.isArray(parsed)) {
+              return `${key}={${JSON.stringify(parsed)}}`;
+            }
+          } catch (e) {
+            // If parsing fails, try to eval it (safer in this context since it's from Visual Builder)
+            try {
+              const evaluated = eval(value);
+              if (Array.isArray(evaluated)) {
+                return `${key}={${JSON.stringify(evaluated)}}`;
+              }
+            } catch (e2) {
+              console.warn('Failed to parse data prop as array:', value);
+            }
+          }
+        }
+        
         return `${key}="${value}"`;
       } else if (typeof value === 'number') {
         return `${key}={${value}}`;
