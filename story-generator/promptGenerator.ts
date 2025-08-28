@@ -3,7 +3,6 @@ import { DiscoveredComponent } from './componentDiscovery.js';
 import { EnhancedComponentDiscovery } from './enhancedComponentDiscovery.js';
 import { loadConsiderations, considerationsToPrompt } from './considerationsLoader.js';
 import { DocumentationLoader } from './documentationLoader.js';
-import { IconGuidanceSystem } from './iconGuidanceSystem.js';
 
 export interface GeneratedPrompt {
   systemPrompt: string;
@@ -461,21 +460,39 @@ export async function buildClaudePrompt(
     '',
   ];
 
-  // Add intelligent icon guidance based on user request
-  const iconGuidanceSystem = new IconGuidanceSystem();
-  const availableIconLibraries = extractAvailableIconLibraries(config, components);
-  const componentName = extractComponentName(userPrompt);
-  const iconGuidance = iconGuidanceSystem.generateGuidancePrompt(
-    componentName,
-    '',
-    userPrompt,
-    availableIconLibraries
-  );
+  // STRICT ICON ENFORCEMENT - NO EMOJIS
+  const strictIconGuidance = `
+🚫 CRITICAL ICON RULE - MANDATORY COMPLIANCE:
+
+**NEVER USE EMOJIS** - Do NOT use emoji characters (❌ ✅ 🔍 📊 👤 etc.) anywhere in your generated code.
+**ALWAYS USE PROPER ICON COMPONENTS** - Import and use icon components from @tabler/icons-react.
+
+CORRECT Examples (ALWAYS DO THIS):
+\`\`\`tsx
+import { IconHome, IconUser, IconSettings, IconMenu, IconSearch, IconFolder, IconFile, IconCut, IconCopy, IconTrash, IconEdit } from '@tabler/icons-react';
+
+// Use proper icon components with size prop
+<IconHome size={20} />
+<IconUser size={16} />
+<IconSettings size={24} stroke={1.5} />
+<IconMenu size={18} />
+\`\`\`
+
+WRONG Examples (NEVER DO THIS):
+\`\`\`tsx
+// NEVER use emojis like these:
+<Text>🏠 Home</Text>  // ❌ WRONG
+<Text>👤 User</Text>  // ❌ WRONG
+<Text>⚙️ Settings</Text>  // ❌ WRONG
+<Button>📂 New Folder</Button>  // ❌ WRONG
+\`\`\`
+
+For ALL components - navigation, menus, buttons, cards, forms, lists - ALWAYS import and use proper icons from @tabler/icons-react.
+This is a MANDATORY requirement - failure to comply will result in rejection.
+`;
   
-  if (iconGuidance) {
-    promptParts.push(iconGuidance);
-    promptParts.push('');
-  }
+  promptParts.push(strictIconGuidance);
+  promptParts.push('');
 
   // Load documentation - try new directory-based approach first
   const projectRoot = config.considerationsPath ?
@@ -587,6 +604,13 @@ export async function buildClaudePrompt(
     '- Use appropriate styling for the component library (design tokens, className, or inline styles as needed)',
     '- ALWAYS use compound component syntax: Card.Section (NEVER CardSection), Menu.Item (NEVER MenuItem), etc.',
     '- Import only parent components - compound components are accessed as properties (Card imported, Card.Section used)',
+    '',
+    '🚫 ABSOLUTE FINAL RULE - NO EMOJIS 🚫',
+    '- NEVER use emoji characters in your code (❌ 🏠 👤 ⚙️ 📂 ✂️ 📋 🗑️ etc.)',
+    '- ALWAYS import and use proper icon components from @tabler/icons-react',
+    '- Every icon MUST be an imported component like <IconHome />, <IconUser />, <IconSettings />',
+    '- This applies to ALL components: menus, navigation, buttons, cards, lists, etc.',
+    '- NO EXCEPTIONS - failure to use proper icons will result in immediate rejection',
     '</rules>',
     '',
     'Sample story format:',
