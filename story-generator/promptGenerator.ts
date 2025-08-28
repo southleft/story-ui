@@ -3,6 +3,7 @@ import { DiscoveredComponent } from './componentDiscovery.js';
 import { EnhancedComponentDiscovery } from './enhancedComponentDiscovery.js';
 import { loadConsiderations, considerationsToPrompt } from './considerationsLoader.js';
 import { DocumentationLoader } from './documentationLoader.js';
+import { IconGuidanceSystem } from './iconGuidanceSystem.js';
 
 export interface GeneratedPrompt {
   systemPrompt: string;
@@ -460,6 +461,22 @@ export async function buildClaudePrompt(
     '',
   ];
 
+  // Add intelligent icon guidance based on user request
+  const iconGuidanceSystem = new IconGuidanceSystem();
+  const availableIconLibraries = extractAvailableIconLibraries(config, components);
+  const componentName = extractComponentName(userPrompt);
+  const iconGuidance = iconGuidanceSystem.generateGuidancePrompt(
+    componentName,
+    '',
+    userPrompt,
+    availableIconLibraries
+  );
+  
+  if (iconGuidance) {
+    promptParts.push(iconGuidance);
+    promptParts.push('');
+  }
+
   // Load documentation - try new directory-based approach first
   const projectRoot = config.considerationsPath ?
     config.considerationsPath.replace(/\/story-ui-considerations\.(md|json)$/, '') :
@@ -580,4 +597,96 @@ export async function buildClaudePrompt(
   );
 
   return promptParts.join('\n');
+}
+
+/**
+ * Extracts available icon libraries from config and components
+ */
+function extractAvailableIconLibraries(config: StoryUIConfig, components: DiscoveredComponent[]): string[] {
+  const libraries = new Set<string>();
+  
+  // Check additional imports for icon libraries
+  if (config.additionalImports) {
+    for (const additionalImport of config.additionalImports) {
+      const path = additionalImport.path;
+      if (path.includes('icons') || isKnownIconLibrary(path)) {
+        libraries.add(path);
+      }
+    }
+  }
+  
+  // Check discovered components for icon libraries
+  for (const component of components) {
+    if (component.__componentPath && isKnownIconLibrary(component.__componentPath)) {
+      libraries.add(component.__componentPath);
+    }
+  }
+  
+  // Default fallbacks based on common icon libraries
+  const commonIconLibraries = [
+    '@tabler/icons-react',
+    'lucide-react',
+    '@heroicons/react',
+    'react-icons',
+    '@mui/icons-material',
+    '@ant-design/icons'
+  ];
+  
+  // Add the main import path if it might be an icon library
+  if (config.importPath && isKnownIconLibrary(config.importPath)) {
+    libraries.add(config.importPath);
+  }
+  
+  // If no icon libraries found, default to common ones
+  if (libraries.size === 0) {
+    return ['@tabler/icons-react'];
+  }
+  
+  return Array.from(libraries);
+}
+
+/**
+ * Checks if a package path is a known icon library
+ */
+function isKnownIconLibrary(path: string): boolean {
+  const knownIconLibraries = [
+    '@tabler/icons-react',
+    '@tamagui/lucide-icons',
+    'lucide-react',
+    '@heroicons/react',
+    'react-icons',
+    '@mui/icons-material',
+    '@ant-design/icons',
+    '@workday/canvas-system-icons-web',
+    'phosphor-react',
+    'feather-icons',
+    'bootstrap-icons'
+  ];
+  
+  return knownIconLibraries.some(lib => path.includes(lib.replace(/[/@]/g, '')));
+}
+
+/**
+ * Extracts the main component name/type from user prompt
+ */
+function extractComponentName(userPrompt: string): string {
+  // Common component type patterns
+  const componentPatterns = [
+    /create\s+(?:a\s+)?(\w+(?:\s+\w+)*?)(?:\s+(?:component|card|page|layout))?/i,
+    /build\s+(?:a\s+)?(\w+(?:\s+\w+)*?)(?:\s+(?:component|card|page|layout))?/i,
+    /make\s+(?:a\s+)?(\w+(?:\s+\w+)*?)(?:\s+(?:component|card|page|layout))?/i,
+    /(\w+(?:\s+\w+)*?)\s+(?:component|card|page|layout)/i,
+    /^(\w+(?:\s+\w+)*?)(?:\s+with|\s+that|\s+showing)/i
+  ];
+  
+  for (const pattern of componentPatterns) {
+    const match = userPrompt.match(pattern);
+    if (match) {
+      return match[1].trim();
+    }
+  }
+  
+  // Fallback: use first few words
+  const words = userPrompt.split(/\s+/).slice(0, 3);
+  return words.join(' ').replace(/[^\w\s]/g, '');
 }
