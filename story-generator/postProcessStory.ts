@@ -10,6 +10,9 @@ export function postProcessStory(code: string, libraryPath: string): string {
 
   let processedCode = code;
 
+  // Fix CardSection to Card.Section mapping - CRITICAL for compound components
+  processedCode = fixCompoundComponentMappings(processedCode, libraryPath);
+
   // Fix ANY component with children prop - ALWAYS convert to render function
   if (processedCode.includes('children: (')) {
     logger.log('🚨 Detected children prop in args - converting to render function');
@@ -23,6 +26,79 @@ export function postProcessStory(code: string, libraryPath: string): string {
   }
 
   return processedCode;
+}
+
+/**
+ * Fix compound component mappings (e.g., CardSection -> Card.Section)
+ * This ensures the AI-generated components map to the correct compound component syntax
+ */
+function fixCompoundComponentMappings(code: string, libraryPath: string): string {
+  let processedCode = code;
+  
+  // Define compound component mappings based on the library
+  const compoundMappings = getCompoundMappingsForLibrary(libraryPath);
+  
+  let hasChanges = false;
+  
+  for (const [incorrectComponent, correctComponent] of compoundMappings) {
+    // Fix JSX elements (both opening and closing tags)
+    const openingTagRegex = new RegExp(`<${incorrectComponent}(\\s|>)`, 'g');
+    const closingTagRegex = new RegExp(`</${incorrectComponent}>`, 'g');
+    
+    if (openingTagRegex.test(processedCode) || closingTagRegex.test(processedCode)) {
+      processedCode = processedCode.replace(openingTagRegex, `<${correctComponent}$1`);
+      processedCode = processedCode.replace(closingTagRegex, `</${correctComponent}>`);
+      hasChanges = true;
+      logger.log(`🔄 Fixed compound component mapping: ${incorrectComponent} → ${correctComponent}`);
+    }
+  }
+  
+  if (hasChanges) {
+    logger.log('✅ Compound component mappings applied successfully');
+  }
+  
+  return processedCode;
+}
+
+/**
+ * Get compound component mappings for a specific library
+ */
+function getCompoundMappingsForLibrary(libraryPath: string): Map<string, string> {
+  const mappings = new Map<string, string>();
+  
+  // Mantine-specific mappings
+  if (libraryPath.includes('@mantine/core')) {
+    mappings.set('CardSection', 'Card.Section');
+    mappings.set('MenuTarget', 'Menu.Target');
+    mappings.set('MenuDropdown', 'Menu.Dropdown');
+    mappings.set('MenuLabel', 'Menu.Label');
+    mappings.set('MenuItem', 'Menu.Item');
+    mappings.set('MenuDivider', 'Menu.Divider');
+    mappings.set('TabsList', 'Tabs.List');
+    mappings.set('TabsTab', 'Tabs.Tab');
+    mappings.set('TabsPanel', 'Tabs.Panel');
+    mappings.set('AccordionItem', 'Accordion.Item');
+    mappings.set('AccordionControl', 'Accordion.Control');
+    mappings.set('AccordionPanel', 'Accordion.Panel');
+    mappings.set('NavLinkSection', 'NavLink.Section');
+  }
+  
+  // Add mappings for other design systems as needed
+  // Ant Design example:
+  if (libraryPath.includes('antd')) {
+    mappings.set('CardMeta', 'Card.Meta');
+    mappings.set('TableColumn', 'Table.Column');
+    mappings.set('FormItem', 'Form.Item');
+  }
+  
+  // Chakra UI example:
+  if (libraryPath.includes('@chakra-ui')) {
+    mappings.set('AccordionItem', 'Accordion.Item');
+    mappings.set('AccordionButton', 'Accordion.Button');
+    mappings.set('AccordionPanel', 'Accordion.Panel');
+  }
+  
+  return mappings;
 }
 
 /**

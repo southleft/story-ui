@@ -96,6 +96,35 @@ describe('storyFileUpdater', () => {
   });
 
   describe('generateStoryFileContent', () => {
+    it('should map CardSection to Card.Section in JSX', () => {
+      const components: ComponentDefinition[] = [{
+        id: 'card1',
+        type: 'Card',
+        displayName: 'Card',
+        category: 'mantine',
+        props: { shadow: 'md', padding: 'lg' },
+        children: [{
+          id: 'cardSection1',
+          type: 'CardSection',
+          displayName: 'Card Section',
+          category: 'mantine',
+          props: {},
+          children: []
+        }]
+      }];
+      
+      const result = generateStoryFileContent(components, 'CardWithSection', 'card-section.stories.tsx');
+      
+      // Should contain Card.Section, not CardSection
+      expect(result).toContain('<Card.Section>');
+      expect(result).toContain('</Card.Section>');
+      expect(result).not.toContain('<CardSection>');
+      expect(result).not.toContain('</CardSection>');
+      // Should only import Card, not CardSection
+      expect(result).toContain('import { Card }');
+      expect(result).not.toContain('import { CardSection }');
+    });
+
     it('should generate story with correct style syntax', () => {
       const components: ComponentDefinition[] = [{
         id: 'card1',

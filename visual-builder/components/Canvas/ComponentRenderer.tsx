@@ -822,30 +822,66 @@ export const ComponentRenderer: React.FC<ComponentRendererProps> = ({
         );
 
       case 'Select':
+        // Ensure data is always an array
+        let selectData = props.data || ['Option 1', 'Option 2', 'Option 3'];
+        
+        // Handle various data formats
+        if (typeof selectData === 'string') {
+          try {
+            selectData = JSON.parse(selectData);
+          } catch {
+            selectData = ['Option 1', 'Option 2', 'Option 3'];
+          }
+        }
+        
+        // Ensure it's an array
+        if (!Array.isArray(selectData)) {
+          selectData = ['Option 1', 'Option 2', 'Option 3'];
+        }
+        
         return (
           <Select
             {...commonProps}
             placeholder={props.placeholder}
             label={props.label}
             size={props.size}
-            data={props.data || ['Option 1', 'Option 2', 'Option 3']}
+            data={selectData}
             searchable={props.searchable}
             clearable={props.clearable}
             disabled={props.disabled}
+            defaultValue={props.defaultValue}
           />
         );
 
       case 'MultiSelect':
+        // Ensure data is always an array
+        let multiSelectData = props.data || ['Option 1', 'Option 2', 'Option 3'];
+        
+        // Handle various data formats
+        if (typeof multiSelectData === 'string') {
+          try {
+            multiSelectData = JSON.parse(multiSelectData);
+          } catch {
+            multiSelectData = ['Option 1', 'Option 2', 'Option 3'];
+          }
+        }
+        
+        // Ensure it's an array
+        if (!Array.isArray(multiSelectData)) {
+          multiSelectData = ['Option 1', 'Option 2', 'Option 3'];
+        }
+        
         return (
           <MultiSelect
             {...commonProps}
             placeholder={props.placeholder}
             label={props.label}
             size={props.size}
-            data={props.data || ['Option 1', 'Option 2', 'Option 3']}
+            data={multiSelectData}
             searchable={props.searchable}
             clearable={props.clearable}
             disabled={props.disabled}
+            defaultValue={props.defaultValue}
           />
         );
 

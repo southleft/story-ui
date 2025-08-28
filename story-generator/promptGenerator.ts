@@ -95,6 +95,12 @@ GENERAL COMPONENT RULES:
 - Do not import components that end with Story, Example, Demo, or that appear to be story exports
 - Only use components explicitly listed in the available components section
 
+COMPOUND COMPONENT RULES:
+- ALWAYS use proper compound component syntax (e.g., Card.Section, NOT CardSection)
+- For Mantine: Card.Section, Menu.Item, Tabs.Panel, Accordion.Item, etc.
+- For Ant Design: Card.Meta, Form.Item, Table.Column, etc.
+- Import only the parent component - compound components are properties of the parent
+
 CRITICAL STORY FORMAT RULES:
 - Use ES modules syntax for exports: "export default meta;" NOT "module.exports = meta;"
 - Every story file MUST have a default export with the meta object
@@ -284,6 +290,18 @@ function generateExamples(config: StoryUIConfig): string[] {
     examples.push('        <h1>Welcome</h1>');
     examples.push('      </div>');
     examples.push('    </div>');
+    examples.push('  )');
+    examples.push('};');
+    examples.push('');
+    examples.push('// CORRECT - Compound component usage:');
+    examples.push('export const CardWithSection: Story = {');
+    examples.push('  render: () => (');
+    examples.push('    <Card shadow="sm" padding="lg">');
+    examples.push('      <Card.Section>');
+    examples.push('        <Image src="https://picsum.photos/300/200" alt="Example" />');
+    examples.push('      </Card.Section>');
+    examples.push('      <Text>Content goes here</Text>');
+    examples.push('    </Card>');
     examples.push('  )');
     examples.push('};');
     examples.push('');
@@ -550,6 +568,8 @@ export async function buildClaudePrompt(
     '- For layouts: DO NOT set component in meta',
     '- Only set component in meta when showcasing a SINGLE component',
     '- Use appropriate styling for the component library (design tokens, className, or inline styles as needed)',
+    '- ALWAYS use compound component syntax: Card.Section (NEVER CardSection), Menu.Item (NEVER MenuItem), etc.',
+    '- Import only parent components - compound components are accessed as properties (Card imported, Card.Section used)',
     '</rules>',
     '',
     'Sample story format:',
