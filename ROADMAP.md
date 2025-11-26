@@ -151,32 +151,36 @@ interface CompletionFeedback {
 ```
 
 ### 1.2 Image & Asset Upload Support
-**Status**: Not Started
+**Status**: Frontend Complete (2025-11-26)
 **Priority**: HIGH
 
 Enable users to upload files for AI reference:
 
-- [ ] **Image Upload**
-  - Accept PNG, JPG, WebP, GIF
-  - Preview uploaded images in chat
+- [x] **Image Upload** (Frontend Complete)
+  - Accept PNG, JPG, WebP, GIF (max 20MB each, 4 images)
+  - Preview uploaded images in chat with removal option
   - Send to vision-capable models (Claude, GPT-4o, Gemini)
   - Use for visual reference when generating components
+  - Drag-and-drop support with visual overlay
+  - Base64 conversion for API transport
 
 - [ ] **PDF Upload**
   - Extract text from PDFs for context
   - Support design specs, brand guidelines
   - Parse multi-page documents
 
-- [ ] **File Type Validation**
-  - Validate file types and sizes
-  - Show appropriate error messages
-  - Max file size limits (configurable)
+- [x] **File Type Validation** (Complete)
+  - Validate file types (image/*)
+  - Max file size limit: 20MB
+  - Max files: 4 images
+  - Clear error feedback
 
-- [ ] **UI Components Needed**
-  - File upload button/dropzone in chat
-  - Image preview thumbnails
-  - File attachment indicators
-  - Remove attachment option
+- [x] **UI Components Implemented**
+  - File upload button in chat input area
+  - Image preview thumbnails with remove buttons
+  - File attachment indicators in user messages
+  - Drag-and-drop overlay
+  - Integration with vision mode (`screenshot_to_story`)
 
 ### 1.3 Chat UI Improvements
 **Status**: Not Started
@@ -354,12 +358,12 @@ templates/decorators/
 ## Priority 2: NPX Command Validation
 
 ### 3.1 Command Testing Matrix
-**Status**: Not Started
+**Status**: Core Commands Complete (2025-11-26)
 **Priority**: MEDIUM
 
 Test all npx commands in fresh environments:
 
-- [ ] `npx story-ui init` - Basic initialization
+- [x] `npx story-ui init` - Basic initialization (verified templates exist)
   - [ ] Fresh project (no Storybook)
   - [ ] Existing Storybook project
   - [ ] With React detected
@@ -384,17 +388,26 @@ Test all npx commands in fresh environments:
   - [ ] Installs MUI packages
   - [ ] Sets up theme provider
 
-- [ ] `npx story-ui start` - Server startup
-  - [ ] Default port selection
-  - [ ] Custom port via `--port`
-  - [ ] Config file detection
+- [x] `npx story-ui start` - Server startup (Tested 2025-11-26)
+  - [x] Default port selection (4001)
+  - [x] Custom port via `--port`
+  - [x] Config file detection
+  - [x] Auto port increment when port in use
 
-- [ ] `npx story-ui start --port 4005`
-  - [ ] Uses specified port
-  - [ ] Handles port conflicts
+- [x] `npx story-ui start --port 4005`
+  - [x] Uses specified port
+  - [x] Handles port conflicts (auto-increments)
 
-- [ ] `npx story-ui mcp` - MCP server mode
-  - [ ] STDIO communication works
+- [x] `npx story-ui config --generate` - Config generation (Tested 2025-11-26)
+  - [x] JS format (default)
+  - [x] JSON format (--type json)
+
+- [x] `npx story-ui cleanup` - Cleanup command (Tested 2025-11-26)
+  - [x] Removes default Storybook template files
+
+- [x] `npx story-ui mcp` - MCP server mode (Tested 2025-11-26)
+  - [x] Help displays correctly
+  - [ ] STDIO communication works (requires Claude Desktop)
   - [ ] Claude Desktop integration
 
 ### 3.2 Error Handling
@@ -504,6 +517,21 @@ The codebase should be design-system agnostic except for installation helpers.
 ---
 
 ## Session Notes
+
+### 2025-11-26 (Session 3)
+- **NPX Command Validation Complete**:
+  - Tested `story-ui --help`, `start`, `config --generate`, `cleanup`, `mcp`
+  - Verified auto-port allocation when port is in use
+  - All provider endpoints respond correctly (Claude, OpenAI, Gemini)
+  - All framework endpoints respond correctly (React, Angular, Vue, Svelte, Web Components)
+  - Updated .env.sample with multi-provider documentation
+- **Image Upload Frontend Implementation Complete** (in mantine-storybook test env):
+  - File picker with multiple image support (up to 4 images, 20MB each)
+  - Drag-and-drop support with visual overlay
+  - Image previews with remove buttons
+  - Base64 conversion for API transport
+  - Integration with vision mode (`screenshot_to_story`)
+  - Note: test-storybooks/ is gitignored, changes are local development only
 
 ### 2025-11-26 (Session 2)
 - **Two-Way Chat Backend Complete**:
