@@ -198,7 +198,7 @@ export default preview;
 }
 
 interface SetupAnswers {
-  designSystem: 'auto' | 'chakra' | 'antd' | 'mantine' | 'custom';
+  designSystem: string; // 'auto', 'custom', or any key from DESIGN_SYSTEM_CONFIGS
   installDesignSystem?: boolean;
   importPath?: string;
   componentPrefix?: string;
@@ -209,25 +209,120 @@ interface SetupAnswers {
   mcpPort?: string;
 }
 
-// Design system installation configurations
-const DESIGN_SYSTEM_CONFIGS = {
+// Design system installation configurations (organized by framework)
+const DESIGN_SYSTEM_CONFIGS: Record<string, {
+  packages: string[];
+  name: string;
+  importPath: string;
+  additionalSetup?: string;
+  framework: 'react' | 'angular' | 'vue' | 'svelte' | 'web-components';
+}> = {
+  // React design systems
   antd: {
     packages: ['antd'],
     name: 'Ant Design',
     importPath: 'antd',
-    additionalSetup: 'import "antd/dist/reset.css";'
+    additionalSetup: 'import "antd/dist/reset.css";',
+    framework: 'react'
   },
   mantine: {
     packages: ['@mantine/core', '@mantine/hooks', '@mantine/notifications'],
     name: 'Mantine',
     importPath: '@mantine/core',
-    additionalSetup: 'import "@mantine/core/styles.css";'
+    additionalSetup: 'import "@mantine/core/styles.css";',
+    framework: 'react'
   },
   chakra: {
     packages: ['@chakra-ui/react', '@emotion/react', '@emotion/styled', 'framer-motion'],
     name: 'Chakra UI',
     importPath: '@chakra-ui/react',
-    additionalSetup: 'import { ChakraProvider } from "@chakra-ui/react";'
+    additionalSetup: 'import { ChakraProvider } from "@chakra-ui/react";',
+    framework: 'react'
+  },
+  mui: {
+    packages: ['@mui/material', '@emotion/react', '@emotion/styled'],
+    name: 'Material UI',
+    importPath: '@mui/material',
+    additionalSetup: 'import { ThemeProvider } from "@mui/material/styles";',
+    framework: 'react'
+  },
+  // Angular design systems
+  'angular-material': {
+    packages: ['@angular/material', '@angular/cdk'],
+    name: 'Angular Material',
+    importPath: '@angular/material',
+    additionalSetup: 'import { MatModule } from "@angular/material";',
+    framework: 'angular'
+  },
+  primeng: {
+    packages: ['primeng', 'primeicons'],
+    name: 'PrimeNG',
+    importPath: 'primeng',
+    additionalSetup: 'import "primeng/resources/themes/lara-light-blue/theme.css";',
+    framework: 'angular'
+  },
+  'ng-zorro': {
+    packages: ['ng-zorro-antd'],
+    name: 'NG-ZORRO',
+    importPath: 'ng-zorro-antd',
+    additionalSetup: 'import "ng-zorro-antd/ng-zorro-antd.min.css";',
+    framework: 'angular'
+  },
+  // Vue design systems
+  primevue: {
+    packages: ['primevue', 'primeicons'],
+    name: 'PrimeVue',
+    importPath: 'primevue',
+    additionalSetup: 'import "primevue/resources/themes/lara-light-blue/theme.css";',
+    framework: 'vue'
+  },
+  vuetify: {
+    packages: ['vuetify'],
+    name: 'Vuetify',
+    importPath: 'vuetify',
+    additionalSetup: 'import "vuetify/styles";',
+    framework: 'vue'
+  },
+  'element-plus': {
+    packages: ['element-plus'],
+    name: 'Element Plus',
+    importPath: 'element-plus',
+    additionalSetup: 'import "element-plus/dist/index.css";',
+    framework: 'vue'
+  },
+  // Svelte design systems
+  'skeleton-ui': {
+    packages: ['@skeletonlabs/skeleton'],
+    name: 'Skeleton UI',
+    importPath: '@skeletonlabs/skeleton',
+    framework: 'svelte'
+  },
+  smui: {
+    packages: ['svelte-material-ui'],
+    name: 'Svelte Material UI',
+    importPath: 'svelte-material-ui',
+    framework: 'svelte'
+  },
+  // Web Components design systems
+  shoelace: {
+    packages: ['@shoelace-style/shoelace'],
+    name: 'Shoelace',
+    importPath: '@shoelace-style/shoelace',
+    additionalSetup: 'import "@shoelace-style/shoelace/dist/themes/light.css";',
+    framework: 'web-components'
+  },
+  lit: {
+    packages: ['lit'],
+    name: 'Lit',
+    importPath: 'lit',
+    framework: 'web-components'
+  },
+  vaadin: {
+    packages: ['@vaadin/vaadin-core'],
+    name: 'Vaadin',
+    importPath: '@vaadin',
+    additionalSetup: 'import "@vaadin/vaadin-lumo-styles/all-imports.js";',
+    framework: 'web-components'
   }
 };
 
@@ -336,10 +431,17 @@ export async function setupCommand() {
     process.exit(1);
   }
 
-  // Check if Storybook is installed
+  // Check if Storybook is installed (any framework)
   const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
-  const hasStorybook = packageJson.devDependencies?.['@storybook/react'] ||
-                      packageJson.dependencies?.['@storybook/react'] ||
+  const devDeps = packageJson.devDependencies || {};
+  const deps = packageJson.dependencies || {};
+
+  // Check for any Storybook framework
+  const storybookPackages = [
+    '@storybook/react', '@storybook/react-vite', '@storybook/react-webpack5', '@storybook/nextjs',
+    '@storybook/angular', '@storybook/vue3', '@storybook/svelte', '@storybook/web-components'
+  ];
+  const hasStorybook = storybookPackages.some(pkg => devDeps[pkg] || deps[pkg]) ||
                       fs.existsSync(path.join(process.cwd(), '.storybook'));
 
   if (!hasStorybook) {
@@ -347,21 +449,53 @@ export async function setupCommand() {
     console.log('Install Storybook first: npx storybook@latest init\n');
   }
 
-  // Detect Storybook framework (Vite vs Webpack)
+  // Detect Storybook framework and component framework type
   let storybookFramework = '@storybook/react'; // default
-  const devDeps = packageJson.devDependencies || {};
-  const deps = packageJson.dependencies || {};
+  let componentFramework: 'react' | 'angular' | 'vue' | 'svelte' | 'web-components' = 'react';
 
-  // Check for Vite-based Storybook
+  // Check for React Storybook variants
   if (devDeps['@storybook/react-vite'] || deps['@storybook/react-vite']) {
     storybookFramework = '@storybook/react-vite';
-    console.log(chalk.green('✅ Detected Vite-based Storybook'));
+    componentFramework = 'react';
+    console.log(chalk.green('✅ Detected Vite-based React Storybook'));
   } else if (devDeps['@storybook/react-webpack5'] || deps['@storybook/react-webpack5']) {
     storybookFramework = '@storybook/react-webpack5';
-    console.log(chalk.green('✅ Detected Webpack 5-based Storybook'));
+    componentFramework = 'react';
+    console.log(chalk.green('✅ Detected Webpack 5-based React Storybook'));
   } else if (devDeps['@storybook/nextjs'] || deps['@storybook/nextjs']) {
     storybookFramework = '@storybook/nextjs';
+    componentFramework = 'react';
     console.log(chalk.green('✅ Detected Next.js Storybook'));
+  }
+  // Check for Angular Storybook
+  else if (devDeps['@storybook/angular'] || deps['@storybook/angular']) {
+    storybookFramework = '@storybook/angular';
+    componentFramework = 'angular';
+    console.log(chalk.green('✅ Detected Angular Storybook'));
+  }
+  // Check for Vue Storybook
+  else if (devDeps['@storybook/vue3'] || deps['@storybook/vue3']) {
+    storybookFramework = '@storybook/vue3';
+    componentFramework = 'vue';
+    console.log(chalk.green('✅ Detected Vue 3 Storybook'));
+  }
+  // Check for Svelte Storybook
+  else if (devDeps['@storybook/svelte'] || deps['@storybook/svelte']) {
+    storybookFramework = '@storybook/svelte';
+    componentFramework = 'svelte';
+    console.log(chalk.green('✅ Detected Svelte Storybook'));
+  }
+  // Check for Web Components Storybook
+  else if (devDeps['@storybook/web-components'] || deps['@storybook/web-components']) {
+    storybookFramework = '@storybook/web-components';
+    componentFramework = 'web-components';
+    console.log(chalk.green('✅ Detected Web Components Storybook'));
+  }
+  // Check for generic @storybook/react (old setup)
+  else if (devDeps['@storybook/react'] || deps['@storybook/react']) {
+    storybookFramework = '@storybook/react';
+    componentFramework = 'react';
+    console.log(chalk.green('✅ Detected React Storybook'));
   }
 
   // Auto-detect design system
@@ -377,31 +511,74 @@ export async function setupCommand() {
     }
   }
 
+  // Build design system choices based on detected framework
+  const getDesignSystemChoices = () => {
+    const baseChoice = { name: '🤖 Auto-detect from package.json', value: 'auto' };
+    const customChoice = { name: '🔧 Custom/Other', value: 'custom' };
+
+    switch (componentFramework) {
+      case 'angular':
+        return [
+          baseChoice,
+          { name: '🅰️ Angular Material (@angular/material)', value: 'angular-material' },
+          { name: '🎨 PrimeNG (primeng)', value: 'primeng' },
+          { name: '🌈 NG-ZORRO (ng-zorro-antd)', value: 'ng-zorro' },
+          customChoice
+        ];
+      case 'vue':
+        return [
+          baseChoice,
+          { name: '🍃 PrimeVue (primevue)', value: 'primevue' },
+          { name: '🎯 Vuetify (vuetify)', value: 'vuetify' },
+          { name: '🔮 Element Plus (element-plus)', value: 'element-plus' },
+          customChoice
+        ];
+      case 'svelte':
+        return [
+          baseChoice,
+          { name: '🟠 Skeleton UI (skeleton)', value: 'skeleton-ui' },
+          { name: '🌸 Svelte Material UI (svelte-material-ui)', value: 'smui' },
+          customChoice
+        ];
+      case 'web-components':
+        return [
+          baseChoice,
+          { name: '👟 Shoelace (@shoelace-style/shoelace)', value: 'shoelace' },
+          { name: '🔥 Lit (@lit/element)', value: 'lit' },
+          { name: '🌟 Vaadin (@vaadin)', value: 'vaadin' },
+          customChoice
+        ];
+      case 'react':
+      default:
+        return [
+          baseChoice,
+          { name: '🐜 Ant Design (antd) - Automatic Install & Configure', value: 'antd' },
+          { name: '🎯 Mantine (@mantine/core) - Automatic Install & Configure', value: 'mantine' },
+          { name: '⚡ Chakra UI (@chakra-ui/react) - Automatic Install & Configure', value: 'chakra' },
+          { name: '🎨 Material UI (@mui/material)', value: 'mui' },
+          { name: '🌈 ShadCN/UI (radix primitives)', value: 'shadcn' },
+          customChoice
+        ];
+    }
+  };
+
   const answers = await inquirer.prompt<SetupAnswers>([
     {
       type: 'list',
       name: 'designSystem',
-      message: 'Which design system are you using?',
-      choices: [
-        { name: '🤖 Auto-detect from package.json', value: 'auto' },
-        { name: '🐜 Ant Design (antd) - Automatic Install & Configure', value: 'antd' },
-        { name: '🎯 Mantine (@mantine/core) - Automatic Install & Configure', value: 'mantine' },
-        { name: '⚡ Chakra UI (@chakra-ui/react) - Automatic Install & Configure', value: 'chakra' },
-        { name: '🔧 Custom/Other', value: 'custom' }
-      ],
+      message: `Which design system are you using? (${componentFramework} detected)`,
+      choices: getDesignSystemChoices(),
       default: autoDetected ? 'auto' : 'custom'
     },
     {
       type: 'confirm',
       name: 'installDesignSystem',
       message: (answers) => {
-        const systemName = answers.designSystem === 'antd' ? 'Ant Design' : 
-                          answers.designSystem === 'mantine' ? 'Mantine' :
-                          answers.designSystem === 'chakra' ? 'Chakra UI' : 'the design system';
         const config = DESIGN_SYSTEM_CONFIGS[answers.designSystem as keyof typeof DESIGN_SYSTEM_CONFIGS];
-        return `🚨 IMPORTANT: Would you like to install ${systemName} packages now?\n   Required packages: ${config.packages.join(', ')}\n   (Without these packages, Story UI and Storybook will not work properly)`;
+        const systemName = config?.name || 'the design system';
+        return `🚨 IMPORTANT: Would you like to install ${systemName} packages now?\n   Required packages: ${config?.packages.join(', ') || 'unknown'}\n   (Without these packages, Story UI and Storybook will not work properly)`;
       },
-      when: (answers) => ['antd', 'mantine', 'chakra'].includes(answers.designSystem),
+      when: (answers) => Object.keys(DESIGN_SYSTEM_CONFIGS).includes(answers.designSystem),
       default: true
     },
     {
@@ -463,7 +640,7 @@ export async function setupCommand() {
   ]);
 
   // Install design system if requested
-  if (answers.installDesignSystem && ['antd', 'mantine', 'chakra'].includes(answers.designSystem)) {
+  if (answers.installDesignSystem && Object.keys(DESIGN_SYSTEM_CONFIGS).includes(answers.designSystem)) {
     const installSuccess = await installDesignSystem(answers.designSystem as keyof typeof DESIGN_SYSTEM_CONFIGS);
     if (!installSuccess) {
       console.log(chalk.red('❌ Installation failed! Cannot continue without required dependencies.'));
@@ -483,7 +660,7 @@ export async function setupCommand() {
     
     // Set up Storybook preview file after successful installation
     setupStorybookPreview(answers.designSystem);
-  } else if (['antd', 'mantine', 'chakra'].includes(answers.designSystem)) {
+  } else if (Object.keys(DESIGN_SYSTEM_CONFIGS).includes(answers.designSystem)) {
     // User declined installation - verify dependencies exist
     const packageJsonPath = path.join(process.cwd(), 'package.json');
     if (fs.existsSync(packageJsonPath)) {
@@ -629,6 +806,8 @@ export async function setupCommand() {
   config.generatedStoriesPath = path.resolve(answers.generatedStoriesPath || './src/stories/generated/');
   config.storyPrefix = 'Generated/';
   config.defaultAuthor = 'Story UI AI';
+  config.componentFramework = componentFramework; // react, angular, vue, svelte, or web-components
+  config.storybookFramework = storybookFramework; // e.g., @storybook/react-vite, @storybook/angular
 
 
   // Create configuration file

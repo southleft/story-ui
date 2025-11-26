@@ -1,12 +1,17 @@
 import { Request, Response } from 'express';
-import fetch from 'node-fetch';
 import { generateStory } from '../../story-generator/generateStory.js';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { discoverComponents } from '../../story-generator/componentDiscovery.js';
-import { buildClaudePrompt as buildFlexiblePrompt } from '../../story-generator/promptGenerator.js';
+import {
+  buildClaudePrompt as buildFlexiblePrompt,
+  buildFrameworkAwarePrompt,
+  detectProjectFramework,
+  getAvailableFrameworks,
+} from '../../story-generator/promptGenerator.js';
+import { FrameworkType, StoryGenerationOptions } from '../../story-generator/framework-adapters/index.js';
 import { loadUserConfig, validateConfig } from '../../story-generator/configLoader.js';
 import { setupProductionGitignore } from '../../story-generator/productionGitignoreManager.js';
 import { getInMemoryStoryService, GeneratedStory } from '../../story-generator/inMemoryStoryService.js';
@@ -20,16 +25,10 @@ import { validateStory, ValidationError } from '../../story-generator/storyValid
 import { StoryHistoryManager } from '../../story-generator/storyHistory.js';
 import { logger } from '../../story-generator/logger.js';
 import { UrlRedirectService } from '../../story-generator/urlRedirectService.js';
-const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages';
-const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514';
-
-// Legacy constants - now using dynamic discovery
-const COMPONENT_LIST: string[] = [];
-
-const SAMPLE_STORY = '';
-
-// Legacy component reference - now using dynamic discovery
-const COMPONENT_REFERENCE = '';
+import { chatCompletion, generateTitle as llmGenerateTitle, isProviderConfigured, getProviderInfo, chatCompletionWithImages, buildMessageWithImages } from '../../story-generator/llm-providers/story-llm-service.js';
+import { processImageInputs, ImageInput } from '../../story-generator/imageProcessor.js';
+import { VisionPromptType, buildVisionAwarePrompt } from '../../story-generator/visionPrompts.js';
+import { ImageContent } from '../../story-generator/llm-providers/types.js';
 
 
 
@@ -42,14 +41,42 @@ async function buildClaudePrompt(userPrompt: string) {
 }
 
 // Enhanced function that includes conversation context and previous code
+// Now supports multi-framework prompt generation and vision-aware prompts
 async function buildClaudePromptWithContext(
   userPrompt: string,
   config: any,
   conversation?: any[],
-  previousCode?: string
+  previousCode?: string,
+  options?: {
+    framework?: FrameworkType;
+    autoDetectFramework?: boolean;
+    visionMode?: VisionPromptType;
+    designSystem?: string;
+  }
 ) {
   const discovery = new EnhancedComponentDiscovery(config);
   const components = await discovery.discoverAll();
+
+  // Determine if we should use framework-aware prompts
+  let useFrameworkAware = false;
+  let frameworkOptions: StoryGenerationOptions | undefined;
+
+  if (options?.framework) {
+    // Explicit framework specified
+    useFrameworkAware = true;
+    frameworkOptions = { framework: options.framework };
+    logger.log(`📦 Using specified framework: ${options.framework}`);
+  } else if (options?.autoDetectFramework) {
+    // Auto-detect framework from project
+    try {
+      const detectedFramework = await detectProjectFramework(process.cwd());
+      useFrameworkAware = true;
+      frameworkOptions = { framework: detectedFramework };
+      logger.log(`📦 Auto-detected framework: ${detectedFramework}`);
+    } catch (error) {
+      logger.warn('Failed to auto-detect framework, using React default', { error });
+    }
+  }
 
   // Always start with component discovery as the authoritative source
   logger.log(`📦 Discovered ${components.length} components from ${config.importPath}`);
@@ -57,7 +84,28 @@ async function buildClaudePromptWithContext(
   logger.log(`✅ Available components: ${availableComponents}`);
 
   // Build base prompt with discovered components (always required)
-  let prompt = await buildFlexiblePrompt(userPrompt, config, components);
+  // Use framework-aware prompt if configured, otherwise use legacy React prompt
+  let prompt: string;
+  if (useFrameworkAware && frameworkOptions) {
+    prompt = await buildFrameworkAwarePrompt(userPrompt, config, components, frameworkOptions);
+    logger.log(`🔧 Built framework-aware prompt for ${frameworkOptions.framework}`);
+  } else {
+    prompt = await buildFlexiblePrompt(userPrompt, config, components);
+  }
+
+  // Enhance prompt with vision-aware context if vision mode is provided
+  if (options?.visionMode) {
+    logger.log(`🔍 Enhancing prompt with vision mode: ${options.visionMode}`);
+    const visionPrompts = buildVisionAwarePrompt({
+      promptType: options.visionMode,
+      userDescription: userPrompt,
+      availableComponents: components.map(c => c.name),
+      framework: frameworkOptions?.framework || 'react',
+      designSystem: options.designSystem,
+    });
+    // Combine the vision system prompt with the existing prompt and add the user prompt
+    prompt = `${visionPrompts.systemPrompt}\n\n---\n\n${prompt}\n\n---\n\n${visionPrompts.userPrompt}`;
+  }
 
 // Try to enhance with bundled documentation for usage patterns and design tokens
   logger.log('📋 Using bundled documentation for enhancement');
@@ -147,25 +195,41 @@ function extractCodeBlock(text: string): string | null {
   return codeBlock ? codeBlock[1].trim() : null;
 }
 
-async function callClaude(messages: { role: 'user' | 'assistant', content: string }[]): Promise<string> {
-  const apiKey = process.env.CLAUDE_API_KEY;
-  if (!apiKey) throw new Error('Claude API key not set');
-  const response = await fetch(CLAUDE_API_URL, {
-    method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'content-type': 'application/json',
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: CLAUDE_MODEL,
-      max_tokens: 8192,
-      messages,
-    }),
-  });
-  const data = await response.json();
-  // Try to extract the main content
-  return data?.content?.[0]?.text || data?.completion || '';
+async function callLLM(
+  messages: { role: 'user' | 'assistant', content: string }[],
+  images?: ImageContent[]
+): Promise<string> {
+  // Check if any provider is configured
+  if (!isProviderConfigured()) {
+    throw new Error('No LLM provider configured. Please set CLAUDE_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY.');
+  }
+
+  const providerInfo = getProviderInfo();
+  logger.debug(`Using ${providerInfo.currentProvider} (${providerInfo.currentModel}) for story generation`);
+
+  // If images are provided, use vision-capable chat
+  if (images && images.length > 0) {
+    if (!providerInfo.supportsVision) {
+      throw new Error(`${providerInfo.currentProvider} does not support vision. Please configure a vision-capable provider.`);
+    }
+
+    logger.log(`🖼️ Using vision-capable chat with ${images.length} image(s)`);
+
+    // Convert messages to include images in the first user message
+    const messagesWithImages = messages.map((msg, index) => {
+      if (msg.role === 'user' && index === 0) {
+        return {
+          role: msg.role as 'user' | 'assistant',
+          content: buildMessageWithImages(msg.content, images)
+        };
+      }
+      return msg;
+    });
+
+    return await chatCompletionWithImages(messagesWithImages, { maxTokens: 8192 });
+  }
+
+  return await chatCompletion(messages, { maxTokens: 8192 });
 }
 
 function cleanPromptForTitle(prompt: string): string {
@@ -205,36 +269,14 @@ function cleanPromptForTitle(prompt: string): string {
     .replace(/\b\w/g, c => c.toUpperCase()); // Capitalize words
 }
 
-async function getClaudeTitle(userPrompt: string): Promise<string> {
-  const titlePrompt = [
-    "Given the following UI description, generate a short, clear, human-friendly title suitable for a Storybook navigation item.",
-    "Requirements:",
-    "- Do not include words like 'Generate', 'Build', or 'Create'",
-    "- Keep it under 50 characters",
-    "- Use simple, clear language",
-    "- Avoid special characters that could break code (use letters, numbers, spaces, hyphens, and basic punctuation only)",
-    '',
-    'UI description:',
-    userPrompt,
-    '',
-    'Title:'
-  ].join('\n');
-  const aiText = await callClaude([{ role: 'user', content: titlePrompt }]);
-  // Take the first non-empty line, trim, and remove quotes if present
-  const lines = aiText.split('\n').map(l => l.trim()).filter(Boolean);
-  if (lines.length > 0) {
-    let title = lines[0].replace(/^['\"]|['\"]$/g, '').trim();
-
-    // Additional sanitization for safety
-    title = title
-      .replace(/[^\w\s'"?!-]/g, ' ')  // Remove problematic characters
-      .replace(/\s+/g, ' ')           // Normalize whitespace
-      .trim()
-      .slice(0, 50);                  // Limit length
-
-    return title;
+async function getLLMTitle(userPrompt: string): Promise<string> {
+  // Use the LLM service's built-in title generation
+  try {
+    return await llmGenerateTitle(userPrompt);
+  } catch (error) {
+    logger.warn('Failed to generate title via LLM, using fallback', { error });
+    return '';
   }
-  return '';
 }
 
 function escapeTitleForTS(title: string): string {
@@ -364,7 +406,19 @@ function fileNameFromTitle(title: string, hash: string): string {
 }
 
 export async function generateStoryFromPrompt(req: Request, res: Response) {
-  const { prompt, fileName, conversation, isUpdate, originalTitle, storyId: providedStoryId } = req.body;
+  const {
+    prompt,
+    fileName,
+    conversation,
+    isUpdate,
+    originalTitle,
+    storyId: providedStoryId,
+    framework,           // Explicit framework (react, vue, angular, svelte, web-components)
+    autoDetectFramework, // Auto-detect from project (default: false)
+    images,              // Array of images for vision-based generation
+    visionMode,          // Vision mode: 'screenshot_to_story', 'design_to_story', 'component_analysis', 'layout_analysis'
+    designSystem         // Design system being used (chakra-ui, mantine, etc.)
+  } = req.body;
   if (!prompt) return res.status(400).json({ error: 'Missing prompt' });
 
   try {
@@ -377,6 +431,21 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         error: 'Configuration validation failed',
         details: validation.errors
       });
+    }
+
+    // Process images if provided
+    let processedImages: ImageContent[] = [];
+    if (images && Array.isArray(images) && images.length > 0) {
+      logger.log(`📸 Processing ${images.length} image(s) for vision-based story generation`);
+      try {
+        processedImages = await processImageInputs(images as ImageInput[]);
+        logger.log(`✅ Successfully processed ${processedImages.length} image(s)`);
+      } catch (imageError) {
+        return res.status(400).json({
+          error: 'Image processing failed',
+          details: imageError instanceof Error ? imageError.message : String(imageError)
+        });
+      }
     }
 
     // Set up production-ready environment
@@ -433,14 +502,22 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
     const maxRetries = 3;
     let attempts = 0;
 
-    const initialPrompt = await buildClaudePromptWithContext(prompt, config, conversation, previousCode);
+    // Build framework-aware options with vision support
+    const frameworkOptions = {
+      framework: framework as FrameworkType | undefined,
+      autoDetectFramework: autoDetectFramework === true,
+      visionMode: visionMode as VisionPromptType | undefined,
+      designSystem: designSystem as string | undefined,
+    };
+
+    const initialPrompt = await buildClaudePromptWithContext(prompt, config, conversation, previousCode, frameworkOptions);
     const messages: { role: 'user' | 'assistant', content: string }[] = [{ role: 'user', content: initialPrompt }];
 
     while (attempts < maxRetries) {
       attempts++;
       logger.log(`--- Story Generation Attempt ${attempts} ---`);
 
-      const claudeResponse = await callClaude(messages);
+      const claudeResponse = await callLLM(messages, processedImages.length > 0 ? processedImages : undefined);
       const extractedCode = extractCodeBlock(claudeResponse);
 
       if (!extractedCode) {
@@ -577,10 +654,10 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
     } else if (isActualUpdate) {
       // For updates without original title, try to keep the original title or modify it slightly
       const originalPrompt = conversation.find((msg: any) => msg.role === 'user')?.content || prompt;
-      aiTitle = await getClaudeTitle(originalPrompt);
+      aiTitle = await getLLMTitle(originalPrompt);
     } else {
       // For new stories, generate a new title
-      aiTitle = await getClaudeTitle(prompt);
+      aiTitle = await getLLMTitle(prompt);
     }
 
     if (!aiTitle || aiTitle.length < 2) {
@@ -798,16 +875,6 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
   }
 }
 
-/**
- * Fixes inline styles in the generated story content
- * Converts React camelCase style properties to kebab-case CSS properties
- */
-function fixInlineStyles(content: string): string {
-  // This function is now superseded by the validator and postProcessStory
-  // but can be kept for other potential style cleanups if needed.
-  // For now, the main logic is in the validator.
-  return content;
-}
 
 /**
  * Extracts component names from story content

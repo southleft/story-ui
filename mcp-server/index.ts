@@ -14,6 +14,7 @@ import cors from 'cors';
 import { getComponents, getProps } from './routes/components.js';
 import { claudeProxy } from './routes/claude.js';
 import { generateStoryFromPrompt } from './routes/generateStory.js';
+import { generateStoryFromPromptStream } from './routes/generateStoryStream.js';
 import {
   getStoriesMetadata,
   getStoryById as getMemoryStoryById,
@@ -41,10 +42,51 @@ import { getInMemoryStoryService } from '../story-generator/inMemoryStoryService
 import { loadUserConfig } from '../story-generator/configLoader.js';
 import fs from 'fs';
 import { UrlRedirectService } from '../story-generator/urlRedirectService.js';
+import {
+  getProviders,
+  getModels,
+  configureProviderRoute,
+  validateApiKey,
+  setDefaultProvider,
+  setModel,
+  getUISettings,
+  applyUISettings,
+  getSettingsConfig
+} from './routes/providers.js';
+import {
+  listFrameworks,
+  detectCurrentFramework,
+  getFrameworkDetails,
+  validateStoryForFramework,
+  postProcessStoryForFramework,
+} from './routes/frameworks.js';
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+
+// CORS configuration - restrict to localhost by default
+const corsOptions = {
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    // Allow requests with no origin (like mobile apps or curl)
+    if (!origin) return callback(null, true);
+
+    // Allow localhost on any port (development)
+    const localhostPattern = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+    if (localhostPattern.test(origin)) {
+      return callback(null, true);
+    }
+
+    // Allow custom origins from environment
+    const allowedOrigins = process.env.STORY_UI_ALLOWED_ORIGINS?.split(',') || [];
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+};
+app.use(cors(corsOptions));
+app.use(express.json({ limit: '10mb' })); // Increased limit for file uploads
 
 // Component discovery routes
 app.get('/mcp/components', getComponents);
@@ -53,6 +95,27 @@ app.get('/mcp/props', getProps);
 // AI generation routes
 app.post('/mcp/claude', claudeProxy);
 app.post('/mcp/generate-story', generateStoryFromPrompt);
+app.post('/mcp/generate-story-stream', generateStoryFromPromptStream);
+
+// LLM Provider management routes
+app.get('/mcp/providers', getProviders);
+app.get('/mcp/providers/models', getModels);
+app.post('/mcp/providers/configure', configureProviderRoute);
+app.post('/mcp/providers/validate', validateApiKey);
+app.post('/mcp/providers/default', setDefaultProvider);
+app.post('/mcp/providers/model', setModel);
+
+// UI Settings routes (hybrid model selection for non-technical users)
+app.get('/mcp/providers/settings', getUISettings);
+app.post('/mcp/providers/settings', applyUISettings);
+app.get('/mcp/providers/config', getSettingsConfig);
+
+// Framework detection and adapter routes
+app.get('/mcp/frameworks', listFrameworks);
+app.get('/mcp/frameworks/detect', detectCurrentFramework);
+app.get('/mcp/frameworks/:type', getFrameworkDetails);
+app.post('/mcp/frameworks/validate', validateStoryForFramework);
+app.post('/mcp/frameworks/post-process', postProcessStoryForFramework);
 
 // Hybrid story management routes (works in both dev and production)
 app.get('/mcp/stories', getAllStories);
@@ -77,10 +140,31 @@ app.get('/story-ui/stories/:id/content', getStoryContent);
 app.delete('/story-ui/stories/:id', deleteStory);
 app.delete('/story-ui/stories', clearAllStories);
 app.post('/story-ui/generate', generateStoryFromPrompt);
+app.post('/story-ui/generate-stream', generateStoryFromPromptStream);
 app.post('/story-ui/claude', claudeProxy);
 app.get('/story-ui/components', getComponents);
 app.get('/story-ui/props', getProps);
 app.get('/story-ui/memory-stats', getMemoryStats);
+
+// Provider management proxy routes
+app.get('/story-ui/providers', getProviders);
+app.get('/story-ui/providers/models', getModels);
+app.post('/story-ui/providers/configure', configureProviderRoute);
+app.post('/story-ui/providers/validate', validateApiKey);
+app.post('/story-ui/providers/default', setDefaultProvider);
+app.post('/story-ui/providers/model', setModel);
+
+// UI Settings proxy routes (for non-technical users)
+app.get('/story-ui/providers/settings', getUISettings);
+app.post('/story-ui/providers/settings', applyUISettings);
+app.get('/story-ui/providers/config', getSettingsConfig);
+
+// Framework management proxy routes
+app.get('/story-ui/frameworks', listFrameworks);
+app.get('/story-ui/frameworks/detect', detectCurrentFramework);
+app.get('/story-ui/frameworks/:type', getFrameworkDetails);
+app.post('/story-ui/frameworks/validate', validateStoryForFramework);
+app.post('/story-ui/frameworks/post-process', postProcessStoryForFramework);
 
 // Legacy delete route for backwards compatibility
 app.post('/story-ui/delete', async (req, res) => {

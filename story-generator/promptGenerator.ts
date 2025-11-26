@@ -3,6 +3,21 @@ import { DiscoveredComponent } from './componentDiscovery.js';
 import { EnhancedComponentDiscovery } from './enhancedComponentDiscovery.js';
 import { loadConsiderations, considerationsToPrompt } from './considerationsLoader.js';
 import { DocumentationLoader } from './documentationLoader.js';
+import {
+  getAdapterRegistry,
+  FrameworkPrompt,
+  StoryGenerationOptions,
+  FrameworkType,
+  FrameworkAdapter,
+} from './framework-adapters/index.js';
+
+/**
+ * Extended prompt interface that includes framework information
+ * Uses string[] for layoutInstructions instead of string
+ */
+export interface FrameworkAwarePrompt extends Omit<FrameworkPrompt, 'layoutInstructions'> {
+  layoutInstructions: string[];
+}
 
 export interface GeneratedPrompt {
   systemPrompt: string;
@@ -560,4 +575,234 @@ export async function buildClaudePrompt(
   );
 
   return promptParts.join('\n');
+}
+
+/**
+ * Generates a framework-aware prompt using the adapter system
+ * This is the new multi-framework entry point
+ */
+export async function generateFrameworkAwarePrompt(
+  config: StoryUIConfig,
+  components: DiscoveredComponent[],
+  options?: StoryGenerationOptions
+): Promise<FrameworkAwarePrompt> {
+  const registry = getAdapterRegistry();
+
+  // Get the appropriate adapter (auto-detect or use specified framework)
+  let adapter: FrameworkAdapter;
+  if (options?.framework) {
+    adapter = registry.getAdapter(options.framework);
+  } else {
+    adapter = await registry.autoDetect(process.cwd());
+  }
+
+  // Generate framework-specific prompt components
+  const frameworkPrompt = await registry.generatePrompt(config, components, options);
+
+  // Generate layout instructions (framework-agnostic)
+  const layoutInstructions = generateLayoutInstructions(config);
+
+  return {
+    ...frameworkPrompt,
+    layoutInstructions,
+  };
+}
+
+/**
+ * Builds a complete LLM prompt with framework awareness
+ * This is the new multi-framework entry point for building complete prompts
+ */
+export async function buildFrameworkAwarePrompt(
+  userPrompt: string,
+  config: StoryUIConfig,
+  components: DiscoveredComponent[],
+  options?: StoryGenerationOptions
+): Promise<string> {
+  const generated = await generateFrameworkAwarePrompt(config, components, options);
+
+  const promptParts = [
+    generated.systemPrompt,
+    '',
+  ];
+
+  // Load documentation - try new directory-based approach first
+  const projectRoot = config.considerationsPath ?
+    config.considerationsPath.replace(/\/story-ui-considerations\.(md|json)$/, '') :
+    process.cwd();
+
+  const docLoader = new DocumentationLoader(projectRoot);
+  let documentationAdded = false;
+
+  if (docLoader.hasDocumentation()) {
+    const docs = await docLoader.loadDocumentation();
+    if (docs.sources.length > 0) {
+      const docPrompt = docLoader.formatForPrompt(docs);
+      if (docPrompt) {
+        promptParts.push(docPrompt);
+        promptParts.push('');
+        documentationAdded = true;
+      }
+    }
+  }
+
+  // Fall back to legacy considerations file if no directory-based docs
+  if (!documentationAdded) {
+    const considerations = loadConsiderations(config.considerationsPath);
+    if (considerations) {
+      const considerationsPrompt = considerationsToPrompt(considerations);
+      if (considerationsPrompt) {
+        promptParts.push(considerationsPrompt);
+        promptParts.push('');
+      }
+    }
+  }
+
+  promptParts.push(
+    ...generated.layoutInstructions,
+    '',
+    'Available components:',
+    generated.componentReference,
+    '',
+    generated.examples,
+  );
+
+  // Add additional imports information if configured
+  if (config.additionalImports && config.additionalImports.length > 0) {
+    promptParts.push('');
+    promptParts.push('ADDITIONAL IMPORT EXAMPLES - COPY THESE EXACTLY:');
+    config.additionalImports.forEach(additionalImport => {
+      const componentExamples = additionalImport.components.map(componentName => {
+        let componentConfig = config.components?.find(c => c.name === componentName);
+        if (!componentConfig) {
+          componentConfig = config.layoutComponents?.find(c => c.name === componentName);
+        }
+
+        if (componentConfig && (componentConfig as any).importType === 'default') {
+          return `import ${componentName} from '${additionalImport.path}';`;
+        } else {
+          return `import { ${componentName} } from '${additionalImport.path}';`;
+        }
+      });
+
+      componentExamples.forEach(example => {
+        promptParts.push(`- ${example}`);
+      });
+    });
+  }
+
+  // Add framework-specific rules
+  const frameworkType = generated.framework.componentFramework;
+  const frameworkRules = getFrameworkSpecificRules(frameworkType);
+  if (frameworkRules.length > 0) {
+    promptParts.push('');
+    promptParts.push(`${frameworkType.toUpperCase()} SPECIFIC RULES:`);
+    promptParts.push(...frameworkRules);
+  }
+
+  promptParts.push(
+    '',
+    `Output a complete Storybook story file in TypeScript. Import components as shown in the sample template below. Use the following sample as a template. Respond ONLY with a single code block containing the full file, and nothing else.`,
+    '',
+    '<rules>',
+    'CRITICAL REMINDERS:',
+    '- Story title MUST always start with "Generated/" (e.g., title: "Generated/Recipe Card")',
+    '- ONLY import components that are listed in the "Available components" section',
+    '- ALWAYS use the exact import path shown in parentheses after each component',
+    '- NEVER use main package imports when specific subpath imports are shown',
+    '- Do NOT import story exports - these are NOT real components',
+    '- All images MUST have a src attribute with placeholder URLs (use https://picsum.photos/)',
+    '- MUST use ES modules syntax: "export default meta;" NOT "module.exports = meta;"',
+    '- The file MUST have a default export for the meta object',
+    '- Keep the story concise and focused - avoid overly complex layouts',
+    '- Ensure all tags are properly closed and syntax is valid',
+    '- Story must be complete and syntactically valid',
+    '</rules>',
+    '',
+    'Sample story format:',
+    generated.sampleStory,
+    '',
+    'User request:',
+    userPrompt
+  );
+
+  return promptParts.join('\n');
+}
+
+/**
+ * Get framework-specific rules to include in the prompt
+ */
+function getFrameworkSpecificRules(framework: FrameworkType): string[] {
+  const rules: string[] = [];
+
+  switch (framework) {
+    case 'react':
+      rules.push("- FIRST LINE MUST BE: import React from 'react';");
+      rules.push('- Use JSX syntax for templates');
+      rules.push('- NEVER pass children through args - use render functions');
+      rules.push('- For layouts with multiple components, DO NOT set component in meta');
+      break;
+
+    case 'vue':
+      rules.push("- Import from '@storybook/vue3'");
+      rules.push('- Use Vue 3 Composition API style');
+      rules.push('- Use render functions with template for complex content');
+      rules.push('- Event bindings use @event or v-on:event syntax');
+      rules.push('- Slots use v-slot directive or # shorthand');
+      break;
+
+    case 'angular':
+      rules.push("- Import from '@storybook/angular'");
+      rules.push('- Use moduleMetadata or applicationConfig decorators');
+      rules.push('- Property binding: [property]="value"');
+      rules.push('- Event binding: (event)="handler($event)"');
+      rules.push('- Use Angular template syntax in render functions');
+      break;
+
+    case 'svelte':
+      rules.push("- Import from '@storybook/svelte'");
+      rules.push('- Import .svelte files directly as default exports');
+      rules.push('- Events use on: directive (e.g., on:click)');
+      rules.push('- Use bind: for two-way binding');
+      break;
+
+    case 'web-components':
+      rules.push("- Import { html } from 'lit'");
+      rules.push("- Import from '@storybook/web-components'");
+      rules.push('- Use html`` template literal, NOT JSX');
+      rules.push('- Use kebab-case for tag names (e.g., <my-button>)');
+      rules.push('- Property binding: .property=${value}');
+      rules.push('- Event binding: @event=${handler}');
+      rules.push('- Boolean attributes: ?disabled=${true}');
+      break;
+
+    default:
+      break;
+  }
+
+  return rules;
+}
+
+/**
+ * Detect the framework for a given project
+ */
+export async function detectProjectFramework(projectRoot?: string): Promise<FrameworkType> {
+  const registry = getAdapterRegistry();
+  const adapter = await registry.autoDetect(projectRoot || process.cwd());
+  return adapter.type;
+}
+
+/**
+ * Get the adapter for a specific framework
+ */
+export function getFrameworkAdapter(framework: FrameworkType): FrameworkAdapter {
+  const registry = getAdapterRegistry();
+  return registry.getAdapter(framework);
+}
+
+/**
+ * Get all available framework adapters
+ */
+export function getAvailableFrameworks(): FrameworkType[] {
+  const registry = getAdapterRegistry();
+  return registry.getAvailableFrameworks();
 }

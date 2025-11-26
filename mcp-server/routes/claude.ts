@@ -1,30 +1,53 @@
 import { Request, Response } from 'express';
-import fetch from 'node-fetch';
+import { chatCompletion, isProviderConfigured, getProviderInfo } from '../../story-generator/llm-providers/story-llm-service.js';
+import { logger } from '../../story-generator/logger.js';
 
 export async function claudeProxy(req: Request, res: Response) {
-  const { prompt } = req.body;
-  if (!prompt) return res.status(400).json({ error: 'Missing prompt' });
-  const apiKey = process.env.CLAUDE_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: 'Claude API key not set' });
+  const { prompt, messages, model, maxTokens } = req.body;
+
+  // Support both single prompt and messages array
+  if (!prompt && (!messages || messages.length === 0)) {
+    return res.status(400).json({ error: 'Missing prompt or messages' });
+  }
+
+  // Check if any provider is configured
+  if (!isProviderConfigured()) {
+    return res.status(500).json({
+      error: 'No LLM provider configured',
+      message: 'Please set CLAUDE_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY in your environment'
+    });
+  }
 
   try {
-    // Example Claude API call (adjust endpoint/model as needed)
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'content-type': 'application/json',
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514',
-        max_tokens: 4096,
-        messages: [{ role: 'user', content: prompt }],
-      }),
+    const providerInfo = getProviderInfo();
+    logger.debug('LLM proxy request', {
+      provider: providerInfo.currentProvider,
+      model: providerInfo.currentModel,
+      hasPrompt: !!prompt,
+      messageCount: messages?.length || 1
     });
-    const data = await response.json();
-    res.json(data);
+
+    // Convert single prompt to messages format if needed
+    const chatMessages = messages || [{ role: 'user' as const, content: prompt }];
+
+    const response = await chatCompletion(chatMessages, {
+      model,
+      maxTokens: maxTokens || 4096
+    });
+
+    // Return response in a format compatible with the old Claude API
+    res.json({
+      content: [{ type: 'text', text: response }],
+      provider: providerInfo.currentProvider,
+      model: providerInfo.currentModel
+    });
   } catch (err) {
-    res.status(500).json({ error: 'Claude API error', details: err });
+    logger.error('LLM proxy error', {
+      error: err instanceof Error ? err.message : String(err)
+    });
+    res.status(500).json({
+      error: 'LLM API error',
+      message: err instanceof Error ? err.message : 'An unexpected error occurred'
+    });
   }
 }
