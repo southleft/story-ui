@@ -60,6 +60,7 @@ import {
   validateStoryForFramework,
   postProcessStoryForFramework,
 } from './routes/frameworks.js';
+import mcpRemoteRouter from './routes/mcpRemote.js';
 
 const app = express();
 
@@ -231,6 +232,11 @@ app.delete('/story-ui/sync/stories/:id', deleteSyncedStory);
 app.delete('/story-ui/sync/stories', clearAllSyncedStories);
 app.get('/story-ui/sync/chat-history', syncChatHistory);
 app.get('/story-ui/sync/validate/:id', validateChatSession);
+
+// MCP Remote HTTP transport routes (for Claude Desktop remote connections)
+// Provides Streamable HTTP and legacy SSE endpoints for remote MCP access
+app.use('/mcp-remote', mcpRemoteRouter);
+app.use('/story-ui/mcp-remote', mcpRemoteRouter); // Also available at story-ui prefix
 
 // Redirect service endpoint
 app.get('/mcp/redirects.js', (req, res) => {
