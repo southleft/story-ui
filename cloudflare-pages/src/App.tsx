@@ -1,7 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback, ReactNode } from 'react';
 
-// Get the Edge MCP URL from environment or use default
-const EDGE_MCP_URL = (import.meta as any).env?.VITE_EDGE_MCP_URL || 'https://story-ui-mcp-edge.southleft-llc.workers.dev';
+// Get the Edge MCP URL from environment - REQUIRED configuration
+// Users must set VITE_EDGE_MCP_URL to their own deployed Edge Worker URL
+const EDGE_MCP_URL = (import.meta as any).env?.VITE_EDGE_MCP_URL;
+if (!EDGE_MCP_URL) {
+  console.error('VITE_EDGE_MCP_URL environment variable is required. Set it to your deployed Edge Worker URL.');
+}
 
 // MCP JSON-RPC client for communicating with Edge worker
 interface MCPRequest {

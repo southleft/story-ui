@@ -142,11 +142,11 @@ echo -e "${GREEN}╚════════════════════
 echo ""
 
 if [ "$DEPLOY_EDGE" = true ]; then
-    echo -e "Edge MCP Worker: ${BLUE}https://story-ui-mcp-edge.southleft-llc.workers.dev${NC}"
+    echo -e "Edge MCP Worker: ${BLUE}Check your Cloudflare dashboard for the deployed Worker URL${NC}"
 fi
 
 if [ "$DEPLOY_PAGES" = true ]; then
-    echo -e "Chat UI:         ${BLUE}https://story-ui-chat.pages.dev${NC}"
+    echo -e "Chat UI:         ${BLUE}Check your Cloudflare dashboard for the deployed Pages URL${NC}"
 fi
 
 echo ""

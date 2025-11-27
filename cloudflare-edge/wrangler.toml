@@ -2,7 +2,7 @@ name = "story-ui-mcp-edge"
 main = "src/worker.ts"
 compatibility_date = "2024-11-01"
 compatibility_flags = ["nodejs_compat"]
-account_id = "4718d49e576512c578ff94c6b1ba7d3f"  # Southleft, LLC
+# account_id = "YOUR_CLOUDFLARE_ACCOUNT_ID"  # Uncomment and set your Cloudflare account ID
 
 [vars]
 STORY_UI_VERSION = "3.0.0"

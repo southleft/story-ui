@@ -9,6 +9,11 @@
     "skipLibCheck": true,
     "outDir": "dist"
   },
-  "include": ["./**/*.ts"],
-  "exclude": ["test-storybooks/**/*", "node_modules/**/*"]
+  "include": [
+    "cli/**/*.ts",
+    "mcp-server/**/*.ts",
+    "story-generator/**/*.ts",
+    "visual-builder/**/*.ts"
+  ],
+  "exclude": ["node_modules/**/*"]
 }

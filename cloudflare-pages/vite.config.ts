@@ -4,9 +4,10 @@ import react from '@vitejs/plugin-react';
 export default defineConfig({
   plugins: [react()],
   define: {
-    // Default edge URL - can be overridden at build time
+    // Edge MCP URL - REQUIRED: Set via VITE_EDGE_MCP_URL environment variable
+    // Example: VITE_EDGE_MCP_URL=https://your-worker.your-account.workers.dev npm run build
     'import.meta.env.VITE_EDGE_MCP_URL': JSON.stringify(
-      process.env.VITE_EDGE_MCP_URL || 'https://story-ui-mcp-edge.southleft-llc.workers.dev'
+      process.env.VITE_EDGE_MCP_URL || ''
     ),
   },
   build: {
