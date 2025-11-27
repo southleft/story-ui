@@ -1,4 +1,127 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, ReactNode } from 'react';
+
+// Simple markdown renderer for AI messages with icon marker support
+const renderMarkdown = (text: string): ReactNode => {
+  // Split by double newlines to get paragraphs
+  const paragraphs = text.split(/\n\n+/);
+
+  // Parse inline formatting within text
+  const parseInline = (str: string, paragraphIndex: number): ReactNode[] => {
+    const parts: ReactNode[] = [];
+    let remaining = str;
+    let keyIndex = 0;
+
+    while (remaining.length > 0) {
+      // Icon markers: [SUCCESS], [ERROR], [TIP], [WRENCH]
+      const iconMatch = remaining.match(/^\[(SUCCESS|ERROR|TIP|WRENCH)\]/);
+      if (iconMatch) {
+        const iconType = iconMatch[1].toLowerCase() as keyof typeof StatusIcons;
+        parts.push(<span key={`icon-${paragraphIndex}-${keyIndex++}`}>{StatusIcons[iconType]}</span>);
+        remaining = remaining.slice(iconMatch[0].length);
+        continue;
+      }
+
+      // Bold: **text**
+      const boldMatch = remaining.match(/^\*\*(.+?)\*\*/);
+      if (boldMatch) {
+        parts.push(<strong key={`b-${paragraphIndex}-${keyIndex++}`}>{boldMatch[1]}</strong>);
+        remaining = remaining.slice(boldMatch[0].length);
+        continue;
+      }
+
+      // Italic: _text_
+      const italicMatch = remaining.match(/^_(.+?)_/);
+      if (italicMatch) {
+        parts.push(<em key={`i-${paragraphIndex}-${keyIndex++}`} style={{ opacity: 0.7, fontSize: '0.9em' }}>{italicMatch[1]}</em>);
+        remaining = remaining.slice(italicMatch[0].length);
+        continue;
+      }
+
+      // Code: `text`
+      const codeMatch = remaining.match(/^`([^`]+)`/);
+      if (codeMatch) {
+        parts.push(
+          <code
+            key={`c-${paragraphIndex}-${keyIndex++}`}
+            style={{
+              background: 'rgba(0,0,0,0.08)',
+              padding: '1px 5px',
+              borderRadius: '3px',
+              fontFamily: 'ui-monospace, monospace',
+              fontSize: '0.88em'
+            }}
+          >
+            {codeMatch[1]}
+          </code>
+        );
+        remaining = remaining.slice(codeMatch[0].length);
+        continue;
+      }
+
+      // Single newline within paragraph - convert to space or line break
+      if (remaining.startsWith('\n')) {
+        parts.push(' ');
+        remaining = remaining.slice(1);
+        continue;
+      }
+
+      // Regular text - consume until next special character or bracket
+      const nextSpecial = remaining.search(/[*_`\[\n]/);
+      if (nextSpecial === -1) {
+        parts.push(remaining);
+        remaining = '';
+      } else if (nextSpecial === 0) {
+        // Special char that didn't match a pattern, treat as regular text
+        parts.push(remaining[0]);
+        remaining = remaining.slice(1);
+      } else {
+        parts.push(remaining.slice(0, nextSpecial));
+        remaining = remaining.slice(nextSpecial);
+      }
+    }
+
+    return parts;
+  };
+
+  return (
+    <>
+      {paragraphs.map((paragraph, index) => (
+        <div key={`p-${index}`} style={{ marginBottom: index < paragraphs.length - 1 ? '12px' : 0 }}>
+          {parseInline(paragraph.trim(), index)}
+        </div>
+      ))}
+    </>
+  );
+};
+
+// Inline SVG icons for status indicators (avoiding emojis)
+const StatusIcons = {
+  success: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#22c55e', verticalAlign: 'middle', marginRight: '6px' }}>
+      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+      <polyline points="22,4 12,14.01 9,11.01"/>
+    </svg>
+  ),
+  error: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#ef4444', verticalAlign: 'middle', marginRight: '6px' }}>
+      <circle cx="12" cy="12" r="10"/>
+      <line x1="15" y1="9" x2="9" y2="15"/>
+      <line x1="9" y1="9" x2="15" y2="15"/>
+    </svg>
+  ),
+  tip: (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#f59e0b', verticalAlign: 'middle', marginRight: '4px' }}>
+      <circle cx="12" cy="12" r="10"/>
+      <line x1="12" y1="16" x2="12" y2="12"/>
+      <line x1="12" y1="8" x2="12.01" y2="8"/>
+    </svg>
+  ),
+  wrench: (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#6366f1', verticalAlign: 'middle', marginRight: '4px' }}>
+      <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+    </svg>
+  )
+};
 
 // Message type
 interface Message {
@@ -994,7 +1117,7 @@ export function StoryUIPanel() {
           {conversation.map((msg, i) => (
             <div key={i} style={STYLES.messageContainer}>
               <div style={msg.role === 'user' ? STYLES.userMessage : STYLES.aiMessage}>
-                {msg.content}
+                {msg.role === 'ai' ? renderMarkdown(msg.content) : msg.content}
               </div>
             </div>
           ))}

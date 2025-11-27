@@ -208,6 +208,81 @@ async function analyzeIntent(
   };
 }
 
+// Component insights - contextual reasons based on component role
+const COMPONENT_INSIGHTS: Record<string, string> = {
+  // Layout
+  Box: 'base container for custom layouts',
+  Container: 'centered content with max-width',
+  Stack: 'vertical flow with consistent spacing',
+  HStack: 'horizontal alignment',
+  VStack: 'vertical alignment',
+  Flex: 'flexible positioning',
+  Grid: 'multi-column responsive layout',
+  SimpleGrid: 'auto-sizing grid columns',
+  Group: 'inline element grouping',
+  Center: 'centered content',
+  Space: 'controlled whitespace',
+  Divider: 'visual section separation',
+
+  // Typography
+  Text: 'text with theme styling',
+  Title: 'semantic heading',
+  Heading: 'hierarchical heading',
+  Typography: 'styled text content',
+
+  // Feedback
+  Alert: 'contextual user notifications',
+  AlertTitle: 'alert heading',
+  Badge: 'status indicators',
+  Chip: 'compact info tags',
+  Progress: 'task completion feedback',
+  CircularProgress: 'loading state indicator',
+  LinearProgress: 'progress visualization',
+  Skeleton: 'loading placeholder',
+  Spinner: 'loading animation',
+  Loader: 'async state feedback',
+
+  // Actions
+  Button: 'primary user actions',
+  IconButton: 'icon-only actions',
+  ActionIcon: 'compact icon actions',
+  Menu: 'contextual options',
+  Tooltip: 'hover information',
+
+  // Forms
+  Input: 'text input field',
+  TextInput: 'text entry',
+  Textarea: 'multi-line text',
+  Select: 'dropdown selection',
+  Checkbox: 'binary toggle',
+  Switch: 'on/off toggle',
+  Radio: 'single selection',
+  Slider: 'range selection',
+  NumberInput: 'numeric entry',
+
+  // Data Display
+  Card: 'content container with elevation',
+  Paper: 'surface elevation',
+  Table: 'tabular data display',
+  List: 'sequential items',
+  Avatar: 'user representation',
+  Image: 'visual content',
+
+  // Navigation
+  Tabs: 'content organization',
+  Breadcrumb: 'navigation hierarchy',
+  Pagination: 'paged navigation',
+  Stepper: 'multi-step progress',
+  NavLink: 'navigation item',
+
+  // Overlay
+  Modal: 'focused interaction',
+  Dialog: 'user confirmation',
+  Drawer: 'side panel content',
+  Popover: 'contextual overlay',
+  Sheet: 'bottom panel (mobile-friendly)',
+};
+
 // Analyze generated code to extract components and decisions
 function analyzeGeneratedCode(
   code: string,
@@ -221,8 +296,9 @@ function analyzeGeneratedCode(
   const componentsUsed: CompletionFeedback['componentsUsed'] = [];
   const layoutChoices: CompletionFeedback['layoutChoices'] = [];
   const styleChoices: CompletionFeedback['styleChoices'] = [];
+  const promptLower = prompt.toLowerCase();
 
-  // Extract imported components
+  // Extract imported components with contextual reasons
   const importMatch = code.match(/import\s*{([^}]+)}\s*from\s*['"][^'"]+['"]/g);
   if (importMatch) {
     for (const imp of importMatch) {
@@ -231,64 +307,120 @@ function analyzeGeneratedCode(
         const names = components[1].split(',').map(n => n.trim());
         for (const name of names) {
           if (name && /^[A-Z]/.test(name)) {
-            componentsUsed.push({ name, reason: 'Used in composition' });
+            // Get contextual insight if available
+            const insight = COMPONENT_INSIGHTS[name];
+            componentsUsed.push({
+              name,
+              reason: insight || undefined
+            });
           }
         }
       }
     }
   }
 
-  // Detect layout patterns
-  if (code.includes('Grid') || code.includes('SimpleGrid')) {
+  // Detect layout patterns with better context
+  const hasGrid = code.includes('Grid') || code.includes('SimpleGrid');
+  const hasStack = code.includes('Stack') || code.includes('VStack') || code.includes('HStack');
+  const hasFlex = code.includes('Flex') || /display:\s*['"]?flex/i.test(code);
+  const hasContainer = code.includes('Container');
+
+  if (hasGrid) {
+    const colMatch = code.match(/columns?[=:]\s*[{]?\s*(\d+|[{][^}]+[}])/i);
+    const cols = colMatch ? 'responsive columns' : 'auto columns';
     layoutChoices.push({
-      pattern: 'Grid Layout',
-      reason: 'Responsive multi-column arrangement for content organization'
-    });
-  }
-  if (code.includes('Stack') || code.includes('VStack') || code.includes('HStack')) {
-    layoutChoices.push({
-      pattern: 'Stack Layout',
-      reason: 'Sequential arrangement with consistent spacing'
-    });
-  }
-  if (code.includes('Flex') || code.includes('flexbox')) {
-    layoutChoices.push({
-      pattern: 'Flexbox',
-      reason: 'Flexible alignment and distribution of elements'
-    });
-  }
-  if (code.includes('Container')) {
-    layoutChoices.push({
-      pattern: 'Container',
-      reason: 'Centered content with max-width constraint'
+      pattern: 'Grid',
+      reason: `${cols} for organized content arrangement`
     });
   }
 
-  // Detect style choices
-  const colorMatches = code.match(/color[s]?:\s*["']([^"']+)["']/gi);
-  if (colorMatches) {
-    for (const match of colorMatches.slice(0, 3)) {
-      const value = match.split(':')[1]?.trim().replace(/["']/g, '');
-      if (value) {
+  if (hasStack && !hasGrid) {
+    const isHorizontal = code.includes('HStack') || code.includes('direction="row"') || code.includes("direction='row'");
+    layoutChoices.push({
+      pattern: isHorizontal ? 'Horizontal Stack' : 'Vertical Stack',
+      reason: isHorizontal
+        ? 'inline element alignment with automatic spacing'
+        : 'stacked sections with consistent gaps'
+    });
+  }
+
+  if (hasFlex && !hasStack && !hasGrid) {
+    const hasJustify = /justify/i.test(code);
+    const hasAlign = /align/i.test(code);
+    layoutChoices.push({
+      pattern: 'Flexbox',
+      reason: hasJustify && hasAlign
+        ? 'precise control over element distribution and alignment'
+        : 'flexible element positioning'
+    });
+  }
+
+  if (hasContainer) {
+    layoutChoices.push({
+      pattern: 'Container',
+      reason: 'centered content with readable max-width'
+    });
+  }
+
+  // Detect meaningful style choices
+  const variantMatch = code.match(/variant[=:]\s*["']([^"']+)["']/gi);
+  if (variantMatch) {
+    const variants = new Set(variantMatch.map(m =>
+      m.split(/[=:]/)[1]?.trim().replace(/["']/g, '')
+    ).filter(Boolean));
+
+    for (const variant of Array.from(variants).slice(0, 2)) {
+      const variantReasons: Record<string, string> = {
+        'filled': 'high visual emphasis',
+        'outlined': 'secondary emphasis',
+        'subtle': 'minimal visual weight',
+        'light': 'soft background emphasis',
+        'gradient': 'eye-catching visual treatment',
+        'contained': 'solid button style',
+        'text': 'inline text action',
+      };
+      if (variantReasons[variant]) {
         styleChoices.push({
-          property: 'color',
-          value,
-          reason: 'Semantic color from design system'
+          property: 'variant',
+          value: variant,
+          reason: variantReasons[variant]
         });
       }
     }
   }
 
-  const sizeMatches = code.match(/size:\s*["']([^"']+)["']/gi);
-  if (sizeMatches) {
-    for (const match of sizeMatches.slice(0, 2)) {
-      const value = match.split(':')[1]?.trim().replace(/["']/g, '');
-      if (value) {
-        styleChoices.push({
-          property: 'size',
-          value,
-          reason: 'Size variant for visual hierarchy'
-        });
+  // Detect color usage with semantic context
+  const colorMatch = code.match(/color[=:]\s*["']([^"']+)["']/gi);
+  if (colorMatch) {
+    const colors = new Set(colorMatch.map(m =>
+      m.split(/[=:]/)[1]?.trim().replace(/["']/g, '')
+    ).filter(Boolean));
+
+    const semanticColors: Record<string, string> = {
+      'primary': 'brand identity emphasis',
+      'secondary': 'supporting visual accent',
+      'success': 'positive outcome indication',
+      'error': 'error state signaling',
+      'warning': 'caution indication',
+      'info': 'informational context',
+      'green': 'success/positive state',
+      'red': 'error/danger state',
+      'blue': 'informational emphasis',
+      'yellow': 'warning indication',
+      'orange': 'attention drawing',
+    };
+
+    for (const color of Array.from(colors).slice(0, 2)) {
+      const colorLower = color.toLowerCase();
+      for (const [key, reason] of Object.entries(semanticColors)) {
+        if (colorLower.includes(key)) {
+          styleChoices.push({
+            property: 'color',
+            value: color,
+            reason
+          });
+          break;
+        }
       }
     }
   }

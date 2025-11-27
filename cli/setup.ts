@@ -160,6 +160,18 @@ function setupStorybookPreview(designSystem: string) {
         <Story />
       </MantineProvider>
     )`
+    },
+    shadcn: {
+      imports: [
+        "import type { Preview } from '@storybook/react-vite'",
+        "import '../src/index.css'", // or globals.css for Tailwind styles
+        "import React from 'react'"
+      ],
+      decorator: `(Story) => (
+      <div className="min-h-screen bg-background text-foreground">
+        <Story />
+      </div>
+    )`
     }
   };
 
@@ -244,6 +256,13 @@ const DESIGN_SYSTEM_CONFIGS: Record<string, {
     name: 'Material UI',
     importPath: '@mui/material',
     additionalSetup: 'import { ThemeProvider } from "@mui/material/styles";',
+    framework: 'react'
+  },
+  shadcn: {
+    packages: ['class-variance-authority', 'clsx', 'tailwind-merge', '@radix-ui/react-slot', 'lucide-react'],
+    name: 'shadcn/ui',
+    importPath: '@/components/ui',
+    additionalSetup: '// shadcn/ui components are locally installed. Run: npx shadcn@latest init',
     framework: 'react'
   },
   // Angular design systems
@@ -556,7 +575,7 @@ export async function setupCommand() {
           { name: '🎯 Mantine (@mantine/core) - Automatic Install & Configure', value: 'mantine' },
           { name: '⚡ Chakra UI (@chakra-ui/react) - Automatic Install & Configure', value: 'chakra' },
           { name: '🎨 Material UI (@mui/material)', value: 'mui' },
-          { name: '🌈 ShadCN/UI (radix primitives)', value: 'shadcn' },
+          { name: '✨ shadcn/ui (Tailwind + Radix) - Automatic Install & Configure', value: 'shadcn' },
           customChoice
         ];
     }
@@ -780,6 +799,51 @@ export async function setupCommand() {
   </div>
 </SimpleGrid>`
         }
+      }
+    };
+  } else if (answers.designSystem === 'shadcn') {
+    config = {
+      importPath: '@/components/ui',
+      componentPrefix: '',
+      layoutRules: {
+        multiColumnWrapper: 'div',
+        columnComponent: 'div',
+        containerComponent: 'div',
+        layoutExamples: {
+          twoColumn: `<div className="grid grid-cols-2 gap-4">
+  <Card>
+    <CardHeader>
+      <CardTitle>Left Card</CardTitle>
+    </CardHeader>
+    <CardContent>
+      <p className="text-sm text-muted-foreground">
+        Left content goes here
+      </p>
+    </CardContent>
+  </Card>
+  <Card>
+    <CardHeader>
+      <CardTitle>Right Card</CardTitle>
+    </CardHeader>
+    <CardContent>
+      <p className="text-sm text-muted-foreground">
+        Right content goes here
+      </p>
+    </CardContent>
+  </Card>
+</div>`
+        }
+      },
+      designSystemGuidelines: {
+        name: 'shadcn/ui',
+        additionalNotes: `
+shadcn/ui components are locally installed in the project.
+- Import components from "@/components/ui" (e.g., import { Button } from "@/components/ui/button")
+- Use the cn() utility from "@/lib/utils" for conditional classes
+- Components use Tailwind CSS for styling
+- Use CSS variables for theming (--primary, --secondary, --muted, etc.)
+- Prefer composition over configuration
+        `.trim()
       }
     };
   } else {

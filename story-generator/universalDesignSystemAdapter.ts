@@ -4,7 +4,7 @@ import { StoryUIConfig } from '../story-ui.config.js';
 import { logger } from './logger.js';
 export interface DesignSystemInfo {
   name: string;
-  type: 'chakra-ui' | 'antd' | 'mantine' | 'generic';
+  type: 'chakra-ui' | 'antd' | 'mantine' | 'shadcn' | 'generic';
   scope?: string;
   primaryPackage: string;
   commonComponents: string[];
@@ -18,6 +18,19 @@ export interface DesignSystemInfo {
     spacing?: string;
     colors?: string;
     typography?: string;
+  };
+  /** For shadcn/ui: parsed components.json configuration */
+  shadcnConfig?: {
+    style?: string;
+    aliases?: {
+      components?: string;
+      utils?: string;
+      ui?: string;
+    };
+    tailwind?: {
+      cssVariables?: boolean;
+      baseColor?: string;
+    };
   };
 }
 
@@ -53,6 +66,7 @@ export class UniversalDesignSystemAdapter {
     this.detectedSystems = [];
 
     // Check for known design systems
+    this.checkForShadcn(allDeps);
     this.checkForChakraUI(allDeps);
     this.checkForAntDesign(allDeps);
     this.checkForMantine(allDeps);
@@ -75,6 +89,8 @@ export class UniversalDesignSystemAdapter {
     }
 
     switch (primarySystem.type) {
+      case 'shadcn':
+        return this.getShadcnConfig(primarySystem);
       case 'chakra-ui':
         return this.getChakraUIConfig();
       case 'antd':
@@ -87,6 +103,124 @@ export class UniversalDesignSystemAdapter {
   }
 
   // Design system detection methods
+
+  /**
+   * Detect shadcn/ui by checking for components.json config file
+   * and common shadcn dependencies (class-variance-authority, tailwind-merge, etc.)
+   */
+  private checkForShadcn(deps: Record<string, string>): void {
+    const componentsJsonPath = path.join(this.projectRoot, 'components.json');
+    const hasShadcnConfig = fs.existsSync(componentsJsonPath);
+
+    // Check for common shadcn/ui dependencies
+    const shadcnIndicators = [
+      'class-variance-authority',
+      'tailwind-merge',
+      'clsx',
+      '@radix-ui/react-slot',
+      '@radix-ui/react-dialog',
+      '@radix-ui/react-dropdown-menu',
+      '@radix-ui/react-select',
+      'lucide-react'
+    ];
+
+    const foundIndicators = shadcnIndicators.filter(pkg => deps[pkg]);
+    const hasStrongIndicators = foundIndicators.length >= 3;
+
+    if (hasShadcnConfig || hasStrongIndicators) {
+      let shadcnConfig: DesignSystemInfo['shadcnConfig'] = undefined;
+      let componentPath = '@/components/ui';
+      let utilsPath = '@/lib/utils';
+
+      // Parse components.json if it exists
+      if (hasShadcnConfig) {
+        try {
+          const configContent = fs.readFileSync(componentsJsonPath, 'utf-8');
+          const config = JSON.parse(configContent);
+
+          shadcnConfig = {
+            style: config.style,
+            aliases: config.aliases,
+            tailwind: config.tailwind ? {
+              cssVariables: config.tailwind.cssVariables,
+              baseColor: config.tailwind.baseColor
+            } : undefined
+          };
+
+          // Use configured paths
+          componentPath = config.aliases?.ui || config.aliases?.components || '@/components/ui';
+          utilsPath = config.aliases?.utils || '@/lib/utils';
+
+          logger.log(`📦 Found shadcn/ui config: style=${config.style}, components=${componentPath}`);
+        } catch (error) {
+          logger.log('⚠️ Could not parse components.json, using defaults');
+        }
+      }
+
+      // Scan for actual shadcn components in the project
+      const discoveredComponents = this.discoverShadcnComponents();
+
+      this.detectedSystems.push({
+        name: 'shadcn/ui',
+        type: 'shadcn',
+        primaryPackage: componentPath,
+        commonComponents: discoveredComponents.length > 0
+          ? discoveredComponents
+          : ['Button', 'Card', 'Input', 'Dialog', 'Select', 'Checkbox', 'Label', 'Badge'],
+        layoutComponents: ['Card', 'Separator', 'Sheet', 'Tabs'],
+        formComponents: ['Input', 'Button', 'Select', 'Checkbox', 'RadioGroup', 'Switch', 'Textarea', 'Label'],
+        importPatterns: {
+          default: [],
+          named: ['cn'] // utility function
+        },
+        shadcnConfig
+      });
+
+      logger.log(`✨ Detected shadcn/ui with ${discoveredComponents.length || 'default'} components`);
+    }
+  }
+
+  /**
+   * Discover which shadcn components are actually installed in the project
+   */
+  private discoverShadcnComponents(): string[] {
+    const components: string[] = [];
+
+    // Common paths where shadcn components might be located
+    const possiblePaths = [
+      path.join(this.projectRoot, 'components', 'ui'),
+      path.join(this.projectRoot, 'src', 'components', 'ui'),
+      path.join(this.projectRoot, 'app', 'components', 'ui'),
+    ];
+
+    for (const uiPath of possiblePaths) {
+      if (fs.existsSync(uiPath)) {
+        try {
+          const files = fs.readdirSync(uiPath);
+          for (const file of files) {
+            // Extract component name from file (button.tsx -> Button)
+            const match = file.match(/^([a-z-]+)\.(tsx|ts|jsx|js)$/i);
+            if (match) {
+              // Convert kebab-case to PascalCase (e.g., date-picker -> DatePicker)
+              const componentName = match[1]
+                .split('-')
+                .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+                .join('');
+              components.push(componentName);
+            }
+          }
+          if (components.length > 0) {
+            logger.log(`📁 Found ${components.length} shadcn components in ${uiPath}`);
+            break;
+          }
+        } catch (error) {
+          // Continue checking other paths
+        }
+      }
+    }
+
+    return components;
+  }
 
   private checkForChakraUI(deps: Record<string, string>): void {
     if (deps['@chakra-ui/react']) {
@@ -179,7 +313,8 @@ export class UniversalDesignSystemAdapter {
   // Configuration generators
   private getPrimaryDesignSystem(): DesignSystemInfo | null {
     // Prioritize based on completeness and popularity
-    const priorities = ['chakra-ui', 'antd', 'mantine', 'generic'];
+    // shadcn first since it's explicitly configured in the project
+    const priorities = ['shadcn', 'chakra-ui', 'antd', 'mantine', 'generic'];
     
     for (const priority of priorities) {
       const system = this.detectedSystems.find(ds => ds.type === priority);
@@ -189,6 +324,35 @@ export class UniversalDesignSystemAdapter {
     return this.detectedSystems[0] || null;
   }
 
+  private getShadcnConfig(system: DesignSystemInfo): Partial<StoryUIConfig> {
+    const componentPath = system.primaryPackage || '@/components/ui';
+    const utilsPath = system.shadcnConfig?.aliases?.utils || '@/lib/utils';
+
+    return {
+      designSystemGuidelines: {
+        name: "shadcn/ui",
+        preferredComponents: {
+          layout: componentPath,
+          buttons: componentPath,
+          forms: componentPath
+        },
+        // shadcn-specific guidelines for AI generation
+        additionalNotes: `
+shadcn/ui components are locally installed in the project.
+- Import components from "${componentPath}" (e.g., import { Button } from "${componentPath}/button")
+- Use the cn() utility from "${utilsPath}" for conditional classes
+- Components use Tailwind CSS for styling
+- Use CSS variables for theming (--primary, --secondary, --muted, etc.)
+- Prefer composition over configuration
+        `.trim()
+      },
+      layoutRules: {
+        multiColumnWrapper: "div",
+        columnComponent: "div",
+        containerComponent: "div"
+      }
+    };
+  }
 
   private getChakraUIConfig(): Partial<StoryUIConfig> {
     return {

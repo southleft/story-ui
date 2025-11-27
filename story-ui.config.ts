@@ -61,6 +61,8 @@ export interface DesignSystemGuidelines {
     prohibitArbitraryValues?: boolean;
     enforceComponentLibrary?: boolean;
   };
+  /** Additional notes/guidelines for AI story generation (e.g., shadcn-specific instructions) */
+  additionalNotes?: string;
 }
 
 // Main Story UI configuration interface
