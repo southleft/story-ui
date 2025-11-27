@@ -420,8 +420,106 @@ export class EnhancedComponentDiscovery {
       }));
     }
     
-    // Add other design systems here as needed
-    
+    // Mantine fallback components
+    if (packageName === '@mantine/core') {
+      const mantineComponents = [
+        // Layout
+        'Container', 'SimpleGrid', 'Grid', 'Group', 'Stack', 'Flex', 'Center', 'Space', 'Divider',
+        'AspectRatio', 'Box', 'AppShell', 'MediaQuery', 'Paper',
+        // Typography
+        'Text', 'Title', 'Anchor', 'Blockquote', 'Code', 'Highlight', 'Mark', 'List',
+        // Buttons & Actions
+        'Button', 'ActionIcon', 'CopyButton', 'FileButton', 'UnstyledButton', 'CloseButton',
+        // Inputs
+        'TextInput', 'NumberInput', 'PasswordInput', 'Textarea', 'Select', 'MultiSelect',
+        'Autocomplete', 'Checkbox', 'Switch', 'Radio', 'Slider', 'RangeSlider', 'Rating',
+        'SegmentedControl', 'ColorInput', 'ColorPicker', 'FileInput', 'JsonInput', 'PinInput',
+        'Chip', 'TransferList', 'NativeSelect',
+        // Navigation
+        'Anchor', 'Breadcrumbs', 'Burger', 'NavLink', 'Pagination', 'Stepper', 'Tabs',
+        // Data Display
+        'Accordion', 'Avatar', 'Badge', 'Card', 'Image', 'BackgroundImage', 'Indicator',
+        'Kbd', 'Spoiler', 'Table', 'ThemeIcon', 'Timeline', 'ColorSwatch',
+        // Overlays
+        'Dialog', 'Drawer', 'Modal', 'LoadingOverlay', 'Popover', 'Tooltip', 'Menu',
+        'HoverCard', 'Affix', 'Overlay',
+        // Feedback
+        'Alert', 'Loader', 'Notification', 'Progress', 'RingProgress', 'Skeleton',
+        // Misc
+        'Portal', 'Transition', 'ScrollArea', 'FocusTrap', 'Input', 'InputWrapper',
+        // Dates (from @mantine/dates)
+        'Calendar', 'DateInput', 'DatePicker', 'DateTimePicker', 'MonthPicker', 'YearPicker'
+      ];
+
+      return mantineComponents.map(name => ({
+        name,
+        description: `${name} component from Mantine`,
+        category: this.categorizeComponent(name, '') as any
+      }));
+    }
+
+    // Material UI fallback components
+    if (packageName === '@mui/material') {
+      const muiComponents = [
+        // Inputs
+        'Autocomplete', 'Button', 'ButtonGroup', 'Checkbox', 'Fab', 'Radio', 'RadioGroup',
+        'Rating', 'Select', 'Slider', 'Switch', 'TextField', 'ToggleButton', 'ToggleButtonGroup',
+        // Data Display
+        'Avatar', 'AvatarGroup', 'Badge', 'Chip', 'Divider', 'Icon', 'List', 'ListItem',
+        'ListItemText', 'ListItemIcon', 'ListItemButton', 'Table', 'TableBody', 'TableCell',
+        'TableContainer', 'TableHead', 'TableRow', 'Tooltip', 'Typography',
+        // Feedback
+        'Alert', 'AlertTitle', 'Backdrop', 'CircularProgress', 'Dialog', 'DialogActions',
+        'DialogContent', 'DialogContentText', 'DialogTitle', 'LinearProgress', 'Skeleton', 'Snackbar',
+        // Surfaces
+        'Accordion', 'AccordionActions', 'AccordionDetails', 'AccordionSummary', 'AppBar',
+        'Card', 'CardActions', 'CardContent', 'CardHeader', 'CardMedia', 'Paper', 'Toolbar',
+        // Navigation
+        'BottomNavigation', 'BottomNavigationAction', 'Breadcrumbs', 'Drawer', 'Link',
+        'Menu', 'MenuItem', 'MenuList', 'Pagination', 'SpeedDial', 'SpeedDialAction',
+        'SpeedDialIcon', 'Stepper', 'Step', 'StepLabel', 'Tabs', 'Tab',
+        // Layout
+        'Box', 'Container', 'Grid', 'Stack', 'ImageList', 'ImageListItem',
+        // Utils
+        'ClickAwayListener', 'Modal', 'NoSsr', 'Popover', 'Popper', 'Portal', 'Collapse', 'Fade', 'Grow', 'Slide', 'Zoom'
+      ];
+
+      return muiComponents.map(name => ({
+        name,
+        description: `${name} component from Material UI`,
+        category: this.categorizeComponent(name, '') as any
+      }));
+    }
+
+    // Ant Design fallback components
+    if (packageName === 'antd') {
+      const antdComponents = [
+        // General
+        'Button', 'FloatButton', 'Icon', 'Typography', 'Text', 'Title', 'Paragraph', 'Link',
+        // Layout
+        'Divider', 'Flex', 'Grid', 'Row', 'Col', 'Layout', 'Header', 'Footer', 'Sider', 'Content', 'Space',
+        // Navigation
+        'Anchor', 'Breadcrumb', 'Dropdown', 'Menu', 'Pagination', 'Steps',
+        // Data Entry
+        'AutoComplete', 'Cascader', 'Checkbox', 'ColorPicker', 'DatePicker', 'Form',
+        'Input', 'InputNumber', 'Mentions', 'Radio', 'Rate', 'Select', 'Slider',
+        'Switch', 'TimePicker', 'Transfer', 'TreeSelect', 'Upload',
+        // Data Display
+        'Avatar', 'Badge', 'Calendar', 'Card', 'Carousel', 'Collapse', 'Descriptions',
+        'Empty', 'Image', 'List', 'Popover', 'QRCode', 'Segmented', 'Statistic',
+        'Table', 'Tabs', 'Tag', 'Timeline', 'Tooltip', 'Tour', 'Tree',
+        // Feedback
+        'Alert', 'Drawer', 'Message', 'Modal', 'Notification', 'Popconfirm', 'Progress',
+        'Result', 'Skeleton', 'Spin', 'Watermark'
+      ];
+
+      return antdComponents.map(name => ({
+        name,
+        description: `${name} component from Ant Design`,
+        category: this.categorizeComponent(name, '') as any
+      }));
+    }
+
     // Default: return empty array
     return [];
   }

@@ -23,8 +23,11 @@ program
 program
   .command('init')
   .description('Initialize Story UI configuration with interactive setup')
-  .action(async () => {
-    await setupCommand();
+  .option('-d, --design-system <system>', 'Design system to configure (shadcn, mantine, chakra, antd, mui)')
+  .option('-y, --yes', 'Skip interactive prompts and use defaults')
+  .option('--skip-install', 'Skip package installation')
+  .action(async (options) => {
+    await setupCommand(options);
   });
 
 program

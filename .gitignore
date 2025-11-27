@@ -78,3 +78,10 @@ test-*.js
 # Local AI tooling and editor artefacts
 .cursor/
 .claude/
+
+src/stories/StoryUI/
+
+# Story UI - AI Generated Stories (ephemeral, not for version control)
+# These are temporary stories for testing layouts and should not be committed
+./test-storybooks/mantine-storybook/src/stories/generated/
+./test-storybooks/mantine-storybook/src/stories/generated/**

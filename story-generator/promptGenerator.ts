@@ -58,7 +58,29 @@ function generateSystemPrompt(config: StoryUIConfig): string {
     `${config.componentPrefix.replace(/^[A-Z]+/, '')} design system` :
     'component library';
 
-  return `🚨 CRITICAL: EVERY STORY MUST START WITH "import React from 'react';" AS THE FIRST LINE 🚨
+  // Get the library name for prominent constraint
+  const libraryName = config.designSystemGuidelines?.name || config.importPath || 'configured library';
+  const importPath = config.importPath || 'your-library';
+
+  return `
+╔════════════════════════════════════════════════════════════════════╗
+║                    🚨 MANDATORY LIBRARY CONSTRAINT 🚨                ║
+╠════════════════════════════════════════════════════════════════════╣
+║  REQUIRED LIBRARY: ${libraryName.padEnd(46)}║
+║  IMPORT PATH:      ${importPath.padEnd(46)}║
+╠════════════════════════════════════════════════════════════════════╣
+║  ALL component imports MUST use:                                   ║
+║  import { ComponentName } from '${importPath}';${' '.repeat(Math.max(0, 32 - importPath.length))}║
+╠════════════════════════════════════════════════════════════════════╣
+║  🚫 FORBIDDEN LIBRARIES - DO NOT USE:                              ║
+║  - tamagui, @tamagui/core (NEVER USE)                              ║
+║  - @chakra-ui/react (unless configured)                            ║
+║  - @mui/material (unless configured)                               ║
+║  - antd (unless configured)                                        ║
+║  - Any library NOT matching: ${importPath.padEnd(36)}║
+╚════════════════════════════════════════════════════════════════════╝
+
+🚨 CRITICAL: EVERY STORY MUST START WITH "import React from 'react';" AS THE FIRST LINE 🚨
 
 🔴 CRITICAL RULE: NEVER use children in args for ANY component or layout. Always use render functions. 🔴
 

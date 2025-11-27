@@ -439,9 +439,22 @@ async function installDesignSystem(systemKey: keyof typeof DESIGN_SYSTEM_CONFIGS
   }
 }
 
-export async function setupCommand() {
+// CLI options interface
+export interface SetupOptions {
+  designSystem?: string;
+  yes?: boolean;
+  skipInstall?: boolean;
+}
+
+export async function setupCommand(options: SetupOptions = {}) {
   console.log(chalk.blue.bold('\n🎨 Story UI Setup\n'));
-  console.log('This will help you configure Story UI for your design system.\n');
+
+  // Non-interactive mode indicator
+  if (options.yes || options.designSystem) {
+    console.log(chalk.gray('Running in non-interactive mode...\n'));
+  } else {
+    console.log('This will help you configure Story UI for your design system.\n');
+  }
 
   // Check if we're in a valid project
   const packageJsonPath = path.join(process.cwd(), 'package.json');
@@ -581,82 +594,115 @@ export async function setupCommand() {
     }
   };
 
-  const answers = await inquirer.prompt<SetupAnswers>([
-    {
-      type: 'list',
-      name: 'designSystem',
-      message: `Which design system are you using? (${componentFramework} detected)`,
-      choices: getDesignSystemChoices(),
-      default: autoDetected ? 'auto' : 'custom'
-    },
-    {
-      type: 'confirm',
-      name: 'installDesignSystem',
-      message: (answers) => {
-        const config = DESIGN_SYSTEM_CONFIGS[answers.designSystem as keyof typeof DESIGN_SYSTEM_CONFIGS];
-        const systemName = config?.name || 'the design system';
-        return `🚨 IMPORTANT: Would you like to install ${systemName} packages now?\n   Required packages: ${config?.packages.join(', ') || 'unknown'}\n   (Without these packages, Story UI and Storybook will not work properly)`;
-      },
-      when: (answers) => Object.keys(DESIGN_SYSTEM_CONFIGS).includes(answers.designSystem),
-      default: true
-    },
-    {
-      type: 'input',
-      name: 'importPath',
-      message: 'What is the import path for your components?',
-      when: (answers) => answers.designSystem === 'custom',
-      validate: (input) => input.trim() ? true : 'Import path is required'
-    },
-    {
-      type: 'input',
-      name: 'componentPrefix',
-      message: 'Do your components have a prefix? (e.g., "AL" for ALButton)',
-      when: (answers) => answers.designSystem === 'custom',
-      default: ''
-    },
-    {
-      type: 'input',
-      name: 'generatedStoriesPath',
-      message: 'Where should generated stories be saved?',
-      default: './src/stories/generated/',
-      validate: (input) => input.trim() ? true : 'Path is required'
-    },
-    {
-      type: 'input',
-      name: 'componentsPath',
-      message: 'Where are your component files located?',
-      default: './src/components',
-      when: (answers) => answers.designSystem === 'custom'
-    },
-    {
-      type: 'input',
-      name: 'mcpPort',
-      message: 'Port for the Story UI MCP server',
-      default: async () => {
-        const port = await findAvailablePort(4001);
-        return String(port);
-      },
-      validate: async (input) => {
-        const value = parseInt(input, 10);
-        if (isNaN(value) || value <= 0) return 'Enter a valid port number';
-        const available = await isPortAvailable(value);
-        return available ? true : `Port ${value} is already in use`;
-      }
-    },
-    {
-      type: 'confirm',
-      name: 'hasApiKey',
-      message: 'Do you have a Claude API key? (You can add it later)',
-      default: false
-    },
-    {
-      type: 'password',
-      name: 'apiKey',
-      message: 'Enter your Claude API key:',
-      when: (answers) => answers.hasApiKey,
-      validate: (input) => input.trim() ? true : 'API key is required'
+  // Non-interactive mode: build answers from CLI options
+  let answers: SetupAnswers;
+
+  if (options.yes || options.designSystem) {
+    // Non-interactive mode
+    const designSystem = options.designSystem || (autoDetected ? 'auto' : 'custom');
+    const mcpPort = String(await findAvailablePort(4001));
+
+    // Validate design system choice
+    const validSystems = ['auto', 'custom', ...Object.keys(DESIGN_SYSTEM_CONFIGS)];
+    if (!validSystems.includes(designSystem)) {
+      console.error(chalk.red(`❌ Invalid design system: ${designSystem}`));
+      console.log(chalk.yellow(`Valid options: ${validSystems.join(', ')}`));
+      process.exit(1);
     }
-  ]);
+
+    answers = {
+      designSystem,
+      installDesignSystem: !options.skipInstall && Object.keys(DESIGN_SYSTEM_CONFIGS).includes(designSystem),
+      generatedStoriesPath: './src/stories/generated/',
+      mcpPort,
+      hasApiKey: false,
+    };
+
+    console.log(chalk.blue(`📦 Design system: ${designSystem}`));
+    console.log(chalk.blue(`📁 Generated stories: ${answers.generatedStoriesPath}`));
+    console.log(chalk.blue(`🔌 MCP port: ${mcpPort}`));
+    if (options.skipInstall) {
+      console.log(chalk.yellow('⏭️  Skipping package installation'));
+    }
+  } else {
+    // Interactive mode - use inquirer prompts
+    answers = await inquirer.prompt<SetupAnswers>([
+      {
+        type: 'list',
+        name: 'designSystem',
+        message: `Which design system are you using? (${componentFramework} detected)`,
+        choices: getDesignSystemChoices(),
+        default: autoDetected ? 'auto' : 'custom'
+      },
+      {
+        type: 'confirm',
+        name: 'installDesignSystem',
+        message: (promptAnswers) => {
+          const config = DESIGN_SYSTEM_CONFIGS[promptAnswers.designSystem as keyof typeof DESIGN_SYSTEM_CONFIGS];
+          const systemName = config?.name || 'the design system';
+          return `🚨 IMPORTANT: Would you like to install ${systemName} packages now?\n   Required packages: ${config?.packages.join(', ') || 'unknown'}\n   (Without these packages, Story UI and Storybook will not work properly)`;
+        },
+        when: (promptAnswers) => Object.keys(DESIGN_SYSTEM_CONFIGS).includes(promptAnswers.designSystem),
+        default: true
+      },
+      {
+        type: 'input',
+        name: 'importPath',
+        message: 'What is the import path for your components?',
+        when: (promptAnswers) => promptAnswers.designSystem === 'custom',
+        validate: (input) => input.trim() ? true : 'Import path is required'
+      },
+      {
+        type: 'input',
+        name: 'componentPrefix',
+        message: 'Do your components have a prefix? (e.g., "AL" for ALButton)',
+        when: (promptAnswers) => promptAnswers.designSystem === 'custom',
+        default: ''
+      },
+      {
+        type: 'input',
+        name: 'generatedStoriesPath',
+        message: 'Where should generated stories be saved?',
+        default: './src/stories/generated/',
+        validate: (input) => input.trim() ? true : 'Path is required'
+      },
+      {
+        type: 'input',
+        name: 'componentsPath',
+        message: 'Where are your component files located?',
+        default: './src/components',
+        when: (promptAnswers) => promptAnswers.designSystem === 'custom'
+      },
+      {
+        type: 'input',
+        name: 'mcpPort',
+        message: 'Port for the Story UI MCP server',
+        default: async () => {
+          const port = await findAvailablePort(4001);
+          return String(port);
+        },
+        validate: async (input) => {
+          const value = parseInt(input, 10);
+          if (isNaN(value) || value <= 0) return 'Enter a valid port number';
+          const available = await isPortAvailable(value);
+          return available ? true : `Port ${value} is already in use`;
+        }
+      },
+      {
+        type: 'confirm',
+        name: 'hasApiKey',
+        message: 'Do you have a Claude API key? (You can add it later)',
+        default: false
+      },
+      {
+        type: 'password',
+        name: 'apiKey',
+        message: 'Enter your Claude API key:',
+        when: (promptAnswers) => promptAnswers.hasApiKey,
+        validate: (input) => input.trim() ? true : 'API key is required'
+      }
+    ]);
+  }
 
   // Install design system if requested
   if (answers.installDesignSystem && Object.keys(DESIGN_SYSTEM_CONFIGS).includes(answers.designSystem)) {
@@ -685,22 +731,31 @@ export async function setupCommand() {
     if (fs.existsSync(packageJsonPath)) {
       const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
       const allDeps = { ...packageJson.dependencies, ...packageJson.devDependencies };
-      const config = DESIGN_SYSTEM_CONFIGS[answers.designSystem as keyof typeof DESIGN_SYSTEM_CONFIGS];
-      const missingDeps = config.packages.filter(pkg => !allDeps[pkg]);
-      
+      const dsConfig = DESIGN_SYSTEM_CONFIGS[answers.designSystem as keyof typeof DESIGN_SYSTEM_CONFIGS];
+      const missingDeps = dsConfig.packages.filter(pkg => !allDeps[pkg]);
+
       if (missingDeps.length > 0) {
-        console.log(chalk.red('❌ Required dependencies missing:'), missingDeps.join(', '));
-        console.log(chalk.yellow('Please install them manually:'));
-        console.log(chalk.cyan(`npm install ${missingDeps.join(' ')}`));
-        
-        // Clean up any existing preview.tsx that might cause issues
-        const previewTsxPath = path.join(process.cwd(), '.storybook', 'preview.tsx');
-        if (fs.existsSync(previewTsxPath)) {
-          fs.unlinkSync(previewTsxPath);
-          console.log(chalk.yellow('⚠️  Removed preview.tsx to prevent import errors'));
+        // If --skip-install was explicitly passed, just warn but continue with config generation
+        if (options.skipInstall) {
+          console.log(chalk.yellow('⚠️  Dependencies not installed (--skip-install used):'), missingDeps.join(', '));
+          console.log(chalk.yellow('   Install them later with:'));
+          console.log(chalk.cyan(`   npm install ${missingDeps.join(' ')}`));
+          // Don't set up Storybook preview since deps are missing
+        } else {
+          // Interactive mode: user declined installation
+          console.log(chalk.red('❌ Required dependencies missing:'), missingDeps.join(', '));
+          console.log(chalk.yellow('Please install them manually:'));
+          console.log(chalk.cyan(`npm install ${missingDeps.join(' ')}`));
+
+          // Clean up any existing preview.tsx that might cause issues
+          const previewTsxPath = path.join(process.cwd(), '.storybook', 'preview.tsx');
+          if (fs.existsSync(previewTsxPath)) {
+            fs.unlinkSync(previewTsxPath);
+            console.log(chalk.yellow('⚠️  Removed preview.tsx to prevent import errors'));
+          }
+
+          process.exit(1);
         }
-        
-        process.exit(1);
       } else {
         // Dependencies exist, set up Storybook preview
         setupStorybookPreview(answers.designSystem);
@@ -843,6 +898,51 @@ shadcn/ui components are locally installed in the project.
 - Components use Tailwind CSS for styling
 - Use CSS variables for theming (--primary, --secondary, --muted, etc.)
 - Prefer composition over configuration
+        `.trim()
+      }
+    };
+  } else if (answers.designSystem === 'mui') {
+    config = {
+      importPath: '@mui/material',
+      componentPrefix: '',
+      layoutRules: {
+        multiColumnWrapper: 'Grid',
+        columnComponent: 'Grid',
+        containerComponent: 'Container',
+        layoutExamples: {
+          twoColumn: `<Grid container spacing={2}>
+  <Grid item xs={6}>
+    <Card>
+      <CardContent>
+        <Typography variant="h6">Left Card</Typography>
+        <Typography variant="body2" color="text.secondary">
+          Left content goes here
+        </Typography>
+      </CardContent>
+    </Card>
+  </Grid>
+  <Grid item xs={6}>
+    <Card>
+      <CardContent>
+        <Typography variant="h6">Right Card</Typography>
+        <Typography variant="body2" color="text.secondary">
+          Right content goes here
+        </Typography>
+      </CardContent>
+    </Card>
+  </Grid>
+</Grid>`
+        }
+      },
+      designSystemGuidelines: {
+        name: 'Material UI',
+        additionalNotes: `
+Material UI (MUI) is a React component library implementing Material Design.
+- Import components from "@mui/material" (e.g., import { Button } from "@mui/material")
+- Use the sx prop for inline styling with theme awareness
+- Use Grid for layouts, Card for containers
+- Leverage ThemeProvider for consistent theming
+- Typography component for text with proper variants
         `.trim()
       }
     };
