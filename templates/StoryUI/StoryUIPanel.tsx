@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, ReactNode } from 'react';
+import React, { useState, useRef, useEffect, useCallback, ReactNode } from 'react';
 
 // Simple markdown renderer for AI messages with icon marker support
 const renderMarkdown = (text: string): ReactNode => {
@@ -127,6 +127,95 @@ const StatusIcons = {
 interface Message {
   role: 'user' | 'ai';
   content: string;
+  isStreaming?: boolean;
+  streamingData?: StreamingState;
+  attachedImages?: AttachedImage[];
+}
+
+// Attached image type for upload
+interface AttachedImage {
+  id: string;
+  file: File;
+  preview: string;
+  base64?: string;
+}
+
+// Streaming event types (matching backend streamTypes.ts)
+type StreamEventType = 'intent' | 'progress' | 'validation' | 'retry' | 'completion' | 'error';
+
+interface IntentPreview {
+  requestType: 'new' | 'modification';
+  framework: string;
+  detectedDesignSystem: string | null;
+  strategy: string;
+  estimatedComponents: string[];
+  promptAnalysis: {
+    hasVisionInput: boolean;
+    hasConversationContext: boolean;
+    hasPreviousCode: boolean;
+  };
+}
+
+interface ProgressUpdate {
+  step: number;
+  totalSteps: number;
+  phase: 'config_loaded' | 'components_discovered' | 'prompt_built' | 'llm_thinking' | 'code_extracted' | 'validating' | 'post_processing' | 'saving';
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+interface ValidationFeedback {
+  isValid: boolean;
+  errors: string[];
+  warnings: string[];
+  autoFixApplied: boolean;
+  fixDetails?: string[];
+}
+
+interface RetryInfo {
+  attempt: number;
+  maxAttempts: number;
+  reason: string;
+  errors: string[];
+}
+
+interface CompletionFeedback {
+  success: boolean;
+  title: string;
+  fileName: string;
+  storyId: string;
+  summary: { action: 'created' | 'updated' | 'failed'; description: string };
+  componentsUsed: { name: string; reason?: string }[];
+  layoutChoices: { pattern: string; reason: string }[];
+  styleChoices: { property: string; value: string; reason?: string }[];
+  suggestions?: string[];
+  validation: ValidationFeedback;
+  code: string;
+  metrics: { totalTimeMs: number; llmCallsCount: number; tokensUsed?: number };
+}
+
+interface ErrorFeedback {
+  code: string;
+  message: string;
+  details?: string;
+  recoverable: boolean;
+  suggestion?: string;
+}
+
+interface StreamEvent {
+  type: StreamEventType;
+  timestamp: number;
+  data: IntentPreview | ProgressUpdate | ValidationFeedback | RetryInfo | CompletionFeedback | ErrorFeedback;
+}
+
+// State for tracking streaming progress
+interface StreamingState {
+  intent?: IntentPreview;
+  progress?: ProgressUpdate;
+  validation?: ValidationFeedback;
+  retry?: RetryInfo;
+  completion?: CompletionFeedback;
+  error?: ErrorFeedback;
 }
 
 // Session type
@@ -160,10 +249,14 @@ const getApiPort = () => {
 };
 
 const MCP_API = `http://localhost:${getApiPort()}/story-ui/generate`;
+const MCP_STREAM_API = `http://localhost:${getApiPort()}/story-ui/generate-stream`;
 const STORIES_API = `http://localhost:${getApiPort()}/story-ui/stories`;
 const DELETE_API_BASE = `http://localhost:${getApiPort()}/story-ui/stories`;
 const STORAGE_KEY = `story-ui-chats-${window.location.port}`;
 const MAX_RECENT_CHATS = 20;
+
+// Feature flag: Enable streaming mode (can be toggled for testing)
+const USE_STREAMING = true;
 
 // Load from localStorage
 const loadChats = (): ChatSession[] => {
@@ -280,47 +373,71 @@ const deleteStoryAndChat = async (chatId: string): Promise<boolean> => {
     // Remove .stories.tsx extension if present to get the actual story ID
     const storyId = chatId.replace(/\.stories\.tsx$/, '');
     console.log(`Attempting to delete story: chatId="${chatId}", storyId="${storyId}"`);
-    
-    // First try to delete from backend
-    const response = await fetch(`${DELETE_API_BASE}/${storyId}`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' }
-    });
 
-    if (!response.ok) {
-      console.error('Failed to delete story from backend, trying legacy endpoint');
-      
-      // Try legacy endpoint as fallback
-      const legacyResponse = await fetch(`http://localhost:${getApiPort()}/story-ui/delete`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          chatId: storyId,
-          storyId: storyId 
-        })
+    let serverDeleteSucceeded = false;
+
+    // First try to delete from backend
+    try {
+      const response = await fetch(`${DELETE_API_BASE}/${storyId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' }
       });
-      
-      if (!legacyResponse.ok) {
-        console.error('Legacy delete endpoint also failed');
-        return false;
+
+      // 404 means story doesn't exist on server - that's OK, we can still clean up localStorage
+      if (response.ok || response.status === 404) {
+        serverDeleteSucceeded = true;
+        if (response.status === 404) {
+          console.log('Story not found on server (may have been a failed generation), cleaning up localStorage');
+        }
+      } else {
+        console.warn(`Backend delete returned ${response.status}, trying legacy endpoint`);
+      }
+    } catch (fetchError) {
+      console.warn('Backend delete request failed, trying legacy endpoint:', fetchError);
+    }
+
+    // Try legacy endpoint as fallback only if primary didn't succeed
+    if (!serverDeleteSucceeded) {
+      try {
+        const legacyResponse = await fetch(`http://localhost:${getApiPort()}/story-ui/delete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chatId: storyId,
+            storyId: storyId
+          })
+        });
+
+        // 404 is also OK for legacy endpoint
+        if (legacyResponse.ok || legacyResponse.status === 404) {
+          serverDeleteSucceeded = true;
+        } else {
+          console.warn('Legacy delete endpoint also returned non-success status');
+        }
+      } catch (legacyError) {
+        console.warn('Legacy delete request failed:', legacyError);
       }
     }
 
-    // Check if response is JSON
-    const contentType = response.headers.get('content-type');
-    if (!contentType || !contentType.includes('application/json')) {
-      console.error('Server returned non-JSON response, likely server not running or wrong port');
-      return false;
-    }
-
-    // Then remove from local storage
+    // Always clean up localStorage - the chat/story data is primarily client-side
+    // Even if server delete failed, we should allow users to clean up their chat history
     const chats = loadChats().filter(chat => chat.id !== chatId);
     saveChats(chats);
+    console.log('Cleaned up localStorage chat entry');
 
     return true;
   } catch (error) {
     console.error('Error deleting story:', error);
-    return false;
+    // Still try to clean up localStorage even on error
+    try {
+      const chats = loadChats().filter(chat => chat.id !== chatId);
+      saveChats(chats);
+      console.log('Cleaned up localStorage despite error');
+      return true;
+    } catch (localError) {
+      console.error('Failed to clean up localStorage:', localError);
+      return false;
+    }
   }
 };
 
@@ -361,9 +478,9 @@ const STYLES = {
 
   // Sidebar
   sidebar: {
-    width: '280px',
-    background: 'rgba(255, 255, 255, 0.05)',
-    borderRight: '1px solid rgba(255, 255, 255, 0.1)',
+    width: '240px',
+    background: 'rgba(255, 255, 255, 0.03)',
+    borderRight: '1px solid rgba(255, 255, 255, 0.08)',
     display: 'flex',
     flexDirection: 'column' as const,
     backdropFilter: 'blur(10px)',
@@ -372,70 +489,76 @@ const STYLES = {
   },
 
   sidebarCollapsed: {
-    width: '60px',
+    width: '56px',
   },
 
   sidebarToggle: {
     width: '100%',
-    padding: '10px 16px',
-    background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
+    padding: '8px 12px',
+    background: '#3b82f6',
     color: 'white',
     border: 'none',
-    borderRadius: '8px',
-    fontSize: '14px',
+    borderRadius: '6px',
+    fontSize: '13px',
     fontWeight: '500',
     cursor: 'pointer',
-    marginBottom: '8px',
+    marginBottom: '6px',
     transition: 'all 0.2s ease',
-    boxShadow: '0 2px 8px rgba(59, 130, 246, 0.3)',
+    boxShadow: 'none',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: '8px',
+    gap: '6px',
+    lineHeight: '1',
   },
 
   newChatButton: {
     width: '100%',
-    padding: '10px 16px',
-    background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
+    padding: '8px 12px',
+    background: '#3b82f6',
     color: 'white',
     border: 'none',
-    borderRadius: '8px',
-    fontSize: '14px',
+    borderRadius: '6px',
+    fontSize: '13px',
     fontWeight: '500',
     cursor: 'pointer',
-    marginBottom: '16px',
+    marginBottom: '12px',
     transition: 'all 0.2s ease',
-    boxShadow: '0 2px 8px rgba(59, 130, 246, 0.2)',
+    boxShadow: 'none',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '6px',
+    lineHeight: '1',
   },
 
   chatItem: {
-    padding: '12px 16px',
-    marginBottom: '8px',
-    background: 'rgba(255, 255, 255, 0.08)',
-    borderRadius: '8px',
+    padding: '8px 10px',
+    marginBottom: '4px',
+    background: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: '6px',
     cursor: 'pointer',
-    transition: 'all 0.2s ease',
+    transition: 'all 0.15s ease',
     position: 'relative' as const,
-    paddingRight: '40px',
+    paddingRight: '32px',
   },
 
   chatItemActive: {
-    background: 'rgba(59, 130, 246, 0.2)',
-    borderLeft: '3px solid #3b82f6',
+    background: 'rgba(59, 130, 246, 0.15)',
+    borderLeft: '2px solid #3b82f6',
   },
 
   chatItemTitle: {
-    fontSize: '14px',
+    fontSize: '13px',
     fontWeight: '500',
-    marginBottom: '4px',
+    marginBottom: '2px',
     whiteSpace: 'nowrap' as const,
     overflow: 'hidden',
     textOverflow: 'ellipsis',
   },
 
   chatItemTime: {
-    fontSize: '12px',
+    fontSize: '11px',
     color: '#94a3b8',
   },
 
@@ -464,15 +587,15 @@ const STYLES = {
   },
 
   chatHeader: {
-    padding: '20px 24px',
-    borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
-    background: 'rgba(255, 255, 255, 0.05)',
+    padding: '12px 16px',
+    borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+    background: 'rgba(255, 255, 255, 0.03)',
     backdropFilter: 'blur(10px)',
   },
 
   chatContainer: {
     flex: 1,
-    padding: '24px',
+    padding: '16px',
     overflowY: 'auto' as const,
     scrollBehavior: 'smooth' as const,
   },
@@ -499,33 +622,33 @@ const STYLES = {
   // Message bubbles
   messageContainer: {
     display: 'flex',
-    marginBottom: '16px',
+    marginBottom: '10px',
   },
 
   userMessage: {
-    background: 'linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)',
+    background: '#3b82f6',
     color: '#ffffff',
-    borderRadius: '18px 18px 4px 18px',
-    padding: '12px 16px',
-    maxWidth: '80%',
+    borderRadius: '16px 16px 4px 16px',
+    padding: '10px 14px',
+    maxWidth: '85%',
     marginLeft: 'auto',
     fontSize: '14px',
     lineHeight: '1.5',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif',
-    boxShadow: '0 2px 12px rgba(59, 130, 246, 0.3)',
+    boxShadow: 'none',
     wordWrap: 'break-word' as const,
   },
 
   aiMessage: {
     background: 'rgba(255, 255, 255, 0.95)',
     color: '#1f2937',
-    borderRadius: '18px 18px 18px 4px',
-    padding: '12px 16px',
-    maxWidth: '80%',
+    borderRadius: '16px 16px 16px 4px',
+    padding: '10px 14px',
+    maxWidth: '85%',
     fontSize: '14px',
     lineHeight: '1.5',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif',
-    boxShadow: '0 2px 12px rgba(0, 0, 0, 0.1)',
+    boxShadow: '0 1px 3px rgba(0, 0, 0, 0.08)',
     wordWrap: 'break-word' as const,
     whiteSpace: 'pre-wrap' as const,
   },
@@ -533,67 +656,67 @@ const STYLES = {
   loadingMessage: {
     background: 'rgba(255, 255, 255, 0.9)',
     color: '#6b7280',
-    borderRadius: '18px 18px 18px 4px',
-    padding: '12px 16px',
+    borderRadius: '16px 16px 16px 4px',
+    padding: '10px 14px',
     fontSize: '14px',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif',
     display: 'flex',
     alignItems: 'center',
-    gap: '8px',
+    gap: '6px',
   },
 
   // Input form
   inputForm: {
     display: 'flex',
     alignItems: 'center',
-    gap: '12px',
-    margin: '0 24px 24px 24px',
-    padding: '16px',
-    background: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: '12px',
-    border: '1px solid rgba(255, 255, 255, 0.1)',
+    gap: '10px',
+    margin: '0 16px 16px 16px',
+    padding: '10px',
+    background: 'rgba(255, 255, 255, 0.03)',
+    borderRadius: '10px',
+    border: '1px solid rgba(255, 255, 255, 0.08)',
     backdropFilter: 'blur(10px)',
   },
 
   textInput: {
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif',
     flex: 1,
-    padding: '12px 16px',
-    borderRadius: '8px',
-    border: '1px solid rgba(255, 255, 255, 0.2)',
-    fontSize: '14px',
+    padding: '10px 14px',
+    borderRadius: '6px',
+    border: '1px solid rgba(255, 255, 255, 0.15)',
+    fontSize: '13px',
     color: '#1f2937',
     background: '#ffffff',
     outline: 'none',
-    transition: 'all 0.2s ease',
+    transition: 'all 0.15s ease',
     boxSizing: 'border-box' as const,
   },
 
   sendButton: {
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif',
-    padding: '12px 20px',
-    borderRadius: '8px',
+    padding: '10px 16px',
+    borderRadius: '6px',
     border: 'none',
-    background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+    background: '#10b981',
     color: '#ffffff',
-    fontSize: '14px',
+    fontSize: '13px',
     fontWeight: '500',
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
-    gap: '6px',
-    transition: 'all 0.2s ease',
-    boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)',
+    gap: '5px',
+    transition: 'all 0.15s ease',
+    boxShadow: 'none',
   },
 
   errorMessage: {
     background: 'rgba(248, 113, 113, 0.1)',
     color: '#f87171',
-    padding: '12px 16px',
-    borderRadius: '8px',
-    fontSize: '14px',
-    marginBottom: '16px',
-    border: '1px solid rgba(248, 113, 113, 0.3)',
+    padding: '8px 12px',
+    borderRadius: '6px',
+    fontSize: '13px',
+    marginBottom: '10px',
+    border: '1px solid rgba(248, 113, 113, 0.2)',
   },
 
   loadingDots: {
@@ -610,14 +733,284 @@ const STYLES = {
 
   codeBlock: {
     background: '#1e293b',
-    padding: '12px 16px',
-    borderRadius: '8px',
+    padding: '10px 12px',
+    borderRadius: '6px',
     fontFamily: 'Consolas, Monaco, "Andale Mono", "Ubuntu Mono", monospace',
-    fontSize: '13px',
-    lineHeight: '1.6',
+    fontSize: '12px',
+    lineHeight: '1.5',
     overflowX: 'auto' as const,
+    marginTop: '6px',
+    border: '1px solid rgba(255, 255, 255, 0.08)',
+  },
+
+  // Streaming progress styles
+  streamingContainer: {
+    background: 'rgba(255, 255, 255, 0.95)',
+    borderRadius: '16px 16px 16px 4px',
+    padding: '12px',
+    maxWidth: '85%',
+    boxShadow: '0 1px 3px rgba(0, 0, 0, 0.08)',
+  },
+
+  intentPreview: {
+    background: 'rgba(59, 130, 246, 0.08)',
+    borderRadius: '8px',
+    padding: '10px',
+    marginBottom: '10px',
+    border: '1px solid rgba(59, 130, 246, 0.15)',
+  },
+
+  intentTitle: {
+    fontSize: '13px',
+    fontWeight: '600',
+    color: '#1e40af',
+    marginBottom: '6px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '5px',
+  },
+
+  intentStrategy: {
+    fontSize: '12px',
+    color: '#4b5563',
+    marginBottom: '4px',
+  },
+
+  intentComponents: {
+    display: 'flex',
+    flexWrap: 'wrap' as const,
+    gap: '4px',
+    marginTop: '6px',
+  },
+
+  componentTag: {
+    background: 'rgba(59, 130, 246, 0.12)',
+    color: '#1d4ed8',
+    fontSize: '10px',
+    padding: '2px 6px',
+    borderRadius: '10px',
+    fontWeight: '500',
+  },
+
+  progressBar: {
+    background: 'rgba(0, 0, 0, 0.08)',
+    borderRadius: '3px',
+    height: '4px',
+    marginTop: '10px',
+    marginBottom: '6px',
+    overflow: 'hidden',
+  },
+
+  progressFill: {
+    background: '#3b82f6',
+    height: '100%',
+    borderRadius: '3px',
+    transition: 'width 0.3s ease',
+  },
+
+  progressPhase: {
+    fontSize: '11px',
+    color: '#6b7280',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '5px',
+  },
+
+  phaseIcon: {
+    fontSize: '12px',
+  },
+
+  validationBox: {
     marginTop: '8px',
-    border: '1px solid rgba(255, 255, 255, 0.1)',
+    padding: '8px',
+    borderRadius: '6px',
+    fontSize: '11px',
+  },
+
+  validationSuccess: {
+    background: 'rgba(16, 185, 129, 0.08)',
+    border: '1px solid rgba(16, 185, 129, 0.15)',
+    color: '#047857',
+  },
+
+  validationWarning: {
+    background: 'rgba(245, 158, 11, 0.08)',
+    border: '1px solid rgba(245, 158, 11, 0.15)',
+    color: '#b45309',
+  },
+
+  validationError: {
+    background: 'rgba(239, 68, 68, 0.08)',
+    border: '1px solid rgba(239, 68, 68, 0.15)',
+    color: '#dc2626',
+  },
+
+  retryBadge: {
+    background: 'rgba(245, 158, 11, 0.12)',
+    color: '#b45309',
+    fontSize: '10px',
+    padding: '2px 8px',
+    borderRadius: '10px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '3px',
+    marginTop: '6px',
+  },
+
+  completionSummary: {
+    marginTop: '10px',
+    paddingTop: '10px',
+    borderTop: '1px solid rgba(0, 0, 0, 0.08)',
+  },
+
+  summaryTitle: {
+    fontSize: '14px',
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: '6px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+  },
+
+  summaryDescription: {
+    fontSize: '12px',
+    color: '#4b5563',
+    lineHeight: '1.5',
+  },
+
+  metricsRow: {
+    display: 'flex',
+    gap: '12px',
+    marginTop: '8px',
+    fontSize: '10px',
+    color: '#6b7280',
+  },
+
+  metric: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '3px',
+  },
+
+  // Image upload styles
+  uploadButton: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '36px',
+    height: '36px',
+    borderRadius: '6px',
+    border: '1px solid rgba(255, 255, 255, 0.15)',
+    background: 'rgba(255, 255, 255, 0.08)',
+    color: '#e2e8f0',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+    flexShrink: 0,
+  },
+
+  uploadButtonHover: {
+    background: 'rgba(59, 130, 246, 0.2)',
+    borderColor: 'rgba(59, 130, 246, 0.5)',
+  },
+
+  imagePreviewContainer: {
+    display: 'flex',
+    flexWrap: 'wrap' as const,
+    gap: '6px',
+    padding: '8px 12px',
+    background: 'rgba(255, 255, 255, 0.03)',
+    borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+    margin: '0 16px',
+    borderRadius: '6px 6px 0 0',
+  },
+
+  imagePreviewItem: {
+    position: 'relative' as const,
+    width: '56px',
+    height: '56px',
+    borderRadius: '6px',
+    overflow: 'hidden',
+    border: '1px solid rgba(255, 255, 255, 0.15)',
+    background: '#1e293b',
+  },
+
+  imagePreviewImg: {
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover' as const,
+  },
+
+  imageRemoveButton: {
+    position: 'absolute' as const,
+    top: '2px',
+    right: '2px',
+    width: '18px',
+    height: '18px',
+    borderRadius: '50%',
+    background: 'rgba(239, 68, 68, 0.9)',
+    color: 'white',
+    border: 'none',
+    fontSize: '12px',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    lineHeight: 1,
+  },
+
+  imagePreviewLabel: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    fontSize: '12px',
+    color: '#94a3b8',
+    marginRight: 'auto',
+  },
+
+  userMessageImages: {
+    display: 'flex',
+    gap: '6px',
+    marginTop: '6px',
+    flexWrap: 'wrap' as const,
+  },
+
+  userMessageImage: {
+    width: '40px',
+    height: '40px',
+    borderRadius: '6px',
+    objectFit: 'cover' as const,
+    border: '1px solid rgba(255, 255, 255, 0.25)',
+  },
+
+  // Drag and drop overlay
+  dropOverlay: {
+    position: 'absolute' as const,
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: 'rgba(59, 130, 246, 0.12)',
+    border: '2px dashed rgba(59, 130, 246, 0.4)',
+    borderRadius: '10px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 100,
+    backdropFilter: 'blur(3px)',
+  },
+
+  dropOverlayText: {
+    background: 'rgba(59, 130, 246, 0.85)',
+    color: 'white',
+    padding: '12px 24px',
+    borderRadius: '8px',
+    fontSize: '14px',
+    fontWeight: '500',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    boxShadow: '0 2px 8px rgba(59, 130, 246, 0.3)',
   },
 };
 
@@ -653,6 +1046,170 @@ const formatTime = (timestamp: number): string => {
   return date.toLocaleDateString();
 };
 
+// Helper to get phase icon and text
+const getPhaseInfo = (phase: ProgressUpdate['phase']): { icon: string; text: string } => {
+  const phases: Record<ProgressUpdate['phase'], { icon: string; text: string }> = {
+    config_loaded: { icon: '⚙️', text: 'Loading configuration' },
+    components_discovered: { icon: '🔍', text: 'Discovering components' },
+    prompt_built: { icon: '📝', text: 'Building prompt' },
+    llm_thinking: { icon: '🤔', text: 'AI is thinking' },
+    code_extracted: { icon: '📦', text: 'Extracting code' },
+    validating: { icon: '✅', text: 'Validating output' },
+    post_processing: { icon: '🔧', text: 'Processing' },
+    saving: { icon: '💾', text: 'Saving story' },
+  };
+  return phases[phase] || { icon: '⏳', text: 'Working' };
+};
+
+// Streaming Progress Message Component
+const StreamingProgressMessage: React.FC<{ streamingData: StreamingState }> = ({ streamingData }) => {
+  const { intent, progress, validation, retry, completion, error } = streamingData;
+
+  // If completed, show completion summary
+  if (completion) {
+    return (
+      <div style={STYLES.streamingContainer}>
+        <div style={STYLES.completionSummary}>
+          <div style={STYLES.summaryTitle}>
+            {completion.success ? '✅' : '❌'} {completion.title}
+          </div>
+          <div style={STYLES.summaryDescription}>
+            {completion.summary.description}
+          </div>
+
+          {/* Components Used */}
+          {completion.componentsUsed.length > 0 && (
+            <div style={{ marginTop: '10px' }}>
+              <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '6px' }}>Components used:</div>
+              <div style={STYLES.intentComponents}>
+                {completion.componentsUsed.map((comp, i) => (
+                  <span key={i} style={STYLES.componentTag}>{comp.name}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Layout Choices */}
+          {completion.layoutChoices.length > 0 && (
+            <div style={{ marginTop: '10px' }}>
+              <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '6px' }}>Layout:</div>
+              <div style={{ fontSize: '12px', color: '#4b5563' }}>
+                {completion.layoutChoices.map(l => l.pattern).join(', ')}
+              </div>
+            </div>
+          )}
+
+          {/* Validation Status */}
+          {completion.validation && !completion.validation.isValid && (
+            <div style={{ ...STYLES.validationBox, ...STYLES.validationWarning }}>
+              ⚠️ {completion.validation.autoFixApplied ? 'Auto-fixed issues' : 'Minor issues detected'}
+            </div>
+          )}
+
+          {/* Suggestions */}
+          {completion.suggestions && completion.suggestions.length > 0 && (
+            <div style={{ marginTop: '10px', fontSize: '12px', color: '#6b7280' }}>
+              💡 {completion.suggestions[0]}
+            </div>
+          )}
+
+          {/* Metrics */}
+          <div style={STYLES.metricsRow}>
+            <span style={STYLES.metric}>⏱️ {(completion.metrics.totalTimeMs / 1000).toFixed(1)}s</span>
+            <span style={STYLES.metric}>🔄 {completion.metrics.llmCallsCount} LLM calls</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // If error, show error
+  if (error) {
+    return (
+      <div style={STYLES.streamingContainer}>
+        <div style={{ ...STYLES.validationBox, ...STYLES.validationError }}>
+          <strong>❌ {error.message}</strong>
+          {error.details && <div style={{ marginTop: '4px' }}>{error.details}</div>}
+          {error.suggestion && <div style={{ marginTop: '8px' }}>💡 {error.suggestion}</div>}
+        </div>
+      </div>
+    );
+  }
+
+  // Show progress
+  return (
+    <div style={STYLES.streamingContainer}>
+      {/* Intent Preview */}
+      {intent && (
+        <div style={STYLES.intentPreview}>
+          <div style={STYLES.intentTitle}>
+            {intent.requestType === 'modification' ? '✏️' : '✨'}
+            {intent.requestType === 'modification' ? ' Modifying Story' : ' Creating New Story'}
+          </div>
+          <div style={STYLES.intentStrategy}>{intent.strategy}</div>
+          {intent.detectedDesignSystem && (
+            <div style={{ fontSize: '12px', color: '#6b7280' }}>
+              Design system: <strong>{intent.detectedDesignSystem}</strong>
+            </div>
+          )}
+          {intent.estimatedComponents.length > 0 && (
+            <div style={STYLES.intentComponents}>
+              {intent.estimatedComponents.map((comp, i) => (
+                <span key={i} style={STYLES.componentTag}>{comp}</span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Progress Bar */}
+      {progress && (
+        <>
+          <div style={STYLES.progressBar}>
+            <div
+              style={{
+                ...STYLES.progressFill,
+                width: `${(progress.step / progress.totalSteps) * 100}%`
+              }}
+            />
+          </div>
+          <div style={STYLES.progressPhase}>
+            <span style={STYLES.phaseIcon}>{getPhaseInfo(progress.phase).icon}</span>
+            <span>{progress.message || getPhaseInfo(progress.phase).text}</span>
+            <span style={{ marginLeft: 'auto', color: '#9ca3af' }}>
+              {progress.step}/{progress.totalSteps}
+            </span>
+          </div>
+        </>
+      )}
+
+      {/* Retry Badge */}
+      {retry && (
+        <div style={STYLES.retryBadge}>
+          🔄 Retry {retry.attempt}/{retry.maxAttempts}: {retry.reason}
+        </div>
+      )}
+
+      {/* Validation Feedback */}
+      {validation && !validation.isValid && (
+        <div style={{ ...STYLES.validationBox, ...STYLES.validationWarning }}>
+          {validation.autoFixApplied ? '🔧 Auto-fixing issues...' : '⚠️ Validation issues found'}
+          {validation.errors.slice(0, 2).map((err, i) => (
+            <div key={i} style={{ marginTop: '4px', fontSize: '11px' }}>• {err}</div>
+          ))}
+        </div>
+      )}
+
+      {/* Loading indicator when no specific phase */}
+      {!progress && !intent && (
+        <div style={STYLES.progressPhase}>
+          <span className="loading-dots">Connecting</span>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // Main component
 export function StoryUIPanel() {
   const [input, setInput] = useState('');
@@ -664,8 +1221,241 @@ export function StoryUIPanel() {
   const [activeTitle, setActiveTitle] = useState<string>('');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState<{ connected: boolean; error?: string }>({ connected: false });
+  const [streamingState, setStreamingState] = useState<StreamingState | null>(null);
+  const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([]);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Maximum images allowed
+  const MAX_IMAGES = 4;
+  const MAX_IMAGE_SIZE_MB = 20;
+
+  // Helper to convert file to base64
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => {
+        const result = reader.result as string;
+        // Extract base64 data (remove data:image/...;base64, prefix)
+        const base64 = result.split(',')[1];
+        resolve(base64);
+      };
+      reader.onerror = error => reject(error);
+    });
+  };
+
+  // Handle file selection
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+
+    const newImages: AttachedImage[] = [];
+    const errors: string[] = [];
+
+    for (let i = 0; i < files.length && (attachedImages.length + newImages.length) < MAX_IMAGES; i++) {
+      const file = files[i];
+
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        errors.push(`${file.name}: Not an image file`);
+        continue;
+      }
+
+      // Validate file size
+      if (file.size > MAX_IMAGE_SIZE_MB * 1024 * 1024) {
+        errors.push(`${file.name}: File too large (max ${MAX_IMAGE_SIZE_MB}MB)`);
+        continue;
+      }
+
+      try {
+        const base64 = await fileToBase64(file);
+        const preview = URL.createObjectURL(file);
+
+        newImages.push({
+          id: `${Date.now()}-${i}`,
+          file,
+          preview,
+          base64,
+        });
+      } catch (err) {
+        errors.push(`${file.name}: Failed to process`);
+      }
+    }
+
+    if (errors.length > 0) {
+      setError(errors.join('\n'));
+    }
+
+    setAttachedImages(prev => [...prev, ...newImages]);
+
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  // Remove attached image
+  const removeAttachedImage = (id: string) => {
+    setAttachedImages(prev => {
+      const removed = prev.find(img => img.id === id);
+      if (removed) {
+        URL.revokeObjectURL(removed.preview);
+      }
+      return prev.filter(img => img.id !== id);
+    });
+  };
+
+  // Clear all attached images
+  const clearAttachedImages = () => {
+    attachedImages.forEach(img => URL.revokeObjectURL(img.preview));
+    setAttachedImages([]);
+  };
+
+  // Drag and drop state
+  const [isDragging, setIsDragging] = useState(false);
+
+  // Handle drag events
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.types.includes('Files')) {
+      setIsDragging(true);
+    }
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only set to false if we're leaving the main container
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsDragging(false);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const files = Array.from(e.dataTransfer.files);
+    const imageFiles = files.filter(f => f.type.startsWith('image/'));
+
+    if (imageFiles.length === 0) {
+      setError('Please drop image files only');
+      return;
+    }
+
+    const newImages: AttachedImage[] = [];
+    const errors: string[] = [];
+
+    for (let i = 0; i < imageFiles.length && (attachedImages.length + newImages.length) < MAX_IMAGES; i++) {
+      const file = imageFiles[i];
+
+      if (file.size > MAX_IMAGE_SIZE_MB * 1024 * 1024) {
+        errors.push(`${file.name}: File too large (max ${MAX_IMAGE_SIZE_MB}MB)`);
+        continue;
+      }
+
+      try {
+        const base64 = await fileToBase64(file);
+        const preview = URL.createObjectURL(file);
+
+        newImages.push({
+          id: `${Date.now()}-${i}`,
+          file,
+          preview,
+          base64,
+        });
+      } catch (err) {
+        errors.push(`${file.name}: Failed to process`);
+      }
+    }
+
+    if (errors.length > 0) {
+      setError(errors.join('\n'));
+    }
+
+    setAttachedImages(prev => [...prev, ...newImages]);
+  }, [attachedImages.length, fileToBase64]);
+
+  // Handle clipboard paste for images
+  const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    const imageItems: DataTransferItem[] = [];
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith('image/')) {
+        imageItems.push(items[i]);
+      }
+    }
+
+    if (imageItems.length === 0) return;
+
+    // Prevent default text paste behavior when pasting images
+    e.preventDefault();
+
+    if (attachedImages.length >= MAX_IMAGES) {
+      setError(`Maximum ${MAX_IMAGES} images allowed`);
+      return;
+    }
+
+    const newImages: AttachedImage[] = [];
+    const errors: string[] = [];
+
+    for (let i = 0; i < imageItems.length && (attachedImages.length + newImages.length) < MAX_IMAGES; i++) {
+      const item = imageItems[i];
+      const file = item.getAsFile();
+
+      if (!file) {
+        errors.push('Failed to get image from clipboard');
+        continue;
+      }
+
+      if (file.size > MAX_IMAGE_SIZE_MB * 1024 * 1024) {
+        errors.push(`Pasted image too large (max ${MAX_IMAGE_SIZE_MB}MB)`);
+        continue;
+      }
+
+      try {
+        const base64 = await fileToBase64(file);
+        const preview = URL.createObjectURL(file);
+
+        // Create a meaningful name for pasted images
+        const timestamp = new Date().toISOString().slice(11, 19).replace(/:/g, '-');
+        const renamedFile = new File([file], `pasted-image-${timestamp}.${file.type.split('/')[1] || 'png'}`, { type: file.type });
+
+        newImages.push({
+          id: `paste-${Date.now()}-${i}`,
+          file: renamedFile,
+          preview,
+          base64,
+        });
+      } catch (err) {
+        errors.push('Failed to process pasted image');
+      }
+    }
+
+    if (errors.length > 0) {
+      setError(errors.join('\n'));
+    }
+
+    if (newImages.length > 0) {
+      setAttachedImages(prev => [...prev, ...newImages]);
+      // Clear any existing error on successful paste
+      if (errors.length === 0) {
+        setError(null);
+      }
+    }
+  }, [attachedImages.length, fileToBase64]);
 
   // Load and sync chats on mount
   useEffect(() => {
@@ -701,208 +1491,441 @@ export function StoryUIPanel() {
     }
   }, [conversation, loading]);
 
+  // Helper function for non-streaming fallback
+  const handleSendNonStreaming = async (userInput: string, newConversation: Message[]) => {
+    const res = await fetch(MCP_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: userInput,
+        conversation: newConversation,
+        fileName: activeChatId || undefined,
+      }),
+    });
+
+    const contentType = res.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      const text = await res.text();
+      throw new Error(`Server returned non-JSON response. Response: ${text.substring(0, 200)}...`);
+    }
+
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || 'Story generation failed');
+
+    return data;
+  };
+
+  // Helper function to build a conversational response from completion data
+  // Uses special markers [SUCCESS], [ERROR], [TIP], [WRENCH] that renderMarkdown converts to icons
+  // Track whether we've shown the refresh hint in this session
+  const hasShownRefreshHint = useRef(false);
+
+  const buildConversationalResponse = (completion: CompletionFeedback, isUpdate: boolean): string => {
+    const parts: string[] = [];
+    const statusMarker = completion.success ? '[SUCCESS]' : '[ERROR]';
+
+    // Lead with the result - more conversational
+    if (isUpdate) {
+      parts.push(`${statusMarker} **Updated: "${completion.title}"**`);
+    } else {
+      parts.push(`${statusMarker} **Created: "${completion.title}"**`);
+    }
+
+    // Build component insights with reasons when available
+    const componentCount = completion.componentsUsed?.length || 0;
+    if (componentCount > 0) {
+      const componentList = completion.componentsUsed!.slice(0, 5);
+
+      // Check if we have meaningful reasons (not just "Used in composition")
+      const componentsWithReasons = componentList.filter(c =>
+        c.reason && c.reason !== 'Used in composition'
+      );
+
+      if (componentsWithReasons.length > 0) {
+        // Show components with their reasons
+        const insights = componentsWithReasons
+          .slice(0, 3)
+          .map(c => `\`${c.name}\` - ${c.reason?.toLowerCase()}`)
+          .join(', ');
+        parts.push(`\nUsed ${insights}${componentCount > 3 ? ` and ${componentCount - 3} more` : ''}.`);
+      } else {
+        // Fallback to simple list
+        const names = componentList.map(c => `\`${c.name}\``).join(', ');
+        parts.push(`\nBuilt with ${names}${componentCount > 5 ? '...' : ''}.`);
+      }
+    }
+
+    // Add layout decisions with educational context
+    if (completion.layoutChoices && completion.layoutChoices.length > 0) {
+      const primaryLayout = completion.layoutChoices[0];
+      parts.push(`\n\n**Layout:** ${primaryLayout.pattern} - ${primaryLayout.reason.charAt(0).toLowerCase()}${primaryLayout.reason.slice(1)}.`);
+    }
+
+    // Add style choices only if they add value
+    if (completion.styleChoices && completion.styleChoices.length > 0) {
+      const notableStyles = completion.styleChoices.filter(s =>
+        s.reason && s.reason !== 'Semantic color from design system'
+      );
+      if (notableStyles.length > 0) {
+        const styleInfo = notableStyles[0];
+        parts.push(` Applied \`${styleInfo.value}\` for ${styleInfo.reason?.toLowerCase() || 'visual consistency'}.`);
+      }
+    }
+
+    // Add validation fixes notice
+    if (completion.validation?.autoFixApplied) {
+      parts.push(`\n\n[WRENCH] **Auto-fixed:** Minor syntax issues were automatically corrected.`);
+    }
+
+    // Add suggestions only if meaningful
+    if (completion.suggestions && completion.suggestions.length > 0) {
+      const suggestion = completion.suggestions[0];
+      // Only show if it's not the generic "review the generated code" message
+      if (!suggestion.toLowerCase().includes('review the generated code')) {
+        parts.push(`\n\n[TIP] **Tip:** ${suggestion}`);
+      }
+    }
+
+    // Show refresh hint only once per session for new stories
+    if (!isUpdate && !hasShownRefreshHint.current) {
+      parts.push(`\n\n_Refresh Storybook (Cmd/Ctrl + R) to see new stories in the sidebar._`);
+      hasShownRefreshHint.current = true;
+    }
+
+    // Add metrics in a subtle way
+    const seconds = (completion.metrics.totalTimeMs / 1000).toFixed(1);
+    parts.push(`\n\n_${seconds}s_`);
+
+    return parts.join('');
+  };
+
+  // Helper function to finalize conversation after streaming completes
+  const finalizeStreamingConversation = useCallback((
+    newConversation: Message[],
+    completion: CompletionFeedback,
+    userInput: string
+  ) => {
+    // Build conversational response using rich completion data
+    const isUpdate = completion.summary.action === 'updated';
+    const responseMessage = buildConversationalResponse(completion, isUpdate);
+
+    const aiMsg: Message = { role: 'ai', content: responseMessage };
+    const updatedConversation = [...newConversation, aiMsg];
+    setConversation(updatedConversation);
+
+    // Update chat session
+    const isExistingSession = activeChatId && conversation.length > 0;
+
+    if (isExistingSession && activeChatId) {
+      const updatedSession: ChatSession = {
+        id: activeChatId,
+        title: activeTitle,
+        fileName: completion.fileName || activeChatId,
+        conversation: updatedConversation,
+        lastUpdated: Date.now(),
+      };
+
+      const chats = loadChats();
+      const chatIndex = chats.findIndex(c => c.id === activeChatId);
+      if (chatIndex !== -1) {
+        chats[chatIndex] = updatedSession;
+      }
+      saveChats(chats);
+      setRecentChats(chats);
+    } else {
+      const chatId = completion.storyId || completion.fileName || Date.now().toString();
+      const chatTitle = completion.title || userInput;
+      setActiveChatId(chatId);
+      setActiveTitle(chatTitle);
+
+      const newSession: ChatSession = {
+        id: chatId,
+        title: chatTitle,
+        fileName: completion.fileName || '',
+        conversation: updatedConversation,
+        lastUpdated: Date.now(),
+      };
+
+      const chats = loadChats().filter(c => c.id !== chatId);
+      chats.unshift(newSession);
+      if (chats.length > MAX_RECENT_CHATS) {
+        chats.splice(MAX_RECENT_CHATS);
+      }
+      saveChats(chats);
+      setRecentChats(chats);
+    }
+  }, [activeChatId, activeTitle, conversation.length]);
+
   const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!input.trim()) return;
+    // Allow sending with either text or images
+    if (!input.trim() && attachedImages.length === 0) return;
+
+    // Use input text or default vision prompt if only images
+    const userInput = input.trim() || (attachedImages.length > 0 ? 'Create a component that matches this design' : '');
     setError(null);
     setLoading(true);
-    
+    setStreamingState(null);
+
     // Test connection before sending
     const connectionTest = await testMCPConnection();
     setConnectionStatus(connectionTest);
-    
+
     if (!connectionTest.connected) {
       setError(`Cannot connect to MCP server: ${connectionTest.error || 'Server not running'}`);
       setLoading(false);
       return;
     }
-    
-    const newConversation = [...conversation, { role: 'user' as const, content: input }];
+
+    // Capture images before clearing
+    const imagesToSend = [...attachedImages];
+    const hasImages = imagesToSend.length > 0;
+
+    // Create user message with images
+    const userMessage: Message = {
+      role: 'user',
+      content: userInput,
+      attachedImages: hasImages ? imagesToSend : undefined
+    };
+    const newConversation: Message[] = [...conversation, userMessage];
     setConversation(newConversation);
     setInput('');
-    try {
-      const res = await fetch(MCP_API, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: input,
-          conversation: newConversation,
-          fileName: activeChatId || undefined,
-        }),
-      });
-      
-      // Check if response is JSON
-      const contentType = res.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        const text = await res.text();
-        throw new Error(`Server returned non-JSON response (likely server not running or wrong port). Response: ${text.substring(0, 200)}...`);
-      }
-      
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.error || 'Story generation failed');
+    clearAttachedImages();
 
-      // Create user-friendly response message instead of showing raw markup
-      let responseMessage: string;
-      let statusIcon = '✅';
-
-      // Check for validation issues
-      if (data.validation && data.validation.hasWarnings) {
-        statusIcon = '⚠️';
-        const warningCount = data.validation.warnings.length;
-        const errorCount = data.validation.errors.length;
-
-        if (errorCount > 0) {
-          statusIcon = '🔧';
+    // Use streaming if enabled
+    if (USE_STREAMING) {
+      try {
+        // Cancel any existing request
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
         }
-      }
+        abortControllerRef.current = new AbortController();
 
-      if (data.isUpdate) {
-        responseMessage = `${statusIcon} Updated your story: "${data.title}"\n\nI've made the requested changes while keeping the same layout structure. You can view the updated component in Storybook.`;
-      } else {
-        responseMessage = `${statusIcon} Created new story: "${data.title}"\n\nI've generated the component with the requested features. You can view it in Storybook where you'll see both the rendered component and its markup in the Docs tab.`;
+        // Initialize streaming state
+        setStreamingState({});
 
-        // IMPORTANT: Add a note about refreshing for new stories
-        responseMessage += '\n\n💡 **Note**: If you don\'t see the story immediately, you may need to refresh your Storybook page (Cmd/Ctrl + R) for new stories to appear in the sidebar.';
-      }
+        // Prepare images for API request
+        const imagePayload = hasImages
+          ? imagesToSend.map(img => ({
+              type: 'base64' as const,
+              data: img.base64,
+              mediaType: img.file.type,
+            }))
+          : undefined;
 
-      // Add validation information if there are issues
-      if (data.validation && data.validation.hasWarnings) {
-        responseMessage += '\n\n';
+        const response = await fetch(MCP_STREAM_API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: userInput,
+            conversation: newConversation,
+            fileName: activeChatId || undefined,
+            isUpdate: activeChatId && conversation.length > 0,
+            originalTitle: activeTitle || undefined,
+            storyId: activeChatId || undefined,
+            images: imagePayload,
+            visionMode: hasImages ? 'screenshot_to_story' : undefined,
+          }),
+          signal: abortControllerRef.current.signal,
+        });
 
-        if (data.validation.errors.length > 0) {
-          responseMessage += `🔧 **Auto-fixed ${data.validation.errors.length} syntax error(s):**\n`;
-          responseMessage += data.validation.errors.slice(0, 3).map(error => `  • ${error}`).join('\n');
-          if (data.validation.errors.length > 3) {
-            responseMessage += `\n  • ... and ${data.validation.errors.length - 3} more`;
+        if (!response.ok) {
+          throw new Error(`Streaming request failed: ${response.status}`);
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) {
+          throw new Error('No response body');
+        }
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let completionData: CompletionFeedback | null = null;
+        let errorData: ErrorFeedback | null = null;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+
+          // Parse SSE events from buffer
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const event: StreamEvent = JSON.parse(line.slice(6));
+
+                // Update streaming state based on event type
+                switch (event.type) {
+                  case 'intent':
+                    setStreamingState(prev => ({ ...prev, intent: event.data as IntentPreview }));
+                    break;
+                  case 'progress':
+                    setStreamingState(prev => ({ ...prev, progress: event.data as ProgressUpdate }));
+                    break;
+                  case 'validation':
+                    setStreamingState(prev => ({ ...prev, validation: event.data as ValidationFeedback }));
+                    break;
+                  case 'retry':
+                    setStreamingState(prev => ({ ...prev, retry: event.data as RetryInfo }));
+                    break;
+                  case 'completion':
+                    completionData = event.data as CompletionFeedback;
+                    setStreamingState(prev => ({ ...prev, completion: completionData }));
+                    break;
+                  case 'error':
+                    errorData = event.data as ErrorFeedback;
+                    setStreamingState(prev => ({ ...prev, error: errorData }));
+                    break;
+                }
+              } catch (parseError) {
+                console.warn('Failed to parse SSE event:', line, parseError);
+              }
+            }
           }
-          responseMessage += '\n';
         }
 
-        if (data.validation.warnings.length > 0) {
-          responseMessage += `⚠️ **Warnings:**\n`;
-          responseMessage += data.validation.warnings.slice(0, 2).map(warning => `  • ${warning}`).join('\n');
-          if (data.validation.warnings.length > 2) {
-            responseMessage += `\n  • ... and ${data.validation.warnings.length - 2} more`;
+        // Handle completion or error
+        if (completionData) {
+          finalizeStreamingConversation(newConversation, completionData, userInput);
+        } else if (errorData) {
+          setError(errorData.message);
+          const errorConversation = [...newConversation, { role: 'ai' as const, content: `Error: ${errorData.message}\n\n${errorData.suggestion || ''}` }];
+          setConversation(errorConversation);
+        }
+
+      } catch (err: unknown) {
+        if ((err as Error).name === 'AbortError') {
+          console.log('Request aborted');
+          return;
+        }
+
+        // Fall back to non-streaming on error
+        console.warn('Streaming failed, falling back to non-streaming:', err);
+        setStreamingState(null);
+
+        try {
+          const data = await handleSendNonStreaming(userInput, newConversation);
+
+          // Process non-streaming response (same as before)
+          let responseMessage: string;
+          const statusIcon = data.validation?.hasWarnings ? (data.validation.errors?.length > 0 ? '🔧' : '⚠️') : '✅';
+
+          // Build conversational response for fallback
+          if (data.isUpdate) {
+            responseMessage = `${statusIcon} **Updated: "${data.title}"**\n\nI've made the requested changes to your component. You can view the updated version in Storybook.\n\n_Check the Docs tab to see both the rendered component and its code._`;
+          } else {
+            responseMessage = `${statusIcon} **Created: "${data.title}"**\n\nI've generated the component with the requested features. You can view it in Storybook where you'll see both the rendered component and its markup.\n\n💡 **Note**: If you don't see the story immediately, you may need to refresh your Storybook page (Cmd/Ctrl + R).`;
           }
+
+          const aiMsg: Message = { role: 'ai', content: responseMessage };
+          const updatedConversation = [...newConversation, aiMsg];
+          setConversation(updatedConversation);
+
+          // Update chat session
+          const isUpdate = activeChatId && conversation.length > 0;
+          if (isUpdate && activeChatId) {
+            const updatedSession: ChatSession = {
+              id: activeChatId,
+              title: activeTitle,
+              fileName: data.fileName || activeChatId,
+              conversation: updatedConversation,
+              lastUpdated: Date.now(),
+            };
+            const chats = loadChats();
+            const chatIndex = chats.findIndex(c => c.id === activeChatId);
+            if (chatIndex !== -1) chats[chatIndex] = updatedSession;
+            saveChats(chats);
+            setRecentChats(chats);
+          } else {
+            const chatId = data.storyId || data.fileName || Date.now().toString();
+            setActiveChatId(chatId);
+            setActiveTitle(data.title || userInput);
+            const newSession: ChatSession = {
+              id: chatId,
+              title: data.title || userInput,
+              fileName: data.fileName || '',
+              conversation: updatedConversation,
+              lastUpdated: Date.now(),
+            };
+            const chats = loadChats().filter(c => c.id !== chatId);
+            chats.unshift(newSession);
+            if (chats.length > MAX_RECENT_CHATS) chats.splice(MAX_RECENT_CHATS);
+            saveChats(chats);
+            setRecentChats(chats);
+          }
+        } catch (fallbackErr: unknown) {
+          const errorMessage = fallbackErr instanceof Error ? fallbackErr.message : 'Unknown error';
+          setError(errorMessage);
+          const errorConversation = [...newConversation, { role: 'ai' as const, content: `Error: ${errorMessage}` }];
+          setConversation(errorConversation);
         }
+      } finally {
+        setLoading(false);
+        setStreamingState(null);
+        abortControllerRef.current = null;
       }
+    } else {
+      // Non-streaming mode (original implementation)
+      try {
+        const data = await handleSendNonStreaming(userInput, newConversation);
 
-      const aiMsg = { role: 'ai' as const, content: responseMessage };
-      const updatedConversation = [...newConversation, aiMsg];
-      setConversation(updatedConversation);
+        let responseMessage: string;
+        const statusIcon = data.validation?.hasWarnings ? (data.validation.errors?.length > 0 ? '🔧' : '⚠️') : '✅';
 
-      // Determine if this is an update or new chat
-      // Check if we have an active chat AND the backend indicates this is an update
-      const isUpdate = activeChatId && conversation.length > 0 && (
-        data.isUpdate ||
-        data.fileName === activeChatId ||
-        // Also check if fileName matches any existing chat's fileName
-        recentChats.some(chat => chat.fileName === data.fileName && chat.id === activeChatId)
-      );
-
-      console.log('Update detection:', {
-        activeChatId,
-        conversationLength: conversation.length,
-        dataIsUpdate: data.isUpdate,
-        dataFileName: data.fileName,
-        isUpdate
-      });
-
-      if (isUpdate) {
-        // Update existing chat session
-        const chatTitle = activeTitle; // Keep existing title for updates
-        const updatedSession: ChatSession = {
-          id: activeChatId,
-          title: chatTitle,
-          fileName: data.fileName || activeChatId,
-          conversation: updatedConversation,
-          lastUpdated: Date.now(),
-        };
-
-        const chats = loadChats();
-        const chatIndex = chats.findIndex(c => c.id === activeChatId);
-        if (chatIndex !== -1) {
-          chats[chatIndex] = updatedSession;
+        // Build conversational response for non-streaming mode
+        if (data.isUpdate) {
+          responseMessage = `${statusIcon} **Updated: "${data.title}"**\n\nI've made the requested changes to your component. You can view the updated version in Storybook.\n\n_Check the Docs tab to see both the rendered component and its code._`;
+        } else {
+          responseMessage = `${statusIcon} **Created: "${data.title}"**\n\nI've generated the component with the requested features. You can view it in Storybook where you'll see both the rendered component and its markup.\n\n💡 **Note**: If you don't see the story immediately, you may need to refresh your Storybook page (Cmd/Ctrl + R).`;
         }
-        saveChats(chats);
-        setRecentChats(chats);
-        console.log('Updated existing chat:', activeChatId);
-      } else {
-        // Create new chat session - use storyId from backend for consistency
-        const chatId = data.storyId || data.fileName || data.outPath || Date.now().toString();
-        const chatTitle = data.title || input;
-        setActiveChatId(chatId);
-        setActiveTitle(chatTitle);
 
-        const newSession: ChatSession = {
-          id: chatId,
-          title: chatTitle,
-          fileName: data.fileName || '',
-          conversation: updatedConversation,
-          lastUpdated: Date.now(),
-        };
+        const aiMsg: Message = { role: 'ai', content: responseMessage };
+        const updatedConversation = [...newConversation, aiMsg];
+        setConversation(updatedConversation);
 
-        const chats = loadChats().filter(c => c.id !== chatId);
-        chats.unshift(newSession);
-        if (chats.length > MAX_RECENT_CHATS) {
-          chats.splice(MAX_RECENT_CHATS);
+        const isUpdate = activeChatId && conversation.length > 0;
+        if (isUpdate && activeChatId) {
+          const updatedSession: ChatSession = {
+            id: activeChatId,
+            title: activeTitle,
+            fileName: data.fileName || activeChatId,
+            conversation: updatedConversation,
+            lastUpdated: Date.now(),
+          };
+          const chats = loadChats();
+          const chatIndex = chats.findIndex(c => c.id === activeChatId);
+          if (chatIndex !== -1) chats[chatIndex] = updatedSession;
+          saveChats(chats);
+          setRecentChats(chats);
+        } else {
+          const chatId = data.storyId || data.fileName || Date.now().toString();
+          setActiveChatId(chatId);
+          setActiveTitle(data.title || userInput);
+          const newSession: ChatSession = {
+            id: chatId,
+            title: data.title || userInput,
+            fileName: data.fileName || '',
+            conversation: updatedConversation,
+            lastUpdated: Date.now(),
+          };
+          const chats = loadChats().filter(c => c.id !== chatId);
+          chats.unshift(newSession);
+          if (chats.length > MAX_RECENT_CHATS) chats.splice(MAX_RECENT_CHATS);
+          saveChats(chats);
+          setRecentChats(chats);
         }
-        saveChats(chats);
-        setRecentChats(chats);
-        console.log('Created new chat:', chatId);
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+        setError(errorMessage);
+        const errorConversation = [...newConversation, { role: 'ai' as const, content: `Error: ${errorMessage}` }];
+        setConversation(errorConversation);
+      } finally {
+        setLoading(false);
       }
-
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-      setError(errorMessage);
-      const errorConversation = [...newConversation, { role: 'ai' as const, content: `Error: ${errorMessage}` }];
-      setConversation(errorConversation);
-
-      // IMPORTANT: Create/update chat session even on error so retries continue the same conversation
-      const isUpdate = activeChatId && conversation.length > 0;
-
-      if (isUpdate) {
-        // Update existing chat with error
-        const updatedSession: ChatSession = {
-          id: activeChatId,
-          title: activeTitle,
-          fileName: activeChatId,
-          conversation: errorConversation,
-          lastUpdated: Date.now(),
-        };
-
-        const chats = loadChats();
-        const chatIndex = chats.findIndex(c => c.id === activeChatId);
-        if (chatIndex !== -1) {
-          chats[chatIndex] = updatedSession;
-        }
-        saveChats(chats);
-        setRecentChats(chats);
-      } else {
-        // Create new chat session for error (so retries can continue it)
-        const chatId = `error-${Date.now()}`;
-        const chatTitle = input.length > 30 ? input.substring(0, 30) + '...' : input;
-        setActiveChatId(chatId);
-        setActiveTitle(chatTitle);
-
-        const newSession: ChatSession = {
-          id: chatId,
-          title: chatTitle,
-          fileName: '',
-          conversation: errorConversation,
-          lastUpdated: Date.now(),
-        };
-
-        const chats = loadChats();
-        chats.unshift(newSession);
-        if (chats.length > MAX_RECENT_CHATS) {
-          chats.splice(MAX_RECENT_CHATS);
-        }
-        saveChats(chats);
-        setRecentChats(chats);
-      }
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -967,7 +1990,8 @@ export function StoryUIPanel() {
                 e.currentTarget.style.boxShadow = '0 2px 8px rgba(59, 130, 246, 0.3)';
               }}
             >
-              ☰ Chats
+              <span style={{ lineHeight: '0.5', display: 'inline-block', alignItems: 'center', width: '10px', height: '10px' }}>☰</span>
+              <span>Chats</span>
             </button>
             <button
               onClick={handleNewChat}
@@ -981,7 +2005,8 @@ export function StoryUIPanel() {
                 e.currentTarget.style.boxShadow = '0 2px 8px rgba(59, 130, 246, 0.2)';
               }}
             >
-              + New Chat
+              <span style={{ lineHeight: '0.5', display: 'inline-block', alignItems: 'center', width: '10px', height: '10px' }}>+</span>
+              <span>New Chat</span>
             </button>
             {recentChats.length > 0 && (
               <div style={{
@@ -1033,34 +2058,53 @@ export function StoryUIPanel() {
           </div>
         )}
         {!sidebarOpen && (
-          <div style={{ padding: '16px' }}>
+          <div style={{ padding: '8px', display: 'flex', justifyContent: 'center' }}>
             <button
               onClick={() => setSidebarOpen(true)}
               style={{
                 ...STYLES.sidebarToggle,
-                width: '40px',
-                height: '40px',
+                width: '38px',
+                height: '38px',
                 padding: '0',
                 fontSize: '16px',
+                borderRadius: '8px',
               }}
               title="Expand sidebar"
               onMouseEnter={(e) => {
                 e.currentTarget.style.transform = 'scale(1.05)';
-                e.currentTarget.style.boxShadow = '0 4px 16px rgba(59, 130, 246, 0.4)';
+                e.currentTarget.style.background = '#2563eb';
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.transform = 'scale(1)';
-                e.currentTarget.style.boxShadow = '0 2px 8px rgba(59, 130, 246, 0.3)';
+                e.currentTarget.style.background = '#3b82f6';
               }}
             >
-              ☰
+              <span style={{ lineHeight: '0.4', display: 'inline-block', height: '10px' }}>☰</span>
             </button>
           </div>
         )}
       </div>
 
       {/* Main content */}
-      <div style={STYLES.mainContent}>
+      <div
+        style={{ ...STYLES.mainContent, position: 'relative' as const }}
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+      >
+        {/* Drop zone overlay */}
+        {isDragging && (
+          <div style={STYLES.dropOverlay}>
+            <div style={STYLES.dropOverlayText}>
+              <svg width={24} height={24} viewBox="0 0 24 24" fill="currentColor">
+                <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
+              </svg>
+              Drop images here
+            </div>
+          </div>
+        )}
+
         <div style={STYLES.chatHeader}>
           <h1 style={{
             fontSize: '24px',
@@ -1118,29 +2162,124 @@ export function StoryUIPanel() {
             <div key={i} style={STYLES.messageContainer}>
               <div style={msg.role === 'user' ? STYLES.userMessage : STYLES.aiMessage}>
                 {msg.role === 'ai' ? renderMarkdown(msg.content) : msg.content}
+                {/* Show attached images in user messages */}
+                {msg.role === 'user' && msg.attachedImages && msg.attachedImages.length > 0 && (
+                  <div style={STYLES.userMessageImages}>
+                    {msg.attachedImages.map((img) => (
+                      <img
+                        key={img.id}
+                        src={img.preview}
+                        alt="attached"
+                        style={STYLES.userMessageImage}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           ))}
 
           {loading && (
             <div style={STYLES.messageContainer}>
-              <div style={STYLES.loadingMessage}>
-                <span>Generating story</span>
-                <span className="loading-dots"></span>
-              </div>
+              {streamingState ? (
+                <StreamingProgressMessage streamingData={streamingState} />
+              ) : (
+                <div style={STYLES.loadingMessage}>
+                  <span>Generating story</span>
+                  <span className="loading-dots"></span>
+                </div>
+              )}
             </div>
           )}
 
           <div ref={chatEndRef} />
         </div>
 
-        <form onSubmit={handleSend} style={STYLES.inputForm}>
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          style={{ display: 'none' }}
+          onChange={handleFileSelect}
+        />
+
+        {/* Image preview area */}
+        {attachedImages.length > 0 && (
+          <div style={STYLES.imagePreviewContainer}>
+            <span style={STYLES.imagePreviewLabel}>
+              <svg width={14} height={14} viewBox="0 0 24 24" fill="currentColor">
+                <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
+              </svg>
+              {attachedImages.length} image{attachedImages.length > 1 ? 's' : ''} attached
+            </span>
+            {attachedImages.map((img) => (
+              <div key={img.id} style={STYLES.imagePreviewItem}>
+                <img src={img.preview} alt="preview" style={STYLES.imagePreviewImg} />
+                <button
+                  type="button"
+                  style={STYLES.imageRemoveButton}
+                  onClick={() => removeAttachedImage(img.id)}
+                  title="Remove image"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <form onSubmit={handleSend} style={{
+          ...STYLES.inputForm,
+          ...(attachedImages.length > 0 ? {
+            marginTop: 0,
+            borderTopLeftRadius: 0,
+            borderTopRightRadius: 0,
+          } : {})
+        }}>
+          {/* Upload button */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={loading || attachedImages.length >= MAX_IMAGES}
+            style={{
+              ...STYLES.uploadButton,
+              ...(attachedImages.length >= MAX_IMAGES ? {
+                opacity: 0.5,
+                cursor: 'not-allowed',
+              } : {})
+            }}
+            title={attachedImages.length >= MAX_IMAGES
+              ? `Maximum ${MAX_IMAGES} images`
+              : 'Attach images (screenshots, designs)'
+            }
+            onMouseEnter={(e) => {
+              if (attachedImages.length < MAX_IMAGES && !loading) {
+                e.currentTarget.style.background = 'rgba(59, 130, 246, 0.2)';
+                e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.5)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
+              e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+            }}
+          >
+            <svg width={20} height={20} viewBox="0 0 24 24" fill="currentColor">
+              <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
+            </svg>
+          </button>
+
           <input
             ref={inputRef}
             type="text"
             value={input}
             onChange={e => setInput(e.target.value)}
-            placeholder="Describe a UI component..."
+            onPaste={handlePaste}
+            placeholder={attachedImages.length > 0
+              ? "Describe what to create from these images..."
+              : "Describe a UI component..."
+            }
             style={STYLES.textInput}
             onFocus={(e) => {
               e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.5)';
@@ -1153,10 +2292,10 @@ export function StoryUIPanel() {
           />
           <button
             type="submit"
-            disabled={loading || !input.trim()}
+            disabled={loading || (!input.trim() && attachedImages.length === 0)}
             style={{
               ...STYLES.sendButton,
-              ...(loading || !input.trim() ? {
+              ...(loading || (!input.trim() && attachedImages.length === 0) ? {
                 opacity: 0.5,
                 cursor: 'not-allowed',
                 background: '#6b7280',
@@ -1164,7 +2303,7 @@ export function StoryUIPanel() {
               } : {})
             }}
             onMouseEnter={(e) => {
-              if (!loading && input.trim()) {
+              if (!loading && (input.trim() || attachedImages.length > 0)) {
                 e.currentTarget.style.transform = 'scale(1.05)';
                 e.currentTarget.style.boxShadow = '0 4px 16px rgba(16, 185, 129, 0.4)';
               }
