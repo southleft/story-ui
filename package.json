@@ -32,7 +32,9 @@
     "release:dry-run": "semantic-release --dry-run",
     "commit": "cz",
     "prepare": "husky",
-    "story-ui": "story-ui start --port 4001"
+    "story-ui": "story-ui start --port 4001",
+    "deploy:edge": "./scripts/deploy-edge.sh",
+    "deploy:edge:dry-run": "./scripts/deploy-edge.sh --dry-run"
   },
   "keywords": [
     "storybook",
