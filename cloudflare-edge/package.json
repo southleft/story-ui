@@ -1,0 +1,21 @@
+{
+  "name": "story-ui-mcp-edge",
+  "version": "1.0.0",
+  "description": "Story UI MCP Remote Server for Cloudflare Edge",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "tail": "wrangler tail"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241127.0",
+    "typescript": "^5.6.3",
+    "wrangler": "^4.51.0"
+  }
+}

@@ -1,0 +1,31 @@
+name = "story-ui-mcp-edge"
+main = "src/worker.ts"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+account_id = "4718d49e576512c578ff94c6b1ba7d3f"  # Southleft, LLC
+
+[vars]
+STORY_UI_VERSION = "3.0.0"
+
+# Durable Objects for session management
+[[durable_objects.bindings]]
+name = "MCP_SESSIONS"
+class_name = "MCPSessionDO"
+
+# Migrations for Durable Objects
+[[migrations]]
+tag = "v1"
+new_classes = ["MCPSessionDO"]
+
+# Development settings
+[dev]
+port = 8787
+local_protocol = "http"
+
+# Build configuration
+[build]
+command = "npm run build"
+
+# Observability
+[observability]
+enabled = true
