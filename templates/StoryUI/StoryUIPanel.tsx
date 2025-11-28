@@ -140,6 +140,24 @@ interface AttachedImage {
   base64?: string;
 }
 
+// Provider info from /story-ui/providers API
+interface ProviderInfo {
+  type: string;
+  name: string;
+  configured: boolean;
+  models: string[];
+}
+
+interface ProvidersResponse {
+  providers: ProviderInfo[];
+  current: {
+    provider: string;
+    model: string;
+    supportsVision: boolean;
+    supportsStreaming: boolean;
+  };
+}
+
 // Streaming event types (matching backend streamTypes.ts)
 type StreamEventType = 'intent' | 'progress' | 'validation' | 'retry' | 'completion' | 'error';
 
@@ -227,31 +245,73 @@ interface ChatSession {
   lastUpdated: number;
 }
 
-// Determine the MCP API port.
-// 1. Check multiple possible environment variables/overrides in order of preference
-// 2. Check VITE_STORY_UI_PORT from environment
-// 3. Check window.__STORY_UI_PORT__ set by host application
-// 4. Otherwise fall back to the default 4001.
-const getApiPort = () => {
-  // Check for Vite environment variable
+// Determine the MCP API base URL.
+// Priority order:
+// 1. VITE_STORY_UI_EDGE_URL - Edge Worker URL for cloud deployments
+// 2. window.__STORY_UI_EDGE_URL__ - Runtime override for edge URL
+// 3. VITE_STORY_UI_PORT - Custom port for localhost
+// 4. window.__STORY_UI_PORT__ - Legacy port override
+// 5. window.STORY_UI_MCP_PORT - MCP port override
+// 6. Default to localhost:4001
+const getApiBaseUrl = () => {
+  // Check for Edge Worker URL (cloud deployment)
+  const edgeUrl = (import.meta as any).env?.VITE_STORY_UI_EDGE_URL;
+  if (edgeUrl) return edgeUrl.replace(/\/$/, ''); // Remove trailing slash
+
+  // Check for window override for edge URL
+  const windowEdgeUrl = (window as any).__STORY_UI_EDGE_URL__;
+  if (windowEdgeUrl) return windowEdgeUrl.replace(/\/$/, '');
+
+  // Check for Vite port environment variable
   const vitePort = (import.meta as any).env?.VITE_STORY_UI_PORT;
-  if (vitePort) return String(vitePort);
-  
+  if (vitePort) return `http://localhost:${vitePort}`;
+
   // Check for window override (legacy support)
   const windowOverride = (window as any).__STORY_UI_PORT__;
-  if (windowOverride) return String(windowOverride);
-  
+  if (windowOverride) return `http://localhost:${windowOverride}`;
+
   // Check for MCP port override set by stories file
   const mcpOverride = (window as any).STORY_UI_MCP_PORT;
-  if (mcpOverride) return String(mcpOverride);
-  
-  return '4001';
+  if (mcpOverride) return `http://localhost:${mcpOverride}`;
+
+  return 'http://localhost:4001';
 };
 
-const MCP_API = `http://localhost:${getApiPort()}/story-ui/generate`;
-const MCP_STREAM_API = `http://localhost:${getApiPort()}/story-ui/generate-stream`;
-const STORIES_API = `http://localhost:${getApiPort()}/story-ui/stories`;
-const DELETE_API_BASE = `http://localhost:${getApiPort()}/story-ui/stories`;
+// Helper to check if we're using Edge mode (cloud deployment)
+const isEdgeMode = () => {
+  const baseUrl = getApiBaseUrl();
+  return baseUrl.includes('workers.dev') || baseUrl.includes('pages.dev') ||
+         baseUrl.startsWith('https://') && !baseUrl.includes('localhost');
+};
+
+// Legacy helper for backwards compatibility
+const getApiPort = () => {
+  const baseUrl = getApiBaseUrl();
+  const match = baseUrl.match(/:(\d+)$/);
+  return match ? match[1] : '4001';
+};
+
+// Get connection display text
+const getConnectionDisplayText = () => {
+  const baseUrl = getApiBaseUrl();
+  if (isEdgeMode()) {
+    // Extract domain for Edge URL
+    try {
+      const url = new URL(baseUrl);
+      return `Edge Worker (${url.hostname})`;
+    } catch {
+      return 'Edge Worker';
+    }
+  }
+  return `MCP server (port ${getApiPort()})`;
+};
+
+const API_BASE = getApiBaseUrl();
+const MCP_API = `${API_BASE}/story-ui/generate`;
+const MCP_STREAM_API = `${API_BASE}/story-ui/generate-stream`;
+const STORIES_API = `${API_BASE}/story-ui/stories`;
+const DELETE_API_BASE = `${API_BASE}/story-ui/stories`;
+const PROVIDERS_API = `${API_BASE}/story-ui/providers`;
 const STORAGE_KEY = `story-ui-chats-${window.location.port}`;
 const MAX_RECENT_CHATS = 20;
 
@@ -399,7 +459,7 @@ const deleteStoryAndChat = async (chatId: string): Promise<boolean> => {
     // Try legacy endpoint as fallback only if primary didn't succeed
     if (!serverDeleteSucceeded) {
       try {
-        const legacyResponse = await fetch(`http://localhost:${getApiPort()}/story-ui/delete`, {
+        const legacyResponse = await fetch(`${API_BASE}/story-ui/delete`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -893,6 +953,85 @@ const STYLES = {
     gap: '3px',
   },
 
+  // Code viewer styles for generated stories
+  codeViewerContainer: {
+    marginTop: '12px',
+    borderTop: '1px solid rgba(0, 0, 0, 0.08)',
+    paddingTop: '12px',
+  },
+
+  codeViewerToggle: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '8px 12px',
+    background: 'rgba(59, 130, 246, 0.08)',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    border: '1px solid rgba(59, 130, 246, 0.15)',
+    transition: 'all 0.2s ease',
+    fontSize: '13px',
+    fontWeight: '500',
+    color: '#1e40af',
+  },
+
+  codeViewerToggleHover: {
+    background: 'rgba(59, 130, 246, 0.15)',
+  },
+
+  codeViewerContent: {
+    marginTop: '10px',
+    background: '#1e293b',
+    borderRadius: '8px',
+    overflow: 'hidden',
+    border: '1px solid rgba(255, 255, 255, 0.08)',
+  },
+
+  codeViewerHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '8px 12px',
+    background: 'rgba(0, 0, 0, 0.2)',
+    borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+  },
+
+  codeViewerFileName: {
+    fontSize: '12px',
+    color: '#94a3b8',
+    fontFamily: 'ui-monospace, monospace',
+  },
+
+  copyButton: {
+    padding: '4px 10px',
+    fontSize: '11px',
+    fontWeight: '500',
+    color: '#e2e8f0',
+    background: 'rgba(59, 130, 246, 0.3)',
+    border: '1px solid rgba(59, 130, 246, 0.5)',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+  },
+
+  copyButtonSuccess: {
+    background: 'rgba(34, 197, 94, 0.3)',
+    borderColor: 'rgba(34, 197, 94, 0.5)',
+    color: '#86efac',
+  },
+
+  codeViewerPre: {
+    margin: 0,
+    padding: '12px',
+    fontSize: '11px',
+    lineHeight: '1.5',
+    fontFamily: 'ui-monospace, Consolas, Monaco, monospace',
+    color: '#e2e8f0',
+    overflowX: 'auto' as const,
+    maxHeight: '400px',
+    overflowY: 'auto' as const,
+  },
+
   // Image upload styles
   uploadButton: {
     display: 'flex',
@@ -1064,6 +1203,19 @@ const getPhaseInfo = (phase: ProgressUpdate['phase']): { icon: string; text: str
 // Streaming Progress Message Component
 const StreamingProgressMessage: React.FC<{ streamingData: StreamingState }> = ({ streamingData }) => {
   const { intent, progress, validation, retry, completion, error } = streamingData;
+  const [showCode, setShowCode] = useState(true); // Show code by default for better UX
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied'>('idle');
+
+  // Handle copy to clipboard
+  const handleCopyCode = async (code: string) => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopyStatus('copied');
+      setTimeout(() => setCopyStatus('idle'), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  };
 
   // If completed, show completion summary
   if (completion) {
@@ -1114,10 +1266,47 @@ const StreamingProgressMessage: React.FC<{ streamingData: StreamingState }> = ({
           )}
 
           {/* Metrics */}
-          <div style={STYLES.metricsRow}>
-            <span style={STYLES.metric}>⏱️ {(completion.metrics.totalTimeMs / 1000).toFixed(1)}s</span>
-            <span style={STYLES.metric}>🔄 {completion.metrics.llmCallsCount} LLM calls</span>
-          </div>
+          {completion.metrics && (
+            <div style={STYLES.metricsRow}>
+              <span style={STYLES.metric}>⏱️ {(completion.metrics.totalTimeMs / 1000).toFixed(1)}s</span>
+              <span style={STYLES.metric}>🔄 {completion.metrics.llmCallsCount} LLM calls</span>
+            </div>
+          )}
+
+          {/* Code Viewer - Show the generated story code */}
+          {completion.code && (
+            <div style={STYLES.codeViewerContainer}>
+              <div
+                style={STYLES.codeViewerToggle}
+                onClick={() => setShowCode(!showCode)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => e.key === 'Enter' && setShowCode(!showCode)}
+              >
+                <span>{showCode ? '▼' : '▶'} View Generated Code</span>
+                <span style={{ fontSize: '11px', color: '#6366f1' }}>{completion.fileName}</span>
+              </div>
+              {showCode && (
+                <div style={STYLES.codeViewerContent}>
+                  <div style={STYLES.codeViewerHeader}>
+                    <span style={STYLES.codeViewerFileName}>{completion.fileName}</span>
+                    <button
+                      style={{
+                        ...STYLES.copyButton,
+                        ...(copyStatus === 'copied' ? STYLES.copyButtonSuccess : {})
+                      }}
+                      onClick={() => handleCopyCode(completion.code)}
+                    >
+                      {copyStatus === 'copied' ? '✓ Copied!' : 'Copy Code'}
+                    </button>
+                  </div>
+                  <pre style={STYLES.codeViewerPre}>
+                    <code>{completion.code}</code>
+                  </pre>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -1211,7 +1400,7 @@ const StreamingProgressMessage: React.FC<{ streamingData: StreamingState }> = ({
 };
 
 // Main component
-export function StoryUIPanel() {
+function StoryUIPanel() {
   const [input, setInput] = useState('');
   const [conversation, setConversation] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
@@ -1221,6 +1410,9 @@ export function StoryUIPanel() {
   const [activeTitle, setActiveTitle] = useState<string>('');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState<{ connected: boolean; error?: string }>({ connected: false });
+  const [availableProviders, setAvailableProviders] = useState<ProviderInfo[]>([]);
+  const [selectedProvider, setSelectedProvider] = useState<string>('');
+  const [selectedModel, setSelectedModel] = useState<string>('');
   const [streamingState, setStreamingState] = useState<StreamingState | null>(null);
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([]);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -1465,6 +1657,22 @@ export function StoryUIPanel() {
       setConnectionStatus(connectionTest);
       
       if (connectionTest.connected) {
+        // Fetch available providers
+        try {
+          const providersRes = await fetch(PROVIDERS_API);
+          if (providersRes.ok) {
+            const providersData: ProvidersResponse = await providersRes.json();
+            setAvailableProviders(providersData.providers.filter(p => p.configured));
+            // Set initial selection from server defaults
+            if (providersData.current) {
+              setSelectedProvider(providersData.current.provider.toLowerCase());
+              setSelectedModel(providersData.current.model);
+            }
+          }
+        } catch (e) {
+          console.error('Failed to fetch providers:', e);
+        }
+
         const syncedChats = await syncWithActualStories();
         const sortedChats = syncedChats.sort((a, b) => b.lastUpdated - a.lastUpdated).slice(0, MAX_RECENT_CHATS);
         setRecentChats(sortedChats);
@@ -1500,6 +1708,8 @@ export function StoryUIPanel() {
         prompt: userInput,
         conversation: newConversation,
         fileName: activeChatId || undefined,
+        provider: selectedProvider || undefined,
+        model: selectedModel || undefined,
       }),
     });
 
@@ -1586,15 +1796,22 @@ export function StoryUIPanel() {
       }
     }
 
-    // Show refresh hint only once per session for new stories
+    // Show refresh hint only once per session for new stories (local mode only)
+    // In Edge mode, stories are stored in Durable Objects, not on filesystem
     if (!isUpdate && !hasShownRefreshHint.current) {
-      parts.push(`\n\n_Refresh Storybook (Cmd/Ctrl + R) to see new stories in the sidebar._`);
+      if (isEdgeMode()) {
+        parts.push(`\n\n_Story saved to cloud. View code in chat history above._`);
+      } else {
+        parts.push(`\n\n_Refresh Storybook (Cmd/Ctrl + R) to see new stories in the sidebar._`);
+      }
       hasShownRefreshHint.current = true;
     }
 
-    // Add metrics in a subtle way
-    const seconds = (completion.metrics.totalTimeMs / 1000).toFixed(1);
-    parts.push(`\n\n_${seconds}s_`);
+    // Add metrics in a subtle way (if available)
+    if (completion.metrics?.totalTimeMs) {
+      const seconds = (completion.metrics.totalTimeMs / 1000).toFixed(1);
+      parts.push(`\n\n_${seconds}s_`);
+    }
 
     return parts.join('');
   };
@@ -1725,6 +1942,8 @@ export function StoryUIPanel() {
             storyId: activeChatId || undefined,
             images: imagePayload,
             visionMode: hasImages ? 'screenshot_to_story' : undefined,
+            provider: selectedProvider || undefined,
+            model: selectedModel || undefined,
           }),
           signal: abortControllerRef.current.signal,
         });
@@ -1774,11 +1993,11 @@ export function StoryUIPanel() {
                     break;
                   case 'completion':
                     completionData = event.data as CompletionFeedback;
-                    setStreamingState(prev => ({ ...prev, completion: completionData }));
+                    setStreamingState(prev => ({ ...prev, completion: event.data as CompletionFeedback }));
                     break;
                   case 'error':
                     errorData = event.data as ErrorFeedback;
-                    setStreamingState(prev => ({ ...prev, error: errorData }));
+                    setStreamingState(prev => ({ ...prev, error: event.data as ErrorFeedback }));
                     break;
                 }
               } catch (parseError) {
@@ -2134,12 +2353,74 @@ export function StoryUIPanel() {
               backgroundColor: connectionStatus.connected ? '#10b981' : '#f87171'
             }}></div>
             <span style={{ color: connectionStatus.connected ? '#10b981' : '#f87171' }}>
-              {connectionStatus.connected 
-                ? `Connected to MCP server (port ${getApiPort()})`
+              {connectionStatus.connected
+                ? `Connected to ${getConnectionDisplayText()}`
                 : `Disconnected: ${connectionStatus.error || 'Server not running'}`
               }
             </span>
           </div>
+
+          {/* LLM Provider/Model Selection */}
+          {connectionStatus.connected && availableProviders.length > 0 && (
+            <div style={{
+              display: 'flex',
+              gap: '12px',
+              marginTop: '12px',
+              flexWrap: 'wrap'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <label style={{ fontSize: '12px', color: '#94a3b8' }}>Provider:</label>
+                <select
+                  value={selectedProvider}
+                  onChange={(e) => {
+                    const newProvider = e.target.value;
+                    setSelectedProvider(newProvider);
+                    // Reset model to first available for new provider
+                    const provider = availableProviders.find(p => p.type === newProvider);
+                    if (provider && provider.models.length > 0) {
+                      setSelectedModel(provider.models[0]);
+                    }
+                  }}
+                  style={{
+                    background: '#1e293b',
+                    border: '1px solid #334155',
+                    borderRadius: '6px',
+                    color: '#e2e8f0',
+                    padding: '4px 8px',
+                    fontSize: '12px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {availableProviders.map(p => (
+                    <option key={p.type} value={p.type}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <label style={{ fontSize: '12px', color: '#94a3b8' }}>Model:</label>
+                <select
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  style={{
+                    background: '#1e293b',
+                    border: '1px solid #334155',
+                    borderRadius: '6px',
+                    color: '#e2e8f0',
+                    padding: '4px 8px',
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                    maxWidth: '200px'
+                  }}
+                >
+                  {availableProviders
+                    .find(p => p.type === selectedProvider)
+                    ?.models.map(model => (
+                      <option key={model} value={model}>{model}</option>
+                    ))}
+                </select>
+              </div>
+            </div>
+          )}
         </div>
 
         <div style={STYLES.chatContainer}>
@@ -2323,3 +2604,6 @@ export function StoryUIPanel() {
     </div>
   );
 }
+
+export default StoryUIPanel;
+export { StoryUIPanel };

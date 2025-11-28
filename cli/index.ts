@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import { setupProductionGitignore } from '../story-generator/productionGitignoreManager.js';
 import { createStoryUIConfig } from '../story-ui.config.js';
 import { setupCommand, cleanupDefaultStorybookComponents } from './setup.js';
+import { deployCommand } from './deploy.js';
 import net from 'net';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -298,6 +299,26 @@ program
     console.log('🧹 Cleaning up default Storybook template files...');
     cleanupDefaultStorybookComponents();
     console.log('✅ Cleanup complete! Component discovery should now work properly.');
+  });
+
+program
+  .command('deploy')
+  .description('Deploy Story UI to production (backend + Storybook frontend)')
+  // New recommended approach
+  .option('--backend', 'Deploy MCP server backend to Railway/Render/Fly.io')
+  .option('--frontend', 'Deploy Storybook frontend to Cloudflare Pages')
+  .option('--platform <platform>', 'Backend platform: railway (default), render, fly', 'railway')
+  .option('--backend-url <url>', 'Use existing backend URL for frontend deployment')
+  .option('--storybook-dir <dir>', 'Path to Storybook project')
+  .option('--project-name <name>', 'Project name prefix', 'story-ui')
+  .option('--dry-run', 'Show what would be deployed without deploying')
+  // Legacy flags (deprecated)
+  .option('--init', '[DEPRECATED] Initialize deployment templates')
+  .option('--edge', '[DEPRECATED] Deploy Edge Worker only')
+  .option('--pages', '[DEPRECATED] Deploy Pages UI only')
+  .option('--all', '[DEPRECATED] Deploy both Edge Worker and Pages UI')
+  .action(async (options) => {
+    await deployCommand(options);
   });
 
 program

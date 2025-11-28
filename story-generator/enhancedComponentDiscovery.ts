@@ -316,20 +316,9 @@ export class EnhancedComponentDiscovery {
     const projectRoot = this.getProjectRoot();
     const packagePath = path.join(projectRoot, 'node_modules', source.path);
 
-    if (!fs.existsSync(packagePath)) {
-      console.warn(`Package ${source.path} not found in node_modules at ${packagePath}`);
-      return;
-    }
-
-          logger.log(`🔍 Dynamically discovering components from ${source.path}...`);
-
-    // Use dynamic discovery to get real exports
-    const dynamicDiscovery = new DynamicPackageDiscovery(source.path, projectRoot);
-    const packageExports = await dynamicDiscovery.getRealPackageExports();
-
-    if (!packageExports) {
+    // Helper function to load known components as fallback
+    const loadFallbackComponents = () => {
       logger.log(`📋 ${source.path}: Using static component list (design system detected)`);
-      // Fallback to predefined components if dynamic discovery fails
       const knownComponents = this.getKnownDesignSystemComponents(source.path);
       if (knownComponents.length > 0) {
         for (const comp of knownComponents) {
@@ -340,7 +329,26 @@ export class EnhancedComponentDiscovery {
             category: comp.category || this.categorizeComponent(comp.name || '', comp.description || '') as any
           } as EnhancedComponent);
         }
+        logger.log(`✅ Loaded ${knownComponents.length} known components for ${source.path}`);
       }
+    };
+
+    if (!fs.existsSync(packagePath)) {
+      console.warn(`Package ${source.path} not found in node_modules at ${packagePath}`);
+      // Use fallback component list when package is not installed (e.g., in production)
+      loadFallbackComponents();
+      return;
+    }
+
+          logger.log(`🔍 Dynamically discovering components from ${source.path}...`);
+
+    // Use dynamic discovery to get real exports
+    const dynamicDiscovery = new DynamicPackageDiscovery(source.path, projectRoot);
+    const packageExports = await dynamicDiscovery.getRealPackageExports();
+
+    if (!packageExports) {
+      // Fallback to predefined components if dynamic discovery fails
+      loadFallbackComponents();
       return;
     }
 

@@ -146,6 +146,8 @@ export interface StreamGenerateRequest {
   }>;
   visionMode?: string;
   designSystem?: string;
+  provider?: string;  // LLM provider (claude, openai, gemini)
+  model?: string;     // Model ID
 }
 
 // Helper to create SSE-formatted message

@@ -178,7 +178,7 @@ export function initializeFromEnv(): void {
   if (claudeKey) {
     registry.configureProvider('claude', {
       apiKey: claudeKey,
-      model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-5-20250514',
+      model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-5-20250929',
     });
     logger.info('Claude provider configured from environment');
   }

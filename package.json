@@ -9,6 +9,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./panel": {
+      "import": "./dist/templates/StoryUI/index.js",
+      "types": "./dist/templates/StoryUI/index.d.ts"
     }
   },
   "bin": {

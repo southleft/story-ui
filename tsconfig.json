@@ -7,13 +7,22 @@
     "forceConsistentCasingInFileNames": true,
     "strict": true,
     "skipLibCheck": true,
-    "outDir": "dist"
+    "outDir": "dist",
+    "jsx": "react-jsx",
+    "declaration": true,
+    "declarationMap": true
   },
   "include": [
     "cli/**/*.ts",
     "mcp-server/**/*.ts",
     "story-generator/**/*.ts",
-    "visual-builder/**/*.ts"
+    "visual-builder/**/*.ts",
+    "templates/**/*.ts",
+    "templates/**/*.tsx"
   ],
-  "exclude": ["node_modules/**/*"]
+  "exclude": [
+    "node_modules/**/*",
+    "templates/StoryUI/manager.tsx",
+    "templates/StoryUI/GeneratedStoryRenderer.stories.tsx"
+  ]
 }

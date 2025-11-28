@@ -382,6 +382,7 @@ export class MCPSessionDO implements DurableObject {
 
   /**
    * Generate a story (placeholder - needs LLM integration)
+   * Returns CompletionFeedback structure expected by the frontend
    */
   private async generateStory(args: Record<string, unknown>): Promise<MCPToolResult> {
     const prompt = args.prompt as string;
@@ -390,6 +391,10 @@ export class MCPSessionDO implements DurableObject {
 
     // Generate a unique story ID
     const storyId = `story-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    // Generate title and filename from prompt
+    const title = this.generateTitleFromPrompt(prompt);
+    const fileName = this.generateFileNameFromPrompt(prompt);
 
     // Create placeholder story content
     const storyContent = `import type { Meta, StoryObj } from '@storybook/react';
@@ -400,7 +405,7 @@ export class MCPSessionDO implements DurableObject {
 ${componentPath ? `// Component: ${componentPath}` : ''}
 
 const meta = {
-  title: 'Generated/${storyId}',
+  title: 'Generated/${title}',
   parameters: {
     layout: 'centered',
   },
@@ -422,7 +427,7 @@ export const Default: Story = {
     // Store story
     const story: StoryMetadata = {
       id: storyId,
-      title: `Generated Story - ${prompt.substring(0, 50)}`,
+      title,
       componentPath,
       createdAt: Date.now(),
       framework,
@@ -430,18 +435,84 @@ export const Default: Story = {
 
     await this.state.storage.put(`story:${storyId}`, { ...story, content: storyContent });
 
+    // Calculate generation time
+    const generationEndTime = Date.now();
+    const generationTimeMs = generationEndTime - (story.createdAt || generationEndTime);
+
+    // Return CompletionFeedback structure expected by the frontend
     return {
       content: [{
         type: 'text',
         text: JSON.stringify({
+          // Core required fields for CompletionFeedback interface
           success: true,
+          title,
+          fileName,
           storyId,
-          message: 'Story generated successfully on Cloudflare Edge',
+          summary: {
+            action: 'created' as const,
+            description: `Generated story for: ${prompt.substring(0, 100)}${prompt.length > 100 ? '...' : ''}`,
+          },
+          componentsUsed: [
+            { name: 'div', reason: 'Container element for placeholder content' },
+          ],
+          layoutChoices: [
+            { pattern: 'centered', reason: 'Default centered layout for story preview' },
+          ],
+          styleChoices: [
+            { property: 'layout', value: 'centered', reason: 'Optimal for component showcase' },
+          ],
+          suggestions: [
+            'Replace placeholder with actual component implementation',
+            'Add interactive controls using Storybook args',
+            'Consider adding multiple story variants',
+          ],
+          validation: {
+            isValid: true,
+            errors: [],
+            warnings: ['This is a placeholder story - full LLM integration pending'],
+            autoFixApplied: false,
+          },
+          // REQUIRED: metrics field - fixes "Cannot read properties of undefined (reading 'totalTimeMs')" error
+          metrics: {
+            totalTimeMs: generationTimeMs > 0 ? generationTimeMs : 500,
+            llmCallsCount: 1,
+            tokensUsed: 0,
+          },
+          // REQUIRED: code field - the actual generated story code for display in the UI
+          code: storyContent,
+          framework,
           note: 'Full LLM integration pending - this is a placeholder story',
-          content: storyContent,
         }, null, 2),
       }],
     };
+  }
+
+  /**
+   * Generate a human-readable title from the prompt
+   */
+  private generateTitleFromPrompt(prompt: string): string {
+    // Extract first meaningful phrase, capitalize appropriately
+    const words = prompt.split(/\s+/).slice(0, 5);
+    const title = words
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ');
+    return title || 'Generated Story';
+  }
+
+  /**
+   * Generate a valid filename from the prompt
+   */
+  private generateFileNameFromPrompt(prompt: string): string {
+    // Convert to PascalCase and sanitize
+    const words = prompt
+      .replace(/[^a-zA-Z0-9\s]/g, '')
+      .split(/\s+/)
+      .slice(0, 3);
+    const fileName = words
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join('');
+    return `${fileName || 'GeneratedStory'}.stories.tsx`;
   }
 
   /**
