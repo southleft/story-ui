@@ -51,6 +51,11 @@ export default {
         return handleProvidersRoute(env);
       }
 
+      // Claude LLM proxy endpoint (for production app)
+      if (url.pathname === '/story-ui/claude') {
+        return handleClaudeRoute(request, env);
+      }
+
       // Story preview - renders the generated story as a live page
       if (url.pathname.startsWith('/story-ui/preview/')) {
         return handlePreviewRoute(request, env, url);
@@ -75,6 +80,7 @@ export default {
             generateStream: '/story-ui/generate-stream',
             providers: '/story-ui/providers',
             preview: '/story-ui/preview/:id',
+            claude: '/story-ui/claude',
           },
         }),
         {
@@ -562,6 +568,184 @@ function handleProvidersRoute(env: Env): Response {
       'Access-Control-Allow-Origin': '*',
     }
   });
+}
+
+/**
+ * Handle /story-ui/claude route
+ * POST: Proxy requests to Claude API for component generation
+ */
+async function handleClaudeRoute(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      }
+    });
+  }
+
+  // Check for API key
+  if (!env.ANTHROPIC_API_KEY) {
+    return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }), {
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      }
+    });
+  }
+
+  try {
+    const body = await request.json() as {
+      prompt?: string;
+      messages?: Array<{ role: string; content: string }>;
+      systemPrompt?: string;
+      prefillAssistant?: string;
+      maxTokens?: number;
+      images?: Array<{ type: string; data: string }>;
+    };
+
+    const { prompt, messages = [], systemPrompt, prefillAssistant, maxTokens = 4096, images = [] } = body;
+
+    if (!prompt) {
+      return new Response(JSON.stringify({ error: 'Missing prompt' }), {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        }
+      });
+    }
+
+    // Build the messages array for Claude API
+    const claudeMessages: Array<{
+      role: 'user' | 'assistant';
+      content: string | Array<{ type: string; text?: string; source?: { type: string; media_type: string; data: string } }>;
+    }> = [];
+
+    // Add conversation history
+    for (const msg of messages) {
+      claudeMessages.push({
+        role: msg.role as 'user' | 'assistant',
+        content: msg.content,
+      });
+    }
+
+    // Add the current user message (with images if any)
+    if (images.length > 0) {
+      const content: Array<{ type: string; text?: string; source?: { type: string; media_type: string; data: string } }> = [];
+
+      // Add images first
+      for (const img of images) {
+        content.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: img.type,
+            data: img.data,
+          },
+        });
+      }
+
+      // Add the text prompt
+      content.push({
+        type: 'text',
+        text: prompt,
+      });
+
+      claudeMessages.push({
+        role: 'user',
+        content,
+      });
+    } else {
+      claudeMessages.push({
+        role: 'user',
+        content: prompt,
+      });
+    }
+
+    // Add assistant prefill if provided (forces specific output format)
+    if (prefillAssistant) {
+      claudeMessages.push({
+        role: 'assistant',
+        content: prefillAssistant,
+      });
+    }
+
+    // Call Claude API
+    const claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: env.DEFAULT_MODEL || 'claude-sonnet-4-20250514',
+        max_tokens: maxTokens,
+        system: systemPrompt || 'You are a helpful assistant.',
+        messages: claudeMessages,
+      }),
+    });
+
+    if (!claudeResponse.ok) {
+      const errorText = await claudeResponse.text();
+      console.error('Claude API error:', errorText);
+      return new Response(JSON.stringify({
+        error: `Claude API error: ${claudeResponse.status}`,
+        details: errorText,
+      }), {
+        status: claudeResponse.status,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        }
+      });
+    }
+
+    const claudeData = await claudeResponse.json() as {
+      content: Array<{ type: string; text: string }>;
+      usage?: { input_tokens: number; output_tokens: number };
+    };
+
+    // Extract the text content
+    let responseText = '';
+    if (claudeData.content && Array.isArray(claudeData.content)) {
+      responseText = claudeData.content
+        .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
+        .map(block => block.text)
+        .join('');
+    }
+
+    // If we used prefill, prepend it back to the response
+    if (prefillAssistant) {
+      responseText = prefillAssistant + responseText;
+    }
+
+    return new Response(JSON.stringify({
+      content: responseText,
+      usage: claudeData.usage,
+    }), {
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      }
+    });
+
+  } catch (error) {
+    console.error('Claude proxy error:', error);
+    return new Response(JSON.stringify({
+      error: 'Failed to process request',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    }), {
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      }
+    });
+  }
 }
 
 /**

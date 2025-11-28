@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Story UI - AI-powered component generation using your design system" />
+    <meta name="theme-color" content="#0a0a0a" />
+
+    <title>Story UI</title>
+
+    <!-- Preload critical fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet" />
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <!-- Prevent flash of unstyled content -->
+    <style>
+      html {
+        background-color: #0a0a0a;
+      }
+      body {
+        margin: 0;
+        background-color: #0a0a0a;
+      }
+      #root {
+        min-height: 100vh;
+        background-color: #0a0a0a;
+      }
+      /* Initial loading state */
+      .initial-loader {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        color: #a1a1a1;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 14px;
+      }
+      .initial-loader-spinner {
+        width: 24px;
+        height: 24px;
+        border: 2px solid #27272a;
+        border-top-color: #6366f1;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin-right: 12px;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <!-- Initial loading state (replaced by React) -->
+      <div class="initial-loader">
+        <div class="initial-loader-spinner"></div>
+        <span>Loading Story UI...</span>
+      </div>
+    </div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
