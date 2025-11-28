@@ -81,7 +81,7 @@ export function getAvailableProviders(): Array<{
  * Maintains backwards compatibility with the old callClaude interface
  */
 export async function chatCompletion(
-  messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+  messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
   options?: {
     model?: string;
     maxTokens?: number;
@@ -94,15 +94,22 @@ export async function chatCompletion(
     throw new Error(`${provider.name} provider is not configured. Please set the API key.`);
   }
 
-  const chatMessages: ChatMessage[] = messages.map(msg => ({
-    role: msg.role,
+  // Extract system messages and convert to systemPrompt option
+  // This ensures proper handling across all providers
+  const systemMessages = messages.filter(msg => msg.role === 'system');
+  const nonSystemMessages = messages.filter(msg => msg.role !== 'system');
+  const systemPrompt = systemMessages.map(msg => msg.content).join('\n\n') || undefined;
+
+  const chatMessages: ChatMessage[] = nonSystemMessages.map(msg => ({
+    role: msg.role as 'user' | 'assistant',
     content: msg.content,
   }));
 
   logger.debug('Sending chat request to provider', {
     provider: provider.name,
     model: options?.model || provider.getConfig().model,
-    messageCount: messages.length,
+    messageCount: chatMessages.length,
+    hasSystemPrompt: !!systemPrompt,
   });
 
   try {
@@ -110,6 +117,7 @@ export async function chatCompletion(
       model: options?.model,
       maxTokens: options?.maxTokens || 8192,
       temperature: options?.temperature,
+      systemPrompt,
     });
 
     return response.content;
