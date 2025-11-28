@@ -25,22 +25,17 @@ interface GeneratedStory {
 }
 
 /**
- * Get the Edge URL from environment
+ * Get the Edge URL from environment variable.
+ * This must be configured via VITE_STORY_UI_EDGE_URL environment variable.
+ * No hardcoded URLs - each deployment must configure their own backend.
  */
 function getEdgeUrl(): string {
-  // Check for Vite env variable
+  // Check for Vite env variable - this is the ONLY source for the Edge URL
   if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_STORY_UI_EDGE_URL) {
     return import.meta.env.VITE_STORY_UI_EDGE_URL;
   }
 
-  // In production Cloudflare Pages, detect from hostname
-  if (typeof window !== 'undefined') {
-    const hostname = window.location.hostname;
-    if (hostname.includes('pages.dev') || hostname.includes('cloudflare')) {
-      return 'https://story-ui-mcp-edge.southleft-llc.workers.dev';
-    }
-  }
-
+  // No fallback - environment variable must be configured
   return '';
 }
 

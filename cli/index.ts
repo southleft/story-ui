@@ -303,13 +303,14 @@ program
 
 program
   .command('deploy')
-  .description('Deploy Story UI to production (backend + Storybook frontend)')
+  .description('Deploy Story UI to production (backend + standalone app)')
   // New recommended approach
   .option('--backend', 'Deploy MCP server backend to Railway/Render/Fly.io')
-  .option('--frontend', 'Deploy Storybook frontend to Cloudflare Pages')
+  .option('--app', 'Deploy standalone production app (Lovable/Bolt-style with live preview)')
+  .option('--frontend', 'Deploy Storybook frontend (legacy, use --app instead)')
   .option('--platform <platform>', 'Backend platform: railway (default), render, fly', 'railway')
-  .option('--backend-url <url>', 'Use existing backend URL for frontend deployment')
-  .option('--storybook-dir <dir>', 'Path to Storybook project')
+  .option('--backend-url <url>', 'Use existing backend URL for app/frontend deployment')
+  .option('--storybook-dir <dir>', 'Path to Storybook project (for --frontend only)')
   .option('--project-name <name>', 'Project name prefix', 'story-ui')
   .option('--dry-run', 'Show what would be deployed without deploying')
   // Legacy flags (deprecated)

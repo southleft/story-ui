@@ -10,8 +10,12 @@ export interface Env {
   STORY_UI_VERSION: string;
   ANTHROPIC_API_KEY?: string;
   OPENAI_API_KEY?: string;
+  GEMINI_API_KEY?: string;
   DEFAULT_LLM_PROVIDER?: string;
+  DEFAULT_PROVIDER?: string;
   DEFAULT_MODEL?: string;
+  DEFAULT_OPENAI_MODEL?: string;
+  DEFAULT_GEMINI_MODEL?: string;
 }
 
 // JSON-RPC 2.0 Types

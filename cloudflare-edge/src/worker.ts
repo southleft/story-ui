@@ -51,9 +51,22 @@ export default {
         return handleProvidersRoute(env);
       }
 
-      // Claude LLM proxy endpoint (for production app)
+      // LLM proxy endpoints (multi-provider support)
       if (url.pathname === '/story-ui/claude') {
         return handleClaudeRoute(request, env);
+      }
+
+      if (url.pathname === '/story-ui/openai') {
+        return handleOpenAIRoute(request, env);
+      }
+
+      if (url.pathname === '/story-ui/gemini') {
+        return handleGeminiRoute(request, env);
+      }
+
+      // Chat title generation endpoint
+      if (url.pathname === '/story-ui/title') {
+        return handleTitleRoute(request, env);
       }
 
       // Story preview - renders the generated story as a live page
@@ -81,6 +94,9 @@ export default {
             providers: '/story-ui/providers',
             preview: '/story-ui/preview/:id',
             claude: '/story-ui/claude',
+            openai: '/story-ui/openai',
+            gemini: '/story-ui/gemini',
+            title: '/story-ui/title',
           },
         }),
         {
@@ -548,16 +564,42 @@ async function handleDeleteRoute(request: Request, env: Env): Promise<Response> 
 /**
  * Handle /story-ui/providers route
  * GET: Return provider configuration (for UI to show connected status)
+ * Returns dynamically based on which API keys are configured
  */
 function handleProvidersRoute(env: Env): Response {
-  // Return a simplified provider config for the edge deployment
+  // Build available providers based on configured API keys
+  const available: string[] = [];
+  const models: Record<string, string[]> = {};
+
+  if (env.ANTHROPIC_API_KEY) {
+    available.push('claude');
+    models['claude'] = ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307'];
+  }
+
+  if (env.OPENAI_API_KEY) {
+    available.push('openai');
+    models['openai'] = ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'];
+  }
+
+  if (env.GEMINI_API_KEY) {
+    available.push('gemini');
+    models['gemini'] = ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-pro'];
+  }
+
+  // Determine default provider
+  const defaultProvider = env.DEFAULT_PROVIDER ||
+    (available.includes('claude') ? 'claude' :
+     available.includes('openai') ? 'openai' :
+     available.includes('gemini') ? 'gemini' : null);
+
   const providers = {
     current: {
-      provider: 'claude',
-      model: 'claude-sonnet-4-20250514',
+      provider: defaultProvider,
+      model: defaultProvider ? models[defaultProvider]?.[0] : null,
     },
-    available: ['claude'],
-    configured: true,
+    available,
+    models,
+    configured: available.length > 0,
     edge: true,
     version: env.STORY_UI_VERSION,
   };
@@ -737,6 +779,479 @@ async function handleClaudeRoute(request: Request, env: Env): Promise<Response> 
     console.error('Claude proxy error:', error);
     return new Response(JSON.stringify({
       error: 'Failed to process request',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    }), {
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      }
+    });
+  }
+}
+
+/**
+ * Handle /story-ui/openai route
+ * POST: Proxy requests to OpenAI API for component generation
+ */
+async function handleOpenAIRoute(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      }
+    });
+  }
+
+  if (!env.OPENAI_API_KEY) {
+    return new Response(JSON.stringify({ error: 'OPENAI_API_KEY not configured' }), {
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      }
+    });
+  }
+
+  try {
+    const body = await request.json() as {
+      prompt?: string;
+      messages?: Array<{ role: string; content: string }>;
+      systemPrompt?: string;
+      prefillAssistant?: string;
+      maxTokens?: number;
+      model?: string;
+      images?: Array<{ type: string; data: string }>;
+    };
+
+    const { prompt, messages = [], systemPrompt, prefillAssistant, maxTokens = 4096, model, images = [] } = body;
+
+    if (!prompt) {
+      return new Response(JSON.stringify({ error: 'Missing prompt' }), {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        }
+      });
+    }
+
+    // Build messages for OpenAI API
+    const openaiMessages: Array<{
+      role: 'system' | 'user' | 'assistant';
+      content: string | Array<{ type: string; text?: string; image_url?: { url: string } }>;
+    }> = [];
+
+    // Add system message
+    if (systemPrompt) {
+      openaiMessages.push({ role: 'system', content: systemPrompt });
+    }
+
+    // Add conversation history
+    for (const msg of messages) {
+      openaiMessages.push({
+        role: msg.role as 'user' | 'assistant',
+        content: msg.content,
+      });
+    }
+
+    // Add the current user message (with images if any)
+    if (images.length > 0) {
+      const content: Array<{ type: string; text?: string; image_url?: { url: string } }> = [];
+
+      // Add images first
+      for (const img of images) {
+        content.push({
+          type: 'image_url',
+          image_url: {
+            url: `data:${img.type};base64,${img.data}`,
+          },
+        });
+      }
+
+      // Add the text prompt
+      content.push({
+        type: 'text',
+        text: prompt,
+      });
+
+      openaiMessages.push({
+        role: 'user',
+        content,
+      });
+    } else {
+      openaiMessages.push({
+        role: 'user',
+        content: prompt,
+      });
+    }
+
+    // Add assistant prefill if provided
+    if (prefillAssistant) {
+      openaiMessages.push({
+        role: 'assistant',
+        content: prefillAssistant,
+      });
+    }
+
+    // Call OpenAI API
+    const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: model || env.DEFAULT_OPENAI_MODEL || 'gpt-4o',
+        max_tokens: maxTokens,
+        messages: openaiMessages,
+      }),
+    });
+
+    if (!openaiResponse.ok) {
+      const errorText = await openaiResponse.text();
+      console.error('OpenAI API error:', errorText);
+      return new Response(JSON.stringify({
+        error: `OpenAI API error: ${openaiResponse.status}`,
+        details: errorText,
+      }), {
+        status: openaiResponse.status,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        }
+      });
+    }
+
+    const openaiData = await openaiResponse.json() as {
+      choices: Array<{ message: { content: string } }>;
+      usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+    };
+
+    let responseText = openaiData.choices[0]?.message?.content || '';
+
+    // If we used prefill, prepend it back
+    if (prefillAssistant) {
+      responseText = prefillAssistant + responseText;
+    }
+
+    return new Response(JSON.stringify({
+      content: responseText,
+      usage: openaiData.usage,
+    }), {
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      }
+    });
+
+  } catch (error) {
+    console.error('OpenAI proxy error:', error);
+    return new Response(JSON.stringify({
+      error: 'Failed to process request',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    }), {
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      }
+    });
+  }
+}
+
+/**
+ * Handle /story-ui/gemini route
+ * POST: Proxy requests to Google Gemini API for component generation
+ */
+async function handleGeminiRoute(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      }
+    });
+  }
+
+  if (!env.GEMINI_API_KEY) {
+    return new Response(JSON.stringify({ error: 'GEMINI_API_KEY not configured' }), {
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      }
+    });
+  }
+
+  try {
+    const body = await request.json() as {
+      prompt?: string;
+      messages?: Array<{ role: string; content: string }>;
+      systemPrompt?: string;
+      prefillAssistant?: string;
+      maxTokens?: number;
+      model?: string;
+      images?: Array<{ type: string; data: string }>;
+    };
+
+    const { prompt, messages = [], systemPrompt, prefillAssistant, maxTokens = 4096, model, images = [] } = body;
+
+    if (!prompt) {
+      return new Response(JSON.stringify({ error: 'Missing prompt' }), {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        }
+      });
+    }
+
+    // Build contents for Gemini API
+    const contents: Array<{
+      role: 'user' | 'model';
+      parts: Array<{ text?: string; inline_data?: { mime_type: string; data: string } }>;
+    }> = [];
+
+    // Add conversation history
+    for (const msg of messages) {
+      contents.push({
+        role: msg.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: msg.content }],
+      });
+    }
+
+    // Add the current user message (with images if any)
+    const userParts: Array<{ text?: string; inline_data?: { mime_type: string; data: string } }> = [];
+
+    for (const img of images) {
+      userParts.push({
+        inline_data: {
+          mime_type: img.type,
+          data: img.data,
+        },
+      });
+    }
+
+    userParts.push({ text: prompt });
+    contents.push({ role: 'user', parts: userParts });
+
+    // Add assistant prefill if provided
+    if (prefillAssistant) {
+      contents.push({
+        role: 'model',
+        parts: [{ text: prefillAssistant }],
+      });
+    }
+
+    const geminiModel = model || env.DEFAULT_GEMINI_MODEL || 'gemini-1.5-flash';
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${env.GEMINI_API_KEY}`;
+
+    // Call Gemini API
+    const geminiResponse = await fetch(geminiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents,
+        systemInstruction: systemPrompt ? { parts: [{ text: systemPrompt }] } : undefined,
+        generationConfig: {
+          maxOutputTokens: maxTokens,
+        },
+      }),
+    });
+
+    if (!geminiResponse.ok) {
+      const errorText = await geminiResponse.text();
+      console.error('Gemini API error:', errorText);
+      return new Response(JSON.stringify({
+        error: `Gemini API error: ${geminiResponse.status}`,
+        details: errorText,
+      }), {
+        status: geminiResponse.status,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        }
+      });
+    }
+
+    const geminiData = await geminiResponse.json() as {
+      candidates: Array<{ content: { parts: Array<{ text: string }> } }>;
+      usageMetadata?: { promptTokenCount: number; candidatesTokenCount: number; totalTokenCount: number };
+    };
+
+    let responseText = geminiData.candidates[0]?.content?.parts?.[0]?.text || '';
+
+    // If we used prefill, prepend it back
+    if (prefillAssistant) {
+      responseText = prefillAssistant + responseText;
+    }
+
+    return new Response(JSON.stringify({
+      content: responseText,
+      usage: geminiData.usageMetadata ? {
+        input_tokens: geminiData.usageMetadata.promptTokenCount,
+        output_tokens: geminiData.usageMetadata.candidatesTokenCount,
+      } : undefined,
+    }), {
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      }
+    });
+
+  } catch (error) {
+    console.error('Gemini proxy error:', error);
+    return new Response(JSON.stringify({
+      error: 'Failed to process request',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    }), {
+      status: 500,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      }
+    });
+  }
+}
+
+/**
+ * Handle /story-ui/title route
+ * POST: Generate a smart title for a conversation using LLM
+ */
+async function handleTitleRoute(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      }
+    });
+  }
+
+  try {
+    const body = await request.json() as {
+      description?: string;
+      provider?: 'claude' | 'openai' | 'gemini';
+    };
+
+    const { description, provider = 'claude' } = body;
+
+    if (!description) {
+      return new Response(JSON.stringify({ error: 'Missing description' }), {
+        status: 400,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        }
+      });
+    }
+
+    const titlePrompt = `Given the following UI description, generate a short, clear, human-friendly title suitable for a chat/conversation name.
+
+Requirements:
+- Do not include words like "Generate", "Build", or "Create"
+- Keep it under 40 characters
+- Use simple, clear language
+- Describe what the UI IS, not what action was taken
+- Examples: "Pricing Card", "Login Form", "User Dashboard", "Contact Page"
+
+UI description:
+${description}
+
+Title:`;
+
+    let title = '';
+
+    // Use whichever provider is available
+    if (provider === 'claude' && env.ANTHROPIC_API_KEY) {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': env.ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-3-haiku-20240307',
+          max_tokens: 50,
+          messages: [{ role: 'user', content: titlePrompt }],
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json() as { content: Array<{ type: string; text: string }> };
+        title = data.content?.[0]?.text || '';
+      }
+    } else if (provider === 'openai' && env.OPENAI_API_KEY) {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${env.OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          max_tokens: 50,
+          messages: [{ role: 'user', content: titlePrompt }],
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json() as { choices: Array<{ message: { content: string } }> };
+        title = data.choices[0]?.message?.content || '';
+      }
+    } else if (provider === 'gemini' && env.GEMINI_API_KEY) {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${env.GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: titlePrompt }] }],
+            generationConfig: { maxOutputTokens: 50 },
+          }),
+        }
+      );
+
+      if (response.ok) {
+        const data = await response.json() as { candidates: Array<{ content: { parts: Array<{ text: string }> } }> };
+        title = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      }
+    }
+
+    // Clean up the title
+    title = title
+      .trim()
+      .replace(/^["']|["']$/g, '')  // Remove quotes
+      .replace(/[^\w\s'"?!-]/g, ' ')  // Remove special chars
+      .replace(/\s+/g, ' ')  // Normalize whitespace
+      .trim()
+      .slice(0, 40);  // Limit length
+
+    // Fallback to simple truncation if LLM failed
+    if (!title) {
+      title = description.slice(0, 40).trim();
+      if (description.length > 40) title += '...';
+    }
+
+    return new Response(JSON.stringify({ title }), {
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      }
+    });
+
+  } catch (error) {
+    console.error('Title generation error:', error);
+    return new Response(JSON.stringify({
+      error: 'Failed to generate title',
       details: error instanceof Error ? error.message : 'Unknown error',
     }), {
       status: 500,

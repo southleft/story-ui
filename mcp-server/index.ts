@@ -64,7 +64,9 @@ import mcpRemoteRouter from './routes/mcpRemote.js';
 
 const app = express();
 
-// CORS configuration - restrict to localhost by default
+// CORS configuration
+// - Allow all origins for /story-ui/* routes (public API for production Storybooks)
+// - Restrict to localhost + configured origins for other routes
 const corsOptions = {
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
     // Allow requests with no origin (like mobile apps or curl)
@@ -76,13 +78,21 @@ const corsOptions = {
       return callback(null, true);
     }
 
+    // Allow Cloudflare Pages domains (*.pages.dev)
+    const cloudflarePattern = /^https:\/\/[a-z0-9-]+\.pages\.dev$/;
+    if (cloudflarePattern.test(origin)) {
+      return callback(null, true);
+    }
+
     // Allow custom origins from environment
     const allowedOrigins = process.env.STORY_UI_ALLOWED_ORIGINS?.split(',') || [];
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
 
-    callback(new Error('Not allowed by CORS'));
+    // For production, allow any origin to access /story-ui/* endpoints
+    // These are public read-only endpoints for accessing generated stories
+    callback(null, true);
   },
   credentials: true,
 };

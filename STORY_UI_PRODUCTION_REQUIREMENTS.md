@@ -24,13 +24,14 @@ The local Story UI in Storybook is the **gold standard** - everything there work
 The production environment should **mimic the local Storybook functionality** with acceptable exceptions for technical limitations:
 
 **MUST HAVE:**
-- [ ] Component discovery (know what components are available)
-- [ ] Multi-provider LLM support (Claude, Gemini, OpenAI)
+- [x] Component discovery (know what components are available) ✅ 225 Mantine components
+- [x] Multi-provider LLM support (Claude, Gemini, OpenAI) ✅ Provider selector in sidebar
 - [ ] Multi-framework support (React, Vue, Angular, Web Components)
-- [ ] Story generation with live, interactive preview
-- [ ] Iteration support (refine/modify generated components)
-- [ ] Design system considerations loaded from config
-- [ ] Components rendered from user's custom design system
+- [x] Story generation with live, interactive preview ✅ Live Babel transform
+- [x] Iteration support (refine/modify generated components) ✅ Conversation history
+- [x] Design system considerations loaded from config ✅ considerations.ts
+- [x] Components rendered from user's custom design system ✅ Mantine components
+- [x] Smart chat titles via LLM ✅ Auto-generated from first message
 
 **ACCEPTABLE DIFFERENCES:**
 - Does not need to use actual Storybook infrastructure
@@ -60,14 +61,16 @@ The production environment should **mimic the local Storybook functionality** wi
 3. [x] Verify component generation succeeds (no errors)
 4. [x] Verify live preview renders correctly
 5. [x] Verify iteration works (modify the generated component)
-6. [ ] Verify chat history persists
-7. [ ] Verify delete chat functionality works
+6. [x] Verify chat history persists ✅ localStorage persistence
+7. [x] Verify smart title generation ✅ LLM-generated titles
+8. [ ] Verify delete chat functionality works
 
-**Verified on November 28, 2024:**
-- Production URL: `https://0f359118.story-ui-storybook.pages.dev/`
+**Verified on November 28, 2025:**
+- Production URL: `https://a8a6405e.story-ui-storybook.pages.dev/`
 - Backend API: `https://story-ui-mcp-edge.southleft-llc.workers.dev`
-- Component generation tested with pricing card prompt
-- Iteration tested by adding "20% OFF" discount badge
+- Component generation tested with e-commerce product card prompt
+- Smart title generation: "E-commerce Product Card"
+- Provider selector: Claude (Anthropic) with 225 components available
 
 ## Technical Architecture Notes
 
