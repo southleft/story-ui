@@ -316,6 +316,11 @@ export const Default: Story = {
       processed = "import { html } from 'lit';\n" + processed;
     }
 
+    // FIX #3: Remove React imports from Web Components stories
+    // LLMs sometimes incorrectly include React imports in non-React frameworks
+    processed = processed.replace(/import React from ['"]react['"];?\n?/g, '');
+    processed = processed.replace(/import \* as React from ['"]react['"];?\n?/g, '');
+
     // Fix common issues
     processed = processed
       // Remove React-style className
@@ -325,7 +330,55 @@ export const Default: Story = {
       .replace(/onChange=/g, '@change=')
       .replace(/onInput=/g, '@input=');
 
+    // FIX #1: Handle escaped backticks in nested template literals
+    // When LLMs generate complex Lit templates with inline JavaScript that uses
+    // template literals, they sometimes escape backticks incorrectly causing
+    // Babel parsing errors like "Expecting Unicode escape sequence \uXXXX"
+    processed = this.fixNestedTemplateLiterals(processed);
+
     return processed;
+  }
+
+  /**
+   * Fix nested template literal escaping issues
+   *
+   * Problem: LLMs generate code like:
+   *   innerHTML: \`<sl-icon></sl-icon>\`
+   *
+   * This causes Babel syntax errors. The fix converts problematic patterns
+   * to use string concatenation instead of nested template literals.
+   */
+  private fixNestedTemplateLiterals(code: string): string {
+    // Pattern 1: innerHTML with escaped template literals
+    // Convert: innerHTML: \`...\` to innerHTML: '...'
+    code = code.replace(
+      /innerHTML:\s*\\`([^`]*?)\\`/g,
+      (match, content) => {
+        // Convert to single quotes, escaping any existing single quotes
+        const escaped = content.replace(/'/g, "\\'");
+        return `innerHTML: '${escaped}'`;
+      }
+    );
+
+    // Pattern 2: Template literals with escaped backticks inside html``
+    // These patterns indicate the LLM tried to nest template literals incorrectly
+    // Look for patterns like \`...\` that appear inside render functions
+    code = code.replace(/\\`/g, (match, offset, fullString) => {
+      // Check if we're inside a JavaScript context (not in a comment or string)
+      const before = fullString.slice(Math.max(0, offset - 50), offset);
+
+      // If this looks like it's in an innerHTML or template context, convert to quote
+      if (/innerHTML\s*[:=]\s*$/.test(before) ||
+          /Object\.assign\([^)]*\{\s*$/.test(before) ||
+          /:\s*$/.test(before)) {
+        return "'";
+      }
+
+      // Otherwise keep the escaped backtick (might be intentional)
+      return match;
+    });
+
+    return code;
   }
 
   /**

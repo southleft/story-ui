@@ -74,6 +74,8 @@ export interface StoryUIConfig {
   defaultAuthor: string;
   importPath: string;
   componentPrefix: string;
+  /** Framework type for story generation (e.g., 'react', 'web-components', 'angular', 'vue', 'svelte') */
+  framework?: string;
   components: ComponentConfig[];
   layoutComponents?: ComponentConfig[]; // Layout-specific components
   layoutRules: LayoutRules;

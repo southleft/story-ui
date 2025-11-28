@@ -73,10 +73,15 @@ export function validateStoryCode(code: string, fileName: string = 'story.tsx', 
     const semanticErrors = performSemanticChecks(sourceFile, config);
     result.errors.push(...semanticErrors);
 
-    // Check for React import
+    // Check for React import - but only for React-based frameworks
+    const framework = config?.framework || 'react';
+    const isReactFramework = framework === 'react' || framework.includes('react');
     const hasJSX = code.includes('<') || code.includes('/>');
     const hasReactImport = code.includes('import React from \'react\';');
-    if (hasJSX && !hasReactImport) {
+    const hasLitHtml = code.includes('import { html }') || code.includes('from \'lit\'');
+
+    // Only require React import for React frameworks, and skip for web-components/angular/vue/svelte
+    if (hasJSX && !hasReactImport && isReactFramework && !hasLitHtml) {
       result.errors.push('Missing React import - add "import React from \'react\';" at the top of the file');
       result.isValid = false;
     }

@@ -38,6 +38,49 @@ export class ReactAdapter extends BaseFrameworkAdapter {
 
     const typescript = options?.typescript !== false;
 
+    // FIX #2: Auto-detect Chakra UI v3 for provider requirements
+    const isChakraUI = this.isChakraUIProject(config);
+
+    let chakraInstructions = '';
+    if (isChakraUI) {
+      chakraInstructions = `
+
+CHAKRA UI v3 CONFIGURATION (CRITICAL):
+Chakra UI v3 requires ChakraProvider for proper theming and styling.
+
+OPTION 1 (Recommended): Configure in .storybook/preview.tsx (project-wide):
+\`\`\`tsx
+// .storybook/preview.tsx
+import { ChakraProvider, defaultSystem } from '@chakra-ui/react';
+
+export const decorators = [
+  (Story) => (
+    <ChakraProvider value={defaultSystem}>
+      <Story />
+    </ChakraProvider>
+  ),
+];
+\`\`\`
+
+OPTION 2: Wrap individual stories (if preview.tsx not configured):
+\`\`\`tsx
+import { ChakraProvider, defaultSystem } from '@chakra-ui/react';
+
+export const MyStory: Story = {
+  decorators: [
+    (Story) => (
+      <ChakraProvider value={defaultSystem}>
+        <Story />
+      </ChakraProvider>
+    ),
+  ],
+};
+\`\`\`
+
+IMPORTANT: Without ChakraProvider, you will see "useContext returned undefined" errors.
+`;
+    }
+
     return `You are an expert React developer creating Storybook stories using CSF 3.0 format.
 Use ONLY the React components from the ${componentSystemName} listed below.
 
@@ -47,7 +90,7 @@ MANDATORY IMPORTS - First lines of every story file:
 3. import { ComponentName } from '${config.importPath || 'your-library'}';
 
 ${typescript ? 'Use TypeScript with proper type annotations.' : 'Use JavaScript.'}
-
+${chakraInstructions}
 COMPONENT IMPORT RULES:
 - ONLY import components listed in the "Available Components" section
 - Use the EXACT import path shown after each component name
@@ -93,6 +136,18 @@ export const WithIcon: Story = {
 \`\`\`
 
 ${this.getCommonRules()}`;
+  }
+
+  /**
+   * FIX #2: Detect if the project uses Chakra UI v3
+   */
+  private isChakraUIProject(config: StoryUIConfig): boolean {
+    const importPath = config.importPath || '';
+    return (
+      importPath.includes('@chakra-ui') ||
+      importPath === 'chakra-ui' ||
+      config.componentPrefix === 'Chakra'
+    );
   }
 
   generateExamples(config: StoryUIConfig): string {
@@ -254,8 +309,9 @@ export const Default${typescript ? ': Story' : ''} = {
 
     // Fix common issues
     processed = processed
-      // Remove empty children in args
-      .replace(/children:\s*['"]?['"]?,?\s*/g, '')
+      // Remove only EMPTY children in args (children: '' or children: "")
+      // The regex must require matching quotes to avoid removing valid children like children: 'Button'
+      .replace(/children:\s*['"]['"],?\s*/g, '')
       // Fix double quotes in JSX
       .replace(/class=/g, 'className=');
 

@@ -11,11 +11,11 @@ import {
   detectProjectFramework,
   getAvailableFrameworks,
 } from '../../story-generator/promptGenerator.js';
-import { FrameworkType, StoryGenerationOptions } from '../../story-generator/framework-adapters/index.js';
+import { FrameworkType, StoryGenerationOptions, getAdapter } from '../../story-generator/framework-adapters/index.js';
 import { loadUserConfig, validateConfig } from '../../story-generator/configLoader.js';
 import { setupProductionGitignore } from '../../story-generator/productionGitignoreManager.js';
 import { getInMemoryStoryService, GeneratedStory } from '../../story-generator/inMemoryStoryService.js';
-import { extractAndValidateCodeBlock, createFallbackStory } from '../../story-generator/validateStory.js';
+import { extractAndValidateCodeBlock, createFallbackStory, validateStoryCode } from '../../story-generator/validateStory.js';
 import { isBlacklistedComponent, isBlacklistedIcon, getBlacklistErrorMessage, ICON_CORRECTIONS } from '../../story-generator/componentBlacklist.js';
 import { StoryTracker, StoryMapping } from '../../story-generator/storyTracker.js';
 import { EnhancedComponentDiscovery } from '../../story-generator/enhancedComponentDiscovery.js';
@@ -637,13 +637,29 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       return res.status(500).json({ error: 'Failed to generate valid TypeScript code.' });
     }
 
-    // CRITICAL: Ensure React import exists but avoid duplicates
-    if (!fileContents.includes("import React from 'react';")) {
+    // Determine the framework being used (priority: request > config > auto-detect > default)
+    const detectedFramework = frameworkOptions.framework ||
+                              config.framework as FrameworkType ||
+                              (frameworkOptions.autoDetectFramework ? await detectProjectFramework(process.cwd()).catch(() => 'react' as FrameworkType) : 'react' as FrameworkType);
+
+    logger.log(`🎯 Framework detection: request=${frameworkOptions.framework}, config=${config.framework}, detected=${detectedFramework}`);
+
+    // Get the framework adapter for post-processing
+    const frameworkAdapter = getAdapter(detectedFramework);
+
+    // Only add React import for React framework
+    if (detectedFramework === 'react' && !fileContents.includes("import React from 'react';")) {
       fileContents = "import React from 'react';\n" + fileContents;
     }
 
     // Post-processing is now consolidated to run once on the final code
     let fixedFileContents = postProcessStory(fileContents, config.importPath);
+
+    // Apply framework-specific post-processing if adapter is available
+    if (frameworkAdapter) {
+      logger.log(`🔧 Applying ${detectedFramework} framework post-processing`);
+      fixedFileContents = frameworkAdapter.postProcess(fixedFileContents);
+    }
 
     // Generate title based on conversation context
     let aiTitle;
@@ -686,12 +702,41 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         /(export\s+default\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
         (match, p1, oldTitle, p3) => {
           // Check if the title already has the prefix to avoid double prefixing
-          const titleToUse = prettyPrompt.startsWith(config.storyPrefix) 
-            ? prettyPrompt 
+          const titleToUse = prettyPrompt.startsWith(config.storyPrefix)
+            ? prettyPrompt
             : config.storyPrefix + prettyPrompt;
           return p1 + titleToUse + p3;
         }
       );
+    }
+
+    // FIX #5: Final validation after ALL post-processing
+    // This catches any syntax errors introduced by post-processing (e.g., buggy regex replacements)
+    const finalValidation = validateStoryCode(fixedFileContents, 'story.tsx', config);
+    if (!finalValidation.isValid) {
+      logger.log('⚠️ Post-processing introduced syntax errors:', finalValidation.errors);
+
+      // If we have fixed code from validation, use it
+      if (finalValidation.fixedCode) {
+        logger.log('✅ Auto-fixed post-processing errors');
+        fixedFileContents = finalValidation.fixedCode;
+      } else {
+        // Post-processing broke the code and we can't fix it
+        // Return an error rather than serving broken code
+        console.error('Post-processing introduced unfixable syntax errors:', finalValidation.errors);
+        return res.status(500).json({
+          error: 'Story generation failed due to post-processing errors',
+          details: finalValidation.errors,
+          suggestion: 'This is a bug in Story UI. Please report this issue with your prompt.',
+          validation: {
+            hasWarnings: true,
+            errors: finalValidation.errors,
+            warnings: ['Post-processing introduced syntax errors that could not be automatically fixed']
+          }
+        });
+      }
+    } else {
+      logger.log('✅ Final validation passed after post-processing');
     }
 
     // Check if this is an update to an existing story

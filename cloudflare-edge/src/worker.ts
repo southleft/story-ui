@@ -573,17 +573,17 @@ function handleProvidersRoute(env: Env): Response {
 
   if (env.ANTHROPIC_API_KEY) {
     available.push('claude');
-    models['claude'] = ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307'];
+    models['claude'] = ['claude-sonnet-4-5-20250929', 'claude-opus-4-5-20251101', 'claude-haiku-4-5-20251001'];
   }
 
   if (env.OPENAI_API_KEY) {
     available.push('openai');
-    models['openai'] = ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'];
+    models['openai'] = ['gpt-5.1', 'gpt-5-mini', 'gpt-5-nano'];
   }
 
   if (env.GEMINI_API_KEY) {
     available.push('gemini');
-    models['gemini'] = ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-pro'];
+    models['gemini'] = ['gemini-3-pro-preview', 'gemini-2.5-pro', 'gemini-2.5-flash'];
   }
 
   // Determine default provider
@@ -645,10 +645,11 @@ async function handleClaudeRoute(request: Request, env: Env): Promise<Response> 
       systemPrompt?: string;
       prefillAssistant?: string;
       maxTokens?: number;
+      model?: string;
       images?: Array<{ type: string; data: string }>;
     };
 
-    const { prompt, messages = [], systemPrompt, prefillAssistant, maxTokens = 4096, images = [] } = body;
+    const { prompt, messages = [], systemPrompt, prefillAssistant, maxTokens = 4096, model, images = [] } = body;
 
     if (!prompt) {
       return new Response(JSON.stringify({ error: 'Missing prompt' }), {
@@ -724,7 +725,7 @@ async function handleClaudeRoute(request: Request, env: Env): Promise<Response> 
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: env.DEFAULT_MODEL || 'claude-sonnet-4-20250514',
+        model: model || env.DEFAULT_MODEL || 'claude-sonnet-4-5-20250929',
         max_tokens: maxTokens,
         system: systemPrompt || 'You are a helpful assistant.',
         messages: claudeMessages,
@@ -904,7 +905,7 @@ async function handleOpenAIRoute(request: Request, env: Env): Promise<Response> 
         'Authorization': `Bearer ${env.OPENAI_API_KEY}`,
       },
       body: JSON.stringify({
-        model: model || env.DEFAULT_OPENAI_MODEL || 'gpt-4o',
+        model: model || env.DEFAULT_OPENAI_MODEL || 'gpt-5.1',
         max_tokens: maxTokens,
         messages: openaiMessages,
       }),
@@ -1047,7 +1048,7 @@ async function handleGeminiRoute(request: Request, env: Env): Promise<Response> 
       });
     }
 
-    const geminiModel = model || env.DEFAULT_GEMINI_MODEL || 'gemini-1.5-flash';
+    const geminiModel = model || env.DEFAULT_GEMINI_MODEL || 'gemini-2.5-pro';
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${env.GEMINI_API_KEY}`;
 
     // Call Gemini API
@@ -1179,7 +1180,7 @@ Title:`;
           'anthropic-version': '2023-06-01',
         },
         body: JSON.stringify({
-          model: 'claude-3-haiku-20240307',
+          model: 'claude-haiku-4-5-20251001',
           max_tokens: 50,
           messages: [{ role: 'user', content: titlePrompt }],
         }),
@@ -1197,7 +1198,7 @@ Title:`;
           'Authorization': `Bearer ${env.OPENAI_API_KEY}`,
         },
         body: JSON.stringify({
-          model: 'gpt-4o-mini',
+          model: 'gpt-5-mini',
           max_tokens: 50,
           messages: [{ role: 'user', content: titlePrompt }],
         }),
@@ -1209,7 +1210,7 @@ Title:`;
       }
     } else if (provider === 'gemini' && env.GEMINI_API_KEY) {
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${env.GEMINI_API_KEY}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${env.GEMINI_API_KEY}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
