@@ -14,5 +14,5 @@ Welcome to Story UI - an AI-powered Storybook story generator for React componen
 
 ## Support
 
-- [GitHub Issues](https://github.com/YOUR_ORG/story-ui/issues)
-- [Discussions](https://github.com/YOUR_ORG/story-ui/discussions)
+- [GitHub Issues](https://github.com/southleft/story-ui/issues)
+- [Discussions](https://github.com/southleft/story-ui/discussions)

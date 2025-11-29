@@ -352,7 +352,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 ```bash
 # Clone and install
-git clone https://github.com/YOUR_ORG/story-ui.git
+git clone https://github.com/southleft/story-ui.git
 cd story-ui
 npm install
 
@@ -371,9 +371,9 @@ MIT © [Story UI Contributors](LICENSE)
 
 ## 🔗 Links
 
-- [GitHub Repository](https://github.com/YOUR_ORG/story-ui)
-- [NPM Package](https://www.npmjs.com/package/@YOUR_ORG/story-ui)
-- [Issues & Support](https://github.com/YOUR_ORG/story-ui/issues)
+- [GitHub Repository](https://github.com/southleft/story-ui)
+- [NPM Package](https://www.npmjs.com/package/@tpitre/story-ui)
+- [Issues & Support](https://github.com/southleft/story-ui/issues)
 
 ---
 

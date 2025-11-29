@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: 📖 Documentation
-    url: https://github.com/YOUR_ORG/story-ui#readme
+    url: https://github.com/southleft/story-ui#readme
     about: Check our comprehensive documentation and examples
   - name: 💬 General Questions
-    url: https://github.com/YOUR_ORG/story-ui/issues
+    url: https://github.com/southleft/story-ui/issues
     about: Ask questions or start discussions about Story UI
