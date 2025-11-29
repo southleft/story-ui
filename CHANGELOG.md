@@ -1,3 +1,10 @@
+## [2.3.1](https://github.com/southleft/story-ui/compare/v2.3.0...v2.3.1) (2025-11-29)
+
+
+### Bug Fixes
+
+* resolve useLocalStorage stale closure bug preventing chat history display ([184c436](https://github.com/southleft/story-ui/commit/184c43620b8988f381225dcfa5b88bc8b4a625d6))
+
 # [2.3.0](https://github.com/southleft/story-ui/compare/v2.2.0...v2.3.0) (2025-11-29)
 
 
