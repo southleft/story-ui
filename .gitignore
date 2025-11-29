@@ -85,3 +85,11 @@ src/stories/StoryUI/
 # These are temporary stories for testing layouts and should not be committed
 ./test-storybooks/mantine-storybook/src/stories/generated/
 ./test-storybooks/mantine-storybook/src/stories/generated/**
+
+# Temporary analysis and test report files
+ROOT_CAUSE_ANALYSIS.md
+*_TEST_REPORT.md
+STORY_UI_PRODUCTION_REQUIREMENTS.md
+
+# Playwright MCP artifacts
+.playwright-mcp/

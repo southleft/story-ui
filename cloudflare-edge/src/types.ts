@@ -16,6 +16,9 @@ export interface Env {
   DEFAULT_MODEL?: string;
   DEFAULT_OPENAI_MODEL?: string;
   DEFAULT_GEMINI_MODEL?: string;
+
+  // Design system considerations for environment parity
+  DESIGN_CONSIDERATIONS?: string;
 }
 
 // JSON-RPC 2.0 Types

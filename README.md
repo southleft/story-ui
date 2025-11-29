@@ -17,6 +17,16 @@ Story UI revolutionizes component documentation by automatically generating Stor
 - **Intelligent Component Discovery**: Automatically finds and analyzes your components
 - **TypeScript Support**: Full TypeScript integration with type-aware story generation
 
+### 🆕 Version 3.0 Features
+- **Multi-Provider LLM Support**: Choose between Claude, OpenAI, or Gemini
+- **Production Deployment**: Deploy as a standalone web app with Railway or Cloudflare
+- **Post-Generation Validation**: Automatic syntax validation with error detection
+- **Children Props Preservation**: Intelligent handling of `children: 'text'` in args
+- **Image/Vision Support**: Attach screenshots for visual component requests
+- **In-Memory Storage**: Production mode without file system writes
+- **REST API**: Full CRUD operations for story management
+- **Design System Agnosticism**: Core code is framework-independent
+
 ### 📚 Documentation System (New!)
 - **Auto-Generated Structure**: `npx story-ui init` creates a `story-ui-docs/` directory template
 - **Directory-Based Documentation**: Organize design system docs in a structured directory
@@ -255,6 +265,85 @@ npx story-ui start --port 4005
 npx story-ui start --config custom-config.js
 ```
 
+## 🚢 Production Deployment
+
+Story UI v3 can be deployed as a standalone web application with multiple backend options.
+
+### Prerequisites
+
+Install the required CLI tools:
+
+```bash
+# Railway CLI (for backend deployment)
+npm install -g @railway/cli
+railway login
+
+# Wrangler (for Cloudflare Workers - optional)
+npm install -g wrangler
+wrangler login
+```
+
+### Option 1: Railway Backend (Recommended)
+
+Deploy the backend to Railway for a fully managed Node.js environment:
+
+```bash
+# From the project root
+cd mcp-server
+railway up
+
+# Set environment variables in Railway dashboard:
+# - ANTHROPIC_API_KEY (required for Claude)
+# - OPENAI_API_KEY (optional for OpenAI)
+# - GEMINI_API_KEY (optional for Gemini)
+```
+
+### Option 2: Cloudflare Workers Edge
+
+Deploy an edge proxy to Cloudflare Workers:
+
+```bash
+# From the project root
+cd cloudflare-edge
+wrangler deploy
+
+# Set secrets:
+wrangler secret put ANTHROPIC_API_KEY
+wrangler secret put OPENAI_API_KEY  # optional
+wrangler secret put GEMINI_API_KEY  # optional
+```
+
+### Frontend Deployment
+
+Deploy the chat UI to Cloudflare Pages:
+
+```bash
+cd test-storybooks/mantine-storybook/.story-ui-build
+npm run build
+wrangler pages deploy dist --project-name=story-ui-app
+```
+
+### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `ANTHROPIC_API_KEY` | Yes | Claude API key from Anthropic |
+| `OPENAI_API_KEY` | No | OpenAI API key for GPT models |
+| `GEMINI_API_KEY` | No | Google Gemini API key |
+| `DEFAULT_MODEL` | No | Default LLM model to use |
+
+### REST API Endpoints
+
+The backend provides these endpoints:
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/story-ui/providers` | List available LLM providers |
+| `POST` | `/story-ui/generate` | Generate a new story |
+| `GET` | `/story-ui/stories` | List all stories |
+| `GET` | `/story-ui/stories/:id` | Get a specific story |
+| `DELETE` | `/story-ui/stories/:id` | Delete a story |
+
 ## 🤝 Contributing
 
 We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
@@ -263,7 +352,7 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 ```bash
 # Clone and install
-git clone https://github.com/southleft/story-ui.git
+git clone https://github.com/YOUR_ORG/story-ui.git
 cd story-ui
 npm install
 
@@ -282,9 +371,9 @@ MIT © [Story UI Contributors](LICENSE)
 
 ## 🔗 Links
 
-- [GitHub Repository](https://github.com/southleft/story-ui)
-- [NPM Package](https://www.npmjs.com/package/@tpitre/story-ui)
-- [Issues & Support](https://github.com/southleft/story-ui/issues)
+- [GitHub Repository](https://github.com/YOUR_ORG/story-ui)
+- [NPM Package](https://www.npmjs.com/package/@YOUR_ORG/story-ui)
+- [Issues & Support](https://github.com/YOUR_ORG/story-ui/issues)
 
 ---
 

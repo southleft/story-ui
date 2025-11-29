@@ -60,12 +60,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/southleft/story-ui.git"
+    "url": "git+https://github.com/YOUR_ORG/story-ui.git"
   },
   "bugs": {
-    "url": "https://github.com/southleft/story-ui/issues"
+    "url": "https://github.com/YOUR_ORG/story-ui/issues"
   },
-  "homepage": "https://github.com/southleft/story-ui#readme",
+  "homepage": "https://github.com/YOUR_ORG/story-ui#readme",
   "engines": {
     "node": ">=16.0.0"
   },

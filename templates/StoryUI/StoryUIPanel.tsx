@@ -258,8 +258,8 @@ const getApiBaseUrl = () => {
   const edgeUrl = (import.meta as any).env?.VITE_STORY_UI_EDGE_URL;
   if (edgeUrl) return edgeUrl.replace(/\/$/, ''); // Remove trailing slash
 
-  // Check for window override for edge URL
-  const windowEdgeUrl = (window as any).__STORY_UI_EDGE_URL__;
+  // Check for window override for edge URL (support both naming conventions)
+  const windowEdgeUrl = (window as any).__STORY_UI_EDGE_URL__ || (window as any).STORY_UI_EDGE_URL;
   if (windowEdgeUrl) return windowEdgeUrl.replace(/\/$/, '');
 
   // Check for Vite port environment variable
@@ -312,7 +312,18 @@ const MCP_STREAM_API = `${API_BASE}/story-ui/generate-stream`;
 const STORIES_API = `${API_BASE}/story-ui/stories`;
 const DELETE_API_BASE = `${API_BASE}/story-ui/stories`;
 const PROVIDERS_API = `${API_BASE}/story-ui/providers`;
-const CONSIDERATIONS_API = `${API_BASE}/story-ui/considerations`;
+// Considerations API URL - includes storybookOrigin param for Edge mode
+const getConsiderationsApiUrl = () => {
+  const baseUrl = `${API_BASE}/story-ui/considerations`;
+  if (isEdgeMode()) {
+    // In Edge mode, tell the Edge Worker where to fetch considerations from
+    // The Storybook origin is where the panel is running (window.location.origin)
+    const storybookOrigin = window.location.origin;
+    return `${baseUrl}?storybookOrigin=${encodeURIComponent(storybookOrigin)}`;
+  }
+  return baseUrl;
+};
+const CONSIDERATIONS_API = getConsiderationsApiUrl();
 const STORAGE_KEY = `story-ui-chats-${window.location.port}`;
 const MAX_RECENT_CHATS = 20;
 

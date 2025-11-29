@@ -132,7 +132,6 @@ function isEdgeMode(): boolean {
  * Generated Stories Sidebar Component
  */
 const GeneratedStoriesSidebar: React.FC = () => {
-  const api = useStorybookApi();
   const [stories, setStories] = useState<GeneratedStory[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeStoryId, setActiveStoryId] = useState<string | null>(null);
@@ -172,16 +171,10 @@ const GeneratedStoriesSidebar: React.FC = () => {
   const handleStoryClick = useCallback((story: GeneratedStory) => {
     setActiveStoryId(story.id);
 
-    // Navigate to the Generated Story Renderer with the story ID
-    // The renderer is a special story that fetches and displays the generated content
-    api.selectStory('storyui-generated--story-renderer', undefined, {
-      ref: undefined,
-    });
-
-    // Emit event for the preview to pick up
+    // Emit event for the Story UI panel to display the story
     const channel = addons.getChannel();
     channel.emit(EVENTS.SELECT_GENERATED_STORY, story);
-  }, [api]);
+  }, []);
 
   if (!isEdgeMode()) {
     return (

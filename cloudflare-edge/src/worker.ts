@@ -69,6 +69,11 @@ export default {
         return handleTitleRoute(request, env);
       }
 
+      // Design system considerations endpoint (for environment parity)
+      if (url.pathname === '/story-ui/considerations') {
+        return handleConsiderationsRoute(request, env);
+      }
+
       // Story preview - renders the generated story as a live page
       if (url.pathname.startsWith('/story-ui/preview/')) {
         return handlePreviewRoute(request, env, url);
@@ -93,6 +98,7 @@ export default {
             generateStream: '/story-ui/generate-stream',
             providers: '/story-ui/providers',
             preview: '/story-ui/preview/:id',
+            considerations: '/story-ui/considerations',
             claude: '/story-ui/claude',
             openai: '/story-ui/openai',
             gemini: '/story-ui/gemini',
@@ -237,6 +243,100 @@ async function handleStoriesRoute(request: Request, env: Env): Promise<Response>
 }
 
 /**
+ * Handle /story-ui/considerations route
+ * GET: Return design system considerations for environment parity
+ *
+ * Considerations are dynamically fetched from the Storybook origin's bundled JSON file.
+ * This ensures they sync automatically with Git-tracked changes when Storybook is deployed.
+ *
+ * The request must include a 'storybookOrigin' query parameter (the Storybook deployment URL).
+ * Example: /story-ui/considerations?storybookOrigin=https://my-storybook.pages.dev
+ */
+async function handleConsiderationsRoute(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const storybookOrigin = url.searchParams.get('storybookOrigin');
+
+  // If no origin provided, return empty (the panel should provide its own origin)
+  if (!storybookOrigin) {
+    return new Response(JSON.stringify({
+      hasConsiderations: false,
+      source: null,
+      considerations: '',
+      error: 'Missing storybookOrigin query parameter. The Storybook panel should provide its deployment URL.',
+    }), {
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      }
+    });
+  }
+
+  try {
+    // Fetch the bundled considerations from the Storybook deployment
+    const considerationsUrl = `${storybookOrigin}/story-ui-considerations.json`;
+    const response = await fetch(considerationsUrl, {
+      headers: {
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      // Fallback: No bundled considerations file exists at this Storybook
+      return new Response(JSON.stringify({
+        hasConsiderations: false,
+        source: null,
+        considerations: '',
+        error: `Failed to fetch considerations from ${considerationsUrl}: ${response.status}`,
+      }), {
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        }
+      });
+    }
+
+    const bundle = await response.json() as {
+      version?: string;
+      generatedAt?: string;
+      source?: string;
+      combinedContent?: string;
+      files?: Array<{ path: string; content: string; type: string }>;
+    };
+
+    // Return the combined considerations content
+    return new Response(JSON.stringify({
+      hasConsiderations: !!bundle.combinedContent,
+      source: 'storybook-bundle',
+      storybookOrigin,
+      generatedAt: bundle.generatedAt,
+      fileCount: bundle.files?.length || 0,
+      considerations: bundle.combinedContent || '',
+    }), {
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+        // Cache for 5 minutes to reduce fetch overhead
+        'Cache-Control': 'public, max-age=300',
+      }
+    });
+
+  } catch (error) {
+    console.error('Failed to fetch considerations:', error);
+    return new Response(JSON.stringify({
+      hasConsiderations: false,
+      source: null,
+      considerations: '',
+      error: `Failed to fetch considerations: ${error instanceof Error ? error.message : 'Unknown error'}`,
+    }), {
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+      }
+    });
+  }
+}
+
+/**
  * Handle /story-ui/generate route
  * POST: Generate a story (non-streaming)
  */
@@ -251,8 +351,8 @@ async function handleGenerateRoute(request: Request, env: Env): Promise<Response
     });
   }
 
-  const body = await request.json() as { prompt?: string; componentPath?: string; framework?: string };
-  const { prompt, componentPath, framework } = body;
+  const body = await request.json() as { prompt?: string; componentPath?: string; framework?: string; considerations?: string };
+  const { prompt, componentPath, framework, considerations } = body;
 
   if (!prompt) {
     return new Response(JSON.stringify({ error: 'Missing prompt' }), {
@@ -274,7 +374,7 @@ async function handleGenerateRoute(request: Request, env: Env): Promise<Response
     method: 'tools/call',
     params: {
       name: 'generate-story',
-      arguments: { prompt, componentPath, framework: framework || 'react' }
+      arguments: { prompt, componentPath, framework: framework || 'react', considerations }
     }
   };
 
@@ -311,8 +411,8 @@ async function handleGenerateStreamRoute(request: Request, env: Env): Promise<Re
     });
   }
 
-  const body = await request.json() as { prompt?: string; componentPath?: string; framework?: string };
-  const { prompt, componentPath, framework } = body;
+  const body = await request.json() as { prompt?: string; componentPath?: string; framework?: string; considerations?: string };
+  const { prompt, componentPath, framework, considerations } = body;
 
   if (!prompt) {
     return new Response(JSON.stringify({ error: 'Missing prompt' }), {
@@ -355,7 +455,7 @@ async function handleGenerateStreamRoute(request: Request, env: Env): Promise<Re
         method: 'tools/call',
         params: {
           name: 'generate-story',
-          arguments: { prompt, componentPath, framework: framework || 'react' }
+          arguments: { prompt, componentPath, framework: framework || 'react', considerations }
         }
       };
 

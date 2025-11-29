@@ -2,9 +2,61 @@
 
 This guide explains how to deploy Story UI to production so non-developers can access it via a public URL.
 
+---
+
+## CRITICAL: Build-Time Environment Variable
+
+**The most common deployment failure is forgetting to set `VITE_STORY_UI_EDGE_URL` during the Storybook build.**
+
+```bash
+# CORRECT: Build with Edge URL
+VITE_STORY_UI_EDGE_URL=https://your-edge-worker.workers.dev npm run build-storybook
+
+# WRONG: Build without Edge URL (will show "port 4001" in production)
+npm run build-storybook
+```
+
+**Why this matters**: The Edge URL is injected at BUILD TIME, not runtime. If you build without it, the compiled JavaScript will hardcode `localhost:4001` as the API endpoint, which won't work in production.
+
+---
+
+## Understanding the Two Interfaces
+
+Story UI has **two ways to access the generation panel**:
+
+### 1. Standalone Story Panel (RECOMMENDED)
+- URL pattern: `?path=/story/storyui-panel--default`
+- Dark custom UI, full-screen experience
+- Works independently of Storybook addons system
+- **This is the primary, reliable interface**
+
+### 2. Storybook Addon Panel (Legacy)
+- URL pattern: `?path=/story/story-ui-story-generator--default`
+- Appears in the Storybook addons panel (bottom/right)
+- More tightly integrated with Storybook navigation
+- **Only visible when Edge mode is detected**
+
+For most deployments, use the **Standalone Story Panel** as it's more reliable and provides a better user experience.
+
+---
+
 ## Architecture Overview
 
 Story UI production deployment consists of two parts:
+
+1. **Edge Worker (Backend)**: Cloudflare Workers that handles AI story generation
+   - Stateless, globally distributed
+   - Deployed to Cloudflare Workers
+   - Fetches design considerations from the deployed Storybook
+
+2. **Frontend (Storybook)**: Static site with Story UI panel
+   - Deployed to Cloudflare Pages
+   - Connects to the Edge Worker via `VITE_STORY_UI_EDGE_URL`
+   - Bundles design considerations at build time
+
+### Alternative: Traditional Backend
+
+For organizations preferring traditional hosting:
 
 1. **Backend (MCP Server)**: Node.js Express server that handles AI story generation
    - Supports multiple LLM providers: Claude (Anthropic), OpenAI, and Gemini (Google)
@@ -188,7 +240,51 @@ Options:
   --dry-run              Show what would be deployed without deploying
 ```
 
+## Edge Worker Deployment (Recommended)
+
+For the current production architecture using Cloudflare Edge Workers:
+
+### Step 1: Deploy Edge Worker
+
+```bash
+cd cloudflare-edge
+npx wrangler deploy
+```
+
+This deploys to: `https://story-ui-mcp-edge.<your-subdomain>.workers.dev`
+
+### Step 2: Build Storybook with Edge URL
+
+```bash
+cd test-storybooks/your-storybook
+VITE_STORY_UI_EDGE_URL=https://story-ui-mcp-edge.<your-subdomain>.workers.dev npm run build-storybook
+```
+
+### Step 3: Deploy Storybook to Cloudflare Pages
+
+```bash
+npx wrangler pages deploy storybook-static --project-name=story-ui-storybook
+```
+
+### Step 4: Verify Deployment
+
+1. Open the Cloudflare Pages URL
+2. Navigate to `?path=/story/storyui-panel--default`
+3. Should show "Connected to Edge Worker" (not "port 4001")
+
+---
+
 ## Troubleshooting
+
+### "Connected to MCP server (port 4001)" in Production
+
+**This is wrong!** It means the Storybook was built without the Edge URL.
+
+**Fix**: Rebuild with the environment variable:
+```bash
+VITE_STORY_UI_EDGE_URL=https://your-edge-worker.workers.dev npm run build-storybook
+npx wrangler pages deploy storybook-static --project-name=story-ui-storybook
+```
 
 ### Backend Not Responding
 
@@ -208,14 +304,84 @@ Options:
 2. Check the provider is available: `GET /story-ui/providers`
 3. Check server logs in your platform's dashboard
 
+### Design Considerations Not Loading
+
+The Edge Worker fetches considerations from the deployed Storybook's `/story-ui-considerations.json`.
+
+1. Verify the file exists in `storybook-static/story-ui-considerations.json`
+2. Check if `story-ui-docs/` directory has content
+3. Rebuild Storybook to regenerate the considerations bundle
+
 ## Architecture Decision
 
-This deployment approach was chosen over Cloudflare Edge Workers because:
+The current architecture uses Cloudflare Edge Workers for:
 
-1. **Existing Code**: The MCP server already has 60+ working routes with full LLM provider integration
-2. **Multi-Provider Support**: Complete support for Claude, OpenAI, and Gemini
-3. **No Duplication**: Reuses proven, tested code instead of rewriting for edge
-4. **Flexibility**: Organizations can choose their preferred hosting platform
-5. **Cost Efficiency**: Traditional servers are often more cost-effective for AI workloads
+1. **Global Distribution**: Edge locations reduce latency worldwide
+2. **Stateless Design**: Easy horizontal scaling
+3. **Cost Efficiency**: Pay-per-request model
+4. **Integration**: Native Cloudflare ecosystem with Pages
 
-The `VITE_STORY_UI_EDGE_URL` environment variable was already built into Storybook's configuration, making this deployment approach plug-and-play.
+Alternative traditional backend deployment (Railway, Render, Fly.io) is still supported for organizations with specific requirements.
+
+---
+
+## Notes for AI Developers
+
+**IMPORTANT**: Read this section to avoid common deployment confusion.
+
+### The Environment Variable is BUILD-TIME
+
+The `VITE_STORY_UI_EDGE_URL` environment variable is **compiled into the JavaScript at build time**. This is controlled by Vite's `define` configuration in `.storybook/main.ts`:
+
+```typescript
+config.define = {
+  'import.meta.env.VITE_STORY_UI_EDGE_URL': JSON.stringify(
+    process.env.VITE_STORY_UI_EDGE_URL || ''  // Empty if not set!
+  ),
+};
+```
+
+If you build without setting the variable, the compiled JavaScript will contain an empty string, causing the fallback to `localhost:4001`.
+
+### Key Files for Deployment
+
+| File | Purpose |
+|------|---------|
+| `.storybook/main.ts` | Injects `VITE_STORY_UI_EDGE_URL` at build time |
+| `.storybook/considerations-plugin.ts` | Bundles `story-ui-docs/` into JSON |
+| `templates/StoryUI/StoryUIPanel.tsx` | Main panel, checks for Edge URL |
+| `templates/StoryUI/manager.tsx` | Storybook addon registration |
+| `cloudflare-edge/src/worker.ts` | Edge Worker API endpoints |
+
+### The `getApiBase()` Function
+
+In `StoryUIPanel.tsx`, the API base URL is determined by this priority:
+
+1. `import.meta.env.VITE_STORY_UI_EDGE_URL` (build-time env var)
+2. `window.__STORY_UI_EDGE_URL__` (runtime injection from manager head)
+3. Fallback to `http://localhost:4001` (local development)
+
+### Correct Deployment Commands
+
+```bash
+# 1. Deploy Edge Worker (one time or when updating)
+cd cloudflare-edge && npx wrangler deploy
+
+# 2. Build Storybook with Edge URL (REQUIRED!)
+cd test-storybooks/your-storybook
+VITE_STORY_UI_EDGE_URL=https://story-ui-mcp-edge.your-subdomain.workers.dev npm run build-storybook
+
+# 3. Deploy to Cloudflare Pages
+npx wrangler pages deploy storybook-static --project-name=story-ui-storybook
+
+# 4. Verify (check compiled JS has correct URL)
+grep -o "localhost:4001\|workers.dev" storybook-static/assets/*.js
+# Should show workers.dev, NOT localhost:4001
+```
+
+### Common Mistakes
+
+1. **Building without env var**: Running `npm run build-storybook` without `VITE_STORY_UI_EDGE_URL`
+2. **Wrong interface**: Using the addon panel URL instead of the standalone panel
+3. **Stale cache**: Browser caching old JavaScript with wrong URL
+4. **Missing considerations**: Not having `story-ui-docs/` directory with content

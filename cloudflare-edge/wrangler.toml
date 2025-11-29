@@ -6,6 +6,8 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 STORY_UI_VERSION = "3.0.0"
+# Considerations are now dynamically fetched from the Storybook deployment's bundled JSON file
+# See: .storybook/considerations-plugin.ts for the Vite plugin that bundles story-ui-docs/
 
 # Durable Objects for session management
 [[durable_objects.bindings]]
