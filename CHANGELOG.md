@@ -1,3 +1,30 @@
+# [2.3.0](https://github.com/southleft/story-ui/compare/v2.2.0...v2.3.0) (2025-11-29)
+
+
+### Bug Fixes
+
+* add considerations endpoint for Railway deployment ([dd316af](https://github.com/southleft/story-ui/commit/dd316af384b7ebfb853fba6322ce1baed39d3049))
+* add post-generation validation gate and fix children prop stripping ([afb1918](https://github.com/southleft/story-ui/commit/afb191890eaf0713b45a64547a36d0a389368b23)), closes [#4](https://github.com/southleft/story-ui/issues/4) [#5](https://github.com/southleft/story-ui/issues/5)
+* await async loadDocumentation call in considerations endpoint ([6a9b46a](https://github.com/southleft/story-ui/commit/6a9b46a3c7505bb0e8ed255c0edb1bd0c4dcefd1))
+* extract system messages and pass as systemPrompt option ([33feb95](https://github.com/southleft/story-ui/commit/33feb95ad390d2262af2a7ec503059f9f95b791e))
+* prevent LLM hallucination of wrong component libraries ([03d8254](https://github.com/southleft/story-ui/commit/03d8254e2c0a5ebb51cdbd1cc00b20c5cf1b9f74))
+* remove organization-specific values for general-purpose use ([ba47a76](https://github.com/southleft/story-ui/commit/ba47a769e6e3387f9ece8d925ff055fd10306b5e))
+* replace YOUR_ORG placeholders with actual organization names ([99ff48c](https://github.com/southleft/story-ui/commit/99ff48cddb3929806c10fc03f1ba032b499e167f))
+* use fallback component list when npm package not installed ([057e9a4](https://github.com/southleft/story-ui/commit/057e9a40349c5fa46f33939f19f9547de39c5d56))
+
+
+### Features
+
+* add assistant prefill support for JSX output format ([8ff1a2b](https://github.com/southleft/story-ui/commit/8ff1a2b2095a5831d474b0c99ff7b682bffe7f3b))
+* add Cloudflare Pages chat UI and unified deploy script ([e405aab](https://github.com/southleft/story-ui/commit/e405aabe2082812b32ab5fa4c655ba3f5130a867))
+* add Cloudflare Workers edge deployment for MCP remote server ([a319671](https://github.com/southleft/story-ui/commit/a319671b0361fefb13be0ee1c5f1b877df158aa6))
+* add environment parity for design system considerations ([8242b50](https://github.com/southleft/story-ui/commit/8242b502f572587368e869cb3bb48f593a781d38))
+* add MCP remote HTTP transport for Claude Desktop connections ([37258e2](https://github.com/southleft/story-ui/commit/37258e22f8a29b79d40e54d149a5a3c6bd4ae1b9))
+* add multi-provider LLM support and smart chat titles to Cloudflare edge ([e8215fc](https://github.com/southleft/story-ui/commit/e8215fce98ff94929e79265f85afe40aa4cfd15d))
+* add multi-provider LLM support, framework adapters, and SSE streaming ([ed2b422](https://github.com/southleft/story-ui/commit/ed2b4221f063c94f36c836db032d2b149863bbe7))
+* add production app template with universal best practices ([80252b7](https://github.com/southleft/story-ui/commit/80252b7c3249677ad0dfe0a6aa081bdfd36f1076))
+* enhance chat responses with contextual component insights ([4e3c3a1](https://github.com/southleft/story-ui/commit/4e3c3a1c3e13482930d0d309d7bee574b65f66a6))
+
 # [2.2.0](https://github.com/southleft/story-ui/compare/v2.1.5...v2.2.0) (2025-08-05)
 
 
