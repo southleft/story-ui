@@ -312,6 +312,7 @@ const MCP_STREAM_API = `${API_BASE}/story-ui/generate-stream`;
 const STORIES_API = `${API_BASE}/story-ui/stories`;
 const DELETE_API_BASE = `${API_BASE}/story-ui/stories`;
 const PROVIDERS_API = `${API_BASE}/story-ui/providers`;
+const CONSIDERATIONS_API = `${API_BASE}/story-ui/considerations`;
 const STORAGE_KEY = `story-ui-chats-${window.location.port}`;
 const MAX_RECENT_CHATS = 20;
 
@@ -1415,6 +1416,7 @@ function StoryUIPanel() {
   const [selectedModel, setSelectedModel] = useState<string>('');
   const [streamingState, setStreamingState] = useState<StreamingState | null>(null);
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([]);
+  const [considerations, setConsiderations] = useState<string>('');
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1673,6 +1675,21 @@ function StoryUIPanel() {
           console.error('Failed to fetch providers:', e);
         }
 
+        // Fetch design system considerations for environment parity
+        // This ensures production gets the same considerations as local development
+        try {
+          const considerationsRes = await fetch(CONSIDERATIONS_API);
+          if (considerationsRes.ok) {
+            const considerationsData = await considerationsRes.json();
+            if (considerationsData.hasConsiderations && considerationsData.considerations) {
+              setConsiderations(considerationsData.considerations);
+              console.log(`Loaded considerations from ${considerationsData.source}`);
+            }
+          }
+        } catch (e) {
+          console.error('Failed to fetch considerations:', e);
+        }
+
         const syncedChats = await syncWithActualStories();
         const sortedChats = syncedChats.sort((a, b) => b.lastUpdated - a.lastUpdated).slice(0, MAX_RECENT_CHATS);
         setRecentChats(sortedChats);
@@ -1710,6 +1727,7 @@ function StoryUIPanel() {
         fileName: activeChatId || undefined,
         provider: selectedProvider || undefined,
         model: selectedModel || undefined,
+        considerations: considerations || undefined,
       }),
     });
 
@@ -1944,6 +1962,7 @@ function StoryUIPanel() {
             visionMode: hasImages ? 'screenshot_to_story' : undefined,
             provider: selectedProvider || undefined,
             model: selectedModel || undefined,
+            considerations: considerations || undefined,
           }),
           signal: abortControllerRef.current.signal,
         });

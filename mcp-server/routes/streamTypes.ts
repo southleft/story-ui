@@ -148,6 +148,7 @@ export interface StreamGenerateRequest {
   designSystem?: string;
   provider?: string;  // LLM provider (claude, openai, gemini)
   model?: string;     // Model ID
+  considerations?: string;  // Design system considerations (passed from frontend for environment parity)
 }
 
 // Helper to create SSE-formatted message

@@ -452,7 +452,8 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
     autoDetectFramework,
     images,
     visionMode,
-    designSystem
+    designSystem,
+    considerations
   } = req.body as StreamGenerateRequest;
 
   if (!prompt) {
@@ -570,6 +571,7 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
       autoDetectFramework: autoDetectFramework === true,
       visionMode: visionMode as VisionPromptType | undefined,
       designSystem: designSystem as string | undefined,
+      considerations: considerations as string | undefined,
     };
 
     const initialPrompt = await buildClaudePromptWithContext(
@@ -922,6 +924,7 @@ async function buildClaudePromptWithContext(
     autoDetectFramework?: boolean;
     visionMode?: VisionPromptType;
     designSystem?: string;
+    considerations?: string;
   }
 ) {
   const discovery = new EnhancedComponentDiscovery(config);
@@ -959,6 +962,13 @@ async function buildClaudePromptWithContext(
       designSystem: options.designSystem,
     });
     prompt = `${visionPrompts.systemPrompt}\n\n---\n\n${prompt}\n\n---\n\n${visionPrompts.userPrompt}`;
+  }
+
+  // Inject passed considerations (from frontend) for environment parity
+  // This takes precedence over file system loading for production deployments
+  if (options?.considerations) {
+    const considerationsEnhancement = `\n\n📋 DESIGN SYSTEM CONSIDERATIONS:\n${options.considerations}`;
+    prompt = prompt.replace('User request:', `${considerationsEnhancement}\n\nUser request:`);
   }
 
   const documentation = getDocumentation(config.importPath);

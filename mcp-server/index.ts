@@ -40,6 +40,8 @@ import {
 import { setupProductionGitignore, ProductionGitignoreManager } from '../story-generator/productionGitignoreManager.js';
 import { getInMemoryStoryService } from '../story-generator/inMemoryStoryService.js';
 import { loadUserConfig } from '../story-generator/configLoader.js';
+import { loadConsiderations, considerationsToPrompt } from '../story-generator/considerationsLoader.js';
+import { DocumentationLoader } from '../story-generator/documentationLoader.js';
 import fs from 'fs';
 import { UrlRedirectService } from '../story-generator/urlRedirectService.js';
 import {
@@ -156,6 +158,58 @@ app.post('/story-ui/claude', claudeProxy);
 app.get('/story-ui/components', getComponents);
 app.get('/story-ui/props', getProps);
 app.get('/story-ui/memory-stats', getMemoryStats);
+
+// Design system considerations endpoint - serves considerations for environment parity
+app.get('/story-ui/considerations', (req, res) => {
+  try {
+    const projectRoot = process.cwd();
+
+    // First try directory-based documentation (story-ui-docs/)
+    const docLoader = new DocumentationLoader(projectRoot);
+    if (docLoader.hasDocumentation()) {
+      const docs = docLoader.loadDocumentation();
+      // Format documentation as considerations text
+      const considerationsText = Object.entries(docs).map(([category, content]) => {
+        if (typeof content === 'string') {
+          return `## ${category}\n${content}`;
+        }
+        return `## ${category}\n${JSON.stringify(content, null, 2)}`;
+      }).join('\n\n');
+
+      return res.json({
+        hasConsiderations: true,
+        source: 'story-ui-docs',
+        considerations: considerationsText
+      });
+    }
+
+    // Fall back to legacy single-file considerations
+    const considerations = loadConsiderations(config.considerationsPath);
+    if (considerations) {
+      const considerationsText = considerationsToPrompt(considerations);
+      return res.json({
+        hasConsiderations: true,
+        source: 'story-ui-considerations',
+        considerations: considerationsText
+      });
+    }
+
+    // No considerations found
+    return res.json({
+      hasConsiderations: false,
+      source: null,
+      considerations: ''
+    });
+  } catch (error) {
+    console.error('Error loading considerations:', error);
+    return res.json({
+      hasConsiderations: false,
+      source: null,
+      considerations: '',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
 
 // Provider management proxy routes
 app.get('/story-ui/providers', getProviders);
