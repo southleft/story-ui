@@ -160,24 +160,19 @@ app.get('/story-ui/props', getProps);
 app.get('/story-ui/memory-stats', getMemoryStats);
 
 // Design system considerations endpoint - serves considerations for environment parity
-app.get('/story-ui/considerations', (req, res) => {
+app.get('/story-ui/considerations', async (req, res) => {
   try {
     const projectRoot = process.cwd();
 
     // First try directory-based documentation (story-ui-docs/)
     const docLoader = new DocumentationLoader(projectRoot);
     if (docLoader.hasDocumentation()) {
-      const docs = docLoader.loadDocumentation();
-      // Format documentation as considerations text
-      const considerationsText = Object.entries(docs).map(([category, content]) => {
-        if (typeof content === 'string') {
-          return `## ${category}\n${content}`;
-        }
-        return `## ${category}\n${JSON.stringify(content, null, 2)}`;
-      }).join('\n\n');
+      const docs = await docLoader.loadDocumentation();
+      // Use the formatForPrompt method to properly format all documentation
+      const considerationsText = docLoader.formatForPrompt(docs);
 
       return res.json({
-        hasConsiderations: true,
+        hasConsiderations: considerationsText.length > 0,
         source: 'story-ui-docs',
         considerations: considerationsText
       });
