@@ -38,6 +38,28 @@ interface Conversation {
   updatedAt: number;
 }
 
+interface ProviderOption {
+  id: string;
+  name: string;
+  isDefault?: boolean;
+}
+
+interface ModelOption {
+  id: string;
+  name: string;
+  provider?: string;
+}
+
+interface ServerConfig {
+  providers: ProviderOption[];
+  currentProvider: string;
+  models: ModelOption[];
+  currentModel: string;
+  isConfigured: boolean;
+  loading: boolean;
+  error: string | null;
+}
+
 // ============================================================================
 // CONSTANTS & CONFIG
 // ============================================================================
@@ -85,11 +107,16 @@ const useLocalStorage = <T,>(key: string, initialValue: T): [T, React.Dispatch<R
     }
   });
 
-  const setValue: React.Dispatch<React.SetStateAction<T>> = (value) => {
-    const valueToStore = value instanceof Function ? value(storedValue) : value;
+  // Use a ref to always have access to the latest value for functional updates
+  const storedValueRef = useRef(storedValue);
+  storedValueRef.current = storedValue;
+
+  const setValue: React.Dispatch<React.SetStateAction<T>> = useCallback((value) => {
+    const valueToStore = value instanceof Function ? value(storedValueRef.current) : value;
+    storedValueRef.current = valueToStore;
     setStoredValue(valueToStore);
     window.localStorage.setItem(key, JSON.stringify(valueToStore));
-  };
+  }, [key]);
 
   return [storedValue, setValue];
 };
@@ -131,6 +158,95 @@ const useResizable = (initialWidth: number, minWidth: number, maxWidth: number) 
   }, [minWidth, maxWidth]);
 
   return { width, startResize };
+};
+
+// Default models for fallback
+const DEFAULT_MODELS: Record<string, ModelOption[]> = {
+  claude: [
+    { id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5', provider: 'claude' },
+    { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', provider: 'claude' },
+    { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', provider: 'claude' },
+  ],
+  openai: [
+    { id: 'gpt-4o', name: 'GPT-4o', provider: 'openai' },
+    { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai' },
+    { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', provider: 'openai' },
+  ],
+  gemini: [
+    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: 'gemini' },
+    { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', provider: 'gemini' },
+    { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', provider: 'gemini' },
+  ],
+};
+
+const useServerConfig = () => {
+  const [config, setConfig] = useState<ServerConfig>({
+    providers: [],
+    currentProvider: 'claude',
+    models: DEFAULT_MODELS.claude,
+    currentModel: DEFAULT_MODELS.claude[0].id,
+    isConfigured: false,
+    loading: true,
+    error: null,
+  });
+
+  const fetchConfig = useCallback(async () => {
+    setConfig(prev => ({ ...prev, loading: true, error: null }));
+    try {
+      const response = await fetch(`${SERVER_URL}/story-ui/providers`);
+      if (response.ok) {
+        const data = await response.json();
+        const providers = data.providers || [];
+        const defaultProvider = providers.find((p: ProviderOption) => p.isDefault)?.id || providers[0]?.id || 'claude';
+        const models = DEFAULT_MODELS[defaultProvider] || DEFAULT_MODELS.claude;
+        setConfig({
+          providers,
+          currentProvider: defaultProvider,
+          models,
+          currentModel: models[0]?.id || '',
+          isConfigured: true,
+          loading: false,
+          error: null,
+        });
+      } else {
+        throw new Error('Failed to fetch providers');
+      }
+    } catch (err) {
+      // Fallback to default Claude config
+      setConfig({
+        providers: [{ id: 'claude', name: 'Claude (Anthropic)', isDefault: true }],
+        currentProvider: 'claude',
+        models: DEFAULT_MODELS.claude,
+        currentModel: DEFAULT_MODELS.claude[0].id,
+        isConfigured: true,
+        loading: false,
+        error: null,
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchConfig();
+  }, [fetchConfig]);
+
+  const changeProvider = useCallback((providerId: string) => {
+    const models = DEFAULT_MODELS[providerId] || DEFAULT_MODELS.claude;
+    setConfig(prev => ({
+      ...prev,
+      currentProvider: providerId,
+      models,
+      currentModel: models[0]?.id || '',
+    }));
+  }, []);
+
+  const changeModel = useCallback((modelId: string) => {
+    setConfig(prev => ({
+      ...prev,
+      currentModel: modelId,
+    }));
+  }, []);
+
+  return { ...config, refetch: fetchConfig, changeProvider, changeModel };
 };
 
 // ============================================================================
@@ -193,11 +309,119 @@ const Icons = {
       <path d="M18 6L6 18M6 6l12 12" />
     </svg>
   ),
+  ChevronDown: () => (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  ),
 };
 
 // ============================================================================
 // SUB-COMPONENTS
 // ============================================================================
+
+// Dropdown component for provider/model selection
+const Dropdown: React.FC<{
+  label: string;
+  value: string;
+  options: { id: string; name: string }[];
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}> = ({ label, value, options, onChange, disabled }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const selectedOption = options.find(o => o.id === value);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  return (
+    <div ref={ref} style={{ position: 'relative', width: '100%' }}>
+      <button
+        onClick={() => !disabled && setIsOpen(!isOpen)}
+        disabled={disabled}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          width: '100%',
+          padding: '8px 10px',
+          background: THEME.bgElevated,
+          border: `1px solid ${THEME.border}`,
+          borderRadius: '6px',
+          color: disabled ? THEME.textSubtle : THEME.text,
+          fontSize: '12px',
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          transition: 'all 0.2s',
+          opacity: disabled ? 0.6 : 1,
+        }}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '2px' }}>
+          <span style={{ color: THEME.textSubtle, fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            {label}
+          </span>
+          <span style={{ fontWeight: 500 }}>{selectedOption?.name || 'Select'}</span>
+        </div>
+        <Icons.ChevronDown />
+      </button>
+      {isOpen && !disabled && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: '100%',
+            left: 0,
+            right: 0,
+            marginBottom: '4px',
+            maxHeight: '200px',
+            overflowY: 'auto',
+            background: THEME.bgElevated,
+            border: `1px solid ${THEME.border}`,
+            borderRadius: '6px',
+            boxShadow: '0 -4px 12px rgba(0,0,0,0.3)',
+            zIndex: 100,
+          }}
+        >
+          {options.map(option => (
+            <button
+              key={option.id}
+              onClick={() => {
+                onChange(option.id);
+                setIsOpen(false);
+              }}
+              style={{
+                display: 'block',
+                width: '100%',
+                padding: '8px 10px',
+                background: option.id === value ? THEME.accentMuted : 'transparent',
+                border: 'none',
+                textAlign: 'left',
+                color: THEME.text,
+                fontSize: '12px',
+                cursor: 'pointer',
+                transition: 'background 0.15s',
+              }}
+              onMouseEnter={e => {
+                if (option.id !== value) e.currentTarget.style.background = THEME.bgHover;
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = option.id === value ? THEME.accentMuted : 'transparent';
+              }}
+            >
+              {option.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const LoadingDots: React.FC = () => (
   <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
@@ -390,6 +614,9 @@ const CodeViewer: React.FC<{ code: string }> = ({ code }) => {
 // ============================================================================
 
 const App: React.FC = () => {
+  // Server configuration (providers, models)
+  const serverConfig = useServerConfig();
+
   const [conversations, setConversations] = useLocalStorage<Conversation[]>('storyui_conversations', []);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [inputValue, setInputValue] = useState('');
@@ -405,45 +632,57 @@ const App: React.FC = () => {
 
   const activeConversation = conversations.find(c => c.id === activeConversationId);
 
+  // Filter out empty conversations for display (deferred creation)
+  const displayConversations = conversations.filter(c => c.messages.length > 0);
+
   // Auto-scroll messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [activeConversation?.messages]);
 
-  // Initialize first conversation
+  // Initialize - select existing conversation or stay in "new chat" mode
   useEffect(() => {
-    if (conversations.length > 0 && !activeConversationId) {
-      setActiveConversationId(conversations[0].id);
-      const lastMsgWithCode = [...conversations[0].messages].reverse().find(m => m.generatedCode);
+    // Only select an existing conversation if we don't have one selected
+    // and there are conversations with messages
+    if (!activeConversationId && displayConversations.length > 0) {
+      setActiveConversationId(displayConversations[0].id);
+      const lastMsgWithCode = [...displayConversations[0].messages].reverse().find(m => m.generatedCode);
       setPreviewCode(lastMsgWithCode?.generatedCode || null);
-    } else if (conversations.length === 0) {
-      createNewConversation();
     }
-  }, [conversations.length, activeConversationId]);
+    // Don't create an empty conversation - we'll create one when user sends first message
+  }, [displayConversations.length, activeConversationId]);
 
-  const createNewConversation = useCallback(() => {
+  // Start a new chat - just clear state, don't create empty conversation
+  const startNewChat = useCallback(() => {
+    setActiveConversationId(null);
+    setPreviewCode(null);
+    setImages([]);
+    inputRef.current?.focus();
+  }, []);
+
+  // Actually create a conversation when first message is sent
+  const createConversationWithMessage = useCallback((message: Message): string => {
     const newConversation: Conversation = {
       id: generateId(),
-      title: 'New Conversation',
-      messages: [],
+      title: message.content.substring(0, 40),
+      messages: [message],
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
     setConversations(prev => [newConversation, ...prev]);
-    setActiveConversationId(newConversation.id);
-    setPreviewCode(null);
-    setImages([]);
-    inputRef.current?.focus();
+    return newConversation.id;
   }, [setConversations]);
 
   const deleteConversation = (id: string) => {
     setConversations(prev => prev.filter(c => c.id !== id));
     if (activeConversationId === id) {
-      const remaining = conversations.filter(c => c.id !== id);
+      const remaining = displayConversations.filter(c => c.id !== id);
       if (remaining.length > 0) {
         setActiveConversationId(remaining[0].id);
       } else {
-        createNewConversation();
+        // Go to "new chat" mode instead of creating empty conversation
+        setActiveConversationId(null);
+        setPreviewCode(null);
       }
     }
   };
@@ -548,6 +787,7 @@ OUTPUT: Start immediately with < and output only JSX.`;
         messages: conversationHistory,
         systemPrompt,
         prefillAssistant,
+        model: serverConfig.currentModel,
         maxTokens: 4096,
         images: imageAttachments.map(img => ({
           type: img.type,
@@ -588,7 +828,7 @@ OUTPUT: Start immediately with < and output only JSX.`;
   };
 
   const sendMessage = async () => {
-    if (!inputValue.trim() || !activeConversationId || isGenerating) return;
+    if (!inputValue.trim() || isGenerating) return;
 
     const userMessage: Message = {
       id: generateId(),
@@ -598,17 +838,26 @@ OUTPUT: Start immediately with < and output only JSX.`;
       images: images.length > 0 ? [...images] : undefined,
     };
 
-    setConversations(prev => prev.map(conv => {
-      if (conv.id === activeConversationId) {
-        return {
-          ...conv,
-          messages: [...conv.messages, userMessage],
-          updatedAt: Date.now(),
-          title: conv.messages.length === 0 ? inputValue.trim().substring(0, 40) : conv.title,
-        };
-      }
-      return conv;
-    }));
+    // Determine if we need to create a new conversation or add to existing
+    let conversationId = activeConversationId;
+
+    if (!conversationId) {
+      // Create new conversation with the first message
+      conversationId = createConversationWithMessage(userMessage);
+      setActiveConversationId(conversationId);
+    } else {
+      // Add message to existing conversation
+      setConversations(prev => prev.map(conv => {
+        if (conv.id === conversationId) {
+          return {
+            ...conv,
+            messages: [...conv.messages, userMessage],
+            updatedAt: Date.now(),
+          };
+        }
+        return conv;
+      }));
+    }
 
     const currentImages = [...images];
     setInputValue('');
@@ -627,7 +876,7 @@ OUTPUT: Start immediately with < and output only JSX.`;
       };
 
       setConversations(prev => prev.map(conv => {
-        if (conv.id === activeConversationId) {
+        if (conv.id === conversationId) {
           return {
             ...conv,
             messages: [...conv.messages, assistantMessage],
@@ -650,7 +899,7 @@ OUTPUT: Start immediately with < and output only JSX.`;
       };
 
       setConversations(prev => prev.map(conv => {
-        if (conv.id === activeConversationId) {
+        if (conv.id === conversationId) {
           return {
             ...conv,
             messages: [...conv.messages, errorMessage],
@@ -740,7 +989,7 @@ OUTPUT: Start immediately with < and output only JSX.`;
         {/* New Chat Button */}
         <div style={{ padding: sidebarCollapsed ? '8px' : '12px' }}>
           <button
-            onClick={createNewConversation}
+            onClick={startNewChat}
             style={{
               width: '100%',
               padding: sidebarCollapsed ? '10px' : '10px 14px',
@@ -765,7 +1014,7 @@ OUTPUT: Start immediately with < and output only JSX.`;
         {/* Conversation List */}
         {!sidebarCollapsed && (
           <div style={{ flex: 1, overflow: 'auto', padding: '8px 12px' }}>
-            {conversations.map(conv => (
+            {displayConversations.map(conv => (
               <div
                 key={conv.id}
                 onClick={() => {
@@ -815,15 +1064,62 @@ OUTPUT: Start immediately with < and output only JSX.`;
           </div>
         )}
 
-        {/* Components Badge */}
+        {/* Sidebar Footer - Provider/Model Info */}
         {!sidebarCollapsed && (
           <div style={{
             padding: '12px',
             borderTop: `1px solid ${THEME.border}`,
-            fontSize: '11px',
-            color: THEME.textSubtle,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '6px',
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            {/* Provider Label */}
+            <div style={{ fontSize: '12px', color: THEME.textMuted }}>
+              <span style={{ color: THEME.textSubtle, textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.5px' }}>Provider: </span>
+              <span style={{ color: THEME.text, fontWeight: 500 }}>
+                {serverConfig.providers.find(p => p.id === serverConfig.currentProvider)?.name || 'Claude (Anthropic)'}
+              </span>
+            </div>
+
+            {/* Model Dropdown */}
+            <div style={{ fontSize: '12px', color: THEME.textMuted }}>
+              <span style={{ color: THEME.textSubtle, textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.5px' }}>Model</span>
+            </div>
+            <select
+              value={serverConfig.currentModel}
+              onChange={(e) => serverConfig.changeModel(e.target.value)}
+              disabled={serverConfig.loading}
+              style={{
+                width: '100%',
+                padding: '8px 10px',
+                background: THEME.bgElevated,
+                border: `1px solid ${THEME.border}`,
+                borderRadius: '6px',
+                color: THEME.text,
+                fontSize: '12px',
+                cursor: 'pointer',
+                outline: 'none',
+                appearance: 'none',
+                backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2371717a' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`,
+                backgroundRepeat: 'no-repeat',
+                backgroundPosition: 'right 8px center',
+                paddingRight: '28px',
+              }}
+            >
+              {serverConfig.models.map(model => (
+                <option key={model.id} value={model.id}>{model.id}</option>
+              ))}
+            </select>
+
+            {/* Components Count */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '11px',
+              color: THEME.textSubtle,
+              paddingTop: '4px',
+            }}>
               <div style={{
                 width: '6px',
                 height: '6px',
@@ -847,7 +1143,7 @@ OUTPUT: Start immediately with < and output only JSX.`;
       }}>
         {/* Messages */}
         <div style={{ flex: 1, overflow: 'auto', padding: '16px' }}>
-          {activeConversation?.messages.length === 0 && (
+          {(!activeConversation || activeConversation.messages.length === 0) && (
             <div style={{
               padding: '32px 16px',
               textAlign: 'center',
@@ -970,19 +1266,68 @@ OUTPUT: Start immediately with < and output only JSX.`;
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input Area */}
+        {/* Input Area - ChatGPT/Lovable Style */}
         <div style={{
           padding: '16px',
           borderTop: `1px solid ${THEME.border}`,
           background: THEME.bgSurface,
         }}>
-          <ImageUploadArea
-            images={images}
-            onImagesChange={setImages}
-            disabled={isGenerating}
-          />
+          {/* Image thumbnails if any */}
+          {images.length > 0 && (
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+              {images.map(img => (
+                <div
+                  key={img.id}
+                  style={{
+                    position: 'relative',
+                    width: '64px',
+                    height: '64px',
+                    borderRadius: '8px',
+                    overflow: 'hidden',
+                    border: `1px solid ${THEME.border}`,
+                  }}
+                >
+                  <img
+                    src={img.data}
+                    alt={img.name}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  />
+                  <button
+                    onClick={() => setImages(images.filter(i => i.id !== img.id))}
+                    style={{
+                      position: 'absolute',
+                      top: '2px',
+                      right: '2px',
+                      width: '18px',
+                      height: '18px',
+                      borderRadius: '50%',
+                      background: 'rgba(0,0,0,0.7)',
+                      border: 'none',
+                      color: '#fff',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '10px',
+                    }}
+                  >
+                    <Icons.X />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
 
-          <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-end' }}>
+          {/* Combined input container matching reference */}
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            background: THEME.bgElevated,
+            border: `1px solid ${THEME.border}`,
+            borderRadius: '12px',
+            overflow: 'hidden',
+          }}>
+            {/* Text input area */}
             <textarea
               ref={inputRef}
               value={inputValue}
@@ -991,37 +1336,95 @@ OUTPUT: Start immediately with < and output only JSX.`;
               placeholder="Describe the component you want to create..."
               disabled={isGenerating}
               style={{
-                flex: 1,
-                padding: '12px 14px',
-                background: THEME.bgElevated,
-                border: `1px solid ${THEME.border}`,
-                borderRadius: '10px',
+                width: '100%',
+                padding: '14px 16px',
+                background: 'transparent',
+                border: 'none',
                 color: THEME.text,
                 fontSize: '14px',
                 resize: 'none',
                 outline: 'none',
                 fontFamily: 'inherit',
-                minHeight: '44px',
+                minHeight: '24px',
                 maxHeight: '120px',
               }}
               rows={1}
             />
-            <button
-              onClick={sendMessage}
-              disabled={isGenerating || !inputValue.trim()}
-              style={{
-                padding: '12px',
-                background: (isGenerating || !inputValue.trim()) ? THEME.bgElevated : THEME.accent,
-                border: 'none',
-                borderRadius: '10px',
-                color: (isGenerating || !inputValue.trim()) ? THEME.textSubtle : '#fff',
-                cursor: (isGenerating || !inputValue.trim()) ? 'not-allowed' : 'pointer',
-                minWidth: '44px',
-                height: '44px',
-              }}
-            >
-              <Icons.Send />
-            </button>
+
+            {/* Bottom row with attach button and send */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '8px 12px',
+              borderTop: `1px solid ${THEME.border}`,
+            }}>
+              {/* + Attach button */}
+              <label
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '6px 12px',
+                  background: THEME.bgHover,
+                  border: `1px solid ${THEME.borderSubtle}`,
+                  borderRadius: '6px',
+                  color: THEME.textMuted,
+                  fontSize: '13px',
+                  cursor: isGenerating ? 'not-allowed' : 'pointer',
+                  opacity: isGenerating ? 0.5 : 1,
+                  transition: 'all 0.2s',
+                }}
+              >
+                <Icons.Plus />
+                <span>Attach</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  style={{ display: 'none' }}
+                  disabled={isGenerating}
+                  onChange={(e) => {
+                    if (e.target.files) {
+                      Array.from(e.target.files).forEach(file => {
+                        if (file.type.startsWith('image/')) {
+                          const reader = new FileReader();
+                          reader.onload = (ev) => {
+                            const newImage: ImageAttachment = {
+                              id: generateId(),
+                              data: ev.target?.result as string,
+                              type: file.type,
+                              name: file.name,
+                            };
+                            setImages(prev => [...prev, newImage]);
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      });
+                    }
+                  }}
+                />
+              </label>
+
+              {/* Send button */}
+              <button
+                onClick={sendMessage}
+                disabled={isGenerating || !inputValue.trim()}
+                style={{
+                  padding: '8px 12px',
+                  background: (isGenerating || !inputValue.trim()) ? THEME.bgHover : THEME.accent,
+                  border: 'none',
+                  borderRadius: '8px',
+                  color: (isGenerating || !inputValue.trim()) ? THEME.textSubtle : '#fff',
+                  cursor: (isGenerating || !inputValue.trim()) ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Icons.Send />
+              </button>
+            </div>
           </div>
         </div>
 
