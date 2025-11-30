@@ -1,3 +1,10 @@
+# [2.5.0](https://github.com/southleft/story-ui/compare/v2.4.0...v2.5.0) (2025-11-30)
+
+
+### Features
+
+* add Prism.js syntax highlighting and design-agnostic pop-out preview ([db15f9a](https://github.com/southleft/story-ui/commit/db15f9a43d836a5fe9a2de5910e8dff42f307fca))
+
 # [2.4.0](https://github.com/southleft/story-ui/compare/v2.3.2...v2.4.0) (2025-11-30)
 
 
