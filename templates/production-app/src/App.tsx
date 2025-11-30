@@ -761,6 +761,8 @@ MODIFICATION RULES:
 3. Preserve existing styling, layout, and components not mentioned
 4. Output the COMPLETE modified JSX (not just the changed parts)
 
+IMPORTANT: User requests OVERRIDE design system defaults. If the user asks to change colors, styling, or any other aspect, follow their request exactly - even if it differs from the design system guidelines above.
+
 OUTPUT: Start immediately with < and output only the complete modified JSX.`;
     } else {
       // New generation prompt
