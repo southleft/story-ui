@@ -1,3 +1,10 @@
+## [2.3.2](https://github.com/southleft/story-ui/compare/v2.3.1...v2.3.2) (2025-11-30)
+
+
+### Bug Fixes
+
+* allow user requests to override design system defaults in iterations ([75b9efa](https://github.com/southleft/story-ui/commit/75b9efa1b6f3800e0839469a1e4999709c2174c8))
+
 ## [2.3.1](https://github.com/southleft/story-ui/compare/v2.3.0...v2.3.1) (2025-11-29)
 
 
