@@ -1,3 +1,10 @@
+# [2.4.0](https://github.com/southleft/story-ui/compare/v2.3.2...v2.4.0) (2025-11-30)
+
+
+### Features
+
+* update model selection to latest versions with friendly names ([cac5a4c](https://github.com/southleft/story-ui/commit/cac5a4ca127225d40947e6b689f96d08c04adf7a))
+
 ## [2.3.2](https://github.com/southleft/story-ui/compare/v2.3.1...v2.3.2) (2025-11-30)
 
 
