@@ -1,3 +1,10 @@
+# [2.7.0](https://github.com/southleft/story-ui/compare/v2.6.1...v2.7.0) (2025-11-30)
+
+
+### Features
+
+* add CLI --llm-provider option and improve component discovery ([dccf848](https://github.com/southleft/story-ui/commit/dccf848130dec53bc103f426120aaca05bb363bb))
+
 ## [2.6.1](https://github.com/southleft/story-ui/compare/v2.6.0...v2.6.1) (2025-11-30)
 
 
