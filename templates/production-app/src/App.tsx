@@ -6,6 +6,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import * as Babel from '@babel/standalone';
 import { LivePreviewRenderer } from './LivePreviewRenderer';
 import { availableComponents } from './componentRegistry';
 import { aiConsiderations, hasConsiderations } from './considerations';
@@ -163,19 +164,19 @@ const useResizable = (initialWidth: number, minWidth: number, maxWidth: number) 
 // Default models for fallback - Updated November 2025
 const DEFAULT_MODELS: Record<string, ModelOption[]> = {
   claude: [
-    { id: 'claude-opus-4-5-20251101', name: 'Opus 4.5', provider: 'claude' },
-    { id: 'claude-sonnet-4-5-20250929', name: 'Sonnet 4.5', provider: 'claude' },
-    { id: 'claude-opus-4-1-20250805', name: 'Opus 4.1', provider: 'claude' },
+    { id: 'claude-opus-4-5', name: 'Opus 4.5', provider: 'claude' },
+    { id: 'claude-sonnet-4-5', name: 'Sonnet 4.5', provider: 'claude' },
+    { id: 'claude-haiku-4-5', name: 'Haiku 4.5', provider: 'claude' },
   ],
   openai: [
-    { id: 'gpt-4.1-2025-04-14', name: 'GPT-4.1', provider: 'openai' },
-    { id: 'gpt-4.1-mini-2025-04-14', name: 'GPT-4.1 Mini', provider: 'openai' },
-    { id: 'gpt-4.1-nano-2025-04-14', name: 'GPT-4.1 Nano', provider: 'openai' },
+    { id: 'gpt-5.1', name: 'GPT-5.1', provider: 'openai' },
+    { id: 'gpt-5-mini', name: 'GPT-5 Mini', provider: 'openai' },
+    { id: 'gpt-5-nano', name: 'GPT-5 Nano', provider: 'openai' },
   ],
   gemini: [
+    { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro', provider: 'gemini' },
     { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'gemini' },
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'gemini' },
-    { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: 'gemini' },
   ],
 };
 
@@ -312,6 +313,11 @@ const Icons = {
   ChevronDown: () => (
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M6 9l6 6 6-6" />
+    </svg>
+  ),
+  ExternalLink: () => (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" />
     </svg>
   ),
 };
@@ -551,14 +557,56 @@ const ImageUploadArea: React.FC<{
   );
 };
 
+// Load Prism.js dynamically for syntax highlighting
+const loadPrism = (): Promise<void> => {
+  return new Promise((resolve) => {
+    if ((window as any).Prism) {
+      resolve();
+      return;
+    }
+
+    // Load CSS
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = 'https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css';
+    document.head.appendChild(link);
+
+    // Load Prism core
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js';
+    script.onload = () => {
+      // Load JSX component after core
+      const jsxScript = document.createElement('script');
+      jsxScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-jsx.min.js';
+      jsxScript.onload = () => resolve();
+      document.head.appendChild(jsxScript);
+    };
+    document.head.appendChild(script);
+  });
+};
+
 const CodeViewer: React.FC<{ code: string }> = ({ code }) => {
   const [copied, setCopied] = useState(false);
+  const [prismLoaded, setPrismLoaded] = useState(false);
+  const codeRef = useRef<HTMLElement>(null);
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(code);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  // Load Prism on mount
+  useEffect(() => {
+    loadPrism().then(() => setPrismLoaded(true));
+  }, []);
+
+  // Apply Prism syntax highlighting when code changes or Prism loads
+  useEffect(() => {
+    if (codeRef.current && prismLoaded && (window as any).Prism) {
+      (window as any).Prism.highlightElement(codeRef.current);
+    }
+  }, [code, prismLoaded]);
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -599,12 +647,83 @@ const CodeViewer: React.FC<{ code: string }> = ({ code }) => {
           fontSize: '13px',
           lineHeight: 1.6,
           fontFamily: '"Fira Code", "SF Mono", Monaco, monospace',
-          background: '#0d1117',
-          color: '#e6edf3',
+          background: '#1d1f21',
+          borderRadius: 0,
         }}
       >
-        {code}
+        <code ref={codeRef} className="language-jsx">
+          {code}
+        </code>
       </pre>
+    </div>
+  );
+};
+
+// ============================================================================
+// POPOUT MODE COMPONENT
+// ============================================================================
+
+// Check if we're in popout mode (loaded in iframe for full-width preview)
+const isPopoutMode = new URLSearchParams(window.location.search).get('popout') === 'true';
+
+/**
+ * Popout Preview Component
+ *
+ * This is a minimal component that renders ONLY the LivePreviewRenderer.
+ * It listens for postMessage from the parent window to receive the JSX code.
+ *
+ * This approach is completely design-system agnostic because:
+ * - It uses the same bundled CSS (whatever library the user has)
+ * - It uses the same component registry
+ * - No framework-specific code needed
+ */
+const PopoutPreview: React.FC = () => {
+  const [code, setCode] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Listen for the preview code from the parent window
+    const handleMessage = (event: MessageEvent) => {
+      // Verify the message is from our parent and has the right type
+      if (event.data && event.data.type === 'PREVIEW_CODE' && typeof event.data.code === 'string') {
+        setCode(event.data.code);
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
+  // Simple full-viewport layout for the preview
+  return (
+    <div style={{
+      width: '100%',
+      height: '100vh',
+      overflow: 'auto',
+      background: THEME.bgSurface,
+    }}>
+      {code ? (
+        <LivePreviewRenderer
+          code={code}
+          containerStyle={{
+            width: '100%',
+            minHeight: '100%',
+            padding: '24px',
+            background: THEME.bgSurface
+          }}
+          onError={(err) => console.error('Preview error:', err)}
+        />
+      ) : (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100%',
+          color: THEME.textMuted,
+          fontSize: '14px',
+        }}>
+          Loading preview...
+        </div>
+      )}
     </div>
   );
 };
@@ -614,6 +733,11 @@ const CodeViewer: React.FC<{ code: string }> = ({ code }) => {
 // ============================================================================
 
 const App: React.FC = () => {
+  // If we're in popout mode, render only the preview component
+  if (isPopoutMode) {
+    return <PopoutPreview />;
+  }
+
   // Server configuration (providers, models)
   const serverConfig = useServerConfig();
 
@@ -628,6 +752,7 @@ const App: React.FC = () => {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const previewContainerRef = useRef<HTMLDivElement>(null);
   const { width: chatWidth, startResize } = useResizable(400, 320, 600);
 
   const activeConversation = conversations.find(c => c.id === activeConversationId);
@@ -687,27 +812,94 @@ const App: React.FC = () => {
     }
   };
 
-  const generateComponent = async (prompt: string, imageAttachments: ImageAttachment[]): Promise<string> => {
-    // Get the last generated code from conversation for iteration context
-    const lastGeneratedCode = activeConversation?.messages
+  /**
+   * Open preview in a new window with an iframe for full-width viewing.
+   *
+   * This approach is completely design-system agnostic:
+   * - The iframe loads the same production app with ?popout=true
+   * - All CSS (whatever library) is loaded automatically
+   * - All components from the registry are available
+   * - Only uses postMessage to pass the JSX code
+   */
+  const openPreviewInNewWindow = () => {
+    const newWindow = window.open('', '_blank');
+    if (!newWindow) {
+      console.error('Could not open new window - popup may be blocked');
+      return;
+    }
+
+    // Get the base URL for the popout iframe
+    const popoutUrl = `${window.location.origin}${window.location.pathname}?popout=true`;
+
+    // Create a minimal HTML wrapper with an iframe
+    // The iframe loads the same app in popout mode, ensuring all styles work
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Story UI - Full Width Preview</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: ${THEME.bg}; font-family: system-ui, sans-serif; }
+    .header {
+      position: fixed; top: 0; left: 0; right: 0; height: 48px;
+      padding: 0 24px; background: ${THEME.bgElevated};
+      border-bottom: 1px solid ${THEME.border};
+      display: flex; justify-content: space-between; align-items: center;
+      z-index: 1000;
+    }
+    .header h1 { font-size: 14px; font-weight: 500; color: ${THEME.textMuted}; }
+    .header span { font-size: 12px; color: ${THEME.textSubtle}; }
+    .iframe-container { position: absolute; top: 48px; left: 0; right: 0; bottom: 0; }
+    iframe { width: 100%; height: 100%; border: none; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Story UI - Full Width Preview</h1>
+    <span>Close tab to return</span>
+  </div>
+  <div class="iframe-container">
+    <iframe id="preview-frame" src="${popoutUrl}"></iframe>
+  </div>
+  <script>
+    var code = ${JSON.stringify(previewCode)};
+    var iframe = document.getElementById('preview-frame');
+    iframe.onload = function() {
+      iframe.contentWindow.postMessage({ type: 'PREVIEW_CODE', code: code }, '*');
+    };
+  </script>
+</body>
+</html>`;
+
+    newWindow.document.write(html);
+    newWindow.document.close();
+  };
+
+  const generateComponent = async (prompt: string, imageAttachments: ImageAttachment[], currentMessages: Message[]): Promise<string> => {
+    // Get the last generated code from the passed-in messages (not stale state)
+    const lastGeneratedCode = currentMessages
       .filter(m => m.generatedCode)
       .slice(-1)[0]?.generatedCode;
 
     // Check if this is an iteration (modification of existing code)
-    const isIteration = !!lastGeneratedCode && (activeConversation?.messages.length || 0) > 0;
+    const isIteration = !!lastGeneratedCode && currentMessages.length > 0;
 
-    // Build conversation history, but for iterations include the code reference differently
+    // Build conversation history from passed-in messages (excluding the just-added user message)
     const conversationHistory = isIteration
-      ? activeConversation?.messages.slice(0, -1).map(msg => ({
+      ? currentMessages.slice(0, -1).map(msg => ({
           role: msg.role,
           content: msg.role === 'assistant' && msg.generatedCode
             ? `[Generated JSX component - see CURRENT_CODE below]`
             : msg.content
-        })) || []
+        }))
       : [];
 
     // Build a UNIVERSAL system prompt that works with ANY component library
-    // Design-system-specific rules come from aiConsiderations (generated from story-ui-considerations.md)
+    // Design-system-specific rules come from aiConsiderations which includes:
+    // - Full documentation from story-ui-docs/ directory (guidelines, tokens, patterns, components)
+    // - Legacy considerations from story-ui-considerations.md
     const basePrompt = `You are a JSX code generator. Your ONLY job is to output raw JSX code.
 
 CRITICAL OUTPUT RULES:
@@ -719,24 +911,22 @@ CRITICAL OUTPUT RULES:
 
 UNIVERSAL BEST PRACTICES (applies to ALL design systems):
 
-THEME & COLORS:
-- Components render on a LIGHT BACKGROUND by default
-- Use DARK text colors for body text (ensure readability)
-- Never use white/light text colors unless on a dark or colored background
+VISUAL DESIGN:
+- Create polished, professional-looking interfaces
+- Use proper visual hierarchy with appropriate heading and text sizes
 - Ensure sufficient color contrast (4.5:1 for normal text, 3:1 for large text)
-
-ACCESSIBILITY (WCAG):
-- Use semantic HTML structure (headings, lists, landmarks)
-- Include aria-labels on interactive elements without visible text
-- Ensure focusable elements have visible focus states
-- Use role attributes appropriately
-- Form inputs should have associated labels
-- Interactive elements should be keyboard accessible
+- Use dark text on light backgrounds for readability
+- Never use emojis - use icons from the component library instead
 
 RESPONSIVE DESIGN:
-- Components should work at various viewport sizes
-- Use relative units and flexible layouts
-- Avoid fixed pixel widths that could cause overflow
+- All layouts should be responsive and mobile-friendly by default
+- Avoid fixed pixel widths - use flexible/responsive approaches
+- Layouts should stack appropriately on smaller screens
+
+ACCESSIBILITY:
+- Use semantic HTML structure
+- Include aria-labels on interactive elements without visible text
+- Form inputs should have associated labels
 
 AVAILABLE COMPONENTS (use ONLY these):
 ${availableComponents.join(', ')}${hasConsiderations ? `
@@ -826,7 +1016,122 @@ OUTPUT: Start immediately with < and output only JSX.`;
         .replace(/\n?```$/, '');
     }
 
+    // Validate that the response is actually JSX and not metadata/thinking
+    const validationResult = validateJSXResponse(cleanCode);
+    if (!validationResult.isValid) {
+      throw new Error(validationResult.error || 'Invalid JSX response');
+    }
+
     return cleanCode;
+  };
+
+  // Validate that the LLM response is valid JSX and not internal metadata
+  const validateJSXResponse = (code: string): { isValid: boolean; error?: string } => {
+    const trimmed = code.trim();
+
+    // Check for empty response
+    if (!trimmed) {
+      return { isValid: false, error: 'Empty response from LLM' };
+    }
+
+    // Check for internal metadata tags that LLMs sometimes output
+    const metadataTags = ['<budget>', '<usage>', '<thinking>', '<reflection>', '<output>', '<result>'];
+    for (const tag of metadataTags) {
+      if (trimmed.toLowerCase().includes(tag)) {
+        return { isValid: false, error: 'LLM returned internal metadata instead of JSX components. Please try again.' };
+      }
+    }
+
+    // Check that it starts with a valid JSX opening tag (component or HTML element)
+    if (!trimmed.startsWith('<')) {
+      return { isValid: false, error: 'Response does not start with JSX. LLM may have returned explanatory text.' };
+    }
+
+    // Check for markdown artifacts
+    if (trimmed.startsWith('```') || trimmed.includes('```jsx') || trimmed.includes('```tsx')) {
+      return { isValid: false, error: 'Response contains markdown code fences' };
+    }
+
+    // Check that the JSX ends properly (not truncated mid-tag or mid-string)
+    // Common truncation patterns:
+    // - Ends with incomplete tag: <Text size="sm" c="dimmed" ta="center">);
+    // - Ends mid-attribute: <Text size="
+    // - Ends with unclosed string: "some text
+    const lastChar = trimmed.slice(-1);
+    const last10Chars = trimmed.slice(-10);
+
+    // Should end with > or /> or } or ; but NOT with ); which indicates truncation
+    if (last10Chars.includes('>);') || last10Chars.includes('>");')) {
+      return { isValid: false, error: 'JSX appears to be truncated (ends with >); pattern). LLM output was cut off.' };
+    }
+
+    // Check for unclosed quotes at the end
+    const quoteCount = (trimmed.match(/"/g) || []).length;
+    if (quoteCount % 2 !== 0) {
+      return { isValid: false, error: 'JSX has unclosed quotes - response appears truncated' };
+    }
+
+    // Check for unclosed JSX expression braces
+    const openBraces = (trimmed.match(/\{/g) || []).length;
+    const closeBraces = (trimmed.match(/\}/g) || []).length;
+    if (openBraces !== closeBraces) {
+      return { isValid: false, error: `JSX has unbalanced braces (${openBraces} open, ${closeBraces} close) - response appears truncated` };
+    }
+
+    // Check for unclosed parentheses (common in arrow functions)
+    const openParens = (trimmed.match(/\(/g) || []).length;
+    const closeParens = (trimmed.match(/\)/g) || []).length;
+    if (openParens !== closeParens) {
+      return { isValid: false, error: `JSX has unbalanced parentheses (${openParens} open, ${closeParens} close) - response appears truncated` };
+    }
+
+    // Try to do a basic Babel parse to catch syntax errors before rendering
+    // This is the most reliable check - if Babel can't parse it, it won't render
+    try {
+      const wrappedCode = `(function() { return (${trimmed}); })()`;
+      Babel.transform(wrappedCode, {
+        presets: ['react'],
+        filename: 'validation.tsx'
+      });
+    } catch (babelError: any) {
+      // Extract useful error message
+      const errorMsg = babelError.message || 'Unknown syntax error';
+      if (errorMsg.includes('Unterminated') || errorMsg.includes('Unexpected token') || errorMsg.includes('Unexpected end')) {
+        return { isValid: false, error: `JSX syntax error: ${errorMsg}. LLM response may be truncated or malformed.` };
+      }
+      // For other Babel errors, still fail validation
+      return { isValid: false, error: `JSX parsing failed: ${errorMsg}` };
+    }
+
+    return { isValid: true };
+  };
+
+  // Wrapper function with retry logic
+  const generateComponentWithRetry = async (
+    prompt: string,
+    imageAttachments: ImageAttachment[],
+    currentMessages: Message[],
+    maxRetries: number = 2
+  ): Promise<string> => {
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const result = await generateComponent(prompt, imageAttachments, currentMessages);
+        return result;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        console.warn(`Generation attempt ${attempt + 1} failed:`, lastError.message);
+
+        // If this isn't the last attempt, wait briefly before retrying
+        if (attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
+    }
+
+    // All retries exhausted
+    throw lastError || new Error('Generation failed after multiple attempts');
   };
 
   const sendMessage = async () => {
@@ -842,12 +1147,18 @@ OUTPUT: Start immediately with < and output only JSX.`;
 
     // Determine if we need to create a new conversation or add to existing
     let conversationId = activeConversationId;
+    let currentMessages: Message[] = [];
 
     if (!conversationId) {
       // Create new conversation with the first message
       conversationId = createConversationWithMessage(userMessage);
       setActiveConversationId(conversationId);
+      currentMessages = [userMessage];
     } else {
+      // Get the current messages BEFORE the async state update
+      const existingConv = conversations.find(c => c.id === conversationId);
+      currentMessages = existingConv ? [...existingConv.messages, userMessage] : [userMessage];
+
       // Add message to existing conversation
       setConversations(prev => prev.map(conv => {
         if (conv.id === conversationId) {
@@ -867,7 +1178,9 @@ OUTPUT: Start immediately with < and output only JSX.`;
     setIsGenerating(true);
 
     try {
-      const generatedCode = await generateComponent(inputValue.trim(), currentImages);
+      // Pass currentMessages directly to avoid stale closure issues
+      // Use retry wrapper to handle invalid LLM responses automatically
+      const generatedCode = await generateComponentWithRetry(inputValue.trim(), currentImages, currentMessages);
 
       const assistantMessage: Message = {
         id: generateId(),
@@ -1501,9 +1814,30 @@ OUTPUT: Start immediately with < and output only JSX.`;
           </div>
 
           {previewCode && previewTab === 'preview' && (
-            <span style={{ fontSize: '12px', color: THEME.textMuted }}>
-              Live Preview
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <span style={{ fontSize: '12px', color: THEME.textMuted }}>
+                Live Preview
+              </span>
+              <button
+                onClick={() => openPreviewInNewWindow()}
+                title="Open in new window"
+                style={{
+                  padding: '6px 10px',
+                  background: THEME.bgElevated,
+                  border: `1px solid ${THEME.border}`,
+                  borderRadius: '6px',
+                  color: THEME.textMuted,
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                }}
+              >
+                <Icons.ExternalLink />
+                Pop Out
+              </button>
+            </div>
           )}
         </div>
 
@@ -1511,11 +1845,13 @@ OUTPUT: Start immediately with < and output only JSX.`;
         <div style={{ flex: 1, overflow: 'hidden' }}>
           {previewCode ? (
             previewTab === 'preview' ? (
-              <LivePreviewRenderer
-                code={previewCode}
-                containerStyle={{ height: '100%', background: THEME.bgSurface }}
-                onError={(err) => console.error('Preview error:', err)}
-              />
+              <div ref={previewContainerRef} style={{ height: '100%' }}>
+                <LivePreviewRenderer
+                  code={previewCode}
+                  containerStyle={{ height: '100%', background: THEME.bgSurface }}
+                  onError={(err) => console.error('Preview error:', err)}
+                />
+              </div>
             ) : (
               <CodeViewer code={previewCode} />
             )
