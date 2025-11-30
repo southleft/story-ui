@@ -160,22 +160,22 @@ const useResizable = (initialWidth: number, minWidth: number, maxWidth: number) 
   return { width, startResize };
 };
 
-// Default models for fallback
+// Default models for fallback - Updated November 2025
 const DEFAULT_MODELS: Record<string, ModelOption[]> = {
   claude: [
-    { id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5', provider: 'claude' },
-    { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', provider: 'claude' },
-    { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', provider: 'claude' },
+    { id: 'claude-opus-4-5-20251101', name: 'Opus 4.5', provider: 'claude' },
+    { id: 'claude-sonnet-4-5-20250929', name: 'Sonnet 4.5', provider: 'claude' },
+    { id: 'claude-opus-4-1-20250805', name: 'Opus 4.1', provider: 'claude' },
   ],
   openai: [
-    { id: 'gpt-4o', name: 'GPT-4o', provider: 'openai' },
-    { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai' },
-    { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', provider: 'openai' },
+    { id: 'gpt-4.1-2025-04-14', name: 'GPT-4.1', provider: 'openai' },
+    { id: 'gpt-4.1-mini-2025-04-14', name: 'GPT-4.1 Mini', provider: 'openai' },
+    { id: 'gpt-4.1-nano-2025-04-14', name: 'GPT-4.1 Nano', provider: 'openai' },
   ],
   gemini: [
+    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'gemini' },
+    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'gemini' },
     { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', provider: 'gemini' },
-    { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro', provider: 'gemini' },
-    { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash', provider: 'gemini' },
   ],
 };
 
@@ -1109,7 +1109,7 @@ OUTPUT: Start immediately with < and output only JSX.`;
               }}
             >
               {serverConfig.models.map(model => (
-                <option key={model.id} value={model.id}>{model.id}</option>
+                <option key={model.id} value={model.id}>{model.name}</option>
               ))}
             </select>
 
