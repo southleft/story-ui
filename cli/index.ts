@@ -24,7 +24,8 @@ program
 program
   .command('init')
   .description('Initialize Story UI configuration with interactive setup')
-  .option('-d, --design-system <system>', 'Design system to configure (shadcn, mantine, chakra, antd, mui)')
+  .option('-d, --design-system <system>', 'Design system to configure (mantine, vuetify, angular-material, skeleton-ui, shoelace)')
+  .option('-l, --llm-provider <provider>', 'LLM provider to use (claude, openai, gemini)')
   .option('-y, --yes', 'Skip interactive prompts and use defaults')
   .option('--skip-install', 'Skip package installation')
   .action(async (options) => {

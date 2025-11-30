@@ -433,7 +433,7 @@ export class EnhancedComponentDiscovery {
       const mantineComponents = [
         // Layout
         'Container', 'SimpleGrid', 'Grid', 'Group', 'Stack', 'Flex', 'Center', 'Space', 'Divider',
-        'AspectRatio', 'Box', 'AppShell', 'MediaQuery', 'Paper',
+        'AspectRatio', 'Box', 'AppShell', 'Paper',
         // Typography
         'Text', 'Title', 'Anchor', 'Blockquote', 'Code', 'Highlight', 'Mark', 'List',
         // Buttons & Actions
@@ -442,7 +442,7 @@ export class EnhancedComponentDiscovery {
         'TextInput', 'NumberInput', 'PasswordInput', 'Textarea', 'Select', 'MultiSelect',
         'Autocomplete', 'Checkbox', 'Switch', 'Radio', 'Slider', 'RangeSlider', 'Rating',
         'SegmentedControl', 'ColorInput', 'ColorPicker', 'FileInput', 'JsonInput', 'PinInput',
-        'Chip', 'TransferList', 'NativeSelect',
+        'Chip', 'NativeSelect',
         // Navigation
         'Anchor', 'Breadcrumbs', 'Burger', 'NavLink', 'Pagination', 'Stepper', 'Tabs',
         // Data Display
@@ -450,13 +450,11 @@ export class EnhancedComponentDiscovery {
         'Kbd', 'Spoiler', 'Table', 'ThemeIcon', 'Timeline', 'ColorSwatch',
         // Overlays
         'Dialog', 'Drawer', 'Modal', 'LoadingOverlay', 'Popover', 'Tooltip', 'Menu',
-        'HoverCard', 'Affix', 'Overlay',
+        'HoverCard', 'Overlay',
         // Feedback
         'Alert', 'Loader', 'Notification', 'Progress', 'RingProgress', 'Skeleton',
         // Misc
-        'Portal', 'Transition', 'ScrollArea', 'FocusTrap', 'Input', 'InputWrapper',
-        // Dates (from @mantine/dates)
-        'Calendar', 'DateInput', 'DatePicker', 'DateTimePicker', 'MonthPicker', 'YearPicker'
+        'Portal', 'Transition', 'ScrollArea', 'FocusTrap', 'Input', 'InputWrapper'
       ];
 
       return mantineComponents.map(name => ({

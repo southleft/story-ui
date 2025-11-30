@@ -431,30 +431,93 @@ async function deployProductionApp(backendUrl: string, projectName: string, dryR
     process.chdir(userCwd);
     await generateComponentRegistry(registryOutputPath);
 
-    // 2.5. Generate AI considerations from story-ui-considerations.md (if exists)
-    console.log('📝 Loading AI considerations...');
+    // 2.5. Load ALL design system documentation (story-ui-docs/ AND story-ui-considerations.md)
+    console.log('📚 Loading design system documentation...');
+
+    // First, try the full documentation directory (story-ui-docs/)
+    const { DocumentationLoader } = await import('../story-generator/documentationLoader.js');
+    const docLoader = new DocumentationLoader(userCwd);
+
+    let fullDocumentation = '';
+    let documentationTokens: Record<string, any> = {};
+    let documentationPatterns: Record<string, string> = {};
+    let hasFullDocs = false;
+
+    if (docLoader.hasDocumentation()) {
+      console.log('📂 Found story-ui-docs/ directory, loading all documentation...');
+      const docs = await docLoader.loadDocumentation();
+      fullDocumentation = docLoader.formatForPrompt(docs);
+      documentationTokens = docs.tokens;
+      documentationPatterns = docs.patterns;
+      hasFullDocs = true;
+      console.log(`   ✅ Loaded ${docs.guidelines.length} guidelines, ${Object.keys(docs.tokens).length} token categories, ${Object.keys(docs.patterns).length} patterns`);
+    }
+
+    // Also load legacy considerations file (story-ui-considerations.md)
     const { loadConsiderations, considerationsToPrompt } = await import('../story-generator/considerationsLoader.js');
     const considerations = loadConsiderations(); // Auto-finds in common locations
     const considerationsPrompt = considerations ? considerationsToPrompt(considerations) : '';
+
+    // Combine both sources - full docs take priority, considerations supplement
+    let combinedDocumentation = '';
+    if (fullDocumentation) {
+      combinedDocumentation = fullDocumentation;
+      if (considerationsPrompt) {
+        // Add considerations as supplementary rules
+        combinedDocumentation += '\n\n📋 ADDITIONAL DESIGN SYSTEM RULES:\n' + considerationsPrompt;
+      }
+    } else if (considerationsPrompt) {
+      combinedDocumentation = considerationsPrompt;
+    }
+
     const considerationsOutputPath = path.join(buildDir, 'src/considerations.ts');
 
-    // Write considerations to a TypeScript file
+    // Write comprehensive documentation to a TypeScript file
     const considerationsContent = `/**
- * AI Considerations - Auto-generated from story-ui-considerations.md
+ * AI Design System Documentation - Auto-generated
  *
- * This file contains design-system-specific instructions for the AI
- * when generating components. Edit story-ui-considerations.md in your
- * project root to customize these rules.
+ * This file contains ALL design system documentation for the AI:
+ * - Guidelines from story-ui-docs/ directory
+ * - Design tokens (colors, spacing, typography, etc.)
+ * - Component-specific documentation
+ * - Layout patterns
+ * - Accessibility rules
+ * - Legacy considerations from story-ui-considerations.md
+ *
+ * To customize:
+ * 1. Create a story-ui-docs/ directory with markdown/JSON files
+ * 2. And/or edit story-ui-considerations.md in your project root
  */
 
-export const aiConsiderations = ${JSON.stringify(considerationsPrompt, null, 2)};
+export const aiConsiderations = ${JSON.stringify(combinedDocumentation, null, 2)};
 
-export const hasConsiderations = ${considerations ? 'true' : 'false'};
+export const hasConsiderations = ${(hasFullDocs || considerations) ? 'true' : 'false'};
+
+// Design tokens for programmatic access (if needed)
+export const designTokens = ${JSON.stringify(documentationTokens, null, 2)};
+
+// Design patterns for programmatic access (if needed)
+export const designPatterns = ${JSON.stringify(documentationPatterns, null, 2)};
+
+// Source information
+export const documentationSource = {
+  hasFullDocs: ${hasFullDocs},
+  hasLegacyConsiderations: ${considerations ? 'true' : 'false'},
+  libraryName: ${JSON.stringify(considerations?.libraryName || null)}
+};
 `;
     fs.writeFileSync(considerationsOutputPath, considerationsContent);
-    console.log(considerations
-      ? `✅ Loaded AI considerations for: ${considerations.libraryName || 'your component library'}`
-      : '⚠️  No story-ui-considerations.md found - using default prompts');
+
+    if (hasFullDocs && considerations) {
+      console.log(`✅ Loaded full documentation + considerations for: ${considerations.libraryName || 'your component library'}`);
+    } else if (hasFullDocs) {
+      console.log('✅ Loaded full documentation from story-ui-docs/');
+    } else if (considerations) {
+      console.log(`✅ Loaded considerations for: ${considerations.libraryName || 'your component library'}`);
+    } else {
+      console.log('⚠️  No documentation found - using default prompts');
+      console.log('   Create story-ui-docs/ directory or story-ui-considerations.md for better results');
+    }
 
     process.chdir(buildDir);
 
@@ -498,7 +561,7 @@ export const hasConsiderations = ${considerations ? 'true' : 'false'};
     console.log('⚙️  Configuring backend URL...');
     fs.writeFileSync(
       path.join(buildDir, '.env'),
-      `VITE_BACKEND_URL=${backendUrl}\nVITE_APP_TITLE=Story UI\n`
+      `VITE_STORY_UI_SERVER=${backendUrl}\nVITE_APP_TITLE=Story UI\n`
     );
 
     // 5. Build the app
