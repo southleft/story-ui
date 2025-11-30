@@ -605,11 +605,13 @@ export async function setupCommand(options: SetupOptions = {}) {
       default:
         return [
           baseChoice,
-          { name: '🎯 Mantine (@mantine/core) - Most Popular', value: 'mantine' },
+          { name: '🎨 ShadCN/UI (shadcn-ui) - Most Popular', value: 'shadcn' },
+          { name: '🎯 Mantine (@mantine/core)', value: 'mantine' },
+          { name: '🐜 Ant Design (antd)', value: 'antd' },
           customChoice
         ];
     }
-  };
+  };;
 
   // Non-interactive mode: build answers from CLI options
   let answers: SetupAnswers;

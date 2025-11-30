@@ -10,7 +10,7 @@ Story UI revolutionizes component documentation by automatically generating Stor
 ## Why Story UI?
 
 - **Framework Agnostic**: Works with React, Vue, Angular, Svelte, and Web Components
-- **Multi-Provider AI**: Choose between Claude (Anthropic), GPT-4 (OpenAI), or Gemini (Google)
+- **Multi-Provider AI**: Choose between Claude (Anthropic), GPT-5 (OpenAI), or Gemini (Google)
 - **Design System Aware**: Learns your component library and generates appropriate code
 - **Production Ready**: Deploy as a standalone web app with full MCP integration
 - **Zero Lock-in**: Use any component library - Mantine, Vuetify, Angular Material, Shoelace, or your own
@@ -51,11 +51,11 @@ Story UI will guide you through:
 
 | Framework | Design Systems | Status |
 |-----------|---------------|--------|
-| React | Mantine, Chakra UI, MUI, Ant Design, ShadCN, Custom | Fully Supported |
-| Vue | Vuetify, Element Plus, PrimeVue, Quasar, Custom | Fully Supported |
-| Angular | Angular Material, PrimeNG, NG-ZORRO, Custom | Fully Supported |
-| Svelte | Skeleton, Custom | Fully Supported |
-| Web Components | Shoelace, Lit, Custom | Fully Supported |
+| React | ShadCN/UI, Mantine, Ant Design, Custom | Fully Supported |
+| Vue | Vuetify, Custom | Fully Supported |
+| Angular | Angular Material, Custom | Fully Supported |
+| Svelte | Skeleton UI, Custom | Fully Supported |
+| Web Components | Shoelace, Custom | Fully Supported |
 
 ### Multi-Provider LLM Support
 
@@ -97,25 +97,19 @@ The interactive installer will ask:
    ```
    # For React:
    ? Choose a design system:
-     > ShadCN/UI
+     > ShadCN/UI - Most Popular
        Mantine
-       Chakra UI
        Ant Design
        Custom
 
    # For Vue:
    ? Choose a design system:
-     > Vuetify
-       Element Plus
-       PrimeVue
-       Quasar
+     > Vuetify - Most Popular
        Custom
 
    # For Angular:
    ? Choose a design system:
-     > Angular Material
-       PrimeNG
-       NG-ZORRO
+     > Angular Material - Most Popular
        Custom
    ```
 
@@ -254,11 +248,31 @@ export class DataTableComponent { }
 
 ## MCP Server Integration
 
-Story UI includes a Model Context Protocol (MCP) server, allowing direct integration with AI clients like Claude Desktop.
+Story UI includes a Model Context Protocol (MCP) server, allowing direct integration with AI clients like Claude Desktop and Claude Code.
 
-### Local MCP Setup
+### Claude Code Integration (Recommended)
 
-Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+The easiest way to connect is via Claude Code's built-in MCP support:
+
+```bash
+# Add remote HTTP MCP server
+claude mcp add --transport http story-ui https://your-worker.workers.dev/mcp
+
+# Or for local development
+claude mcp add --transport http story-ui-local http://localhost:4005/mcp
+```
+
+### Claude Desktop Integration
+
+Claude Desktop now supports a connector UI for adding MCP servers. Simply:
+
+1. Open Claude Desktop Settings
+2. Navigate to the MCP Servers section
+3. Add a new server with:
+   - **Name**: Story UI
+   - **URL**: `https://your-worker.workers.dev/mcp` (production) or `http://localhost:4005/mcp` (local)
+
+For advanced users who prefer manual configuration, add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
 
 ```json
 {
@@ -274,28 +288,13 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 }
 ```
 
-Then start the Story UI HTTP server:
+### Starting the Local MCP Server
+
 ```bash
 npx story-ui start
 ```
 
-### Production MCP Setup
-
-Connect Claude Desktop to your deployed Story UI instance:
-
-```json
-{
-  "mcpServers": {
-    "story-ui-production": {
-      "command": "npx",
-      "args": ["mcp-remote", "https://your-worker.workers.dev/mcp"],
-      "env": {}
-    }
-  }
-}
-```
-
-This allows you to generate stories in your production environment directly from Claude Desktop, with all your design system configurations loaded.
+This starts the Story UI HTTP server with MCP endpoint at `http://localhost:4005/mcp`.
 
 ### Available MCP Commands
 
