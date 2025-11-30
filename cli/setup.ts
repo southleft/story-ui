@@ -222,26 +222,26 @@ interface SetupAnswers {
   mcpPort?: string;
 }
 
-// LLM Provider configurations
+// LLM Provider configurations - synced with production (cloudflare-edge/src/worker.ts)
 const LLM_PROVIDERS = {
   claude: {
     name: 'Claude (Anthropic)',
     envKey: 'ANTHROPIC_API_KEY',
-    models: ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307'],
+    models: ['claude-opus-4-5-20251101', 'claude-sonnet-4-5-20250929', 'claude-haiku-4-5-20251001'],
     docsUrl: 'https://console.anthropic.com/',
     description: 'Recommended - Best for complex reasoning and code quality'
   },
   openai: {
-    name: 'OpenAI (GPT-4)',
+    name: 'OpenAI (GPT-5)',
     envKey: 'OPENAI_API_KEY',
-    models: ['gpt-4o', 'gpt-4-turbo', 'gpt-3.5-turbo'],
+    models: ['gpt-5.1', 'gpt-5-mini', 'gpt-5-nano'],
     docsUrl: 'https://platform.openai.com/api-keys',
     description: 'Versatile and fast'
   },
   gemini: {
     name: 'Google Gemini',
     envKey: 'GEMINI_API_KEY',
-    models: ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'],
+    models: ['gemini-3-pro-preview', 'gemini-2.5-pro', 'gemini-2.5-flash'],
     docsUrl: 'https://aistudio.google.com/app/apikey',
     description: 'Cost-effective with good performance'
   }
@@ -571,6 +571,7 @@ export async function setupCommand(options: SetupOptions = {}) {
   }
 
   // Build design system choices based on detected framework
+  // Simplified to show only the most popular option per framework
   const getDesignSystemChoices = () => {
     const baseChoice = { name: '🤖 Auto-detect from package.json', value: 'auto' };
     const customChoice = { name: '🔧 Custom/Other', value: 'custom' };
@@ -579,43 +580,32 @@ export async function setupCommand(options: SetupOptions = {}) {
       case 'angular':
         return [
           baseChoice,
-          { name: '🅰️ Angular Material (@angular/material)', value: 'angular-material' },
-          { name: '🎨 PrimeNG (primeng)', value: 'primeng' },
-          { name: '🌈 NG-ZORRO (ng-zorro-antd)', value: 'ng-zorro' },
+          { name: '🅰️ Angular Material (@angular/material) - Most Popular', value: 'angular-material' },
           customChoice
         ];
       case 'vue':
         return [
           baseChoice,
-          { name: '🍃 PrimeVue (primevue)', value: 'primevue' },
-          { name: '🎯 Vuetify (vuetify)', value: 'vuetify' },
-          { name: '🔮 Element Plus (element-plus)', value: 'element-plus' },
+          { name: '🎯 Vuetify (vuetify) - Most Popular', value: 'vuetify' },
           customChoice
         ];
       case 'svelte':
         return [
           baseChoice,
-          { name: '🟠 Skeleton UI (skeleton)', value: 'skeleton-ui' },
-          { name: '🌸 Svelte Material UI (svelte-material-ui)', value: 'smui' },
+          { name: '🟠 Skeleton UI (@skeletonlabs/skeleton) - Most Popular', value: 'skeleton-ui' },
           customChoice
         ];
       case 'web-components':
         return [
           baseChoice,
-          { name: '👟 Shoelace (@shoelace-style/shoelace)', value: 'shoelace' },
-          { name: '🔥 Lit (@lit/element)', value: 'lit' },
-          { name: '🌟 Vaadin (@vaadin)', value: 'vaadin' },
+          { name: '👟 Shoelace (@shoelace-style/shoelace) - Most Popular', value: 'shoelace' },
           customChoice
         ];
       case 'react':
       default:
         return [
           baseChoice,
-          { name: '🐜 Ant Design (antd) - Automatic Install & Configure', value: 'antd' },
-          { name: '🎯 Mantine (@mantine/core) - Automatic Install & Configure', value: 'mantine' },
-          { name: '⚡ Chakra UI (@chakra-ui/react) - Automatic Install & Configure', value: 'chakra' },
-          { name: '🎨 Material UI (@mui/material)', value: 'mui' },
-          { name: '✨ shadcn/ui (Tailwind + Radix) - Automatic Install & Configure', value: 'shadcn' },
+          { name: '🎯 Mantine (@mantine/core) - Most Popular', value: 'mantine' },
           customChoice
         ];
     }
@@ -725,7 +715,7 @@ export async function setupCommand(options: SetupOptions = {}) {
         message: 'Which AI provider would you like to use?',
         choices: [
           { name: `${chalk.green('Claude (Anthropic)')} - ${chalk.gray('Recommended for complex reasoning and code quality')}`, value: 'claude' },
-          { name: `${chalk.blue('OpenAI (GPT-4)')} - ${chalk.gray('Versatile and fast')}`, value: 'openai' },
+          { name: `${chalk.blue('OpenAI (GPT-5)')} - ${chalk.gray('Versatile and fast')}`, value: 'openai' },
           { name: `${chalk.yellow('Google Gemini')} - ${chalk.gray('Cost-effective with good performance')}`, value: 'gemini' }
         ],
         default: 'claude'

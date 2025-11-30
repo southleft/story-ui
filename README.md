@@ -61,9 +61,9 @@ Story UI will guide you through:
 
 | Provider | Models | Best For |
 |----------|--------|----------|
-| **Claude** (Anthropic) | claude-sonnet-4, claude-3.5-sonnet, claude-3-haiku | Complex reasoning, code quality |
-| **GPT-4** (OpenAI) | gpt-4o, gpt-4-turbo, gpt-3.5-turbo | Versatility, speed |
-| **Gemini** (Google) | gemini-2.0-flash, gemini-1.5-pro | Fast generation, cost efficiency |
+| **Claude** (Anthropic) | Opus 4.5, Sonnet 4.5, Haiku 4.5 | Complex reasoning, code quality |
+| **GPT-5** (OpenAI) | GPT-5.1, GPT-5 Mini, GPT-5 Nano | Versatility, speed |
+| **Gemini** (Google) | Gemini 3 Pro, Gemini 2.5 Pro, Gemini 2.5 Flash | Fast generation, cost efficiency |
 
 ### Production Deployment
 - **Cloudflare Workers**: Edge-deployed API proxy
@@ -123,7 +123,7 @@ The interactive installer will ask:
    ```
    ? Which AI provider do you prefer?
      > Claude (Anthropic) - Recommended
-       OpenAI (GPT-4)
+       OpenAI (GPT-5)
        Google Gemini
 
    ? Enter your API key:
