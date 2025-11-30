@@ -1,3 +1,10 @@
+# [2.6.0](https://github.com/southleft/story-ui/compare/v2.5.0...v2.6.0) (2025-11-30)
+
+
+### Features
+
+* add framework-agnostic updates for Story UI v3 ([f7d0b85](https://github.com/southleft/story-ui/commit/f7d0b85e3345aef881a229f636ba9c78ddbd19bb))
+
 # [2.5.0](https://github.com/southleft/story-ui/compare/v2.4.0...v2.5.0) (2025-11-30)
 
 
