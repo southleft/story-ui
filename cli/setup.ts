@@ -216,10 +216,36 @@ interface SetupAnswers {
   componentPrefix?: string;
   generatedStoriesPath?: string;
   componentsPath?: string;
+  llmProvider?: 'claude' | 'openai' | 'gemini';
   hasApiKey?: boolean;
   apiKey?: string;
   mcpPort?: string;
 }
+
+// LLM Provider configurations
+const LLM_PROVIDERS = {
+  claude: {
+    name: 'Claude (Anthropic)',
+    envKey: 'ANTHROPIC_API_KEY',
+    models: ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-haiku-20240307'],
+    docsUrl: 'https://console.anthropic.com/',
+    description: 'Recommended - Best for complex reasoning and code quality'
+  },
+  openai: {
+    name: 'OpenAI (GPT-4)',
+    envKey: 'OPENAI_API_KEY',
+    models: ['gpt-4o', 'gpt-4-turbo', 'gpt-3.5-turbo'],
+    docsUrl: 'https://platform.openai.com/api-keys',
+    description: 'Versatile and fast'
+  },
+  gemini: {
+    name: 'Google Gemini',
+    envKey: 'GEMINI_API_KEY',
+    models: ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'],
+    docsUrl: 'https://aistudio.google.com/app/apikey',
+    description: 'Cost-effective with good performance'
+  }
+};
 
 // Design system installation configurations (organized by framework)
 const DESIGN_SYSTEM_CONFIGS: Record<string, {
@@ -442,6 +468,7 @@ async function installDesignSystem(systemKey: keyof typeof DESIGN_SYSTEM_CONFIGS
 // CLI options interface
 export interface SetupOptions {
   designSystem?: string;
+  llmProvider?: 'claude' | 'openai' | 'gemini';
   yes?: boolean;
   skipInstall?: boolean;
 }
@@ -610,15 +637,19 @@ export async function setupCommand(options: SetupOptions = {}) {
       process.exit(1);
     }
 
+    const llmProvider = options.llmProvider || 'claude';
+
     answers = {
       designSystem,
       installDesignSystem: !options.skipInstall && Object.keys(DESIGN_SYSTEM_CONFIGS).includes(designSystem),
       generatedStoriesPath: './src/stories/generated/',
+      llmProvider,
       mcpPort,
       hasApiKey: false,
     };
 
     console.log(chalk.blue(`📦 Design system: ${designSystem}`));
+    console.log(chalk.blue(`🤖 AI Provider: ${LLM_PROVIDERS[llmProvider]?.name || llmProvider}`));
     console.log(chalk.blue(`📁 Generated stories: ${answers.generatedStoriesPath}`));
     console.log(chalk.blue(`🔌 MCP port: ${mcpPort}`));
     if (options.skipInstall) {
@@ -689,15 +720,32 @@ export async function setupCommand(options: SetupOptions = {}) {
         }
       },
       {
+        type: 'list',
+        name: 'llmProvider',
+        message: 'Which AI provider would you like to use?',
+        choices: [
+          { name: `${chalk.green('Claude (Anthropic)')} - ${chalk.gray('Recommended for complex reasoning and code quality')}`, value: 'claude' },
+          { name: `${chalk.blue('OpenAI (GPT-4)')} - ${chalk.gray('Versatile and fast')}`, value: 'openai' },
+          { name: `${chalk.yellow('Google Gemini')} - ${chalk.gray('Cost-effective with good performance')}`, value: 'gemini' }
+        ],
+        default: 'claude'
+      },
+      {
         type: 'confirm',
         name: 'hasApiKey',
-        message: 'Do you have a Claude API key? (You can add it later)',
+        message: (promptAnswers) => {
+          const provider = LLM_PROVIDERS[promptAnswers.llmProvider as keyof typeof LLM_PROVIDERS];
+          return `Do you have a ${provider?.name || 'provider'} API key? (You can add it later)`;
+        },
         default: false
       },
       {
         type: 'password',
         name: 'apiKey',
-        message: 'Enter your Claude API key:',
+        message: (promptAnswers) => {
+          const provider = LLM_PROVIDERS[promptAnswers.llmProvider as keyof typeof LLM_PROVIDERS];
+          return `Enter your ${provider?.name || 'provider'} API key:`;
+        },
         when: (promptAnswers) => promptAnswers.hasApiKey,
         validate: (input) => input.trim() ? true : 'API key is required'
       }
@@ -972,6 +1020,7 @@ Material UI (MUI) is a React component library implementing Material Design.
   config.defaultAuthor = 'Story UI AI';
   config.componentFramework = componentFramework; // react, angular, vue, svelte, or web-components
   config.storybookFramework = storybookFramework; // e.g., @storybook/react-vite, @storybook/angular
+  config.llmProvider = answers.llmProvider || 'claude'; // claude, openai, or gemini
 
 
   // Create configuration file
@@ -1063,27 +1112,34 @@ Material UI (MUI) is a React component library implementing Material Design.
     console.log(chalk.gray('   Add your design system documentation to enhance AI story generation'));
   }
 
-  // Create .env file from template
-  const envSamplePath = path.resolve(__dirname, '../../.env.sample');
+  // Create .env file with provider-specific configuration
   const envPath = path.join(process.cwd(), '.env');
+  const selectedProvider = answers.llmProvider || 'claude';
+  const providerConfig = LLM_PROVIDERS[selectedProvider as keyof typeof LLM_PROVIDERS];
 
   if (!fs.existsSync(envPath)) {
-    if (fs.existsSync(envSamplePath)) {
-      let envContent = fs.readFileSync(envSamplePath, 'utf-8');
+    // Generate .env content based on selected provider
+    let envContent = `# Story UI Configuration
+# Generated by: npx story-ui init
 
-      // If user provided API key, update the template
-      if (answers.apiKey) {
-        envContent = envContent.replace('your-claude-api-key-here', answers.apiKey);
-      }
-      
-      // Update the VITE_STORY_UI_PORT with the chosen port
-      if (answers.mcpPort) {
-        envContent = envContent.replace('VITE_STORY_UI_PORT=4001', `VITE_STORY_UI_PORT=${answers.mcpPort}`);
-      }
+# LLM Provider: ${providerConfig?.name || selectedProvider}
+LLM_PROVIDER=${selectedProvider}
 
-      fs.writeFileSync(envPath, envContent);
-      console.log(chalk.green(`✅ Created .env file${answers.apiKey ? ' with your API key' : ''}`));
-    }
+# API Key for ${providerConfig?.name || selectedProvider}
+# Get your key from: ${providerConfig?.docsUrl || 'your provider dashboard'}
+${providerConfig?.envKey || 'API_KEY'}=${answers.apiKey || 'your-api-key-here'}
+
+# Story UI MCP Server Port
+VITE_STORY_UI_PORT=${answers.mcpPort || '4001'}
+
+# Optional: Add additional provider keys if you want to switch providers later
+# ANTHROPIC_API_KEY=your-anthropic-key
+# OPENAI_API_KEY=your-openai-key
+# GEMINI_API_KEY=your-gemini-key
+`;
+
+    fs.writeFileSync(envPath, envContent);
+    console.log(chalk.green(`✅ Created .env file for ${providerConfig?.name || selectedProvider}${answers.apiKey ? ' with your API key' : ''}`));
   } else {
     console.log(chalk.yellow('⚠️  .env file already exists, skipping'));
   }
@@ -1189,12 +1245,14 @@ Material UI (MUI) is a React component library implementing Material Design.
   }
 
   if (!answers.apiKey) {
-    console.log(chalk.yellow('\n⚠️  Don\'t forget to add your Claude API key to .env file!'));
-    console.log('   Get your key from: https://console.anthropic.com/');
+    const provider = LLM_PROVIDERS[answers.llmProvider as keyof typeof LLM_PROVIDERS] || LLM_PROVIDERS.claude;
+    console.log(chalk.yellow(`\n⚠️  Don't forget to add your ${provider.name} API key to .env file!`));
+    console.log(`   Get your key from: ${provider.docsUrl}`);
   }
 
+  const providerName = LLM_PROVIDERS[answers.llmProvider as keyof typeof LLM_PROVIDERS]?.name || 'your LLM provider';
   console.log('\n🚀 Next steps:');
-  console.log('1. ' + (answers.apiKey ? 'Start' : 'Add your Claude API key to .env, then start') + ' Story UI: npm run story-ui');
+  console.log('1. ' + (answers.apiKey ? 'Start' : `Add your ${providerName} API key to .env, then start`) + ' Story UI: npm run story-ui');
   console.log('2. Start Storybook: npm run storybook');
   console.log('3. Navigate to "Story UI > Story Generator" in your Storybook sidebar');
   console.log('4. Start generating UI with natural language prompts!');

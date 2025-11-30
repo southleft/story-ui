@@ -91,5 +91,17 @@ ROOT_CAUSE_ANALYSIS.md
 *_TEST_REPORT.md
 STORY_UI_PRODUCTION_REQUIREMENTS.md
 
-# Playwright MCP artifacts
+# Playwright MCP artifacts (dev testing screenshots)
 .playwright-mcp/
+
+# Serena MCP artifacts (dev semantic code tools)
+.serena/
+
+# Root-level src folder (orphaned dev artifacts)
+/src/
+
+# Root-level story-ui-build (local dev build)
+/.story-ui-build/
+
+# V3 Release tracking (internal use)
+V3_RELEASE_TASKS.md
