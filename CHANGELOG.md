@@ -1,3 +1,10 @@
+## [2.6.1](https://github.com/southleft/story-ui/compare/v2.6.0...v2.6.1) (2025-11-30)
+
+
+### Bug Fixes
+
+* update model names and simplify design system options ([bfe9c04](https://github.com/southleft/story-ui/commit/bfe9c047ffb00df9691f0bd16a4aeed19f95d9dc))
+
 # [2.6.0](https://github.com/southleft/story-ui/compare/v2.5.0...v2.6.0) (2025-11-30)
 
 
