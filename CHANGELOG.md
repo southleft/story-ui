@@ -1,3 +1,10 @@
+# [3.4.0](https://github.com/southleft/story-ui/compare/v3.3.0...v3.4.0) (2025-12-01)
+
+
+### Features
+
+* add combined Storybook + MCP production deployment ([b34edd0](https://github.com/southleft/story-ui/commit/b34edd07c8485d9eaf24cc7bdaa13a3aa19577f0))
+
 # [3.3.0](https://github.com/southleft/story-ui/compare/v3.2.0...v3.3.0) (2025-12-01)
 
 
