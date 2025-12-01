@@ -1,8 +1,8 @@
 # Story UI v3 Roadmap & Task List
 
-> **Last Updated**: 2025-11-26
-> **Current Version**: 2.2.0
-> **Target Version**: 3.0.0
+> **Last Updated**: 2025-12-01
+> **Current Version**: 3.4.2
+> **Target Version**: 3.5.0
 
 This document tracks all pending tasks, enhancements, and bugs for the Story UI v3 overhaul. It serves as a persistent reference across conversation sessions.
 
@@ -517,6 +517,28 @@ The codebase should be design-system agnostic except for installation helpers.
 ---
 
 ## Session Notes
+
+### 2025-12-01 (Codebase Integrity Audit)
+- **Codebase Cleanup**:
+  - Created `.dockerignore` to exclude 1.9GB `test-storybooks/` directory from Docker builds
+  - Updated `CLAUDE.md` to reflect actual codebase state:
+    - Removed all PostgreSQL references (feature was tried and removed)
+    - Fixed architecture diagram to show file-based persistence
+    - Removed references to non-existent files (postgresStoryService.ts, etc.)
+    - Corrected model lists to match actual provider implementations
+    - Added correct production URL and deployment repo info
+  - Removed dead code from `story-generator/generateStory.ts`
+  - Created shared `mcp-server/routes/storyHelpers.ts` for code deduplication (available for future refactoring)
+- **Production Verification**:
+  - Verified Railway deployment at https://story-ui-demo.up.railway.app is working
+  - Confirmed all Claude, OpenAI, and Gemini models are available in UI
+  - Chat history persistence working
+  - Provider/model selection functional
+- **Documentation**:
+  - Updated version to 3.4.2
+  - Corrected model lists in CLAUDE.md to include latest models (gpt-5.1, gpt-5.1-thinking, gemini-3-pro)
+- **Build Verification**:
+  - Confirmed `npm run build` succeeds with all changes
 
 ### 2025-11-26 (Session 3)
 - **NPX Command Validation Complete**:

@@ -2,13 +2,6 @@ import fs from 'fs';
 import path from 'path';
 import { StoryUIConfig } from '../story-ui.config.js';
 
-function slugify(str: string) {
-  return str
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
-
 /**
  * Check if the current working directory is the Story UI package itself.
  * This prevents accidentally generating stories in the package source code.
@@ -57,9 +50,3 @@ export function generateStory({
   fs.writeFileSync(outPath, fileContents, 'utf-8');
   return outPath;
 }
-
-// Mock usage:
-// generateStory({
-//   title: 'Login Form',
-//   jsx: '<al-input label="Email"></al-input>\n<al-input label="Password" type="password"></al-input>\n<al-button>Login</al-button>'
-// });

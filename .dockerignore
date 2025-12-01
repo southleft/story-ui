@@ -1,0 +1,69 @@
+# Story UI Docker Ignore File
+# Excludes development and test files from Docker builds
+
+# Test storybooks (1.9GB+ of test environments)
+test-storybooks/
+
+# Node modules (installed in container)
+node_modules/
+**/node_modules/
+
+# Git and version control
+.git/
+.gitignore
+.github/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Development configuration
+.husky/
+.cursor/
+.vercel/
+.serena/
+
+# Environment files (use Railway dashboard for secrets)
+.env
+.env.*
+!.env.sample
+!.env.example
+
+# Build artifacts (rebuilt in container)
+dist/
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test and coverage
+coverage/
+*.test.ts
+*.spec.ts
+__tests__/
+
+# Temporary files
+temp/
+tmp/
+*.tmp
+
+# Documentation (not needed in runtime)
+docs/
+dev-docs/
+*.md
+!README.md
+
+# Development testing
+dev-testing/
+
+# Story history (development only)
+.story-ui-history/
+
+# Lock files (use package-lock.json in container)
+yarn.lock

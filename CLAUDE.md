@@ -1,9 +1,9 @@
 # Story UI - Claude Code Project Guide
 
 > **Last Updated**: December 1, 2025
-> **Current Version**: 3.1.0
-> **Production URL**: Railway deployment URL
-> **Backend URL**: Railway with PostgreSQL for story persistence
+> **Current Version**: 3.4.2
+> **Production URL**: https://story-ui-demo.up.railway.app
+> **Backend URL**: Railway with file-based story persistence
 
 This document provides context for AI assistants working on the Story UI codebase. It captures project history, architecture decisions, resolved issues, and remaining work to prevent repeating past mistakes.
 
@@ -15,17 +15,15 @@ This document provides context for AI assistants working on the Story UI codebas
 
 | Purpose | Location |
 |---------|----------|
-| Production App | `test-storybooks/mantine-storybook/.story-ui-build/src/App.tsx` |
 | MCP Server | `mcp-server/index.ts` |
 | Story Generator | `story-generator/generateStory.ts` |
-| Story Service Interface | `story-generator/storyServiceInterface.ts` |
-| PostgreSQL Story Service | `story-generator/postgresStoryService.ts` |
-| Story Service Factory | `story-generator/storyServiceFactory.ts` |
 | Component Discovery | `story-generator/componentDiscovery.ts` |
 | LLM Providers | `story-generator/llm-providers/` |
-| Design Considerations | `test-storybooks/mantine-storybook/.story-ui-build/src/considerations.ts` |
-| Production Requirements | `STORY_UI_PRODUCTION_REQUIREMENTS.md` |
+| Framework Adapters | `story-generator/framework-adapters/` |
+| Storybook Panel | `templates/StoryUI/StoryUIPanel.tsx` |
+| Production App Template | `templates/production-app/` |
 | Detailed Roadmap | `ROADMAP.md` |
+| Deployment Guide | `DEPLOYMENT.md` |
 
 ### Deployment Commands
 
@@ -33,20 +31,21 @@ This document provides context for AI assistants working on the Story UI codebas
 # Build main package
 npm run build
 
-# Deploy to Railway (automatic via git push)
-git push origin main
+# Deploy to Railway (automatic via git push to deployment repo)
+# Deployment repo: https://github.com/tpitre/story-ui-mantine-live
 ```
 
 ### Environment Variables (Railway)
 
 | Variable | Description |
 |----------|-------------|
-| `DATABASE_URL` | PostgreSQL connection string (enables persistent story storage) |
 | `ANTHROPIC_API_KEY` | Claude API key (required for Claude provider) |
 | `OPENAI_API_KEY` | OpenAI API key (optional) |
 | `GEMINI_API_KEY` | Gemini API key (optional) |
 | `DEFAULT_MODEL` | Default Claude model |
 | `PORT` | Server port (Railway sets automatically) |
+| `STORYBOOK_PROXY_ENABLED` | Enable Storybook proxy mode |
+| `STORYBOOK_PROXY_PORT` | Internal Storybook port (default: 6006) |
 
 ---
 
@@ -68,10 +67,10 @@ The original implementation runs as a Storybook addon panel:
 
 #### 2. Production Web Environment
 
-A standalone web app that mimics local functionality:
-- **Location**: `test-storybooks/mantine-storybook/.story-ui-build/`
-- **Frontend**: React + Vite, served by Express MCP server
-- **Backend**: Express MCP server on Railway with PostgreSQL
+A deployed Storybook instance with Story UI:
+- **Live URL**: https://story-ui-demo.up.railway.app
+- **Deployment Repo**: https://github.com/tpitre/story-ui-mantine-live
+- **Backend**: Express MCP server proxying Storybook dev server
 - **Status**: Actively developed (December 2025)
 
 ---
@@ -86,25 +85,24 @@ A standalone web app that mimics local functionality:
 │  ┌─────────────────────────────────────────────────────────┐│
 │  │              Express MCP Server (Node.js)                ││
 │  │  ┌───────────────────────────────────────────────────┐  ││
-│  │  │  React App (Served from .story-ui-build/dist)     │  ││
+│  │  │  Storybook Dev Server (proxied, port 6006)        │  ││
+│  │  │  - Story UI Addon Panel                            │  ││
 │  │  │  - Chat Interface                                  │  ││
-│  │  │  - Component Preview (Live Babel Transform)        │  ││
 │  │  │  - Provider/Model Selection                        │  ││
 │  │  │  - LocalStorage Persistence                        │  ││
 │  │  └───────────────────────────────────────────────────┘  ││
 │  │                                                          ││
 │  │  API Routes:                                             ││
 │  │  - GET  /story-ui/providers → Available providers/models ││
-│  │  - POST /story-ui/claude → Claude API proxy              ││
-│  │  - POST /story-ui/generate-stream → Story generation     ││
-│  │  - GET  /story-ui/stories → Persistent story list        ││
+│  │  - POST /story-ui/generate  → Story generation           ││
+│  │  - POST /story-ui/generate-stream → Streaming generation ││
+│  │  - POST /mcp-remote/mcp → Claude Desktop MCP endpoint    ││
 │  └─────────────────────────────────────────────────────────┘│
 │                            │                                 │
-│                            ▼                                 │
 │  ┌─────────────────────────────────────────────────────────┐│
-│  │              PostgreSQL Database                         ││
-│  │  - Story persistence across deployments                  ││
-│  │  - Chat history storage                                  ││
+│  │         File-based Story Persistence                     ││
+│  │  - Stories saved to generated-stories/ directory         ││
+│  │  - Chat history in localStorage                          ││
 │  └─────────────────────────────────────────────────────────┘│
 └──────────────────────────┬──────────────────────────────────┘
                            │
@@ -118,22 +116,19 @@ A standalone web app that mimics local functionality:
 
 ### Key Components
 
-1. **Frontend (App.tsx)**
-   - Chat interface with message history
-   - Provider and model selection
-   - Live component preview with Babel transformation
-   - Image attachment support (vision)
-   - LocalStorage persistence for chats and settings
+1. **MCP Server (index.ts)**
+   - Express server handling API routes
+   - Storybook proxy for production deployment
+   - MCP remote endpoint for Claude Desktop integration
 
-2. **Story Service (PostgreSQL/In-Memory)**
-   - Async interface for story storage (`IStoryService`)
-   - PostgreSQL implementation for Railway deployments
-   - In-memory fallback when `DATABASE_URL` not set
-   - Factory pattern for automatic service selection
+2. **Story Generator**
+   - Core generation logic with LLM providers
+   - Framework adapters (React, Vue, Angular, Svelte, Web Components)
+   - Component discovery and validation
 
 3. **Considerations System**
    - Design-system-specific AI guidelines
-   - Loaded from `considerations.ts` in production
+   - Loaded from `considerations.ts` or config
    - Prevents wrong components/colors/patterns
 
 ---
@@ -145,22 +140,20 @@ A standalone web app that mimics local functionality:
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Multi-provider LLM (Claude, OpenAI, Gemini) | ✅ | Provider selector in sidebar |
-| Model selection | ✅ | Latest 3 models per provider |
-| Component generation | ✅ | Live Babel transform preview |
+| Model selection | ✅ | Multiple models per provider |
+| Component generation | ✅ | Live preview in Storybook |
 | Conversation history | ✅ | LocalStorage persistence |
 | Smart chat titles | ✅ | LLM-generated from first message |
 | Image attachments | ✅ | Vision support for screenshots |
-| Design considerations | ✅ | Loaded from considerations.ts |
-| Modern chat UI | ✅ | ChatGPT-style input interface |
-| 225 Mantine components | ✅ | Auto-discovered registry |
-| PostgreSQL story persistence | ✅ | Stories survive Railway redeployments |
+| Design considerations | ✅ | Loaded from config |
+| Multi-framework support | ✅ | React, Vue, Angular, Svelte, Web Components |
+| MCP Remote endpoint | ✅ | Claude Desktop integration via Streamable HTTP |
 | Model/provider persistence | ✅ | User preferences saved to localStorage |
 
 ### Pending Features
 
 | Feature | Priority | Notes |
 |---------|----------|-------|
-| Multi-framework (Vue, Angular, etc.) | HIGH | Backend supports, frontend needs work |
 | Delete chat functionality | MEDIUM | UI exists, needs implementation |
 | SSE streaming | MEDIUM | Backend ready, frontend needs integration |
 | Two-way conversational AI | LOW | Intent preview, progress updates |
@@ -174,7 +167,6 @@ A standalone web app that mimics local functionality:
 
 | Issue | Root Cause | Resolution |
 |-------|------------|------------|
-| Stories lost after Railway deploy | In-memory storage wiped on container restart | Implemented PostgreSQL story persistence |
 | Model/provider not persisting | localStorage not properly syncing state | Fixed useLocalStorage hook with proper useEffect |
 | Broken image preview | FileReader errors not handled gracefully | Added validation and error handling for file reading |
 | Cloudflare Edge dead code | Unused ~150MB of Cloudflare Worker code | Removed cloudflare-edge directory completely |
@@ -199,52 +191,54 @@ A standalone web app that mimics local functionality:
 3. **Don't use deprecated models** - Update model lists when providers release new versions
 4. **Don't skip prefill** - Always prefill with `<` to ensure JSX output
 5. **Don't ignore localStorage** - It's the primary persistence mechanism for user preferences
-6. **Don't forget DATABASE_URL** - Stories are lost on Railway redeploys without PostgreSQL
-7. **Use async service methods** - All story service methods are now async (use await)
 
 ---
 
 ## Codebase Structure
 
 ```
-story-ui-repo/
+story-ui/
 ├── cli/                          # CLI commands (init, start, deploy)
 │   ├── index.ts                  # Main CLI entry
+│   ├── setup.ts                  # Project setup utilities
 │   └── deploy.ts                 # Deployment commands
 ├── mcp-server/                   # Express MCP server (production backend)
 │   ├── index.ts                  # Express server with routes
 │   ├── mcp-stdio-server.ts       # STDIO MCP server for CLI
 │   └── routes/                   # API route handlers
-│       ├── generateStoryStream.ts  # Streaming story generation
-│       ├── hybridStories.ts      # Story CRUD operations
-│       └── providers.ts          # LLM provider management
+│       ├── generateStory.ts      # Non-streaming story generation
+│       ├── generateStoryStream.ts # Streaming story generation
+│       ├── providers.ts          # LLM provider management
+│       ├── components.ts         # Component discovery endpoints
+│       ├── frameworks.ts         # Framework detection endpoints
+│       └── mcpRemote.ts          # Claude Desktop MCP endpoint
 ├── story-generator/              # Core story generation logic
 │   ├── generateStory.ts          # Main generation function
 │   ├── componentDiscovery.ts     # Component discovery
-│   ├── storyServiceInterface.ts  # IStoryService interface
-│   ├── storyServiceFactory.ts    # Factory for storage backend selection
-│   ├── postgresStoryService.ts   # PostgreSQL storage implementation
-│   ├── inMemoryStoryService.ts   # In-memory storage fallback
+│   ├── promptGenerator.ts        # Prompt building utilities
+│   ├── configLoader.ts           # Configuration loading
 │   ├── llm-providers/            # LLM provider implementations
 │   │   ├── base-provider.ts      # Base class
 │   │   ├── claude-provider.ts    # Claude/Anthropic
 │   │   ├── openai-provider.ts    # OpenAI/GPT
-│   │   └── gemini-provider.ts    # Google Gemini
-│   └── framework-adapters/       # React, Vue, Angular, etc.
+│   │   ├── gemini-provider.ts    # Google Gemini
+│   │   └── story-llm-service.ts  # Unified LLM service
+│   └── framework-adapters/       # Framework support
+│       ├── base-adapter.ts       # Base adapter class
+│       ├── react-adapter.ts      # React adapter
+│       ├── vue-adapter.ts        # Vue adapter
+│       ├── angular-adapter.ts    # Angular adapter
+│       ├── svelte-adapter.ts     # Svelte adapter
+│       └── web-components-adapter.ts # Web Components adapter
 ├── templates/                    # Storybook integration templates
-│   └── StoryUI/
-│       ├── StoryUIPanel.tsx      # Main panel component
-│       └── index.tsx             # Panel registration
-├── test-storybooks/              # Test environments (gitignored)
-│   └── mantine-storybook/
-│       └── .story-ui-build/      # Production frontend app
-│           ├── src/
-│           │   ├── App.tsx       # Main production app
-│           │   └── considerations.ts  # Design system rules
-│           └── dist/             # Built static files
+│   ├── StoryUI/                  # Storybook addon
+│   │   ├── StoryUIPanel.tsx      # Main panel component
+│   │   ├── manager.tsx           # Addon registration
+│   │   └── index.tsx             # Panel registration
+│   └── production-app/           # Production app template
+├── test-storybooks/              # Test environments (development only)
 ├── docs/                         # Documentation
 ├── ROADMAP.md                    # Detailed task tracking
-├── STORY_UI_PRODUCTION_REQUIREMENTS.md  # Production requirements
 └── DEPLOYMENT.md                 # Deployment guide
 ```
 
@@ -252,26 +246,19 @@ story-ui-repo/
 
 ## Development Workflow
 
-### Making Changes to Production Frontend
-
-1. **Edit the source** in `test-storybooks/mantine-storybook/.story-ui-build/src/`
-2. **Test locally**: `npm run dev` (from .story-ui-build directory)
-3. **Build**: `npm run build`
-4. **Deploy**: Push to git for Railway auto-deploy
-
 ### Making Changes to Backend/MCP Server
 
 1. **Edit** files in `mcp-server/` or `story-generator/`
 2. **Build**: `npm run build` (from repo root)
 3. **Test locally**: `npm run story-ui`
-4. **Deploy**: Push to git for Railway auto-deploy
+4. **Deploy**: Push to deployment repo for Railway auto-deploy
 
 ### Railway Deployment
 
 Railway is the primary deployment platform for the full-stack Story UI application:
 
 1. **Deployment Platform**: Railway provides containerized deployment with automatic builds
-2. **Reverse Proxy**: Caddy is configured to handle HTTPS and routing
+2. **Deployment Repository**: https://github.com/tpitre/story-ui-mantine-live
 3. **Environment**: All LLM provider API keys are configured as Railway environment variables
 4. **Auto-deploy**: Connected to git repository for automatic deployments on push
 
@@ -280,15 +267,14 @@ To deploy to Railway:
 # Railway CLI deployment
 railway up
 
-# Or push to main branch for auto-deployment
-git push origin main
+# Or push to deployment repo for auto-deployment
 ```
 
 ### Testing
 
 Use Chrome DevTools MCP for automated browser testing:
 ```
-- Navigate to production URL
+- Navigate to production URL: https://story-ui-demo.up.railway.app
 - Take snapshots/screenshots
 - Click elements
 - Verify UI changes
@@ -304,7 +290,12 @@ Use Chrome DevTools MCP for automated browser testing:
 models: [
   'claude-opus-4-5-20251101',      // Claude Opus 4.5 - Most capable
   'claude-sonnet-4-5-20250929',    // Claude Sonnet 4.5 - Recommended default
-  'claude-haiku-4-5-20251001'      // Claude Haiku 4.5 - Fast, economical
+  'claude-haiku-4-5-20251001',     // Claude Haiku 4.5 - Fast, economical
+  'claude-sonnet-4-20250514',      // Claude Sonnet 4
+  'claude-opus-4-20250514',        // Claude Opus 4
+  'claude-3-7-sonnet-20250219',    // Claude 3.7 Sonnet
+  'claude-3-5-sonnet-20241022',    // Claude 3.5 Sonnet
+  'claude-3-5-haiku-20241022'      // Claude 3.5 Haiku
 ]
 ```
 
@@ -314,8 +305,11 @@ models: [
 models: [
   'gpt-5.1',                       // GPT-5.1 - Latest with adaptive reasoning
   'gpt-5.1-thinking',              // GPT-5.1 Thinking - Extended reasoning
+  'gpt-5',                         // GPT-5 - Multimodal foundation model
   'gpt-4o',                        // GPT-4o - Fast multimodal, recommended default
-  'gpt-4o-mini'                    // GPT-4o Mini - Economical
+  'gpt-4o-mini',                   // GPT-4o Mini - Economical
+  'o1',                            // o1 - Advanced reasoning model
+  'o1-mini'                        // o1 Mini - Compact reasoning
 ]
 ```
 
@@ -323,10 +317,12 @@ models: [
 
 ```typescript
 models: [
-  'gemini-3-pro',                  // Gemini 3 Pro - Most intelligent
+  'gemini-3-pro',                  // Gemini 3 Pro - Most intelligent, PhD-level reasoning
+  'gemini-3-pro-preview',          // Gemini 3 Pro Preview - Experimental features
   'gemini-2.0-flash-exp',          // Gemini 2.0 Flash Experimental
   'gemini-2.0-flash',              // Gemini 2.0 Flash - Recommended default
-  'gemini-1.5-pro'                 // Gemini 1.5 Pro - Large context
+  'gemini-1.5-pro',                // Gemini 1.5 Pro - Large context (2M tokens)
+  'gemini-1.5-flash'               // Gemini 1.5 Flash - Fast and economical
 ]
 ```
 
@@ -339,7 +335,7 @@ The production app sends prompts with this structure:
 ```
 1. Universal best practices (theming, accessibility, responsive design)
 2. Design-system-specific considerations (from considerations.ts)
-3. Available components list (225 Mantine components)
+3. Available components list (auto-discovered)
 4. User's request
 5. Conversation history (for iterations)
 6. Previous code (for modifications)
@@ -368,10 +364,9 @@ When issues occur, check in order:
 1. **Console errors** - Browser DevTools Console tab
 2. **Network requests** - Browser DevTools Network tab (look for failed requests)
 3. **Server logs** - Railway deployment logs or local `npm run story-ui` output
-4. **Database connection** - Verify `DATABASE_URL` is set and PostgreSQL is reachable
-5. **API response** - Check if LLM is returning expected format
-6. **CORS headers** - Ensure OPTIONS requests return correct headers
-7. **API keys** - Verify environment variables are set in Railway dashboard
+4. **API response** - Check if LLM is returning expected format
+5. **CORS headers** - Ensure OPTIONS requests return correct headers
+6. **API keys** - Verify environment variables are set in Railway dashboard
 
 ---
 
@@ -386,7 +381,6 @@ When issues occur, check in order:
 ### Short Term
 
 - [ ] SSE streaming for real-time generation feedback
-- [ ] Multi-framework support in production (Vue, Angular)
 - [ ] User authentication for personalized experience
 
 ### Long Term
@@ -413,9 +407,10 @@ See `ROADMAP.md` section "DEFERRED: Visual Builder" for full analysis.
 
 ## Contact & Resources
 
-- **Repository**: Your repository URL
-- **NPM Package**: Your npm package URL
-- **Issues**: Your issues URL
+- **Repository**: https://github.com/tpitre/story-ui
+- **NPM Package**: @tpitre/story-ui
+- **Production Demo**: https://story-ui-demo.up.railway.app
+- **Deployment Repo**: https://github.com/tpitre/story-ui-mantine-live
 
 ---
 
