@@ -110,6 +110,11 @@ class StreamWriter {
         llmCallsCount: this.llmCalls
       }
     };
+    console.log('[Story UI Server DEBUG] sendCompletion called:', {
+      hasCode: !!fullCompletion.code,
+      codeLength: fullCompletion.code?.length,
+      title: fullCompletion.title
+    });
     this.send(createStreamEvent('completion', fullCompletion));
   }
 

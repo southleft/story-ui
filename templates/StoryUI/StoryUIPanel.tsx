@@ -311,16 +311,36 @@ declare global {
 }
 
 // Helper to store generated code for the Source Code panel to display
-const storeGeneratedCode = (title: string, code: string) => {
-  const storyPath = titleToStoryPath(title);
+const storeGeneratedCode = (storyId: string, code: string, title?: string) => {
   const topWindow = window.top || window;
 
   // Store code in the top window so it's accessible from manager frame
   if (!topWindow.__STORY_UI_GENERATED_CODE__) {
     topWindow.__STORY_UI_GENERATED_CODE__ = {};
   }
-  topWindow.__STORY_UI_GENERATED_CODE__[storyPath] = code;
-  console.log(`[Story UI] Stored code for story "${storyPath}" in window cache`);
+
+  // Store with story ID
+  topWindow.__STORY_UI_GENERATED_CODE__[storyId] = code;
+
+  // Also store in localStorage for persistence across page reloads
+  try {
+    const stored = JSON.parse(localStorage.getItem('storyui_generated_code') || '{}');
+    stored[storyId] = code;
+
+    // Also store with the title as key for easier lookup
+    if (title) {
+      const storyPath = titleToStoryPath(title);
+      stored[storyPath] = code;
+      stored[title] = code;
+      stored[title.replace(/\s+/g, '')] = code;
+      topWindow.__STORY_UI_GENERATED_CODE__[storyPath] = code;
+    }
+
+    localStorage.setItem('storyui_generated_code', JSON.stringify(stored));
+    console.log(`[Story UI] Stored code for story "${storyId}" in window cache and localStorage`);
+  } catch (e) {
+    console.warn('[Story UI] Failed to store code in localStorage:', e);
+  }
 };
 
 // Helper to navigate to a newly created story after generation completes
@@ -332,7 +352,7 @@ const navigateToNewStory = (title: string, code?: string, delayMs: number = 1500
 
   // Store the code for the Source Code panel if provided
   if (code) {
-    storeGeneratedCode(title, code);
+    storeGeneratedCode(title, code, title);
   }
 
   setTimeout(() => {
@@ -1398,36 +1418,24 @@ const StreamingProgressMessage: React.FC<{ streamingData: StreamingState }> = ({
     );
   }
 
-  // Show progress
+  // Show progress - simplified to just show status without verbose details
   return (
     <div style={STYLES.streamingContainer}>
-      {/* Intent Preview */}
-      {intent && (
-        <div style={STYLES.intentPreview}>
-          <div style={STYLES.intentTitle}>
-            {intent.requestType === 'modification' ? '✏️' : '✨'}
-            {intent.requestType === 'modification' ? ' Modifying Story' : ' Creating New Story'}
-          </div>
-          <div style={STYLES.intentStrategy}>{intent.strategy}</div>
-          {intent.detectedDesignSystem && (
-            <div style={{ fontSize: '12px', color: '#6b7280' }}>
-              Design system: <strong>{intent.detectedDesignSystem}</strong>
-            </div>
-          )}
-          {intent.estimatedComponents.length > 0 && (
-            <div style={STYLES.intentComponents}>
-              {intent.estimatedComponents.map((comp, i) => (
-                <span key={i} style={STYLES.componentTag}>{comp}</span>
-              ))}
-            </div>
+      {/* Simple progress indicator */}
+      <div style={STYLES.intentPreview}>
+        <div style={STYLES.progressPhase}>
+          <span style={STYLES.phaseIcon}>🤖</span>
+          <span>AI is generating your story...</span>
+          {progress && (
+            <span style={{ marginLeft: 'auto', color: '#9ca3af' }}>
+              {progress.step}/{progress.totalSteps}
+            </span>
           )}
         </div>
-      )}
 
-      {/* Progress Bar */}
-      {progress && (
-        <>
-          <div style={STYLES.progressBar}>
+        {/* Progress Bar */}
+        {progress && (
+          <div style={{ ...STYLES.progressBar, marginTop: '8px' }}>
             <div
               style={{
                 ...STYLES.progressFill,
@@ -1435,30 +1443,13 @@ const StreamingProgressMessage: React.FC<{ streamingData: StreamingState }> = ({
               }}
             />
           </div>
-          <div style={STYLES.progressPhase}>
-            <span style={STYLES.phaseIcon}>{getPhaseInfo(progress.phase).icon}</span>
-            <span>{progress.message || getPhaseInfo(progress.phase).text}</span>
-            <span style={{ marginLeft: 'auto', color: '#9ca3af' }}>
-              {progress.step}/{progress.totalSteps}
-            </span>
-          </div>
-        </>
-      )}
+        )}
+      </div>
 
-      {/* Retry Badge */}
+      {/* Retry Badge - only show if retrying */}
       {retry && (
         <div style={STYLES.retryBadge}>
           🔄 Retry {retry.attempt}/{retry.maxAttempts}: {retry.reason}
-        </div>
-      )}
-
-      {/* Validation Feedback */}
-      {validation && !validation.isValid && (
-        <div style={{ ...STYLES.validationBox, ...STYLES.validationWarning }}>
-          {validation.autoFixApplied ? '🔧 Auto-fixing issues...' : '⚠️ Validation issues found'}
-          {validation.errors.slice(0, 2).map((err, i) => (
-            <div key={i} style={{ marginTop: '4px', fontSize: '11px' }}>• {err}</div>
-          ))}
         </div>
       )}
 
@@ -1942,6 +1933,11 @@ function StoryUIPanel() {
       }
       saveChats(chats);
       setRecentChats(chats);
+
+      // Store code for Source Code panel
+      if (completion.code) {
+        storeGeneratedCode(activeChatId, completion.code, activeTitle || completion.title);
+      }
     } else {
       const chatId = completion.storyId || completion.fileName || Date.now().toString();
       const chatTitle = completion.title || userInput;
@@ -1968,6 +1964,11 @@ function StoryUIPanel() {
       // This prevents the "Couldn't find story after HMR" error by refreshing
       // after the file system has been updated and HMR has processed the change
       navigateToNewStory(chatTitle, completion.code);
+
+      // Store code for Source Code panel
+      if (completion.code) {
+        storeGeneratedCode(chatId, completion.code, chatTitle);
+      }
     }
   }, [activeChatId, activeTitle, conversation.length]);
 
@@ -2158,6 +2159,11 @@ function StoryUIPanel() {
             if (chatIndex !== -1) chats[chatIndex] = updatedSession;
             saveChats(chats);
             setRecentChats(chats);
+
+            // Store code for Source Code panel
+            if (data.code) {
+              storeGeneratedCode(activeChatId, data.code, activeTitle || data.title);
+            }
           } else {
             const chatId = data.storyId || data.fileName || Date.now().toString();
             const chatTitle = data.title || userInput;
@@ -2178,6 +2184,11 @@ function StoryUIPanel() {
 
             // Auto-navigate to the newly created story
             navigateToNewStory(chatTitle, data.code);
+
+            // Store code for Source Code panel
+            if (data.code) {
+              storeGeneratedCode(chatId, data.code, chatTitle);
+            }
           }
         } catch (fallbackErr: unknown) {
           const errorMessage = fallbackErr instanceof Error ? fallbackErr.message : 'Unknown error';
@@ -2223,13 +2234,19 @@ function StoryUIPanel() {
           if (chatIndex !== -1) chats[chatIndex] = updatedSession;
           saveChats(chats);
           setRecentChats(chats);
+
+          // Store code for Source Code panel
+          if (data.code) {
+            storeGeneratedCode(activeChatId, data.code, activeTitle || data.title);
+          }
         } else {
           const chatId = data.storyId || data.fileName || Date.now().toString();
+          const chatTitle = data.title || userInput;
           setActiveChatId(chatId);
-          setActiveTitle(data.title || userInput);
+          setActiveTitle(chatTitle);
           const newSession: ChatSession = {
             id: chatId,
-            title: data.title || userInput,
+            title: chatTitle,
             fileName: data.fileName || '',
             conversation: updatedConversation,
             lastUpdated: Date.now(),
@@ -2239,6 +2256,11 @@ function StoryUIPanel() {
           if (chats.length > MAX_RECENT_CHATS) chats.splice(MAX_RECENT_CHATS);
           saveChats(chats);
           setRecentChats(chats);
+
+          // Store code for Source Code panel
+          if (data.code) {
+            storeGeneratedCode(chatId, data.code, chatTitle);
+          }
         }
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : 'Unknown error';

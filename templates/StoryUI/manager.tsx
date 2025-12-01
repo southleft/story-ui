@@ -20,6 +20,29 @@ const EVENTS = {
   STORY_SELECTED: `${ADDON_ID}/story-selected`,
 };
 
+/**
+ * Get the API base URL for story operations.
+ * Works in both local development and production (Railway).
+ */
+const getApiBaseUrl = (): string => {
+  if (typeof window === 'undefined') return 'http://localhost:4001';
+
+  // Check for Railway production domain - use same-origin requests
+  const hostname = window.location.hostname;
+  if (hostname.includes('.railway.app')) {
+    return '';
+  }
+
+  // Check for window overrides (local development)
+  const windowOverride = (window as any).__STORY_UI_PORT__;
+  if (windowOverride) return `http://localhost:${windowOverride}`;
+
+  const mcpOverride = (window as any).STORY_UI_MCP_PORT;
+  if (mcpOverride) return `http://localhost:${mcpOverride}`;
+
+  return 'http://localhost:4001';
+};
+
 // Extend Window to include generated stories cache
 declare global {
   interface Window {
@@ -394,6 +417,26 @@ const styles = {
     color: '#888',
     marginTop: '4px',
   },
+  deleteButton: {
+    background: 'transparent',
+    color: '#C75050',
+    border: '1px solid #C75050',
+    borderRadius: '4px',
+    padding: '4px 10px',
+    fontSize: '11px',
+    cursor: 'pointer',
+    fontWeight: 500,
+  },
+  deleteButtonHover: {
+    background: '#C75050',
+    color: 'white',
+  },
+  deleteButtonDeleting: {
+    background: '#555',
+    color: '#888',
+    border: '1px solid #555',
+    cursor: 'not-allowed',
+  },
 };
 
 /**
@@ -406,6 +449,8 @@ const SourceCodePanel: React.FC<{ active?: boolean }> = ({ active }) => {
   const [storyTitle, setStoryTitle] = useState<string>('');
   const [copied, setCopied] = useState(false);
   const [showFullCode, setShowFullCode] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteHover, setDeleteHover] = useState(false);
 
   // Get the current story ID
   const currentStoryId = state?.storyId;
@@ -434,6 +479,88 @@ const SourceCodePanel: React.FC<{ active?: boolean }> = ({ active }) => {
   const hasUsageCode = useMemo(() => {
     return sourceCode && usageCode && usageCode !== sourceCode;
   }, [sourceCode, usageCode]);
+
+  // Check if this is a generated story (for showing delete button)
+  const isGeneratedStory = useMemo(() => {
+    return currentStoryId?.includes('generated') || false;
+  }, [currentStoryId]);
+
+  // Extract story file ID from the Storybook story ID
+  // e.g., "generated-simple-test-button--primary" -> "SimpleTestButton"
+  const getStoryFileId = useCallback((storyId: string): string => {
+    // Remove "generated-" prefix and variant suffix
+    const match = storyId.match(/^generated[-\/]?(.+?)(?:--.*)?$/i);
+    if (match) {
+      // Convert kebab-case to PascalCase: "simple-test-button" -> "SimpleTestButton"
+      const words = match[1].split('-');
+      return words.map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join('');
+    }
+    return storyId;
+  }, []);
+
+  // Handle delete story
+  const handleDelete = useCallback(async () => {
+    if (!currentStoryId || !isGeneratedStory || isDeleting) return;
+
+    const confirmed = window.confirm('Delete this generated story? This cannot be undone.');
+    if (!confirmed) return;
+
+    setIsDeleting(true);
+
+    try {
+      const apiBase = getApiBaseUrl();
+      const storyFileId = getStoryFileId(currentStoryId);
+
+      console.log('[Source Code Panel] Deleting story:', { currentStoryId, storyFileId, apiBase });
+
+      // Try the RESTful DELETE endpoint first
+      const response = await fetch(`${apiBase}/story-ui/stories/${storyFileId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (response.ok) {
+        console.log('[Source Code Panel] Story deleted successfully');
+
+        // Clear local cache
+        const topWindow = window.top || window;
+        if (topWindow.__STORY_UI_GENERATED_CODE__) {
+          delete topWindow.__STORY_UI_GENERATED_CODE__[currentStoryId];
+        }
+        if (window.__STORY_UI_GENERATED_CODE__) {
+          delete window.__STORY_UI_GENERATED_CODE__[currentStoryId];
+        }
+
+        // Clear localStorage cache
+        try {
+          const stored = JSON.parse(localStorage.getItem('storyui_generated_code') || '{}');
+          delete stored[storyFileId];
+          delete stored[currentStoryId];
+          localStorage.setItem('storyui_generated_code', JSON.stringify(stored));
+        } catch (e) {
+          console.warn('[Source Code Panel] Failed to clear localStorage:', e);
+        }
+
+        // Clear the source code display
+        setSourceCode('');
+
+        // Navigate to a different story (Story UI Generator default)
+        api.selectStory('story-ui-story-generator--default');
+
+        // Trigger Storybook refresh to update sidebar
+        window.location.reload();
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        console.error('[Source Code Panel] Delete failed:', errorData);
+        alert(`Failed to delete story: ${errorData.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('[Source Code Panel] Delete error:', error);
+      alert('Failed to delete story. Check console for details.');
+    } finally {
+      setIsDeleting(false);
+    }
+  }, [currentStoryId, isGeneratedStory, isDeleting, api, getStoryFileId]);
 
   // Try to get source code from the story
   useEffect(() => {
@@ -668,15 +795,33 @@ const SourceCodePanel: React.FC<{ active?: boolean }> = ({ active }) => {
             </button>
           )}
         </div>
-        <button
-          style={{
-            ...styles.copyButton,
-            background: copied ? '#16825D' : '#0E639C',
-          }}
-          onClick={handleCopy}
-        >
-          {copied ? 'Copied!' : 'Copy'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <button
+            style={{
+              ...styles.copyButton,
+              background: copied ? '#16825D' : '#0E639C',
+            }}
+            onClick={handleCopy}
+          >
+            {copied ? 'Copied!' : 'Copy'}
+          </button>
+          {isGeneratedStory && (
+            <button
+              style={{
+                ...styles.deleteButton,
+                ...(isDeleting ? styles.deleteButtonDeleting : {}),
+                ...(deleteHover && !isDeleting ? styles.deleteButtonHover : {}),
+              }}
+              onClick={handleDelete}
+              onMouseEnter={() => setDeleteHover(true)}
+              onMouseLeave={() => setDeleteHover(false)}
+              disabled={isDeleting}
+              title="Delete this generated story"
+            >
+              {isDeleting ? 'Deleting...' : 'Delete'}
+            </button>
+          )}
+        </div>
       </div>
       <div style={styles.codeContainer}>
         <SyntaxHighlighter code={displayCode} />
