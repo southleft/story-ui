@@ -184,7 +184,103 @@ app.get('/story-ui/frameworks/:type', getFrameworkDetails);
 app.post('/story-ui/frameworks/validate', validateStoryForFramework);
 app.post('/story-ui/frameworks/post-process', postProcessStoryForFramework);
 
-// Delete story from file system
+// List generated stories from file system
+app.get('/story-ui/stories', async (req, res) => {
+  try {
+    const storiesPath = config.generatedStoriesPath;
+    console.log(`📋 Listing stories from: ${storiesPath}`);
+
+    if (!fs.existsSync(storiesPath)) {
+      return res.json({ stories: [] });
+    }
+
+    const files = fs.readdirSync(storiesPath);
+    const stories = files
+      .filter(file => file.endsWith('.stories.tsx'))
+      .map(file => {
+        const filePath = path.join(storiesPath, file);
+        const stats = fs.statSync(filePath);
+        const content = fs.readFileSync(filePath, 'utf-8');
+
+        // Extract title from story file
+        const titleMatch = content.match(/title:\s*['"]([^'"]+)['"]/);
+        const title = titleMatch ? titleMatch[1].replace('Generated/', '') : file.replace('.stories.tsx', '');
+
+        return {
+          id: file.replace('.stories.tsx', ''),
+          fileName: file,
+          title,
+          lastUpdated: stats.mtime.getTime(),
+          code: content
+        };
+      })
+      .sort((a, b) => b.lastUpdated - a.lastUpdated);
+
+    console.log(`✅ Found ${stories.length} stories`);
+    return res.json({ stories });
+  } catch (error) {
+    console.error('Error listing stories:', error);
+    return res.status(500).json({ error: 'Failed to list stories' });
+  }
+});
+
+// Save story to file system
+app.post('/story-ui/stories', async (req, res) => {
+  try {
+    const { id, title, code } = req.body;
+
+    if (!id || !code) {
+      return res.status(400).json({ error: 'id and code are required' });
+    }
+
+    const storiesPath = config.generatedStoriesPath;
+
+    // Ensure stories directory exists
+    if (!fs.existsSync(storiesPath)) {
+      fs.mkdirSync(storiesPath, { recursive: true });
+    }
+
+    const fileName = `${id}.stories.tsx`;
+    const filePath = path.join(storiesPath, fileName);
+
+    fs.writeFileSync(filePath, code, 'utf-8');
+    console.log(`✅ Saved story: ${filePath}`);
+
+    return res.json({
+      success: true,
+      id,
+      fileName,
+      title
+    });
+  } catch (error) {
+    console.error('Error saving story:', error);
+    return res.status(500).json({ error: 'Failed to save story' });
+  }
+});
+
+// Delete story by ID (RESTful endpoint)
+app.delete('/story-ui/stories/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const storiesPath = config.generatedStoriesPath;
+
+    const fileName = id.endsWith('.stories.tsx') ? id : `${id}.stories.tsx`;
+    const filePath = path.join(storiesPath, fileName);
+
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+      console.log(`✅ Deleted story: ${filePath}`);
+      return res.json({ success: true, message: 'Story deleted successfully' });
+    }
+
+    return res.status(404).json({ success: false, error: 'Story not found' });
+  } catch (error) {
+    console.error('Error deleting story:', error);
+    return res.status(500).json({ error: 'Failed to delete story' });
+  }
+});
+
+// Delete story from file system (legacy POST endpoint)
 app.post('/story-ui/delete', async (req, res) => {
   try {
     const { chatId, storyId } = req.body;
