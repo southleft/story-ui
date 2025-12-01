@@ -1,3 +1,10 @@
+## [3.4.3](https://github.com/southleft/story-ui/compare/v3.4.2...v3.4.3) (2025-12-01)
+
+
+### Bug Fixes
+
+* use base64 data URL for attached image thumbnails in chat history ([c3ccdc4](https://github.com/southleft/story-ui/commit/c3ccdc4d7e77578bf2c4c3fed99856cd29c96bb5))
+
 ## [3.4.2](https://github.com/southleft/story-ui/compare/v3.4.1...v3.4.2) (2025-12-01)
 
 
