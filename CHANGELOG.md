@@ -1,3 +1,10 @@
+# [3.6.0](https://github.com/southleft/story-ui/compare/v3.5.1...v3.6.0) (2025-12-01)
+
+
+### Features
+
+* add delete button for generated stories in Source Code panel ([e0e6b4a](https://github.com/southleft/story-ui/commit/e0e6b4a79cfc39c9b0bf76ef571117d268394ce8))
+
 ## [3.5.1](https://github.com/southleft/story-ui/compare/v3.5.0...v3.5.1) (2025-12-01)
 
 
