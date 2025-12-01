@@ -1,3 +1,10 @@
+## [3.5.1](https://github.com/southleft/story-ui/compare/v3.5.0...v3.5.1) (2025-12-01)
+
+
+### Bug Fixes
+
+* convert object-style props to proper JSX attribute syntax in Source Code panel ([7734fad](https://github.com/southleft/story-ui/commit/7734fad1b50927bc4875137b636f4bef7585bc8c))
+
 # [3.5.0](https://github.com/southleft/story-ui/compare/v3.4.3...v3.5.0) (2025-12-01)
 
 
