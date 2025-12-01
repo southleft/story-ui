@@ -38,7 +38,101 @@ declare global {
  * Into:
  *   <Button>Click</Button>
  */
-const extractUsageCode = (fullStoryCode: string): string => {
+const extractUsageCode = (fullStoryCode: string, variantName?: string): string => {
+  // Helper function to generate JSX from args
+  const generateJsxFromArgs = (argsStr: string, componentName: string): string | null => {
+    try {
+      // Extract children if present
+      const childrenMatch = argsStr.match(/children:\s*['"`]([^'"`]+)['"`]/);
+      const children = childrenMatch ? childrenMatch[1] : '';
+
+      // Extract other props (simplified)
+      const propsStr = argsStr
+        .replace(/children:\s*['"`][^'"`]*['"`],?/, '') // Remove children
+        .replace(/^\{|\}$/g, '') // Remove braces
+        .trim();
+
+      if (children) {
+        if (propsStr) {
+          return `<${componentName} ${propsStr.replace(/,\s*$/, '')}>${children}</${componentName}>`;
+        }
+        return `<${componentName}>${children}</${componentName}>`;
+      } else if (propsStr) {
+        return `<${componentName} ${propsStr.replace(/,\s*$/, '')} />`;
+      }
+      return `<${componentName} />`;
+    } catch {
+      return null;
+    }
+  };
+
+  // Get the component name from meta
+  const componentMatch = fullStoryCode.match(/component:\s*([A-Z][A-Za-z0-9]*)/);
+  const componentName = componentMatch ? componentMatch[1] : null;
+
+  // If we have a variant name, try to find that specific variant's args or render
+  if (variantName) {
+    // Normalize variant name for matching:
+    // - "primary" -> "Primary"
+    // - "full-width" -> "FullWidth" (kebab-case to PascalCase)
+    const normalizedVariant = variantName
+      .split('-')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join('');
+
+    // Pattern A: export const Primary: Story = { args: {...} }
+    // Match the specific variant's export block
+    const variantExportRegex = new RegExp(
+      `export\\s+const\\s+${normalizedVariant}\\s*(?::\\s*Story)?\\s*=\\s*\\{([\\s\\S]*?)\\}\\s*;`,
+      'i'
+    );
+    const variantExportMatch = fullStoryCode.match(variantExportRegex);
+
+    if (variantExportMatch) {
+      const variantBlock = variantExportMatch[1];
+
+      // Try to extract render function from this variant
+      const renderWithParensMatch = variantBlock.match(/render:\s*\([^)]*\)\s*=>\s*\(\s*([\s\S]*?)\s*\)\s*[,}]/);
+      if (renderWithParensMatch) {
+        return renderWithParensMatch[1].trim().replace(/,\s*$/, '');
+      }
+
+      const renderNoParensMatch = variantBlock.match(/render:\s*\([^)]*\)\s*=>\s*(<[A-Z][^,}]*(?:\/>|<\/[A-Za-z.]+>))/s);
+      if (renderNoParensMatch) {
+        return renderNoParensMatch[1].trim();
+      }
+
+      // Try to extract args from this variant
+      const argsMatch = variantBlock.match(/args:\s*(\{[\s\S]*?\})\s*[,}]/);
+      if (argsMatch && componentName) {
+        const result = generateJsxFromArgs(argsMatch[1], componentName);
+        if (result) return result;
+      }
+    }
+
+    // Pattern B: Arrow function variant: export const Primary = () => <Component...>
+    const arrowVariantRegex = new RegExp(
+      `export\\s+const\\s+${normalizedVariant}\\s*=\\s*\\(\\)\\s*=>\\s*\\(\\s*([\\s\\S]*?)\\s*\\)\\s*;`,
+      'i'
+    );
+    const arrowVariantMatch = fullStoryCode.match(arrowVariantRegex);
+    if (arrowVariantMatch) {
+      return arrowVariantMatch[1].trim().replace(/,\s*$/, '');
+    }
+
+    // Pattern C: Arrow function without parens: export const Primary = () => <Component...>;
+    const arrowNoParensRegex = new RegExp(
+      `export\\s+const\\s+${normalizedVariant}\\s*=\\s*\\(\\)\\s*=>\\s*(<[A-Z][^;]*(?:\\/>|<\\/[A-Za-z.]+>))\\s*;`,
+      'is'
+    );
+    const arrowNoParensMatch = fullStoryCode.match(arrowNoParensRegex);
+    if (arrowNoParensMatch) {
+      return arrowNoParensMatch[1].trim();
+    }
+  }
+
+  // Fallback: Try generic patterns (for Default or when variant not specified)
+
   // Try to extract JSX from render function: render: () => (<JSX>) or render: () => <JSX>
   // Pattern 1: render: () => (\n  <Component...>\n)
   const renderWithParensMatch = fullStoryCode.match(/render:\s*\([^)]*\)\s*=>\s*\(\s*([\s\S]*?)\s*\)\s*[,}]/);
@@ -70,37 +164,9 @@ const extractUsageCode = (fullStoryCode: string): string => {
   // Pattern 5: Look for args-based stories with component prop spreading
   // e.g., args: { children: 'Click me', color: 'blue' }
   const argsMatch = fullStoryCode.match(/args:\s*(\{[\s\S]*?\})\s*[,}]/);
-  if (argsMatch) {
-    // Try to find the component from the meta
-    const componentMatch = fullStoryCode.match(/component:\s*([A-Z][A-Za-z0-9]*)/);
-    if (componentMatch) {
-      const componentName = componentMatch[1];
-      try {
-        // Parse the args to generate JSX
-        const argsStr = argsMatch[1];
-        // Extract children if present
-        const childrenMatch = argsStr.match(/children:\s*['"`]([^'"`]+)['"`]/);
-        const children = childrenMatch ? childrenMatch[1] : '';
-
-        // Extract other props (simplified)
-        const propsStr = argsStr
-          .replace(/children:\s*['"`][^'"`]*['"`],?/, '') // Remove children
-          .replace(/^\{|\}$/g, '') // Remove braces
-          .trim();
-
-        if (children) {
-          if (propsStr) {
-            return `<${componentName} ${propsStr.replace(/,\s*$/, '')}>${children}</${componentName}>`;
-          }
-          return `<${componentName}>${children}</${componentName}>`;
-        } else if (propsStr) {
-          return `<${componentName} ${propsStr.replace(/,\s*$/, '')} />`;
-        }
-        return `<${componentName} />`;
-      } catch {
-        // Fall through to return full code
-      }
-    }
+  if (argsMatch && componentName) {
+    const result = generateJsxFromArgs(argsMatch[1], componentName);
+    if (result) return result;
   }
 
   // Pattern 6: Look for any JSX block starting with < and ending with /> or </Component>
@@ -297,14 +363,33 @@ const SourceCodePanel: React.FC<{ active?: boolean }> = ({ active }) => {
   const [copied, setCopied] = useState(false);
   const [showFullCode, setShowFullCode] = useState(false);
 
-  // Memoize the usage code extraction
-  const displayCode = useMemo(() => {
-    if (!sourceCode) return '';
-    return showFullCode ? sourceCode : extractUsageCode(sourceCode);
-  }, [sourceCode, showFullCode]);
-
   // Get the current story ID
   const currentStoryId = state?.storyId;
+
+  // Extract variant name from story ID (e.g., "generated-button--primary" -> "primary", "generated-button--full-width" -> "full-width")
+  const currentVariant = useMemo(() => {
+    if (!currentStoryId) return undefined;
+    // Match everything after the last -- (variant can contain hyphens like "full-width")
+    const variantMatch = currentStoryId.match(/--([a-z0-9-]+)$/i);
+    return variantMatch ? variantMatch[1] : undefined;
+  }, [currentStoryId]);
+
+  // Memoize the usage code extraction with variant awareness
+  const usageCode = useMemo(() => {
+    if (!sourceCode) return '';
+    return extractUsageCode(sourceCode, currentVariant);
+  }, [sourceCode, currentVariant]);
+
+  const displayCode = useMemo(() => {
+    if (!sourceCode) return '';
+    return showFullCode ? sourceCode : usageCode;
+  }, [sourceCode, showFullCode, usageCode]);
+
+  // Check if there's different usage code (for showing toggle button)
+  // This should remain true even when showing full code
+  const hasUsageCode = useMemo(() => {
+    return sourceCode && usageCode && usageCode !== sourceCode;
+  }, [sourceCode, usageCode]);
 
   // Try to get source code from the story
   useEffect(() => {
@@ -340,11 +425,81 @@ const SourceCodePanel: React.FC<{ active?: boolean }> = ({ active }) => {
       let cachedCode = topWindow.__STORY_UI_GENERATED_CODE__?.[currentStoryId] ||
                         window.__STORY_UI_GENERATED_CODE__?.[currentStoryId];
 
+      console.log('[Source Code Panel DEBUG] Looking for code:', {
+        currentStoryId,
+        foundInWindowCache: !!cachedCode,
+        windowCacheKeys: Object.keys(topWindow.__STORY_UI_GENERATED_CODE__ || {}),
+      });
+
       // If not in memory cache, check localStorage (survives page navigation)
       if (!cachedCode) {
         try {
           const stored = JSON.parse(localStorage.getItem('storyui_generated_code') || '{}');
-          cachedCode = stored[currentStoryId];
+
+          console.log('[Source Code Panel DEBUG] localStorage lookup:', {
+            localStorageKeys: Object.keys(stored),
+            localStorageKeyCount: Object.keys(stored).length,
+          });
+
+          // Try multiple key formats since Storybook IDs differ from our storage keys
+          // Storybook ID format: "generated-componentname--variant" or "generated/componentname--variant"
+          // Our storage keys: "ComponentName", "ComponentName.stories.tsx", "story-hash123", etc.
+          const keysToTry: string[] = [currentStoryId];
+
+          // Extract component name and base story ID from Storybook ID
+          // e.g., "generated-simple-test-button--primary" -> baseId: "generated-simple-test-button--default", component: "simpletestbutton"
+          const match = currentStoryId.match(/^(generated[-\/]?.+?)(?:--(.*))?$/i);
+          if (match) {
+            const baseId = match[1];
+            const variant = match[2];
+
+            // Try base story ID with --default variant (this is what we store)
+            if (variant && variant !== 'default') {
+              keysToTry.push(`${baseId}--default`);
+            }
+            // Also try just the base ID without any variant
+            keysToTry.push(baseId);
+
+            // Extract component name (e.g., "generated-simple-test-button" -> "simpletestbutton")
+            const componentMatch = baseId.match(/^generated[-\/]?(.+)$/i);
+            if (componentMatch) {
+              const componentNameLower = componentMatch[1].replace(/-/g, '');
+              keysToTry.push(componentNameLower);
+              // Try PascalCase version (e.g., "simpletestbutton" -> "Simpletestbutton")
+              const pascalCase = componentNameLower.charAt(0).toUpperCase() + componentNameLower.slice(1);
+              keysToTry.push(pascalCase);
+              keysToTry.push(`${pascalCase}.stories.tsx`);
+
+              // Try with spaces converted to title case (e.g., "Simple Test Button" -> "SimpleTestButton")
+              const words = componentMatch[1].split('-');
+              if (words.length > 1) {
+                const titleCase = words.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join('');
+                keysToTry.push(titleCase);
+                // Also try with space-separated title (what we store)
+                const spacedTitle = words.map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+                keysToTry.push(spacedTitle);
+              }
+            }
+          }
+
+          // Also try the story title if available
+          if (storyTitle) {
+            keysToTry.push(storyTitle);
+            keysToTry.push(storyTitle.replace(/\s+/g, ''));
+            keysToTry.push(`${storyTitle.replace(/\s+/g, '')}.stories.tsx`);
+          }
+
+          console.log('[Source Code Panel DEBUG] trying keys:', keysToTry);
+
+          // Try each key format
+          for (const key of keysToTry) {
+            if (stored[key]) {
+              cachedCode = stored[key];
+              console.log('[Source Code Panel DEBUG] found code with key:', key, 'codeLength:', cachedCode?.length);
+              break;
+            }
+          }
+
           // Restore to memory cache if found
           if (cachedCode) {
             if (!topWindow.__STORY_UI_GENERATED_CODE__) {
@@ -356,6 +511,11 @@ const SourceCodePanel: React.FC<{ active?: boolean }> = ({ active }) => {
           console.warn('[Story UI] Failed to read from localStorage:', e);
         }
       }
+
+      console.log('[Source Code Panel DEBUG] final result:', {
+        foundCode: !!cachedCode,
+        codeLength: cachedCode?.length,
+      });
 
       if (cachedCode) {
         setSourceCode(cachedCode);
@@ -440,9 +600,6 @@ const SourceCodePanel: React.FC<{ active?: boolean }> = ({ active }) => {
       </div>
     );
   }
-
-  // Check if extraction was successful (displayCode is different from sourceCode)
-  const hasUsageCode = displayCode !== sourceCode;
 
   return (
     <div style={styles.container}>
