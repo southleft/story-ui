@@ -291,12 +291,37 @@ const titleToStoryPath = (title: string): string => {
   return `generated-${kebabTitle}--default`;
 };
 
+// Extend window to include our code cache for the Source Code panel
+declare global {
+  interface Window {
+    __STORY_UI_GENERATED_CODE__?: Record<string, string>;
+  }
+}
+
+// Helper to store generated code for the Source Code panel to display
+const storeGeneratedCode = (title: string, code: string) => {
+  const storyPath = titleToStoryPath(title);
+  const topWindow = window.top || window;
+
+  // Store code in the top window so it's accessible from manager frame
+  if (!topWindow.__STORY_UI_GENERATED_CODE__) {
+    topWindow.__STORY_UI_GENERATED_CODE__ = {};
+  }
+  topWindow.__STORY_UI_GENERATED_CODE__[storyPath] = code;
+  console.log(`[Story UI] Stored code for story "${storyPath}" in window cache`);
+};
+
 // Helper to navigate to a newly created story after generation completes
 // In dev mode with HMR, this prevents the "Couldn't find story after HMR" error
 // In all modes, this provides a better UX by auto-navigating to the new story
-const navigateToNewStory = (title: string, delayMs: number = 4000) => {
+const navigateToNewStory = (title: string, code?: string, delayMs: number = 1500) => {
   const storyPath = titleToStoryPath(title);
   console.log(`[Story UI] Will navigate to story "${storyPath}" in ${delayMs}ms...`);
+
+  // Store the code for the Source Code panel if provided
+  if (code) {
+    storeGeneratedCode(title, code);
+  }
 
   setTimeout(() => {
     // Navigate the TOP window (parent Storybook UI), not the iframe
@@ -1927,7 +1952,7 @@ function StoryUIPanel() {
       // Auto-navigate to the newly created story after HMR processes the file
       // This prevents the "Couldn't find story after HMR" error by refreshing
       // after the file system has been updated and HMR has processed the change
-      navigateToNewStory(chatTitle);
+      navigateToNewStory(chatTitle, completion.code);
     }
   }, [activeChatId, activeTitle, conversation.length]);
 
@@ -2137,7 +2162,7 @@ function StoryUIPanel() {
             setRecentChats(chats);
 
             // Auto-navigate to the newly created story
-            navigateToNewStory(chatTitle);
+            navigateToNewStory(chatTitle, data.code);
           }
         } catch (fallbackErr: unknown) {
           const errorMessage = fallbackErr instanceof Error ? fallbackErr.message : 'Unknown error';
