@@ -32,11 +32,16 @@ yarn-error.log*
 # Personal Development & Testing Infrastructure
 dev-testing/
 dev-docs/
-test-storybooks/
-# But allow essential config files for proper TypeScript/Storybook setup
-!test-storybooks/*/tsconfig.json
-!test-storybooks/*/.storybook/
-!test-storybooks/*/package.json
+# Ignore test-storybooks content except essential config files
+# Note: We track .storybook/, vite.config.ts, tsconfig.json, package.json
+test-storybooks/**/node_modules/
+test-storybooks/**/dist/
+test-storybooks/**/src/
+test-storybooks/**/*.log
+test-storybooks/**/storybook-static/
+test-storybooks/**/.story-ui-build/
+test-storybooks/**/.story-ui-cache/
+test-storybooks/**/.story-ui-history/
 
 *storybook.log
 storybook-static
