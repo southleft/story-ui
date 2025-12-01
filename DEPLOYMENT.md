@@ -120,11 +120,45 @@ export default {
 
 ### Persistence Strategy
 
-For production deployments, stories persist through:
+For production deployments, stories persist through **Railway Volumes**:
 
-1. **Git Commits**: Generated stories are real `.stories.tsx` files that can be committed
-2. **Volume Mounts**: Configure persistent storage in Railway for non-git persistence
-3. **Re-generation**: Stories can be regenerated from saved prompts if needed
+#### Local vs Production Separation
+
+- **Local environment**: Stories written to `./src/stories/generated/` (gitignored)
+- **Production**: Stories written to Railway Volume mounted at `/app/src/stories/generated`
+- **No conflicts**: Local stories never get committed, production stories persist independently
+
+#### Setting Up Railway Volumes (Recommended)
+
+Railway Volumes provide persistent storage that survives deployments. This requires the **Hobby plan** ($5/month).
+
+**Step 1: Open Railway Dashboard**
+1. Go to [railway.app/dashboard](https://railway.app/dashboard)
+2. Select your project (e.g., `story-ui-mantine-live`)
+
+**Step 2: Create Volume**
+1. Press `⌘K` (or `Ctrl+K`) to open command palette
+2. Type "Create Volume" and select it
+3. Configure the volume:
+   - **Name**: `generated-stories`
+   - **Mount Path**: `/app/src/stories/generated`
+   - **Size**: Start with 1GB (can expand later)
+
+**Step 3: Connect to Service**
+1. Click on your service in the project
+2. Go to the "Volumes" tab
+3. Attach the `generated-stories` volume
+
+**Step 4: Redeploy**
+1. Trigger a redeploy from the Railway dashboard
+2. The volume will be mounted at runtime
+
+> **Note**: Volumes are NOT mounted during build time, only at runtime. This is expected behavior.
+
+#### Alternative Persistence Options
+
+1. **Git Commits**: Commit generated stories to your repository (not recommended for production deployments)
+2. **Re-generation**: Stories can be regenerated from saved prompts if needed
 
 ---
 
@@ -195,11 +229,12 @@ Should return available LLM providers:
 
 ### Stories Not Persisting
 
-**Cause**: Railway containers are ephemeral
+**Cause**: Railway containers are ephemeral by default
 **Fix**:
-1. Commit generated stories to your git repository
-2. Or configure a persistent volume in Railway
-3. Stories are automatically re-discovered on restart if files exist
+1. Set up a Railway Volume (see "Setting Up Railway Volumes" above)
+2. Mount the volume at `/app/src/stories/generated`
+3. Stories will persist across deployments automatically
+4. Requires Hobby plan ($5/month) for volume support
 
 ---
 
