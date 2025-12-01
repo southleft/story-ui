@@ -284,6 +284,30 @@ const isEdgeMode = () => {
          baseUrl.startsWith('https://') && !baseUrl.includes('localhost');
 };
 
+// Helper to convert story title to Storybook URL format
+// e.g., "Simple Card With Image" -> "generated-simple-card-with-image--default"
+const titleToStoryPath = (title: string): string => {
+  const kebabTitle = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return `generated-${kebabTitle}--default`;
+};
+
+// Helper to navigate to a newly created story after generation completes
+// In dev mode with HMR, this prevents the "Couldn't find story after HMR" error
+// In all modes, this provides a better UX by auto-navigating to the new story
+const navigateToNewStory = (title: string, delayMs: number = 4000) => {
+  const storyPath = titleToStoryPath(title);
+  console.log(`[Story UI] Will navigate to story "${storyPath}" in ${delayMs}ms...`);
+
+  setTimeout(() => {
+    // Navigate the TOP window (parent Storybook UI), not the iframe
+    // The Story UI panel runs inside an iframe, so we need window.top to escape it
+    const topWindow = window.top || window;
+    const newUrl = `${topWindow.location.origin}/?path=/story/${storyPath}`;
+    console.log(`[Story UI] Navigating parent window to: ${newUrl}`);
+    topWindow.location.href = newUrl;
+  }, delayMs);
+};
+
 // Legacy helper for backwards compatibility
 const getApiPort = () => {
   const baseUrl = getApiBaseUrl();
@@ -1899,6 +1923,11 @@ function StoryUIPanel() {
       }
       saveChats(chats);
       setRecentChats(chats);
+
+      // Auto-navigate to the newly created story after HMR processes the file
+      // This prevents the "Couldn't find story after HMR" error by refreshing
+      // after the file system has been updated and HMR has processed the change
+      navigateToNewStory(chatTitle);
     }
   }, [activeChatId, activeTitle, conversation.length]);
 
@@ -2091,11 +2120,12 @@ function StoryUIPanel() {
             setRecentChats(chats);
           } else {
             const chatId = data.storyId || data.fileName || Date.now().toString();
+            const chatTitle = data.title || userInput;
             setActiveChatId(chatId);
-            setActiveTitle(data.title || userInput);
+            setActiveTitle(chatTitle);
             const newSession: ChatSession = {
               id: chatId,
-              title: data.title || userInput,
+              title: chatTitle,
               fileName: data.fileName || '',
               conversation: updatedConversation,
               lastUpdated: Date.now(),
@@ -2105,6 +2135,9 @@ function StoryUIPanel() {
             if (chats.length > MAX_RECENT_CHATS) chats.splice(MAX_RECENT_CHATS);
             saveChats(chats);
             setRecentChats(chats);
+
+            // Auto-navigate to the newly created story
+            navigateToNewStory(chatTitle);
           }
         } catch (fallbackErr: unknown) {
           const errorMessage = fallbackErr instanceof Error ? fallbackErr.message : 'Unknown error';
