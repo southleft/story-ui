@@ -1,3 +1,10 @@
+# [3.2.0](https://github.com/southleft/story-ui/compare/v3.1.0...v3.2.0) (2025-12-01)
+
+
+### Features
+
+* add PostgreSQL persistence and remove Cloudflare Edge deployment ([34de0a6](https://github.com/southleft/story-ui/commit/34de0a63c66b8755d2e2260edc75347178ec9f3f))
+
 # [3.1.0](https://github.com/southleft/story-ui/compare/v3.0.0...v3.1.0) (2025-12-01)
 
 
