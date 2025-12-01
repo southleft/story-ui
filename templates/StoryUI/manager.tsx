@@ -39,6 +39,47 @@ declare global {
  *   <Button>Click</Button>
  */
 const extractUsageCode = (fullStoryCode: string, variantName?: string): string => {
+  // Helper function to convert object-style props to JSX attribute syntax
+  // e.g., "color: 'blue', variant: 'filled'" -> 'color="blue" variant="filled"'
+  const convertToJsxAttributes = (propsStr: string): string => {
+    if (!propsStr.trim()) return '';
+
+    const attributes: string[] = [];
+    // Match key: value pairs, handling strings, booleans, numbers, and expressions
+    // Pattern: key: 'value' or key: "value" or key: true/false or key: 123 or key: expression
+    const propRegex = /(\w+)\s*:\s*(?:'([^']*)'|"([^"]*)"|(\btrue\b|\bfalse\b)|(\d+(?:\.\d+)?)|(\{[^}]+\})|([^,}\s]+))/g;
+
+    let match;
+    while ((match = propRegex.exec(propsStr)) !== null) {
+      const key = match[1];
+      const stringValueSingle = match[2]; // 'value'
+      const stringValueDouble = match[3]; // "value"
+      const boolValue = match[4]; // true/false
+      const numValue = match[5]; // 123 or 1.5
+      const objValue = match[6]; // {expression}
+      const otherValue = match[7]; // other expressions
+
+      if (stringValueSingle !== undefined) {
+        attributes.push(`${key}="${stringValueSingle}"`);
+      } else if (stringValueDouble !== undefined) {
+        attributes.push(`${key}="${stringValueDouble}"`);
+      } else if (boolValue !== undefined) {
+        if (boolValue === 'true') {
+          attributes.push(key); // Just the prop name for true (e.g., fullWidth)
+        }
+        // Skip false values - they're the default and don't need to be shown
+      } else if (numValue !== undefined) {
+        attributes.push(`${key}={${numValue}}`);
+      } else if (objValue !== undefined) {
+        attributes.push(`${key}=${objValue}`);
+      } else if (otherValue !== undefined) {
+        attributes.push(`${key}={${otherValue}}`);
+      }
+    }
+
+    return attributes.join(' ');
+  };
+
   // Helper function to generate JSX from args
   const generateJsxFromArgs = (argsStr: string, componentName: string): string | null => {
     try {
@@ -46,19 +87,22 @@ const extractUsageCode = (fullStoryCode: string, variantName?: string): string =
       const childrenMatch = argsStr.match(/children:\s*['"`]([^'"`]+)['"`]/);
       const children = childrenMatch ? childrenMatch[1] : '';
 
-      // Extract other props (simplified)
+      // Extract other props (remove children first)
       const propsStr = argsStr
         .replace(/children:\s*['"`][^'"`]*['"`],?/, '') // Remove children
         .replace(/^\{|\}$/g, '') // Remove braces
         .trim();
 
+      // Convert to JSX attribute syntax
+      const jsxAttributes = convertToJsxAttributes(propsStr);
+
       if (children) {
-        if (propsStr) {
-          return `<${componentName} ${propsStr.replace(/,\s*$/, '')}>${children}</${componentName}>`;
+        if (jsxAttributes) {
+          return `<${componentName} ${jsxAttributes}>${children}</${componentName}>`;
         }
         return `<${componentName}>${children}</${componentName}>`;
-      } else if (propsStr) {
-        return `<${componentName} ${propsStr.replace(/,\s*$/, '')} />`;
+      } else if (jsxAttributes) {
+        return `<${componentName} ${jsxAttributes} />`;
       }
       return `<${componentName} />`;
     } catch {
