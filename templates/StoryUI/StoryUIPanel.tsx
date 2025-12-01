@@ -138,6 +138,7 @@ interface AttachedImage {
   file: File;
   preview: string;
   base64?: string;
+  mediaType?: string; // Store MIME type for data URL reconstruction after localStorage restore
 }
 
 // Provider info from /story-ui/providers API
@@ -1544,6 +1545,7 @@ function StoryUIPanel() {
           file,
           preview,
           base64,
+          mediaType: file.type || 'image/png',
         });
       } catch (err) {
         errors.push(`${file.name}: Failed to process`);
@@ -1638,6 +1640,7 @@ function StoryUIPanel() {
           file,
           preview,
           base64,
+          mediaType: file.type || 'image/png',
         });
       } catch (err) {
         errors.push(`${file.name}: Failed to process`);
@@ -1703,6 +1706,7 @@ function StoryUIPanel() {
           file: renamedFile,
           preview,
           base64,
+          mediaType: file.type || 'image/png',
         });
       } catch (err) {
         errors.push('Failed to process pasted image');
@@ -2548,7 +2552,9 @@ function StoryUIPanel() {
                     {msg.attachedImages.map((img) => (
                       <img
                         key={img.id}
-                        src={img.preview}
+                        src={img.base64
+                          ? `data:${img.mediaType || 'image/png'};base64,${img.base64}`
+                          : img.preview}
                         alt="attached"
                         style={STYLES.userMessageImage}
                       />
