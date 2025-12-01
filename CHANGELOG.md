@@ -1,3 +1,10 @@
+# [3.5.0](https://github.com/southleft/story-ui/compare/v3.4.3...v3.5.0) (2025-12-01)
+
+
+### Features
+
+* add variant-specific usage code in Source Code panel ([db7d380](https://github.com/southleft/story-ui/commit/db7d38005a7b49e8ffb8cda9bf6c44193ac28596))
+
 ## [3.4.3](https://github.com/southleft/story-ui/compare/v3.4.2...v3.4.3) (2025-12-01)
 
 
