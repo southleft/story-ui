@@ -15,30 +15,6 @@ import { getComponents, getProps } from './routes/components.js';
 import { claudeProxy } from './routes/claude.js';
 import { generateStoryFromPrompt } from './routes/generateStory.js';
 import { generateStoryFromPromptStream } from './routes/generateStoryStream.js';
-import {
-  getStoriesMetadata,
-  getStoryById as getMemoryStoryById,
-  getStoryContent as getMemoryStoryContent,
-  deleteStory as deleteMemoryStory,
-  clearAllStories,
-  getMemoryStats
-} from './routes/memoryStories.js';
-import {
-  getAllStories,
-  getStoryById,
-  getStoryContent,
-  deleteStory
-} from './routes/hybridStories.js';
-import {
-  getSyncedStories,
-  deleteSyncedStory,
-  clearAllSyncedStories,
-  syncChatHistory,
-  validateChatSession,
-  getSyncedStoryById
-} from './routes/storySync.js';
-import { setupProductionGitignore, ProductionGitignoreManager } from '../story-generator/productionGitignoreManager.js';
-import { getStoryService, getStorageType } from '../story-generator/storyServiceFactory.js';
 import { loadUserConfig } from '../story-generator/configLoader.js';
 import { loadConsiderations, considerationsToPrompt } from '../story-generator/considerationsLoader.js';
 import { DocumentationLoader } from '../story-generator/documentationLoader.js';
@@ -130,34 +106,15 @@ app.get('/mcp/frameworks/:type', getFrameworkDetails);
 app.post('/mcp/frameworks/validate', validateStoryForFramework);
 app.post('/mcp/frameworks/post-process', postProcessStoryForFramework);
 
-// Hybrid story management routes (works in both dev and production)
-app.get('/mcp/stories', getAllStories);
-app.get('/mcp/stories/:id', getStoryById);
-app.get('/mcp/stories/:id/content', getStoryContent);
-app.delete('/mcp/stories/:id', deleteStory);
-app.delete('/mcp/stories', clearAllStories);
-app.get('/mcp/memory-stats', getMemoryStats);
-
-// Synchronized story management routes (works in both dev and production)
-app.get('/mcp/sync/stories', getSyncedStories);
-app.get('/mcp/sync/stories/:id', getSyncedStoryById);
-app.delete('/mcp/sync/stories/:id', deleteSyncedStory);
-app.delete('/mcp/sync/stories', clearAllSyncedStories);
-app.get('/mcp/sync/chat-history', syncChatHistory);
-app.get('/mcp/sync/validate/:id', validateChatSession);
+// File-based story routes - stories are generated as .stories.tsx files
+// Storybook discovers these automatically via its native file system watching
 
 // Proxy routes for frontend compatibility (maps /story-ui/ to /mcp/)
-app.get('/story-ui/stories', getAllStories);
-app.get('/story-ui/stories/:id', getStoryById);
-app.get('/story-ui/stories/:id/content', getStoryContent);
-app.delete('/story-ui/stories/:id', deleteStory);
-app.delete('/story-ui/stories', clearAllStories);
 app.post('/story-ui/generate', generateStoryFromPrompt);
 app.post('/story-ui/generate-stream', generateStoryFromPromptStream);
 app.post('/story-ui/claude', claudeProxy);
 app.get('/story-ui/components', getComponents);
 app.get('/story-ui/props', getProps);
-app.get('/story-ui/memory-stats', getMemoryStats);
 
 // Design system considerations endpoint - serves considerations for environment parity
 app.get('/story-ui/considerations', async (req, res) => {
@@ -226,71 +183,48 @@ app.get('/story-ui/frameworks/:type', getFrameworkDetails);
 app.post('/story-ui/frameworks/validate', validateStoryForFramework);
 app.post('/story-ui/frameworks/post-process', postProcessStoryForFramework);
 
-// Legacy delete route for backwards compatibility
+// Delete story from file system
 app.post('/story-ui/delete', async (req, res) => {
   try {
     const { chatId, storyId } = req.body;
-    const id = chatId || storyId; // Support both parameter names
-    
+    const id = chatId || storyId;
+
     if (!id) {
       return res.status(400).json({ error: 'chatId or storyId is required' });
     }
-    
-    console.log(`🗑️ Attempting to delete story: ${id}`);
-    
-    // First try storage service deletion (production mode)
-    const storyService = await getStoryService(config);
-    const serviceDeleted = await storyService.deleteStory(id);
 
-    if (serviceDeleted) {
-      console.log(`✅ Deleted story from ${getStorageType()}: ${id}`);
-      return res.json({
-        success: true,
-        message: `Story deleted successfully from ${getStorageType()}`
-      });
-    }
-    
-    // If not found in memory, try file-system deletion (development mode)
-    if (gitignoreManager && !gitignoreManager.isProductionMode()) {
-      const storiesPath = config.generatedStoriesPath;
-      console.log(`🔍 Searching for file-system story in: ${storiesPath}`);
-      
-      if (fs.existsSync(storiesPath)) {
-        const files = fs.readdirSync(storiesPath);
-        const matchingFile = files.find(file => 
-          file.includes(id) || file.replace('.stories.tsx', '') === id
-        );
-        
-        if (matchingFile) {
-          const filePath = path.join(storiesPath, matchingFile);
-          fs.unlinkSync(filePath);
-          console.log(`✅ Deleted story file: ${filePath}`);
-          return res.json({
-            success: true,
-            message: 'Story deleted successfully from file system'
-          });
-        }
+    console.log(`🗑️ Attempting to delete story: ${id}`);
+
+    const storiesPath = config.generatedStoriesPath;
+    console.log(`🔍 Searching for story in: ${storiesPath}`);
+
+    if (fs.existsSync(storiesPath)) {
+      const files = fs.readdirSync(storiesPath);
+      const matchingFile = files.find(file =>
+        file.includes(id) || file.replace('.stories.tsx', '') === id
+      );
+
+      if (matchingFile) {
+        const filePath = path.join(storiesPath, matchingFile);
+        fs.unlinkSync(filePath);
+        console.log(`✅ Deleted story file: ${filePath}`);
+        return res.json({
+          success: true,
+          message: 'Story deleted successfully'
+        });
       }
     }
-    
+
     console.log(`❌ Story not found: ${id}`);
     return res.status(404).json({
       success: false,
       error: 'Story not found'
     });
   } catch (error) {
-    console.error('Error in legacy delete route:', error);
+    console.error('Error deleting story:', error);
     res.status(500).json({ error: 'Failed to delete story' });
   }
 });
-
-// Synchronized story proxy routes
-app.get('/story-ui/sync/stories', getSyncedStories);
-app.get('/story-ui/sync/stories/:id', getSyncedStoryById);
-app.delete('/story-ui/sync/stories/:id', deleteSyncedStory);
-app.delete('/story-ui/sync/stories', clearAllSyncedStories);
-app.get('/story-ui/sync/chat-history', syncChatHistory);
-app.get('/story-ui/sync/validate/:id', validateChatSession);
 
 // MCP Remote HTTP transport routes (for Claude Desktop remote connections)
 // Provides Streamable HTTP and legacy SSE endpoints for remote MCP access
@@ -309,9 +243,8 @@ app.get('/story-ui/redirects.js', (req, res) => {
   res.send(redirectService.getRedirectScript());
 });
 
-// Set up production-ready gitignore and directory structure on startup
+// Load user config and initialize services
 const config = loadUserConfig();
-const gitignoreManager = setupProductionGitignore(config);
 
 // Initialize URL redirect service
 const redirectService = new UrlRedirectService(process.cwd());
@@ -321,8 +254,7 @@ const PORT = parseInt(process.env.PORT || '4001', 10);
 // Start server
 app.listen(PORT, () => {
   console.log(`MCP server running on port ${PORT}`);
-  console.log(`Environment: ${gitignoreManager.isProductionMode() ? 'Production' : 'Development'}`);
-  console.log(`Story generation: ${gitignoreManager.isProductionMode() ? 'In-memory' : 'File-system'}`);
+  console.log(`Stories will be generated to: ${config.generatedStoriesPath}`);
 }).on('error', (err: any) => {
   if (err.code === 'EADDRINUSE') {
     console.error(`\n❌ Port ${PORT} is already in use!`);

@@ -9,6 +9,26 @@ function slugify(str: string) {
     .replace(/^-+|-+$/g, '');
 }
 
+/**
+ * Check if the current working directory is the Story UI package itself.
+ * This prevents accidentally generating stories in the package source code.
+ */
+function isStoryUIPackageDirectory(): boolean {
+  try {
+    const packageJsonPath = path.join(process.cwd(), 'package.json');
+    if (fs.existsSync(packageJsonPath)) {
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+      // Check if this is the story-ui package by name
+      if (packageJson.name === '@tpitre/story-ui') {
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 export function generateStory({
   fileContents,
   fileName,
@@ -18,6 +38,14 @@ export function generateStory({
   fileName: string;
   config: StoryUIConfig;
 }) {
+  // SAFEGUARD: Prevent generating stories in the Story UI package directory
+  if (isStoryUIPackageDirectory()) {
+    throw new Error(
+      'Cannot generate stories in the Story UI package directory. ' +
+      'Please run story-ui from a project that uses Story UI, not from the story-ui package itself.'
+    );
+  }
+
   const outPath = path.join(config.generatedStoriesPath, fileName);
 
   // Ensure the directory exists

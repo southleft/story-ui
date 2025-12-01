@@ -5,7 +5,6 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { setupProductionGitignore } from '../story-generator/productionGitignoreManager.js';
 import { createStoryUIConfig } from '../story-ui.config.js';
 import { setupCommand, cleanupDefaultStorybookComponents } from './setup.js';
 import { deployCommand } from './deploy.js';
@@ -102,38 +101,6 @@ program
       console.log(`✅ Sample configuration generated: ${filename}`);
     }
   });
-
-program
-  .command('setup-gitignore')
-  .description('Set up .gitignore for Story UI generated stories')
-  .option('-c, --config <path>', 'Path to Story UI config file', 'story-ui.config.js')
-  .action(async (options) => {
-    console.log('🔧 Setting up .gitignore for Story UI...');
-
-    try {
-      const configPath = path.resolve(process.cwd(), options.config);
-      const configModule = await import(configPath);
-      const userConfig = configModule.default;
-      const fullConfig = createStoryUIConfig(userConfig);
-
-      const manager = setupProductionGitignore(fullConfig);
-
-      if (manager.isProductionMode()) {
-        console.log('🌐 Production environment detected');
-        console.log('✅ Gitignore validation completed');
-      } else {
-        console.log('🔧 Development environment - gitignore updated');
-      }
-
-      console.log('✅ Gitignore setup completed successfully!');
-    } catch (error) {
-      console.error('❌ Failed to set up gitignore:', error);
-      console.log('💡 Make sure you have a valid story-ui.config.js file');
-      process.exit(1);
-    }
-  });
-
-
 
 async function autoDetectAndCreateConfig() {
   const cwd = process.cwd();

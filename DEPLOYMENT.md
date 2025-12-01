@@ -12,12 +12,17 @@ Story UI production deployment consists of:
 
 1. **Backend (MCP Server)**: Node.js Express server on Railway
    - Handles AI story generation via multiple LLM providers
-   - PostgreSQL database for persistent story storage
    - Supports Claude (Anthropic), OpenAI, and Gemini (Google)
+   - Stories are generated as `.stories.tsx` files
 
 2. **Frontend**: React app served by the same Express server
    - Built with Vite, bundled into `dist/`
    - Served as static files from the MCP server
+
+3. **Story Storage**: File-based (`.stories.tsx` files)
+   - Stories are written to the configured `generatedStoriesPath`
+   - Storybook's native file system watching discovers them automatically
+   - Files can be committed to your repository for persistence
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -27,12 +32,14 @@ Story UI production deployment consists of:
 │  │  - Serves React frontend                                 ││
 │  │  - API routes for story generation                       ││
 │  │  - Multi-provider LLM support                            ││
+│  │  - File-based story storage                              ││
 │  └─────────────────────────────────────────────────────────┘│
 │                            │                                 │
 │                            ▼                                 │
 │  ┌─────────────────────────────────────────────────────────┐│
-│  │              PostgreSQL Database                         ││
-│  │  - Story persistence across deployments                  ││
+│  │              Generated Stories (File System)             ││
+│  │  - src/stories/generated/*.stories.tsx                   ││
+│  │  - Commit to repo for persistence                        ││
 │  └─────────────────────────────────────────────────────────┘│
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -48,14 +55,11 @@ npm install -g @railway/cli
 railway login
 ```
 
-### Step 2: Create Project and Database
+### Step 2: Create Project
 
 ```bash
 # Initialize Railway project
 railway init
-
-# Add PostgreSQL database
-railway add --plugin postgresql
 ```
 
 ### Step 3: Configure Environment Variables
@@ -64,7 +68,6 @@ In the [Railway Dashboard](https://railway.app/dashboard), add these variables:
 
 | Variable | Description | Required |
 |----------|-------------|----------|
-| `DATABASE_URL` | PostgreSQL connection string | Auto-set by Railway |
 | `ANTHROPIC_API_KEY` | Claude API key | One of these |
 | `OPENAI_API_KEY` | OpenAI API key | One of these |
 | `GEMINI_API_KEY` | Google Gemini API key | One of these |
@@ -92,42 +95,36 @@ This gives you a public URL like `your-app.railway.app`.
 
 ---
 
-## PostgreSQL Setup for Story Persistence
+## Story Storage
 
-**Why PostgreSQL?**: Railway containers are ephemeral. Without a database, all generated stories are lost when the container restarts or redeploys.
+### How It Works
 
-### Automatic Setup
+Story UI uses a simple file-based storage approach:
 
-When `DATABASE_URL` is present, Story UI automatically:
-1. Creates the `stories` table on first connection
-2. Stores all generated stories with metadata
-3. Persists across container restarts
+1. Stories are generated as `.stories.tsx` files
+2. Files are written to the configured `generatedStoriesPath` (default: `./src/stories/generated`)
+3. Storybook's native file system watching automatically discovers new stories
+4. Commit generated stories to your repository for persistence across deployments
 
-### Schema
+### Configuration
 
-```sql
-CREATE TABLE IF NOT EXISTS stories (
-  id TEXT PRIMARY KEY,
-  title TEXT NOT NULL,
-  content TEXT NOT NULL,
-  chat_id TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  metadata JSONB DEFAULT '{}'
-);
+In your `story-ui.config.js`:
+
+```javascript
+export default {
+  generatedStoriesPath: './src/stories/generated',
+  storyPrefix: 'Generated/',
+  // ... other options
+};
 ```
 
-### Verify Database Connection
+### Persistence Strategy
 
-Check the server logs after deployment:
-```
-🗄️  Using PostgreSQL for story persistence
-✅ PostgreSQL stories table ready
-```
+For production deployments, stories persist through:
 
-If you see this instead, `DATABASE_URL` is not set:
-```
-💾 Using in-memory storage (no DATABASE_URL configured)
-```
+1. **Git Commits**: Generated stories are real `.stories.tsx` files that can be committed
+2. **Volume Mounts**: Configure persistent storage in Railway for non-git persistence
+3. **Re-generation**: Stories can be regenerated from saved prompts if needed
 
 ---
 
@@ -145,7 +142,6 @@ If you see this instead, `DATABASE_URL` is not set:
 
 | Variable | Description |
 |----------|-------------|
-| `DATABASE_URL` | PostgreSQL connection string for persistent storage |
 | `DEFAULT_MODEL` | Default model to use (e.g., `claude-sonnet-4-5-20250929`) |
 
 ### Optional
@@ -175,48 +171,9 @@ Should return available LLM providers:
 }
 ```
 
-### Story Persistence Check
-
-```bash
-curl https://your-app.railway.app/story-ui/stories
-```
-
-Should return stored stories (empty array if none yet):
-```json
-[]
-```
-
-### Database Connection Check
-
-```bash
-curl https://your-app.railway.app/story-ui/memory-stats
-```
-
-Should show storage type:
-```json
-{
-  "success": true,
-  "stats": {...},
-  "storage": "postgresql"  // or "memory" if DATABASE_URL not set
-}
-```
-
 ---
 
 ## Troubleshooting
-
-### Stories Disappear After Redeploy
-
-**Cause**: `DATABASE_URL` not configured
-**Fix**: Add PostgreSQL database to Railway and verify `DATABASE_URL` is set
-
-### "Failed to connect to database"
-
-**Cause**: Invalid `DATABASE_URL` or database not accessible
-**Fix**:
-1. Verify PostgreSQL addon is attached in Railway dashboard
-2. Check `DATABASE_URL` format: `postgresql://user:pass@host:5432/db`
-3. Ensure database is in same Railway project (private networking)
 
 ### No LLM Providers Available
 
@@ -235,6 +192,14 @@ Should show storage type:
 1. Verify API key is valid
 2. Check Railway logs: `railway logs`
 3. Test API key directly with provider's API
+
+### Stories Not Persisting
+
+**Cause**: Railway containers are ephemeral
+**Fix**:
+1. Commit generated stories to your git repository
+2. Or configure a persistent volume in Railway
+3. Stories are automatically re-discovered on restart if files exist
 
 ---
 
@@ -270,7 +235,7 @@ jobs:
 
 | Feature | Local | Production |
 |---------|-------|------------|
-| Story storage | In-memory (file system in dev mode) | PostgreSQL |
+| Story storage | File system | File system (commit for persistence) |
 | API base | `localhost:4001` | Your Railway URL |
 | Hot reload | Yes | No |
 | HTTPS | No | Yes (automatic) |
@@ -282,7 +247,6 @@ jobs:
 1. **Never commit API keys** - Use environment variables
 2. **Use HTTPS** - Railway provides automatic SSL
 3. **Limit CORS origins** - Set `STORY_UI_ALLOWED_ORIGINS` in production
-4. **Database security** - Railway's private networking keeps PostgreSQL internal
 
 ---
 
@@ -293,23 +257,8 @@ jobs:
 | File | Purpose |
 |------|---------|
 | `mcp-server/index.ts` | Express server entry point |
-| `story-generator/storyServiceFactory.ts` | Chooses storage backend |
-| `story-generator/postgresStoryService.ts` | PostgreSQL implementation |
+| `story-generator/generateStory.ts` | File-based story generation |
 | `package.json` | Build and start scripts |
-
-### Storage Backend Selection
-
-The `storyServiceFactory.ts` automatically selects storage:
-
-```typescript
-if (process.env.DATABASE_URL) {
-  // Use PostgreSQL
-  return new PostgresStoryService(databaseUrl);
-} else {
-  // Fall back to in-memory
-  return new AsyncInMemoryStoryService(config);
-}
-```
 
 ### Build and Start Commands
 

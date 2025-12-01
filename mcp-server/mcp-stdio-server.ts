@@ -9,12 +9,9 @@ import {
 import fetch from 'node-fetch';
 import { loadUserConfig } from '../story-generator/configLoader.js';
 import { EnhancedComponentDiscovery } from '../story-generator/enhancedComponentDiscovery.js';
-// Story service is now handled by HTTP server routes
-import { SessionManager } from './sessionManager.js';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
-import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 
 // Get package version dynamically
@@ -44,11 +41,7 @@ const HTTP_BASE_URL = `http://localhost:${HTTP_PORT}`;
 
 // Initialize configuration
 const config = loadUserConfig();
-const sessionManager = SessionManager.getInstance();
 
-// Generate a session ID for this MCP connection
-const sessionId = crypto.randomBytes(16).toString('hex');
-console.error(`[MCP] Session ID: ${sessionId}`);
 
 // Create MCP server instance
 const server = new Server(
@@ -216,16 +209,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Debug log to see what we're getting
         console.error('Story generation result:', JSON.stringify(result, null, 2));
 
-        // Track the story in session
-        if (result.storyId && result.fileName && result.title) {
-          sessionManager.trackStory(sessionId, {
-            id: result.storyId,
-            fileName: result.fileName,
-            title: result.title,
-            prompt: prompt
-          });
-        }
-
         return {
           content: [{
             type: "text",
@@ -279,19 +262,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "list-stories": {
         try {
-          // Get session stories
-          const sessionStories = sessionManager.getSessionStories(sessionId);
-          
-          // Also try to get file system stories
-          let fileStories: any[] = [];
+          // Get stories from file system
+          const stories: Array<{id: string; fileName: string; title: string}> = [];
           if (config.generatedStoriesPath && fs.existsSync(config.generatedStoriesPath)) {
             const files = fs.readdirSync(config.generatedStoriesPath);
-            fileStories = files
-              .filter(file => file.endsWith('.stories.tsx'))
-              .map(file => {
+            files
+              .filter((file: string) => file.endsWith('.stories.tsx'))
+              .forEach((file: string) => {
                 const hash = file.match(/-([a-f0-9]{8})\.stories\.tsx$/)?.[1] || '';
                 const storyId = hash ? `story-${hash}` : file.replace('.stories.tsx', '');
-                
+
                 // Try to read title from file
                 let title = file.replace('.stories.tsx', '').replace(/-/g, ' ');
                 try {
@@ -304,18 +284,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 } catch (e) {
                   // Use filename as fallback
                 }
-                
-                return {
-                  id: storyId,
-                  fileName: file,
-                  title,
-                  source: 'file-system',
-                  isInSession: sessionStories.some(s => s.id === storyId)
-                };
+
+                stories.push({ id: storyId, fileName: file, title });
               });
           }
-          
-          if (sessionStories.length === 0 && fileStories.length === 0) {
+
+          if (stories.length === 0) {
             return {
               content: [{
                 type: "text",
@@ -324,39 +298,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             };
           }
 
-          let responseText = '';
-          
-          // Show session stories first
-          if (sessionStories.length > 0) {
-            responseText += `**Stories in current session:**\n`;
-            const currentStory = sessionManager.getCurrentStory(sessionId);
-            
-            sessionStories.forEach(story => {
-              const isCurrent = currentStory?.id === story.id;
-              responseText += `\n${isCurrent ? '→ ' : '  '}${story.title}\n`;
-              responseText += `  ID: ${story.id}\n`;
-              responseText += `  File: ${story.fileName}\n`;
-              if (isCurrent) {
-                responseText += `  (Currently discussing this story)\n`;
-              }
-            });
-          }
-          
-          // Show other available stories
-          const nonSessionFiles = fileStories.filter(f => !f.isInSession);
-          if (nonSessionFiles.length > 0) {
-            responseText += `\n\n**Other available stories:**\n`;
-            nonSessionFiles.forEach(story => {
-              responseText += `\n- ${story.title}\n`;
-              responseText += `  ID: ${story.id}\n`;
-              responseText += `  File: ${story.fileName}\n`;
-            });
-          }
-          
+          let responseText = `**Available stories (${stories.length}):**\n`;
+
+          stories.forEach(story => {
+            responseText += `\n- ${story.title}\n`;
+            responseText += `  ID: ${story.id}\n`;
+            responseText += `  File: ${story.fileName}\n`;
+          });
+
           responseText += `\n\n**Tips:**\n`;
           responseText += `- To update a story, just describe what changes you want\n`;
-          responseText += `- I'll automatically work with the most recent story or find the right one based on context\n`;
-          responseText += `- You can also specify a story ID directly if needed`;
+          responseText += `- Specify a story ID if you want to update a specific story\n`;
+          responseText += `- Stories are stored in: ${config.generatedStoriesPath}`;
 
           return {
             content: [{
@@ -435,19 +388,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               const filePath = path.join(config.generatedStoriesPath, matchingFile);
               fs.unlinkSync(filePath);
               console.error(`[MCP] Deleted story file: ${filePath}`);
-              
-              // Also remove from session
-              const sessionStories = sessionManager.getSessionStories(sessionId);
-              const storyInSession = sessionStories.find(s => s.id === storyId);
-              if (storyInSession) {
-                // Note: SessionManager doesn't have a removeStory method yet
-                // For now, just clear current if it matches
-                const current = sessionManager.getCurrentStory(sessionId);
-                if (current?.id === storyId) {
-                  sessionManager.setCurrentStory(sessionId, '');
-                }
-              }
-              
+
               return {
                 content: [{
                   type: "text",
@@ -517,41 +458,40 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "update-story": {
         let { storyId, prompt } = args as { storyId?: string; prompt: string };
-        
+
         try {
-          // If no storyId provided, try to find the right story
+          // If no storyId provided, find the most recently modified story file
           if (!storyId) {
-            // First check current story in session
-            const currentStory = sessionManager.getCurrentStory(sessionId);
-            if (currentStory) {
-              storyId = currentStory.id;
-              console.error(`[MCP] Using current story: ${currentStory.title} (${storyId})`);
-            } else {
-              // Try to find by context
-              const contextStory = sessionManager.findStoryByContext(sessionId, prompt);
-              if (contextStory) {
-                storyId = contextStory.id;
-                console.error(`[MCP] Found story by context: ${contextStory.title} (${storyId})`);
-              } else {
-                // Use the most recent story
-                const sessionStories = sessionManager.getSessionStories(sessionId);
-                if (sessionStories.length > 0) {
-                  const recentStory = sessionStories[sessionStories.length - 1];
-                  storyId = recentStory.id;
-                  console.error(`[MCP] Using most recent story: ${recentStory.title} (${storyId})`);
-                } else {
-                  return {
-                    content: [{
-                      type: "text",
-                      text: "No story found to update. Please generate a story first or specify which story you'd like to update."
-                    }],
-                    isError: true
-                  };
-                }
+            if (config.generatedStoriesPath && fs.existsSync(config.generatedStoriesPath)) {
+              const files = fs.readdirSync(config.generatedStoriesPath)
+                .filter((file: string) => file.endsWith('.stories.tsx'))
+                .map((file: string) => {
+                  const filePath = path.join(config.generatedStoriesPath, file);
+                  const stats = fs.statSync(filePath);
+                  return { file, mtime: stats.mtime.getTime() };
+                })
+                .sort((a: { file: string; mtime: number }, b: { file: string; mtime: number }) => b.mtime - a.mtime);
+
+              if (files.length > 0) {
+                // Use the most recently modified story
+                const mostRecent = files[0].file;
+                const hashMatch = mostRecent.match(/-([a-f0-9]{8})\.stories\.tsx$/);
+                storyId = hashMatch ? `story-${hashMatch[1]}` : mostRecent.replace('.stories.tsx', '');
+                console.error(`[MCP] Using most recent story: ${mostRecent} (${storyId})`);
               }
             }
+
+            if (!storyId) {
+              return {
+                content: [{
+                  type: "text",
+                  text: "No story found to update. Please generate a story first or specify which story you'd like to update."
+                }],
+                isError: true
+              };
+            }
           }
-          
+
           // Try to get story content directly from file system first
           let existingCode = '';
           let storyMetadata: any = {};
@@ -645,19 +585,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
 
           const result = await response.json();
-          
+
           // Debug log to see what we're getting
           console.error('Story update result:', JSON.stringify(result, null, 2));
-
-          // Update session tracking with preserved metadata
-          if (result.storyId && result.fileName && result.title) {
-            sessionManager.trackStory(sessionId, {
-              id: result.storyId,
-              fileName: result.fileName,
-              title: result.title,
-              prompt: prompt
-            });
-          }
 
           return {
             content: [{

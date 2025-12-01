@@ -20,9 +20,6 @@ import {
 } from '../../story-generator/promptGenerator.js';
 import { FrameworkType, StoryGenerationOptions } from '../../story-generator/framework-adapters/index.js';
 import { loadUserConfig, validateConfig } from '../../story-generator/configLoader.js';
-import { setupProductionGitignore } from '../../story-generator/productionGitignoreManager.js';
-import { getStoryService } from '../../story-generator/storyServiceFactory.js';
-import type { GeneratedStory } from '../../story-generator/storyServiceInterface.js';
 import { extractAndValidateCodeBlock, createFallbackStory } from '../../story-generator/validateStory.js';
 import { isBlacklistedComponent, isBlacklistedIcon, getBlacklistErrorMessage, ICON_CORRECTIONS } from '../../story-generator/componentBlacklist.js';
 import { StoryTracker, StoryMapping } from '../../story-generator/storyTracker.js';
@@ -519,12 +516,9 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
     );
 
     // Set up environment
-    const gitignoreManager = setupProductionGitignore(config);
-    const storyService = await getStoryService(config);
-    const isProduction = gitignoreManager.isProductionMode();
     const storyTracker = new StoryTracker(config);
     const historyManager = new StoryHistoryManager(process.cwd());
-    const redirectDir = isProduction ? process.cwd() : path.dirname(config.generatedStoriesPath);
+    const redirectDir = path.dirname(config.generatedStoriesPath);
     const redirectService = new UrlRedirectService(redirectDir);
 
     // Check for previous code if update
@@ -794,80 +788,39 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
     // Analyze what was generated
     const analysis = analyzeGeneratedCode(fixedFileContents, prompt, config);
 
-    if (isProduction) {
-      const generatedStory: GeneratedStory = {
-        id: storyId,
-        title: aiTitle,
-        description: isActualUpdate ? `Updated: ${prompt}` : prompt,
-        content: fixedFileContents,
-        createdAt: isActualUpdate ? new Date() : new Date(),
-        lastAccessed: new Date(),
-        prompt: isActualUpdate && conversation
-          ? conversation.map((msg: any) => `${msg.role}: ${msg.content}`).join('\n\n')
-          : prompt,
-        components: extractComponentsFromContent(fixedFileContents)
-      };
+    // Write story to file system
+    const outPath = generateStory({
+      fileContents: fixedFileContents,
+      fileName: finalFileName,
+      config: config
+    });
 
-      await storyService.storeStory(generatedStory);
+    // Register with story tracker
+    const mapping: StoryMapping = {
+      title: aiTitle,
+      fileName: finalFileName,
+      storyId,
+      hash,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      prompt
+    };
+    storyTracker.registerStory(mapping);
 
-      const mapping: StoryMapping = {
-        title: aiTitle,
-        fileName: finalFileName,
-        storyId,
-        hash,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        prompt
-      };
-      storyTracker.registerStory(mapping);
+    // Save to history
+    historyManager.addVersion(finalFileName, prompt, fixedFileContents, parentVersionId);
 
-      historyManager.addVersion(finalFileName, prompt, fixedFileContents, parentVersionId);
+    // Track URL redirect if this is an update and the title changed
+    if (isActualUpdate && oldTitle && oldStoryUrl) {
+      const newTitleMatch = fixedFileContents.match(/title:\s*["']([^"']+)['"]/);
+      if (newTitleMatch) {
+        const newTitle = newTitleMatch[1];
+        const cleanNewTitle = newTitle.replace(config.storyPrefix, '');
+        const cleanOldTitle = oldTitle.replace(config.storyPrefix, '');
+        const newStoryUrl = `/story/${cleanNewTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-')}--primary`;
 
-      // Track URL redirect if needed
-      if (isActualUpdate && oldTitle && oldStoryUrl) {
-        const newTitleMatch = fixedFileContents.match(/title:\s*["']([^"']+)['"]/);
-        if (newTitleMatch) {
-          const newTitle = newTitleMatch[1];
-          const cleanNewTitle = newTitle.replace(config.storyPrefix, '');
-          const cleanOldTitle = oldTitle.replace(config.storyPrefix, '');
-          const newStoryUrl = `/story/${cleanNewTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-')}--primary`;
-
-          if (oldStoryUrl !== newStoryUrl) {
-            redirectService.addRedirect(oldStoryUrl, newStoryUrl, cleanOldTitle, cleanNewTitle, storyId);
-          }
-        }
-      }
-    } else {
-      const outPath = generateStory({
-        fileContents: fixedFileContents,
-        fileName: finalFileName,
-        config: config
-      });
-
-      const mapping: StoryMapping = {
-        title: aiTitle,
-        fileName: finalFileName,
-        storyId,
-        hash,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        prompt
-      };
-      storyTracker.registerStory(mapping);
-
-      historyManager.addVersion(finalFileName, prompt, fixedFileContents, parentVersionId);
-
-      if (isActualUpdate && oldTitle && oldStoryUrl) {
-        const newTitleMatch = fixedFileContents.match(/title:\s*["']([^"']+)['"]/);
-        if (newTitleMatch) {
-          const newTitle = newTitleMatch[1];
-          const cleanNewTitle = newTitle.replace(config.storyPrefix, '');
-          const cleanOldTitle = oldTitle.replace(config.storyPrefix, '');
-          const newStoryUrl = `/story/${cleanNewTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-')}--primary`;
-
-          if (oldStoryUrl !== newStoryUrl) {
-            redirectService.addRedirect(oldStoryUrl, newStoryUrl, cleanOldTitle, cleanNewTitle, storyId);
-          }
+        if (oldStoryUrl !== newStoryUrl) {
+          redirectService.addRedirect(oldStoryUrl, newStoryUrl, cleanOldTitle, cleanNewTitle, storyId);
         }
       }
     }

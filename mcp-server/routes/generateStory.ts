@@ -13,9 +13,6 @@ import {
 } from '../../story-generator/promptGenerator.js';
 import { FrameworkType, StoryGenerationOptions, getAdapter } from '../../story-generator/framework-adapters/index.js';
 import { loadUserConfig, validateConfig } from '../../story-generator/configLoader.js';
-import { setupProductionGitignore } from '../../story-generator/productionGitignoreManager.js';
-import { getStoryService } from '../../story-generator/storyServiceFactory.js';
-import type { GeneratedStory } from '../../story-generator/storyServiceInterface.js';
 import { extractAndValidateCodeBlock, createFallbackStory, validateStoryCode } from '../../story-generator/validateStory.js';
 import { isBlacklistedComponent, isBlacklistedIcon, getBlacklistErrorMessage, ICON_CORRECTIONS } from '../../story-generator/componentBlacklist.js';
 import { StoryTracker, StoryMapping } from '../../story-generator/storyTracker.js';
@@ -449,20 +446,14 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       }
     }
 
-    // Set up production-ready environment
-    const gitignoreManager = setupProductionGitignore(config);
-    const storyService = await getStoryService(config);
-    const isProduction = gitignoreManager.isProductionMode();
-
     // Initialize story tracker for managing updates vs new creations
     const storyTracker = new StoryTracker(config);
 
     // Initialize history manager - use the current working directory
     const historyManager = new StoryHistoryManager(process.cwd());
-    
+
     // Initialize URL redirect service
-    // Use the same directory as the stories to ensure consistency
-    const redirectDir = isProduction ? process.cwd() : path.dirname(config.generatedStoriesPath);
+    const redirectDir = path.dirname(config.generatedStoriesPath);
     const redirectService = new UrlRedirectService(redirectDir);
 
     // Check if this is an update to an existing story
@@ -783,139 +774,66 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       logger.log('🆕 Creating new story:', { storyId, fileName: finalFileName });
     }
 
-    if (isProduction) {
-      // Production: Store in memory
-      const generatedStory: GeneratedStory = {
-        id: storyId,
-        title: aiTitle,
-        description: isActualUpdate ? `Updated: ${prompt}` : prompt,
-        content: fixedFileContents,
-        createdAt: isActualUpdate ? (new Date()) : new Date(),
-        lastAccessed: new Date(),
-        prompt: isActualUpdate ? conversation.map((msg: any) => `${msg.role}: ${msg.content}`).join('\n\n') : prompt,
-        components: extractComponentsFromContent(fixedFileContents)
-      };
+    // Write story to file system
+    const outPath = generateStory({
+      fileContents: fixedFileContents,
+      fileName: finalFileName,
+      config: config
+    });
 
-      await storyService.storeStory(generatedStory);
+    // Register with story tracker
+    const mapping: StoryMapping = {
+      title: aiTitle,
+      fileName: finalFileName,
+      storyId,
+      hash,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      prompt
+    };
+    storyTracker.registerStory(mapping);
 
-      // Register with story tracker
-      const mapping: StoryMapping = {
-        title: aiTitle,
-        fileName: finalFileName,
-        storyId,
-        hash,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        prompt
-      };
-      storyTracker.registerStory(mapping);
+    // Save to history
+    historyManager.addVersion(
+      finalFileName,
+      prompt,
+      fixedFileContents,
+      parentVersionId
+    );
 
-      // Save to history
-      historyManager.addVersion(
-        finalFileName,
-        prompt,
-        fixedFileContents,
-        parentVersionId
-      );
+    logger.log(`Story ${isActualUpdate ? 'updated' : 'written'} to:`, outPath);
 
-      logger.log(`Story ${isActualUpdate ? 'updated' : 'stored'} in memory: ${storyId}`);
-      
-      // Track URL redirect if this is an update and the title changed
-      if (isActualUpdate && oldTitle && oldStoryUrl) {
-        // Extract the new title from the fixed content
-        const newTitleMatch = fixedFileContents.match(/title:\s*["']([^"']+)['"]/);
-        if (newTitleMatch) {
-          const newTitle = newTitleMatch[1];
-          // Remove the prefix to get clean title for URL
-          const cleanNewTitle = newTitle.replace(config.storyPrefix, '');
-          const cleanOldTitle = oldTitle.replace(config.storyPrefix, '');
-          const newStoryUrl = `/story/${cleanNewTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-')}--primary`;
-          
-          if (oldStoryUrl !== newStoryUrl) {
-            redirectService.addRedirect(oldStoryUrl, newStoryUrl, cleanOldTitle, cleanNewTitle, storyId);
-            logger.log(`🔀 Added redirect: ${oldStoryUrl} → ${newStoryUrl}`);
-          }
+    // Track URL redirect if this is an update and the title changed
+    if (isActualUpdate && oldTitle && oldStoryUrl) {
+      const newTitleMatch = fixedFileContents.match(/title:\s*["']([^"']+)['"]/);
+      if (newTitleMatch) {
+        const newTitle = newTitleMatch[1];
+        const cleanNewTitle = newTitle.replace(config.storyPrefix, '');
+        const cleanOldTitle = oldTitle.replace(config.storyPrefix, '');
+        const newStoryUrl = `/story/${cleanNewTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-')}--primary`;
+
+        if (oldStoryUrl !== newStoryUrl) {
+          redirectService.addRedirect(oldStoryUrl, newStoryUrl, cleanOldTitle, cleanNewTitle, storyId);
+          logger.log(`🔀 Added redirect: ${oldStoryUrl} → ${newStoryUrl}`);
         }
       }
-      res.json({
-        success: true,
-        fileName: finalFileName,
-        storyId,
-        title: aiTitle,
-        story: fileContents,
-        environment: 'production',
-        storage: 'in-memory',
-        isUpdate: isActualUpdate,
-        validation: {
-          hasWarnings: hasValidationWarnings,
-          errors: validationResult?.errors || [],
-          warnings: validationResult?.warnings || []
-        }
-      });
-    } else {
-      // Development: Write to file system
-      const outPath = generateStory({
-        fileContents: fixedFileContents,
-        fileName: finalFileName,
-        config: config
-      });
-
-      // Register with story tracker
-      const mapping: StoryMapping = {
-        title: aiTitle,
-        fileName: finalFileName,
-        storyId,
-        hash,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        prompt
-      };
-      storyTracker.registerStory(mapping);
-
-      // Save to history
-      historyManager.addVersion(
-        finalFileName,
-        prompt,
-        fixedFileContents,
-        parentVersionId
-      );
-
-      logger.log(`Story ${isActualUpdate ? 'updated' : 'written'} to:`, outPath);
-      
-      // Track URL redirect if this is an update and the title changed
-      if (isActualUpdate && oldTitle && oldStoryUrl) {
-        // Extract the new title from the fixed content
-        const newTitleMatch = fixedFileContents.match(/title:\s*["']([^"']+)['"]/);
-        if (newTitleMatch) {
-          const newTitle = newTitleMatch[1];
-          // Remove the prefix to get clean title for URL
-          const cleanNewTitle = newTitle.replace(config.storyPrefix, '');
-          const cleanOldTitle = oldTitle.replace(config.storyPrefix, '');
-          const newStoryUrl = `/story/${cleanNewTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-')}--primary`;
-          
-          if (oldStoryUrl !== newStoryUrl) {
-            redirectService.addRedirect(oldStoryUrl, newStoryUrl, cleanOldTitle, cleanNewTitle, storyId);
-            logger.log(`🔀 Added redirect: ${oldStoryUrl} → ${newStoryUrl}`);
-          }
-        }
-      }
-      res.json({
-        success: true,
-        fileName: finalFileName,
-        storyId,
-        outPath,
-        title: aiTitle,
-        story: fileContents,
-        environment: 'development',
-        storage: 'file-system',
-        isUpdate: isActualUpdate,
-        validation: {
-          hasWarnings: hasValidationWarnings,
-          errors: validationResult?.errors || [],
-          warnings: validationResult?.warnings || []
-        }
-      });
     }
+
+    res.json({
+      success: true,
+      fileName: finalFileName,
+      storyId,
+      outPath,
+      title: aiTitle,
+      story: fileContents,
+      storage: 'file-system',
+      isUpdate: isActualUpdate,
+      validation: {
+        hasWarnings: hasValidationWarnings,
+        errors: validationResult?.errors || [],
+        warnings: validationResult?.warnings || []
+      }
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Story generation failed' });
   }
