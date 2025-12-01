@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createProxyMiddleware } from 'http-proxy-middleware';
 
 // Get __dirname equivalent for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -250,6 +251,44 @@ const config = loadUserConfig();
 const redirectService = new UrlRedirectService(process.cwd());
 
 const PORT = parseInt(process.env.PORT || '4001', 10);
+
+// Storybook proxy configuration for production deployment
+// When STORYBOOK_PROXY_ENABLED is set, proxy all non-API requests to Storybook dev server
+const storybookProxyPort = process.env.STORYBOOK_PROXY_PORT || '6006';
+const storybookProxyEnabled = process.env.STORYBOOK_PROXY_ENABLED === 'true';
+
+if (storybookProxyEnabled) {
+  console.log(`📖 Storybook proxy enabled - forwarding to localhost:${storybookProxyPort}`);
+
+  // Proxy all requests that don't match API routes to Storybook
+  // This must be added AFTER all API routes so they take precedence
+  app.use(
+    '/',
+    createProxyMiddleware({
+      target: `http://localhost:${storybookProxyPort}`,
+      changeOrigin: true,
+      ws: true, // Enable WebSocket proxying for HMR
+      logger: console,
+      // Don't proxy API routes
+      pathFilter: (path: string) => {
+        const isApiRoute =
+          path.startsWith('/mcp') ||
+          path.startsWith('/story-ui') ||
+          path.startsWith('/mcp-remote');
+        return !isApiRoute;
+      },
+      on: {
+        error: (err: Error, req: any, res: any) => {
+          console.error('Storybook proxy error:', err.message);
+          if (res && typeof res.writeHead === 'function' && !res.headersSent) {
+            res.writeHead(502, { 'Content-Type': 'text/plain' });
+            res.end('Storybook is starting up, please wait...');
+          }
+        }
+      }
+    })
+  );
+}
 
 // Start server
 app.listen(PORT, () => {

@@ -1,39 +1,59 @@
-# Story UI MCP Server - Production Dockerfile
-# Deploys the backend API server for Story UI
+# Story UI Combined Deployment
+# Runs Storybook in DEV MODE with MCP server for dynamic story generation
+# - Storybook dev server (internal port 6006) for hot-reloading
+# - MCP server (Railway PORT) serves API + proxies Storybook
 
-FROM node:20-alpine
+FROM node:20-slim
 
-# Set working directory
 WORKDIR /app
 
-# Copy package files
+# Install dependencies needed for Storybook
+RUN apt-get update && apt-get install -y \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy root package files first
 COPY package*.json ./
 COPY yarn.lock* ./
 
-# Install ALL dependencies (needed for build)
+# Install story-ui dependencies
 RUN npm install
 
-# Copy source files
+# Copy story-ui source
 COPY . .
 
-# Build the project
+# Build story-ui from source
 RUN npm run build
 
-# Prune dev dependencies after build
-RUN npm prune --production
+# Now set up the mantine-storybook
+WORKDIR /app/test-storybooks/mantine-storybook
 
-# Environment variables (set these in Railway/Render dashboard)
-# CLAUDE_API_KEY - Anthropic API key
-# OPENAI_API_KEY - OpenAI API key
-# GEMINI_API_KEY - Google Gemini API key
-# PORT - Server port (default: 4001)
+# Install mantine-storybook dependencies (uses @tpitre/story-ui from npm)
+RUN npm install
 
-# Expose the port
+# Link the local story-ui build instead of npm version
+# This ensures we use the latest source code
+RUN npm link /app
+
+# Go back to app root
+WORKDIR /app
+
+# Make start script executable
+COPY start-live.sh ./
+RUN chmod +x ./start-live.sh
+
+# Environment variables (set these in Railway dashboard)
+# ANTHROPIC_API_KEY - Claude API key
+# OPENAI_API_KEY - OpenAI API key (optional)
+# GEMINI_API_KEY - Google Gemini API key (optional)
+# PORT - Server port (set by Railway, default: 4001)
+
+# Expose the port (Railway sets PORT)
 EXPOSE ${PORT:-4001}
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+# Health check - verify MCP server is responding
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT:-4001}/story-ui/providers || exit 1
 
-# Start the MCP server
-CMD ["node", "dist/mcp-server/index.js"]
+# Start both servers
+CMD ["./start-live.sh"]
