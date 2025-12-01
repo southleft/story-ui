@@ -1,3 +1,10 @@
+# [2.8.0](https://github.com/southleft/story-ui/compare/v2.7.0...v2.8.0) (2025-12-01)
+
+
+### Features
+
+* v3 cleanup - remove deprecated code and update documentation ([e56e5fb](https://github.com/southleft/story-ui/commit/e56e5fb7338bf7a56bfd28386ee72d1376f570f9))
+
 # [2.7.0](https://github.com/southleft/story-ui/compare/v2.6.1...v2.7.0) (2025-11-30)
 
 
