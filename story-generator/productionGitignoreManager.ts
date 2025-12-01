@@ -20,6 +20,13 @@ export class ProductionGitignoreManager {
    * Detects if we're running in a production/read-only environment
    */
   private detectProductionEnvironment(): boolean {
+    // Explicit override: Force development mode for file-based story generation
+    // Use this on Railway/Render when running Storybook dev mode
+    if (process.env.STORY_UI_DEV_MODE === 'true') {
+      logger.log('📁 STORY_UI_DEV_MODE=true - forcing file-based story generation');
+      return false;
+    }
+
     // Check common production environment indicators
     const prodIndicators = [
       process.env.NODE_ENV === 'production',

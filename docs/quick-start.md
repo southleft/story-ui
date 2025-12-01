@@ -24,7 +24,7 @@ npx story-ui init
 
 This will:
 1. Auto-detect your existing design system (if any)
-2. Optionally install and configure popular design systems (Chakra UI, Ant Design, Mantine)
+2. Optionally install and configure popular design systems (Mantine, Chakra UI, Material UI)
 3. Create a `story-ui.config.js` file with optimized settings
 4. Set up the Story UI panel component in your Storybook
 5. Configure `.gitignore` for generated stories
@@ -37,7 +37,7 @@ The generated `story-ui.config.js` will be pre-configured based on your choices:
 ```javascript
 module.exports = {
   generatedStoriesPath: "./src/stories/generated/",
-  importPath: "@chakra-ui/react", // or "antd", "@mantine/core", etc.
+  importPath: "@mantine/core", // or "@chakra-ui/react", "@mui/material", etc.
   componentPrefix: "",
   layoutRules: {
     // Pre-configured for your design system

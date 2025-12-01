@@ -1,4 +1,4 @@
-module.exports = {
+export default {
   "importPath": "@mantine/core",
   "componentPrefix": "",
   "layoutRules": {

@@ -51,7 +51,7 @@ Story UI will guide you through:
 
 | Framework | Design Systems | Status |
 |-----------|---------------|--------|
-| React | ShadCN/UI, Mantine, Ant Design, Custom | Fully Supported |
+| React | Mantine, Chakra UI, Material UI, Custom | Fully Supported |
 | Vue | Vuetify, Custom | Fully Supported |
 | Angular | Angular Material, Custom | Fully Supported |
 | Svelte | Skeleton UI, Custom | Fully Supported |
@@ -62,8 +62,8 @@ Story UI will guide you through:
 | Provider | Models | Best For |
 |----------|--------|----------|
 | **Claude** (Anthropic) | Opus 4.5, Sonnet 4.5, Haiku 4.5 | Complex reasoning, code quality |
-| **GPT-5** (OpenAI) | GPT-5.1, GPT-5 Mini, GPT-5 Nano | Versatility, speed |
-| **Gemini** (Google) | Gemini 3 Pro, Gemini 2.5 Pro, Gemini 2.5 Flash | Fast generation, cost efficiency |
+| **GPT** (OpenAI) | GPT-5.1, GPT-5.1 Thinking, GPT-4o, GPT-4o Mini | Versatility, speed |
+| **Gemini** (Google) | Gemini 3 Pro, Gemini 2.0 Flash, Gemini 1.5 Pro | Fast generation, cost efficiency |
 
 ### Production Deployment
 - **Cloudflare Workers**: Edge-deployed API proxy
@@ -97,9 +97,9 @@ The interactive installer will ask:
    ```
    # For React:
    ? Choose a design system:
-     > ShadCN/UI - Most Popular
-       Mantine
-       Ant Design
+     > Mantine - Most Popular
+       Chakra UI
+       Material UI
        Custom
 
    # For Vue:
@@ -364,19 +364,50 @@ wrangler pages deploy dist --project-name=your-app-name
 
 Update the frontend to point to your worker URL in the configuration.
 
-### Alternative: Railway Backend
+### Railway Deployment (Recommended)
 
-For a full Node.js environment:
+Railway provides the most complete deployment experience with:
+- Full Storybook dev server with HMR
+- Integrated Story UI MCP server
+- Live story generation directly in the sidebar
+- Easy environment variable management
+
+**1. Deploy to Railway**
 
 ```bash
-cd mcp-server
-railway up
+# From your Storybook project with Story UI configured
+npx story-ui deploy --live --platform=railway --dry-run
 
-# Set environment variables in Railway dashboard:
-# - ANTHROPIC_API_KEY
-# - OPENAI_API_KEY (optional)
-# - GEMINI_API_KEY (optional)
+# Review the generated configuration, then deploy:
+railway up
 ```
+
+**2. Set Environment Variables in Railway Dashboard:**
+- `ANTHROPIC_API_KEY` - Required for Claude models
+- `OPENAI_API_KEY` - Optional for OpenAI models
+- `GEMINI_API_KEY` - Optional for Gemini models
+- `STORY_UI_DEV_MODE=true` - Enable file-based story storage
+
+**3. Connect External MCP Clients**
+
+Once deployed, your Railway instance provides an MCP endpoint that AI clients can connect to:
+
+```
+https://your-app.up.railway.app/story-ui
+```
+
+**For Claude Desktop/Claude Code:**
+```bash
+# Add your Railway deployment as an MCP server
+claude mcp add --transport http story-ui https://your-app.up.railway.app/story-ui
+```
+
+**For other MCP clients**, use the full URL:
+```
+https://your-app.up.railway.app/mcp
+```
+
+This allows you to generate stories from Claude Desktop, ChatGPT (with MCP support), or any other MCP-compatible AI client, and see them appear in your deployed Storybook instance.
 
 ---
 

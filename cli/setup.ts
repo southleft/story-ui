@@ -98,7 +98,7 @@ function setupStorybookPreview(designSystem: string) {
   }
 
   // Verify required packages are installed before creating preview
-  if (['antd', 'mantine', 'chakra'].includes(designSystem)) {
+  if (['mantine', 'chakra'].includes(designSystem)) {
     const packageJsonPath = path.join(process.cwd(), 'package.json');
     if (fs.existsSync(packageJsonPath)) {
       const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
@@ -136,18 +136,6 @@ function setupStorybookPreview(designSystem: string) {
       </ChakraProvider>
     )`
     },
-    antd: {
-      imports: [
-        "import type { Preview } from '@storybook/react-vite'",
-        "import { ConfigProvider } from 'antd'",
-        "import React from 'react'"
-      ],
-      decorator: `(Story) => (
-      <ConfigProvider>
-        <Story />
-      </ConfigProvider>
-    )`
-    },
     mantine: {
       imports: [
         "import type { Preview } from '@storybook/react-vite'",
@@ -159,18 +147,6 @@ function setupStorybookPreview(designSystem: string) {
       <MantineProvider>
         <Story />
       </MantineProvider>
-    )`
-    },
-    shadcn: {
-      imports: [
-        "import type { Preview } from '@storybook/react-vite'",
-        "import '../src/index.css'", // or globals.css for Tailwind styles
-        "import React from 'react'"
-      ],
-      decorator: `(Story) => (
-      <div className="min-h-screen bg-background text-foreground">
-        <Story />
-      </div>
     )`
     }
   };
@@ -232,16 +208,16 @@ const LLM_PROVIDERS = {
     description: 'Recommended - Best for complex reasoning and code quality'
   },
   openai: {
-    name: 'OpenAI (GPT-5)',
+    name: 'OpenAI (GPT)',
     envKey: 'OPENAI_API_KEY',
-    models: ['gpt-5.1', 'gpt-5-mini', 'gpt-5-nano'],
+    models: ['gpt-5.1', 'gpt-5.1-thinking', 'gpt-4o', 'gpt-4o-mini'],
     docsUrl: 'https://platform.openai.com/api-keys',
     description: 'Versatile and fast'
   },
   gemini: {
     name: 'Google Gemini',
     envKey: 'GEMINI_API_KEY',
-    models: ['gemini-3-pro-preview', 'gemini-2.5-pro', 'gemini-2.5-flash'],
+    models: ['gemini-3-pro', 'gemini-2.0-flash-exp', 'gemini-2.0-flash', 'gemini-1.5-pro'],
     docsUrl: 'https://aistudio.google.com/app/apikey',
     description: 'Cost-effective with good performance'
   }
@@ -256,13 +232,6 @@ const DESIGN_SYSTEM_CONFIGS: Record<string, {
   framework: 'react' | 'angular' | 'vue' | 'svelte' | 'web-components';
 }> = {
   // React design systems
-  antd: {
-    packages: ['antd'],
-    name: 'Ant Design',
-    importPath: 'antd',
-    additionalSetup: 'import "antd/dist/reset.css";',
-    framework: 'react'
-  },
   mantine: {
     packages: ['@mantine/core', '@mantine/hooks', '@mantine/notifications'],
     name: 'Mantine',
@@ -282,13 +251,6 @@ const DESIGN_SYSTEM_CONFIGS: Record<string, {
     name: 'Material UI',
     importPath: '@mui/material',
     additionalSetup: 'import { ThemeProvider } from "@mui/material/styles";',
-    framework: 'react'
-  },
-  shadcn: {
-    packages: ['class-variance-authority', 'clsx', 'tailwind-merge', '@radix-ui/react-slot', 'lucide-react'],
-    name: 'shadcn/ui',
-    importPath: '@/components/ui',
-    additionalSetup: '// shadcn/ui components are locally installed. Run: npx shadcn@latest init',
     framework: 'react'
   },
   // Angular design systems
@@ -605,9 +567,9 @@ export async function setupCommand(options: SetupOptions = {}) {
       default:
         return [
           baseChoice,
-          { name: '🎨 ShadCN/UI (shadcn-ui) - Most Popular', value: 'shadcn' },
-          { name: '🎯 Mantine (@mantine/core)', value: 'mantine' },
-          { name: '🐜 Ant Design (antd)', value: 'antd' },
+          { name: '🎯 Mantine (@mantine/core) - Most Popular', value: 'mantine' },
+          { name: '⚡ Chakra UI (@chakra-ui/react)', value: 'chakra' },
+          { name: '🎨 Material UI (@mui/material)', value: 'mui' },
           customChoice
         ];
     }
@@ -842,30 +804,6 @@ export async function setupCommand(options: SetupOptions = {}) {
         }
       }
     };
-  } else if (answers.designSystem === 'antd') {
-    config = {
-      importPath: 'antd',
-      componentPrefix: '',
-      layoutRules: {
-        multiColumnWrapper: 'Row',
-        columnComponent: 'Col',
-        containerComponent: 'div',
-        layoutExamples: {
-          twoColumn: `<Row gutter={16}>
-  <Col span={12}>
-    <Card title="Left Card" bordered={false}>
-      <p>Left content goes here</p>
-    </Card>
-  </Col>
-  <Col span={12}>
-    <Card title="Right Card" bordered={false}>
-      <p>Right content goes here</p>
-    </Card>
-  </Col>
-</Row>`
-        }
-      }
-    };
   } else if (answers.designSystem === 'mantine') {
     config = {
       importPath: '@mantine/core',
@@ -894,51 +832,6 @@ export async function setupCommand(options: SetupOptions = {}) {
   </div>
 </SimpleGrid>`
         }
-      }
-    };
-  } else if (answers.designSystem === 'shadcn') {
-    config = {
-      importPath: '@/components/ui',
-      componentPrefix: '',
-      layoutRules: {
-        multiColumnWrapper: 'div',
-        columnComponent: 'div',
-        containerComponent: 'div',
-        layoutExamples: {
-          twoColumn: `<div className="grid grid-cols-2 gap-4">
-  <Card>
-    <CardHeader>
-      <CardTitle>Left Card</CardTitle>
-    </CardHeader>
-    <CardContent>
-      <p className="text-sm text-muted-foreground">
-        Left content goes here
-      </p>
-    </CardContent>
-  </Card>
-  <Card>
-    <CardHeader>
-      <CardTitle>Right Card</CardTitle>
-    </CardHeader>
-    <CardContent>
-      <p className="text-sm text-muted-foreground">
-        Right content goes here
-      </p>
-    </CardContent>
-  </Card>
-</div>`
-        }
-      },
-      designSystemGuidelines: {
-        name: 'shadcn/ui',
-        additionalNotes: `
-shadcn/ui components are locally installed in the project.
-- Import components from "@/components/ui" (e.g., import { Button } from "@/components/ui/button")
-- Use the cn() utility from "@/lib/utils" for conditional classes
-- Components use Tailwind CSS for styling
-- Use CSS variables for theming (--primary, --secondary, --muted, etc.)
-- Prefer composition over configuration
-        `.trim()
       }
     };
   } else if (answers.designSystem === 'mui') {

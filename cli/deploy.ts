@@ -8,15 +8,17 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 interface DeployOptions {
-  // New recommended approach
-  backend?: boolean;
-  frontend?: boolean;
-  app?: boolean;  // New: Deploy standalone production app (Lovable/Bolt-style)
-  platform?: 'railway' | 'render' | 'fly';
-  backendUrl?: string;
-  storybookDir?: string;
+  // NEW RECOMMENDED: Live Storybook deployment (dev mode on server)
+  live?: boolean;  // Deploy Storybook in dev mode with MCP server
+  platform?: 'railway' | 'fly';
   projectName?: string;
   dryRun?: boolean;
+  // Legacy approaches (still supported)
+  backend?: boolean;
+  frontend?: boolean;
+  app?: boolean;  // Deploy standalone production app
+  backendUrl?: string;
+  storybookDir?: string;
   // Legacy Cloudflare Edge approach (deprecated)
   init?: boolean;
   edge?: boolean;
@@ -52,6 +54,396 @@ function isToolInstalled(tool: string): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Generate deployment files for live Storybook deployment
+ * This creates Dockerfile, start script, and platform configs
+ */
+function generateLiveDeploymentFiles(projectDir: string, platform: string): void {
+  console.log('📝 Generating deployment files...\n');
+
+  // 1. Create Dockerfile for running both servers
+  const dockerfilePath = path.join(projectDir, 'Dockerfile');
+  const dockerfile = `# Story UI Live Deployment
+# Runs Storybook in dev mode with Story UI MCP server
+
+FROM node:20-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY package*.json ./
+RUN npm install
+
+# Copy project files
+COPY . .
+
+# Make start script executable
+RUN chmod +x ./start-production.sh
+
+# Expose ports: Storybook (6006) and MCP server (4005)
+EXPOSE 6006 4005
+
+# Start both servers
+CMD ["./start-production.sh"]
+`;
+  fs.writeFileSync(dockerfilePath, dockerfile);
+  console.log('✅ Created Dockerfile');
+
+  // 2. Create start script that runs both servers
+  const startScriptPath = path.join(projectDir, 'start-production.sh');
+  const startScript = `#!/bin/bash
+
+# Story UI Live Production Start Script
+# Runs Storybook in dev mode with Story UI MCP server
+
+echo "🚀 Starting Story UI Live Environment..."
+
+# Start Storybook dev server in background
+echo "📖 Starting Storybook dev server on port 6006..."
+npm run storybook -- --port 6006 --host 0.0.0.0 --ci --no-open &
+STORYBOOK_PID=$!
+
+# Wait a moment for Storybook to initialize
+sleep 5
+
+# Start Story UI MCP server in background
+echo "🤖 Starting Story UI MCP server on port 4005..."
+npx story-ui start --port 4005 &
+MCP_PID=$!
+
+echo ""
+echo "✅ Story UI Live Environment is running!"
+echo "   📖 Storybook:   http://localhost:6006"
+echo "   🤖 MCP Server:  http://localhost:4005"
+echo "   📡 MCP Endpoint: http://localhost:4005/mcp"
+echo ""
+
+# Wait for either process to exit
+wait $STORYBOOK_PID $MCP_PID
+`;
+  fs.writeFileSync(startScriptPath, startScript);
+  fs.chmodSync(startScriptPath, '755');
+  console.log('✅ Created start-production.sh');
+
+  // 3. Create platform-specific config
+  switch (platform) {
+    case 'railway':
+      createRailwayConfig(projectDir);
+      break;
+    case 'fly':
+      createFlyConfig(projectDir);
+      break;
+  }
+
+  // 4. Create .dockerignore if it doesn't exist
+  const dockerignorePath = path.join(projectDir, '.dockerignore');
+  if (!fs.existsSync(dockerignorePath)) {
+    const dockerignore = `node_modules
+.git
+.gitignore
+*.md
+.DS_Store
+storybook-static
+dist
+.env.local
+`;
+    fs.writeFileSync(dockerignorePath, dockerignore);
+    console.log('✅ Created .dockerignore');
+  }
+
+  // 5. Update package.json to ensure story-ui is a dependency
+  const packageJsonPath = path.join(projectDir, 'package.json');
+  if (fs.existsSync(packageJsonPath)) {
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+
+    // Add story-ui as a dependency if not present
+    if (!packageJson.dependencies?.['@tpitre/story-ui'] && !packageJson.devDependencies?.['@tpitre/story-ui']) {
+      packageJson.devDependencies = packageJson.devDependencies || {};
+      packageJson.devDependencies['@tpitre/story-ui'] = 'latest';
+      fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
+      console.log('✅ Added @tpitre/story-ui to package.json');
+    }
+  }
+}
+
+function createRailwayConfig(projectDir: string): void {
+  const railwayJsonPath = path.join(projectDir, 'railway.json');
+  const railwayJson = {
+    "$schema": "https://railway.app/railway.schema.json",
+    "build": {
+      "builder": "DOCKERFILE"
+    },
+    "deploy": {
+      "numReplicas": 1,
+      "restartPolicyType": "ON_FAILURE"
+    }
+  };
+  fs.writeFileSync(railwayJsonPath, JSON.stringify(railwayJson, null, 2));
+  console.log('✅ Created railway.json');
+
+  // Also create nixpacks.toml as alternative
+  const nixpacksPath = path.join(projectDir, 'nixpacks.toml');
+  const nixpacks = `[start]
+cmd = "./start-production.sh"
+
+[phases.install]
+cmds = ["npm install"]
+
+[phases.build]
+cmds = []
+`;
+  fs.writeFileSync(nixpacksPath, nixpacks);
+  console.log('✅ Created nixpacks.toml (Railway alternative)');
+}
+
+function createFlyConfig(projectDir: string): void {
+  const flyTomlPath = path.join(projectDir, 'fly.toml');
+  const projectName = path.basename(projectDir).toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  const flyToml = `app = "${projectName}-story-ui"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[[services]]
+  internal_port = 6006
+  protocol = "tcp"
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+[[services]]
+  internal_port = 4005
+  protocol = "tcp"
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 4005
+
+[env]
+  NODE_ENV = "production"
+`;
+  fs.writeFileSync(flyTomlPath, flyToml);
+  console.log('✅ Created fly.toml');
+}
+
+/**
+ * Deploy live Storybook (dev mode) with MCP server to a cloud platform
+ * This is the RECOMMENDED approach for production Story UI deployment
+ */
+async function deployLiveStorybook(options: DeployOptions): Promise<{ storybookUrl: string | null; mcpUrl: string | null }> {
+  console.log('\n🚀 Story UI Live Deployment');
+  console.log('═'.repeat(50));
+  console.log('This deploys your Storybook in DEV MODE with the MCP server.');
+  console.log('Works with ANY components - exactly like your local environment!\n');
+
+  const projectDir = process.cwd();
+  const platform = options.platform || 'railway';
+
+  // Validate project has Storybook
+  const packageJsonPath = path.join(projectDir, 'package.json');
+  if (!fs.existsSync(packageJsonPath)) {
+    console.error('❌ No package.json found. Run this from your Storybook project root.');
+    return { storybookUrl: null, mcpUrl: null };
+  }
+
+  const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+  const hasStorybook = packageJson.devDependencies?.storybook ||
+                       packageJson.dependencies?.storybook ||
+                       packageJson.devDependencies?.['@storybook/react'] ||
+                       packageJson.dependencies?.['@storybook/react'];
+
+  if (!hasStorybook) {
+    console.error('❌ No Storybook found in package.json.');
+    console.log('   Make sure you have Storybook installed: npx storybook@latest init');
+    return { storybookUrl: null, mcpUrl: null };
+  }
+
+  // Generate deployment files
+  generateLiveDeploymentFiles(projectDir, platform);
+
+  if (options.dryRun) {
+    console.log('\n[DRY RUN] Deployment files generated. Would deploy to', platform);
+    console.log('[DRY RUN] To deploy manually:');
+
+    switch (platform) {
+      case 'railway':
+        console.log('   1. railway login');
+        console.log('   2. railway init');
+        console.log('   3. railway up');
+        console.log('   4. railway domain (to get URL)');
+        break;
+      case 'fly':
+        console.log('   1. fly auth login');
+        console.log('   2. fly launch');
+        console.log('   3. fly secrets set ANTHROPIC_API_KEY=...');
+        console.log('   4. fly deploy');
+        break;
+    }
+
+    return { storybookUrl: 'https://dry-run.example.com', mcpUrl: 'https://dry-run.example.com:4005/mcp' };
+  }
+
+  // Actually deploy based on platform
+  console.log(`\n☁️  Deploying to ${platform}...`);
+
+  switch (platform) {
+    case 'railway':
+      return await deployLiveToRailway(projectDir);
+    case 'fly':
+      return await deployLiveToFly(projectDir);
+    default:
+      console.error(`❌ Unknown platform: ${platform}`);
+      return { storybookUrl: null, mcpUrl: null };
+  }
+}
+
+async function deployLiveToRailway(projectDir: string): Promise<{ storybookUrl: string | null; mcpUrl: string | null }> {
+  console.log('\n🚂 Deploying to Railway...\n');
+
+  if (!isToolInstalled('railway')) {
+    console.log('📦 Railway CLI not found. Installing...');
+    try {
+      execSync('npm install -g @railway/cli', { stdio: 'inherit' });
+    } catch {
+      console.error('❌ Failed to install Railway CLI');
+      console.log('   Install manually: npm install -g @railway/cli');
+      return { storybookUrl: null, mcpUrl: null };
+    }
+  }
+
+  // Check if logged in
+  try {
+    execSync('railway whoami', { stdio: 'pipe' });
+  } catch {
+    console.log('🔐 Not logged into Railway. Please login:');
+    execSync('railway login', { stdio: 'inherit' });
+  }
+
+  try {
+    // Check if project is linked
+    try {
+      execSync('railway status', { cwd: projectDir, stdio: 'pipe' });
+      console.log('✅ Railway project already linked');
+    } catch {
+      console.log('📁 Creating new Railway project...');
+      execSync('railway init', { cwd: projectDir, stdio: 'inherit' });
+    }
+
+    // Set environment variables reminder
+    console.log('\n⚠️  Remember to set your API keys in Railway dashboard:');
+    console.log('   railway variables set ANTHROPIC_API_KEY=your-key');
+    console.log('   (or OPENAI_API_KEY, GEMINI_API_KEY)\n');
+
+    // Deploy
+    console.log('🚀 Deploying to Railway...');
+    const result = execSync('railway up --detach 2>&1', {
+      cwd: projectDir,
+      encoding: 'utf-8'
+    });
+    console.log(result);
+
+    // Get the deployment URL
+    console.log('\n📋 Getting deployment URL...');
+    try {
+      const urlResult = execSync('railway domain 2>&1', {
+        cwd: projectDir,
+        encoding: 'utf-8'
+      }).trim();
+
+      if (urlResult && !urlResult.includes('No domain')) {
+        const storybookUrl = `https://${urlResult}`;
+        const mcpUrl = `https://${urlResult}:4005/mcp`;
+
+        console.log(`\n✅ Deployment successful!`);
+        console.log(`   📖 Storybook:   ${storybookUrl}`);
+        console.log(`   🤖 MCP Server:  ${mcpUrl}`);
+
+        return { storybookUrl, mcpUrl };
+      }
+    } catch {
+      console.log('⚠️  Could not get domain automatically.');
+    }
+
+    // Try to generate a domain
+    console.log('🌐 Generating Railway domain...');
+    execSync('railway domain', { cwd: projectDir, stdio: 'inherit' });
+
+    console.log('\n✅ Deployment submitted!');
+    console.log('   Run "railway domain" to get your deployment URL.');
+
+    return { storybookUrl: null, mcpUrl: null };
+  } catch (error: any) {
+    console.error('❌ Railway deployment failed:', error.message);
+    return { storybookUrl: null, mcpUrl: null };
+  }
+}
+
+async function deployLiveToFly(projectDir: string): Promise<{ storybookUrl: string | null; mcpUrl: string | null }> {
+  console.log('\n🪁 Deploying to Fly.io...\n');
+
+  const flyCmd = isToolInstalled('flyctl') ? 'flyctl' : (isToolInstalled('fly') ? 'fly' : null);
+
+  if (!flyCmd) {
+    console.log('📦 Fly CLI not found. Installing...');
+    try {
+      execSync('curl -L https://fly.io/install.sh | sh', { stdio: 'inherit' });
+    } catch {
+      console.error('❌ Failed to install Fly CLI');
+      console.log('   Install manually: https://fly.io/docs/hands-on/install-flyctl/');
+      return { storybookUrl: null, mcpUrl: null };
+    }
+  }
+
+  const cmd = flyCmd || 'fly';
+
+  try {
+    // Check if logged in
+    try {
+      execSync(`${cmd} auth whoami`, { stdio: 'pipe' });
+    } catch {
+      console.log('🔐 Not logged into Fly.io. Please login:');
+      execSync(`${cmd} auth login`, { stdio: 'inherit' });
+    }
+
+    // Launch or deploy
+    try {
+      execSync(`${cmd} status`, { cwd: projectDir, stdio: 'pipe' });
+      console.log('🚀 Deploying to existing Fly app...');
+      execSync(`${cmd} deploy`, { cwd: projectDir, stdio: 'inherit' });
+    } catch {
+      console.log('📁 Creating new Fly app...');
+      execSync(`${cmd} launch --no-deploy`, { cwd: projectDir, stdio: 'inherit' });
+
+      console.log('\n⚠️  Before deploying, set your secrets:');
+      console.log(`   ${cmd} secrets set ANTHROPIC_API_KEY=your-key`);
+      console.log('\n   Then run:');
+      console.log(`   ${cmd} deploy`);
+
+      return { storybookUrl: null, mcpUrl: null };
+    }
+
+    // Get URL
+    const appName = path.basename(projectDir).toLowerCase().replace(/[^a-z0-9-]/g, '-') + '-story-ui';
+    const storybookUrl = `https://${appName}.fly.dev`;
+    const mcpUrl = `https://${appName}.fly.dev:4005/mcp`;
+
+    console.log(`\n✅ Deployment successful!`);
+    console.log(`   📖 Storybook:   ${storybookUrl}`);
+    console.log(`   🤖 MCP Server:  ${mcpUrl}`);
+
+    return { storybookUrl, mcpUrl };
+  } catch (error: any) {
+    console.error('❌ Fly.io deployment failed:', error.message);
+    return { storybookUrl: null, mcpUrl: null };
   }
 }
 
@@ -145,67 +537,6 @@ async function deployToRailway(dryRun: boolean): Promise<string | null> {
     console.error('❌ Railway deployment failed:', error.message);
     return null;
   }
-}
-
-/**
- * Deploy backend to Render
- */
-async function deployToRender(dryRun: boolean): Promise<string | null> {
-  console.log('\n🎨 Deploying backend to Render...\n');
-
-  const pkgRoot = getPackageRoot();
-
-  // Create render.yaml if it doesn't exist
-  const renderYamlPath = path.join(pkgRoot, 'render.yaml');
-  if (!fs.existsSync(renderYamlPath)) {
-    console.log('📝 Creating render.yaml...');
-    const renderYaml = `services:
-  - type: web
-    name: story-ui-backend
-    env: node
-    buildCommand: npm install && npm run build
-    startCommand: node dist/mcp-server/index.js
-    healthCheckPath: /story-ui/providers
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: PORT
-        value: 4001
-      - key: CLAUDE_API_KEY
-        sync: false
-      - key: OPENAI_API_KEY
-        sync: false
-      - key: GEMINI_API_KEY
-        sync: false
-`;
-    fs.writeFileSync(renderYamlPath, renderYaml);
-    console.log('✅ Created render.yaml');
-  }
-
-  if (dryRun) {
-    console.log('[DRY RUN] render.yaml created at:', renderYamlPath);
-    console.log('[DRY RUN] To deploy:');
-    console.log('   1. Push this repo to GitHub');
-    console.log('   2. Go to https://render.com');
-    console.log('   3. Create new Web Service from your repo');
-    console.log('   4. Set environment variables');
-    return 'https://dry-run.onrender.com';
-  }
-
-  console.log('\n📋 Render deployment is Git-based.');
-  console.log('   To deploy to Render:\n');
-  console.log('   1. Push your code to GitHub/GitLab');
-  console.log('   2. Go to https://dashboard.render.com');
-  console.log('   3. Click "New" → "Web Service"');
-  console.log('   4. Connect your repository');
-  console.log('   5. Render will auto-detect the render.yaml config');
-  console.log('   6. Add your API keys as environment variables:');
-  console.log('      - CLAUDE_API_KEY');
-  console.log('      - OPENAI_API_KEY');
-  console.log('      - GEMINI_API_KEY');
-  console.log('\n   render.yaml has been created in your project root.');
-
-  return null;
 }
 
 /**
@@ -384,12 +715,12 @@ async function deployStorybook(backendUrl: string, storybookDir: string, project
 }
 
 /**
- * Build and deploy standalone production app (Lovable/Bolt-style)
+ * Build and deploy standalone production app
  * This builds a React app with the user's component library bundled in
  */
 async function deployProductionApp(backendUrl: string, projectName: string, dryRun: boolean): Promise<string | null> {
   console.log('\n🚀 Building Standalone Production App...\n');
-  console.log('   This creates a Lovable/Bolt-style UI with your component library\n');
+  console.log('   This creates a standalone web app with your component library\n');
 
   const pkgRoot = getPackageRoot();
   const userCwd = process.cwd();
@@ -703,7 +1034,7 @@ function printSummary(backendUrl: string | null, frontendUrl: string | null, app
 
   if (appUrl) {
     console.log(`\n🚀 Production App: ${appUrl}`);
-    console.log('   This is your Lovable/Bolt-style UI with your component library');
+    console.log('   This is your standalone web app with your component library');
     console.log('   Users can prompt and see live-rendered components!');
   }
 
@@ -756,7 +1087,38 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
     return;
   }
 
-  // New recommended deployment flow
+  // NEW RECOMMENDED: Live Storybook deployment
+  // Runs Storybook in dev mode with MCP server - works with ANY components
+  if (options.live) {
+    const result = await deployLiveStorybook(options);
+
+    if (result.storybookUrl || result.mcpUrl) {
+      console.log('\n' + '═'.repeat(60));
+      console.log('📋 LIVE DEPLOYMENT SUMMARY');
+      console.log('═'.repeat(60));
+
+      if (result.storybookUrl) {
+        console.log(`\n📖 Storybook (Live Dev Mode): ${result.storybookUrl}`);
+        console.log('   This runs in dev mode - Story UI can generate & hot-reload stories!');
+      }
+
+      if (result.mcpUrl) {
+        console.log(`\n🤖 MCP Server: ${result.mcpUrl}`);
+        console.log('   Connect Claude Desktop with:');
+        console.log(`   claude mcp add --transport http story-ui ${result.mcpUrl}`);
+      }
+
+      console.log('\n✅ This is the EXACT same experience as local development!');
+      console.log('   - Works with ANY components (custom, Tailwind, multiple libraries)');
+      console.log('   - Generated stories are hot-reloaded instantly');
+      console.log('   - MCP server accessible from anywhere');
+      console.log('\n' + '═'.repeat(60));
+    }
+
+    return;
+  }
+
+  // Legacy deployment flows
   let backendUrl = options.backendUrl || null;
   let frontendUrl: string | null = null;
   let appUrl: string | null = null;
@@ -769,15 +1131,12 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
       case 'railway':
         backendUrl = await deployToRailway(options.dryRun || false);
         break;
-      case 'render':
-        backendUrl = await deployToRender(options.dryRun || false);
-        break;
       case 'fly':
         backendUrl = await deployToFly(options.dryRun || false);
         break;
       default:
         console.error(`❌ Unknown platform: ${platform}`);
-        console.log('   Supported platforms: railway, render, fly');
+        console.log('   Supported platforms: railway, fly');
         return;
     }
 
@@ -823,47 +1182,53 @@ export async function deployCommand(options: DeployOptions): Promise<void> {
   }
 
   // Show help if no flags provided
-  if (!options.backend && !options.frontend && !options.app && !options.edge && !options.pages && !options.all && !options.init) {
-    console.log('Story UI Deployment - Deploy your component library as a production app\n');
-    console.log('RECOMMENDED APPROACH (Lovable/Bolt-style App):');
-    console.log('─'.repeat(50));
-    console.log('  --backend              Deploy MCP server backend');
-    console.log('  --app                  Deploy standalone production app (RECOMMENDED)');
-    console.log('                         Builds a Lovable/Bolt-style UI with your components');
-    console.log('  --platform <name>      Backend platform: railway (default), render, fly');
-    console.log('  --backend-url <url>    Use existing backend URL');
-    console.log('  --project-name <name>  Project name prefix (default: story-ui)');
-    console.log('  --dry-run              Show what would be deployed\n');
+  if (!options.backend && !options.frontend && !options.app && !options.live && !options.edge && !options.pages && !options.all && !options.init) {
+    console.log('Story UI Deployment - Deploy your Storybook with AI story generation\n');
+
+    console.log('═'.repeat(60));
+    console.log('  RECOMMENDED: Live Storybook Deployment');
+    console.log('═'.repeat(60));
+    console.log('  --live                 Deploy Storybook in DEV MODE with MCP server');
+    console.log('                         Works with ANY components - exactly like local dev!');
+    console.log('  --platform <name>      Platform: railway (default), fly');
+    console.log('  --dry-run              Generate deployment files only\n');
 
     console.log('EXAMPLES:');
-    console.log('─'.repeat(50));
-    console.log('  # Deploy everything (recommended)');
-    console.log('  npx story-ui deploy --backend --app\n');
+    console.log('─'.repeat(60));
+    console.log('  # Deploy your Storybook to Railway (recommended)');
+    console.log('  npx story-ui deploy --live\n');
 
-    console.log('  # Deploy backend only to Railway');
-    console.log('  npx story-ui deploy --backend --platform=railway\n');
+    console.log('  # Deploy to Fly.io');
+    console.log('  npx story-ui deploy --live --platform=fly\n');
 
-    console.log('  # Deploy app with existing backend');
-    console.log('  npx story-ui deploy --app --backend-url=https://your-api.railway.app\n');
+    console.log('  # Just generate deployment files (no actual deploy)');
+    console.log('  npx story-ui deploy --live --dry-run\n');
 
-    console.log('  # Custom project name');
-    console.log('  npx story-ui deploy --backend --app --project-name=my-design-system\n');
+    console.log('WHY --live IS RECOMMENDED:');
+    console.log('─'.repeat(60));
+    console.log('  - Works with ANY components (custom, Tailwind, multiple libraries)');
+    console.log('  - Exactly the same experience as local development');
+    console.log('  - Story UI writes stories to disk, Storybook hot-reloads them');
+    console.log('  - MCP server accessible from Claude Desktop anywhere');
+    console.log('  - No design system lock-in - completely agnostic\n');
 
-    console.log('ENVIRONMENT VARIABLES (set on backend platform):');
-    console.log('─'.repeat(50));
-    console.log('  CLAUDE_API_KEY    - Anthropic API key');
-    console.log('  OPENAI_API_KEY    - OpenAI API key');
-    console.log('  GEMINI_API_KEY    - Google Gemini API key');
+    console.log('ENVIRONMENT VARIABLES (set on your platform):');
+    console.log('─'.repeat(60));
+    console.log('  ANTHROPIC_API_KEY  - Claude API key (recommended)');
+    console.log('  OPENAI_API_KEY     - OpenAI API key (optional)');
+    console.log('  GEMINI_API_KEY     - Google Gemini API key (optional)');
     console.log('  (Set at least one of these)\n');
 
-    console.log('LEGACY OPTIONS (Storybook-based frontend):');
-    console.log('─'.repeat(50));
-    console.log('  --frontend             Deploy Storybook frontend (use --app instead)');
-    console.log('  --storybook-dir <dir>  Path to Storybook project\n');
+    console.log('ALTERNATIVE APPROACHES (for specific use cases):');
+    console.log('─'.repeat(60));
+    console.log('  --backend              Deploy only the MCP server backend');
+    console.log('  --app                  Deploy standalone production app (static)');
+    console.log('  --frontend             Deploy Storybook static build');
+    console.log('  --backend-url <url>    Use existing backend URL\n');
 
-    console.log('DEPRECATED OPTIONS (Cloudflare Edge approach):');
-    console.log('─'.repeat(50));
+    console.log('DEPRECATED:');
+    console.log('─'.repeat(60));
     console.log('  --init, --edge, --pages, --all');
-    console.log('  These are deprecated. Use --backend and --app instead.\n');
+    console.log('  These Cloudflare Edge options are deprecated. Use --live instead.\n');
   }
 }

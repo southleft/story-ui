@@ -54,7 +54,7 @@ export interface SettingsResponse {
  */
 export function loadSettingsConfig(): SettingsConfig {
   const defaultProvider = (process.env.DEFAULT_PROVIDER as ProviderType) || 'claude';
-  const defaultModel = process.env.DEFAULT_MODEL || 'claude-sonnet-4-5-20250929';
+  const defaultModel = process.env.DEFAULT_MODEL || 'claude-opus-4-5-20251101';
 
   // Parse allowed providers
   const allowedProvidersEnv = process.env.ALLOWED_PROVIDERS;
@@ -134,14 +134,14 @@ export function getAvailableModels(
   // Mark recommended models based on capabilities
   const recommendedModels = [
     // Claude
+    'claude-opus-4-5-20251101', // Claude Opus 4.5 - flagship
     'claude-sonnet-4-5-20250929',
-    'claude-opus-4-5-20251101',
     // OpenAI
-    'gpt-5.1',
+    'gpt-5.1', // GPT-5.1 - flagship
     'gpt-4o',
     // Gemini
+    'gemini-3-pro-preview', // Gemini 3 Pro Preview - flagship
     'gemini-3-pro',
-    'gemini-2.0-flash',
   ];
 
   return filteredModels.map((model: ModelInfo) => ({

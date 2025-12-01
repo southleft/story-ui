@@ -380,9 +380,9 @@ Test all npx commands in fresh environments:
   - [ ] Creates ChakraProvider wrapper
   - [ ] Handles dependencies
 
-- [ ] `npx story-ui init --design-system antd`
-  - [ ] Installs Ant Design packages
-  - [ ] Configures styles correctly
+- [ ] `npx story-ui init --design-system mui`
+  - [ ] Installs MUI packages
+  - [ ] Configures theme provider
 
 - [ ] `npx story-ui init --design-system material`
   - [ ] Installs MUI packages

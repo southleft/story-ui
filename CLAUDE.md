@@ -1,6 +1,6 @@
 # Story UI - Claude Code Project Guide
 
-> **Last Updated**: November 28, 2025
+> **Last Updated**: November 30, 2025
 > **Current Version**: 3.0.0
 > **Production URL**: Your Cloudflare Pages deployment URL
 > **Backend URL**: Your Railway or Cloudflare Workers deployment URL
@@ -81,39 +81,26 @@ A standalone web app that mimics local functionality:
 
 ### Production Environment Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Cloudflare Pages                          │
-│              (story-ui-storybook.pages.dev)                  │
-│  ┌─────────────────────────────────────────────────────────┐│
-│  │                    React App                             ││
-│  │  - Chat Interface                                        ││
-│  │  - Component Preview (Live Babel Transform)              ││
-│  │  - Provider/Model Selection                              ││
-│  │  - LocalStorage Persistence                              ││
-│  └─────────────────────────────────────────────────────────┘│
-└──────────────────────────┬──────────────────────────────────┘
-                           │ HTTPS
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│               Cloudflare Workers Edge                        │
-│             (your-worker.your-subdomain.workers.dev)        │
-│  ┌─────────────────────────────────────────────────────────┐│
-│  │  Routes:                                                 ││
-│  │  - GET  /story-ui/providers → Available providers/models ││
-│  │  - POST /story-ui/claude → Claude API proxy              ││
-│  │  - POST /story-ui/openai → OpenAI API proxy              ││
-│  │  - POST /story-ui/gemini → Gemini API proxy              ││
-│  │  - POST /mcp → MCP JSON-RPC endpoint                     ││
-│  └─────────────────────────────────────────────────────────┘│
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-           ┌───────────────┼───────────────┐
-           ▼               ▼               ▼
-      ┌─────────┐    ┌─────────┐    ┌─────────┐
-      │ Claude  │    │ OpenAI  │    │ Gemini  │
-      │   API   │    │   API   │    │   API   │
-      └─────────┘    └─────────┘    └─────────┘
+```mermaid
+flowchart TD
+    subgraph Frontend["Cloudflare Pages (story-ui-storybook.pages.dev)"]
+        App["React App<br/>- Chat Interface<br/>- Component Preview (Live Babel Transform)<br/>- Provider/Model Selection<br/>- LocalStorage Persistence"]
+    end
+
+    subgraph Backend["Cloudflare Workers Edge (your-worker.workers.dev)"]
+        Routes["API Routes:<br/>GET /story-ui/providers → Available providers/models<br/>POST /story-ui/claude → Claude API proxy<br/>POST /story-ui/openai → OpenAI API proxy<br/>POST /story-ui/gemini → Gemini API proxy<br/>POST /mcp → MCP JSON-RPC endpoint"]
+    end
+
+    subgraph APIs["LLM Provider APIs"]
+        Claude["Claude API"]
+        OpenAI["OpenAI API"]
+        Gemini["Gemini API"]
+    end
+
+    App -->|HTTPS| Backend
+    Backend --> Claude
+    Backend --> OpenAI
+    Backend --> Gemini
 ```
 
 ### Key Components
@@ -151,7 +138,7 @@ A standalone web app that mimics local functionality:
 | Smart chat titles | ✅ | LLM-generated from first message |
 | Image attachments | ✅ | Vision support for screenshots |
 | Design considerations | ✅ | Loaded from considerations.ts |
-| Modern chat UI | ✅ | ChatGPT/Lovable-style input |
+| Modern chat UI | ✅ | ChatGPT-style input interface |
 | 225 Mantine components | ✅ | Auto-discovered registry |
 
 ### Pending Features
@@ -252,6 +239,24 @@ story-ui-repo/
 2. **Deploy**: `cd cloudflare-edge && wrangler deploy`
 3. **Verify**: Check the deployed endpoint
 
+### Railway Deployment
+
+Railway is the primary deployment platform for the full-stack Story UI application:
+
+1. **Deployment Platform**: Railway provides containerized deployment with automatic builds
+2. **Reverse Proxy**: Caddy is configured to handle HTTPS and routing
+3. **Environment**: All LLM provider API keys are configured as Railway environment variables
+4. **Auto-deploy**: Connected to git repository for automatic deployments on push
+
+To deploy to Railway:
+```bash
+# Railway CLI deployment
+railway up
+
+# Or push to main branch for auto-deployment
+git push origin main
+```
+
 ### Testing
 
 Use Chrome DevTools MCP for automated browser testing:
@@ -270,9 +275,9 @@ Use Chrome DevTools MCP for automated browser testing:
 
 ```typescript
 models: [
-  'claude-sonnet-4-20250514',      // Latest, recommended
-  'claude-3-5-sonnet-20241022',    // Previous version
-  'claude-3-haiku-20240307'        // Fast, economical
+  'claude-opus-4-5-20251101',      // Claude Opus 4.5 - Most capable
+  'claude-sonnet-4-5-20250929',    // Claude Sonnet 4.5 - Recommended default
+  'claude-haiku-4-5-20251001'      // Claude Haiku 4.5 - Fast, economical
 ]
 ```
 
@@ -280,9 +285,10 @@ models: [
 
 ```typescript
 models: [
-  'gpt-4o',                        // Latest multimodal
-  'gpt-4-turbo',                   // Previous flagship
-  'gpt-3.5-turbo'                  // Fast, economical
+  'gpt-5.1',                       // GPT-5.1 - Latest with adaptive reasoning
+  'gpt-5.1-thinking',              // GPT-5.1 Thinking - Extended reasoning
+  'gpt-4o',                        // GPT-4o - Fast multimodal, recommended default
+  'gpt-4o-mini'                    // GPT-4o Mini - Economical
 ]
 ```
 
@@ -290,9 +296,10 @@ models: [
 
 ```typescript
 models: [
-  'gemini-2.0-flash',              // Latest
-  'gemini-1.5-pro',                // Previous flagship
-  'gemini-1.5-flash'               // Fast
+  'gemini-3-pro',                  // Gemini 3 Pro - Most intelligent
+  'gemini-2.0-flash-exp',          // Gemini 2.0 Flash Experimental
+  'gemini-2.0-flash',              // Gemini 2.0 Flash - Recommended default
+  'gemini-1.5-pro'                 // Gemini 1.5 Pro - Large context
 ]
 ```
 

@@ -304,21 +304,23 @@ program
 
 program
   .command('deploy')
-  .description('Deploy Story UI to production (backend + standalone app)')
-  // New recommended approach
-  .option('--backend', 'Deploy MCP server backend to Railway/Render/Fly.io')
-  .option('--app', 'Deploy standalone production app (Lovable/Bolt-style with live preview)')
-  .option('--frontend', 'Deploy Storybook frontend (legacy, use --app instead)')
-  .option('--platform <platform>', 'Backend platform: railway (default), render, fly', 'railway')
-  .option('--backend-url <url>', 'Use existing backend URL for app/frontend deployment')
-  .option('--storybook-dir <dir>', 'Path to Storybook project (for --frontend only)')
+  .description('Deploy Story UI to production')
+  // RECOMMENDED: Live Storybook deployment
+  .option('--live', 'Deploy Storybook in DEV MODE with MCP server (RECOMMENDED)')
+  .option('--platform <platform>', 'Platform: railway (default), render, fly', 'railway')
+  .option('--dry-run', 'Generate deployment files only, don\'t deploy')
+  // Alternative approaches
+  .option('--backend', 'Deploy only the MCP server backend')
+  .option('--app', 'Deploy standalone production app (static build)')
+  .option('--frontend', 'Deploy Storybook static build (legacy)')
+  .option('--backend-url <url>', 'Use existing backend URL for app/frontend')
+  .option('--storybook-dir <dir>', 'Path to Storybook project')
   .option('--project-name <name>', 'Project name prefix', 'story-ui')
-  .option('--dry-run', 'Show what would be deployed without deploying')
   // Legacy flags (deprecated)
-  .option('--init', '[DEPRECATED] Initialize deployment templates')
-  .option('--edge', '[DEPRECATED] Deploy Edge Worker only')
-  .option('--pages', '[DEPRECATED] Deploy Pages UI only')
-  .option('--all', '[DEPRECATED] Deploy both Edge Worker and Pages UI')
+  .option('--init', '[DEPRECATED] Use --live instead')
+  .option('--edge', '[DEPRECATED] Use --live instead')
+  .option('--pages', '[DEPRECATED] Use --live instead')
+  .option('--all', '[DEPRECATED] Use --live instead')
   .action(async (options) => {
     await deployCommand(options);
   });

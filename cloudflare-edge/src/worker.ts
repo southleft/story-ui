@@ -716,6 +716,55 @@ function handleProvidersRoute(env: Env): Response {
  * Handle /story-ui/claude route
  * POST: Proxy requests to Claude API for component generation
  */
+/**
+ * Extract component names used in JSX code
+ */
+function extractComponentsFromJSX(jsxCode: string): string[] {
+  // Match component tags: <ComponentName or <ComponentName.SubComponent
+  const componentRegex = /<([A-Z][A-Za-z0-9]*(?:\.[A-Z][A-Za-z0-9]*)?)/g;
+  const components = new Set<string>();
+  let match;
+  while ((match = componentRegex.exec(jsxCode)) !== null) {
+    // Get the base component name (before any dot)
+    const componentName = match[1].split('.')[0];
+    components.add(componentName);
+  }
+  return Array.from(components);
+}
+
+/**
+ * Validate components used in JSX against available components
+ */
+function validateComponents(
+  jsxCode: string,
+  availableComponents: string[]
+): { valid: boolean; invalidComponents: string[]; suggestions: Record<string, string> } {
+  const usedComponents = extractComponentsFromJSX(jsxCode);
+  const availableSet = new Set(availableComponents);
+  const invalidComponents: string[] = [];
+  const suggestions: Record<string, string> = {};
+
+  for (const comp of usedComponents) {
+    if (!availableSet.has(comp)) {
+      invalidComponents.push(comp);
+      // Find a similar component as suggestion
+      const similar = availableComponents.find(a =>
+        a.toLowerCase().includes(comp.toLowerCase()) ||
+        comp.toLowerCase().includes(a.toLowerCase())
+      );
+      if (similar) {
+        suggestions[comp] = similar;
+      }
+    }
+  }
+
+  return {
+    valid: invalidComponents.length === 0,
+    invalidComponents,
+    suggestions,
+  };
+}
+
 async function handleClaudeRoute(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
@@ -747,9 +796,10 @@ async function handleClaudeRoute(request: Request, env: Env): Promise<Response> 
       maxTokens?: number;
       model?: string;
       images?: Array<{ type: string; data: string }>;
+      availableComponents?: string[];
     };
 
-    const { prompt, messages = [], systemPrompt, prefillAssistant, maxTokens = 4096, model, images = [] } = body;
+    const { prompt, messages = [], systemPrompt, prefillAssistant, maxTokens = 4096, model, images = [], availableComponents = [] } = body;
 
     if (!prompt) {
       return new Response(JSON.stringify({ error: 'Missing prompt' }), {
@@ -816,59 +866,149 @@ async function handleClaudeRoute(request: Request, env: Env): Promise<Response> 
       });
     }
 
-    // Call Claude API
-    const claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: model || env.DEFAULT_MODEL || 'claude-sonnet-4-5-20250929',
-        max_tokens: maxTokens,
-        system: systemPrompt || 'You are a helpful assistant.',
-        messages: claudeMessages,
-      }),
-    });
+    // Validation and retry loop
+    const maxRetries = 3;
+    let lastResponse = '';
+    let lastValidation = { valid: true, invalidComponents: [] as string[], suggestions: {} as Record<string, string> };
 
-    if (!claudeResponse.ok) {
-      const errorText = await claudeResponse.text();
-      console.error('Claude API error:', errorText);
-      return new Response(JSON.stringify({
-        error: `Claude API error: ${claudeResponse.status}`,
-        details: errorText,
-      }), {
-        status: claudeResponse.status,
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      // Call Claude API
+      const claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-        }
+          'x-api-key': env.ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: model || env.DEFAULT_MODEL || 'claude-sonnet-4-5-20250929',
+          max_tokens: maxTokens,
+          system: systemPrompt || 'You are a helpful assistant.',
+          messages: claudeMessages,
+        }),
       });
+
+      if (!claudeResponse.ok) {
+        const errorText = await claudeResponse.text();
+        console.error('Claude API error:', errorText);
+        return new Response(JSON.stringify({
+          error: `Claude API error: ${claudeResponse.status}`,
+          details: errorText,
+        }), {
+          status: claudeResponse.status,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          }
+        });
+      }
+
+      const claudeData = await claudeResponse.json() as {
+        content: Array<{ type: string; text: string }>;
+        usage?: { input_tokens: number; output_tokens: number };
+      };
+
+      // Extract the text content
+      let responseText = '';
+      if (claudeData.content && Array.isArray(claudeData.content)) {
+        responseText = claudeData.content
+          .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
+          .map(block => block.text)
+          .join('');
+      }
+
+      // If we used prefill, prepend it back to the response
+      if (prefillAssistant) {
+        responseText = prefillAssistant + responseText;
+      }
+
+      lastResponse = responseText;
+
+      // If no available components provided, skip validation
+      if (availableComponents.length === 0) {
+        return new Response(JSON.stringify({
+          content: responseText,
+          usage: claudeData.usage,
+        }), {
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          }
+        });
+      }
+
+      // Validate components
+      lastValidation = validateComponents(responseText, availableComponents);
+
+      if (lastValidation.valid) {
+        // All components are valid, return the response
+        console.log(`Attempt ${attempt}: All components valid`);
+        return new Response(JSON.stringify({
+          content: responseText,
+          usage: claudeData.usage,
+          validated: true,
+        }), {
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+          }
+        });
+      }
+
+      // Components are invalid, prepare retry prompt
+      console.log(`Attempt ${attempt}: Invalid components found:`, lastValidation.invalidComponents);
+
+      if (attempt < maxRetries) {
+        // Build correction prompt with suggestions
+        const suggestionsList = lastValidation.invalidComponents.map(comp => {
+          const suggestion = lastValidation.suggestions[comp];
+          return suggestion
+            ? `"${comp}" - use "${suggestion}" instead`
+            : `"${comp}" - remove or replace with an available component`;
+        }).join('\n');
+
+        const correctionPrompt = `Your previous response used components that don't exist: ${lastValidation.invalidComponents.join(', ')}.
+
+Please fix by replacing or removing these invalid components:
+${suggestionsList}
+
+Available components: ${availableComponents.slice(0, 50).join(', ')}${availableComponents.length > 50 ? '...' : ''}
+
+Output the corrected JSX starting with < :`;
+
+        // Remove the prefill for retry (we'll add it again)
+        if (prefillAssistant && claudeMessages[claudeMessages.length - 1]?.role === 'assistant') {
+          claudeMessages.pop();
+        }
+
+        // Add the invalid response and correction request
+        claudeMessages.push({
+          role: 'assistant',
+          content: responseText,
+        });
+        claudeMessages.push({
+          role: 'user',
+          content: correctionPrompt,
+        });
+
+        // Add prefill again
+        if (prefillAssistant) {
+          claudeMessages.push({
+            role: 'assistant',
+            content: prefillAssistant,
+          });
+        }
+      }
     }
 
-    const claudeData = await claudeResponse.json() as {
-      content: Array<{ type: string; text: string }>;
-      usage?: { input_tokens: number; output_tokens: number };
-    };
-
-    // Extract the text content
-    let responseText = '';
-    if (claudeData.content && Array.isArray(claudeData.content)) {
-      responseText = claudeData.content
-        .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
-        .map(block => block.text)
-        .join('');
-    }
-
-    // If we used prefill, prepend it back to the response
-    if (prefillAssistant) {
-      responseText = prefillAssistant + responseText;
-    }
-
+    // All retries exhausted, return the last response with validation warning
+    console.log(`All ${maxRetries} attempts failed validation. Returning last response with warning.`);
     return new Response(JSON.stringify({
-      content: responseText,
-      usage: claudeData.usage,
+      content: lastResponse,
+      validated: false,
+      validationWarning: `Response may contain invalid components: ${lastValidation.invalidComponents.join(', ')}`,
+      invalidComponents: lastValidation.invalidComponents,
+      suggestions: lastValidation.suggestions,
     }), {
       headers: {
         'Content-Type': 'application/json',
