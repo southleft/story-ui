@@ -1,3 +1,10 @@
+# [3.1.0](https://github.com/southleft/story-ui/compare/v3.0.0...v3.1.0) (2025-12-01)
+
+
+### Features
+
+* add usage code extraction to Source Code panel ([312f7d8](https://github.com/southleft/story-ui/commit/312f7d8d5ad2290773078c9d14b4f4fdbfcb0230))
+
 ## [2.8.1](https://github.com/southleft/story-ui/compare/v2.8.0...v2.8.1) (2025-12-01)
 
 
