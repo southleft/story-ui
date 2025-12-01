@@ -1,3 +1,10 @@
+## [2.8.1](https://github.com/southleft/story-ui/compare/v2.8.0...v2.8.1) (2025-12-01)
+
+
+### Bug Fixes
+
+* auto-navigate to new story after generation to prevent HMR error ([77c1076](https://github.com/southleft/story-ui/commit/77c1076f8f0ff17d00b47ee1f3165ce2c054ceb0))
+
 # [2.8.0](https://github.com/southleft/story-ui/compare/v2.7.0...v2.8.0) (2025-12-01)
 
 
