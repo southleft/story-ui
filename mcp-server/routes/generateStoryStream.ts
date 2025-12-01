@@ -21,7 +21,8 @@ import {
 import { FrameworkType, StoryGenerationOptions } from '../../story-generator/framework-adapters/index.js';
 import { loadUserConfig, validateConfig } from '../../story-generator/configLoader.js';
 import { setupProductionGitignore } from '../../story-generator/productionGitignoreManager.js';
-import { getInMemoryStoryService, GeneratedStory } from '../../story-generator/inMemoryStoryService.js';
+import { getStoryService } from '../../story-generator/storyServiceFactory.js';
+import type { GeneratedStory } from '../../story-generator/storyServiceInterface.js';
 import { extractAndValidateCodeBlock, createFallbackStory } from '../../story-generator/validateStory.js';
 import { isBlacklistedComponent, isBlacklistedIcon, getBlacklistErrorMessage, ICON_CORRECTIONS } from '../../story-generator/componentBlacklist.js';
 import { StoryTracker, StoryMapping } from '../../story-generator/storyTracker.js';
@@ -519,7 +520,7 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
 
     // Set up environment
     const gitignoreManager = setupProductionGitignore(config);
-    const storyService = getInMemoryStoryService(config);
+    const storyService = await getStoryService(config);
     const isProduction = gitignoreManager.isProductionMode();
     const storyTracker = new StoryTracker(config);
     const historyManager = new StoryHistoryManager(process.cwd());
@@ -807,7 +808,7 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
         components: extractComponentsFromContent(fixedFileContents)
       };
 
-      storyService.storeStory(generatedStory);
+      await storyService.storeStory(generatedStory);
 
       const mapping: StoryMapping = {
         title: aiTitle,

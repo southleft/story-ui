@@ -9,7 +9,7 @@ import {
 import fetch from 'node-fetch';
 import { loadUserConfig } from '../story-generator/configLoader.js';
 import { EnhancedComponentDiscovery } from '../story-generator/enhancedComponentDiscovery.js';
-import { getInMemoryStoryService } from '../story-generator/inMemoryStoryService.js';
+// Story service is now handled by HTTP server routes
 import { SessionManager } from './sessionManager.js';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -44,7 +44,6 @@ const HTTP_BASE_URL = `http://localhost:${HTTP_PORT}`;
 
 // Initialize configuration
 const config = loadUserConfig();
-const storyService = getInMemoryStoryService(config);
 const sessionManager = SessionManager.getInstance();
 
 // Generate a session ID for this MCP connection

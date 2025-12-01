@@ -1,25 +1,25 @@
 import { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
-import { getInMemoryStoryService } from '../../story-generator/inMemoryStoryService.js';
+import { getStoryService, getStorageType } from '../../story-generator/storyServiceFactory.js';
 import { loadUserConfig } from '../../story-generator/configLoader.js';
 import { setupProductionGitignore } from '../../story-generator/productionGitignoreManager.js';
 
 /**
- * Get all stories from both memory and file system
+ * Get all stories from both memory/database and file system
  */
-export function getAllStories(req: Request, res: Response) {
+export async function getAllStories(req: Request, res: Response) {
   try {
     const config = loadUserConfig();
     const gitignoreManager = setupProductionGitignore(config);
-    const storyService = getInMemoryStoryService(config);
-    
+    const storyService = await getStoryService(config);
+
     let allStories: any[] = [];
-    
-    // Get stories from memory
-    const memoryStories = storyService.getStoryMetadata();
-    allStories = [...memoryStories];
-    
+
+    // Get stories from storage service (memory or PostgreSQL)
+    const storedStories = await storyService.getStoryMetadata();
+    allStories = [...storedStories];
+
     // In development mode, also check file system
     if (!gitignoreManager.isProductionMode() && config.generatedStoriesPath) {
       try {
@@ -31,7 +31,7 @@ export function getAllStories(req: Request, res: Response) {
               const fileName = file;
               const hash = file.match(/-([a-f0-9]{8})\.stories\.tsx$/)?.[1] || '';
               const storyId = hash ? `story-${hash}` : file.replace('.stories.tsx', '');
-              
+
               // Try to read the file to get the title
               let title = file.replace('.stories.tsx', '').replace(/-/g, ' ');
               try {
@@ -44,7 +44,7 @@ export function getAllStories(req: Request, res: Response) {
               } catch (e) {
                 // Use filename as fallback
               }
-              
+
               return {
                 id: storyId,
                 fileName,
@@ -53,9 +53,9 @@ export function getAllStories(req: Request, res: Response) {
                 storage: 'file-system'
               };
             });
-          
+
           // Merge, avoiding duplicates
-          const memoryIds = new Set(memoryStories.map(s => s.id));
+          const memoryIds = new Set(storedStories.map(s => s.id));
           const uniqueFileStories = fileStories.filter(s => !memoryIds.has(s.id));
           allStories = [...allStories, ...uniqueFileStories];
         }
@@ -63,7 +63,7 @@ export function getAllStories(req: Request, res: Response) {
         console.error('Error reading file system stories:', error);
       }
     }
-    
+
     res.json(allStories);
   } catch (error) {
     console.error('Error in getAllStories:', error);
@@ -72,30 +72,32 @@ export function getAllStories(req: Request, res: Response) {
 }
 
 /**
- * Get a specific story by ID from memory or file system
+ * Get a specific story by ID from memory/database or file system
  */
-export function getStoryById(req: Request, res: Response) {
+export async function getStoryById(req: Request, res: Response) {
   try {
     const { id } = req.params;
     const config = loadUserConfig();
     const gitignoreManager = setupProductionGitignore(config);
-    const storyService = getInMemoryStoryService(config);
-    
-    // First try memory
-    const memoryStory = storyService.getStory(id);
-    if (memoryStory) {
-      return res.json(memoryStory);
+    const storyService = await getStoryService(config);
+
+    // First try storage service
+    const storedStory = await storyService.getStory(id);
+    if (storedStory) {
+      return res.json({
+        ...storedStory,
+        storage: getStorageType()
+      });
     }
-    
+
     // In development, try file system
     if (!gitignoreManager.isProductionMode() && config.generatedStoriesPath) {
-      // Try to find by story ID pattern
       const files = fs.readdirSync(config.generatedStoriesPath);
-      
+
       // Extract hash from story ID (e.g., "story-abc123" -> "abc123")
       const hashMatch = id.match(/^story-([a-f0-9]{8})$/);
       const hash = hashMatch ? hashMatch[1] : null;
-      
+
       // Find file by hash or exact match
       const matchingFile = files.find(file => {
         if (hash && file.includes(`-${hash}.stories.tsx`)) return true;
@@ -103,19 +105,19 @@ export function getStoryById(req: Request, res: Response) {
         if (file === id) return true;
         return false;
       });
-      
+
       if (matchingFile) {
         const filePath = path.join(config.generatedStoriesPath, matchingFile);
         const content = fs.readFileSync(filePath, 'utf-8');
         const stats = fs.statSync(filePath);
-        
+
         // Extract title from content
         let title = matchingFile.replace('.stories.tsx', '').replace(/-/g, ' ');
         const titleMatch = content.match(/title:\s*['"]([^'"]+)['"]/);
         if (titleMatch) {
           title = titleMatch[1].replace('Generated/', '');
         }
-        
+
         return res.json({
           id,
           fileName: matchingFile,
@@ -126,7 +128,7 @@ export function getStoryById(req: Request, res: Response) {
         });
       }
     }
-    
+
     res.status(404).json({ error: 'Story not found' });
   } catch (error) {
     console.error('Error in getStoryById:', error);
@@ -137,35 +139,35 @@ export function getStoryById(req: Request, res: Response) {
 /**
  * Get story content by ID
  */
-export function getStoryContent(req: Request, res: Response) {
+export async function getStoryContent(req: Request, res: Response) {
   try {
     const { id } = req.params;
     const config = loadUserConfig();
     const gitignoreManager = setupProductionGitignore(config);
-    const storyService = getInMemoryStoryService(config);
-    
-    // First try memory
-    const content = storyService.getStoryContent(id);
+    const storyService = await getStoryService(config);
+
+    // First try storage service
+    const content = await storyService.getStoryContent(id);
     if (content) {
       res.setHeader('Content-Type', 'text/plain');
       return res.send(content);
     }
-    
+
     // In development, try file system
     if (!gitignoreManager.isProductionMode() && config.generatedStoriesPath) {
       const files = fs.readdirSync(config.generatedStoriesPath);
-      
+
       // Extract hash from story ID
       const hashMatch = id.match(/^story-([a-f0-9]{8})$/);
       const hash = hashMatch ? hashMatch[1] : null;
-      
+
       const matchingFile = files.find(file => {
         if (hash && file.includes(`-${hash}.stories.tsx`)) return true;
         if (file === `${id}.stories.tsx`) return true;
         if (file === id) return true;
         return false;
       });
-      
+
       if (matchingFile) {
         const filePath = path.join(config.generatedStoriesPath, matchingFile);
         const content = fs.readFileSync(filePath, 'utf-8');
@@ -173,7 +175,7 @@ export function getStoryContent(req: Request, res: Response) {
         return res.send(content);
       }
     }
-    
+
     res.status(404).json({ error: 'Story content not found' });
   } catch (error) {
     console.error('Error in getStoryContent:', error);
@@ -184,37 +186,37 @@ export function getStoryContent(req: Request, res: Response) {
 /**
  * Delete a story by ID
  */
-export function deleteStory(req: Request, res: Response) {
+export async function deleteStory(req: Request, res: Response) {
   try {
     const { id } = req.params;
     const config = loadUserConfig();
     const gitignoreManager = setupProductionGitignore(config);
-    const storyService = getInMemoryStoryService(config);
-    
+    const storyService = await getStoryService(config);
+
     console.log(`🗑️ Attempting to delete story: ${id}`);
-    
-    // First try memory
-    const memoryDeleted = storyService.deleteStory(id);
-    if (memoryDeleted) {
-      console.log(`✅ Deleted story from memory: ${id}`);
-      return res.json({ success: true, message: 'Story deleted from memory' });
+
+    // First try storage service
+    const serviceDeleted = await storyService.deleteStory(id);
+    if (serviceDeleted) {
+      console.log(`✅ Deleted story from ${getStorageType()}: ${id}`);
+      return res.json({ success: true, message: `Story deleted from ${getStorageType()}` });
     }
-    
+
     // In development, try file system
     if (!gitignoreManager.isProductionMode() && config.generatedStoriesPath) {
       const files = fs.readdirSync(config.generatedStoriesPath);
-      
+
       // Extract hash from story ID
       const hashMatch = id.match(/^story-([a-f0-9]{8})$/);
       const hash = hashMatch ? hashMatch[1] : null;
-      
+
       const matchingFile = files.find(file => {
         if (hash && file.includes(`-${hash}.stories.tsx`)) return true;
         if (file === `${id}.stories.tsx`) return true;
         if (file === id) return true;
         return false;
       });
-      
+
       if (matchingFile) {
         const filePath = path.join(config.generatedStoriesPath, matchingFile);
         fs.unlinkSync(filePath);
@@ -222,7 +224,7 @@ export function deleteStory(req: Request, res: Response) {
         return res.json({ success: true, message: 'Story deleted from file system' });
       }
     }
-    
+
     console.log(`❌ Story not found: ${id}`);
     res.status(404).json({ error: 'Story not found' });
   } catch (error) {

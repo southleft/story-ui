@@ -66,9 +66,7 @@ Story UI will guide you through:
 | **Gemini** (Google) | Gemini 3 Pro, Gemini 2.0 Flash, Gemini 1.5 Pro | Fast generation, cost efficiency |
 
 ### Production Deployment
-- **Cloudflare Workers**: Edge-deployed API proxy
-- **Cloudflare Pages**: Static frontend hosting
-- **Railway**: Full Node.js backend (alternative)
+- **Railway**: Node.js backend with PostgreSQL for story persistence
 - **MCP Integration**: Connect AI clients directly to production
 
 ---
@@ -314,100 +312,55 @@ Story UI v3 can be deployed as a standalone web application accessible from anyw
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Cloudflare Pages                          │
-│                   (Your Frontend App)                        │
+│                    Railway Deployment                        │
 │  ┌─────────────────────────────────────────────────────────┐│
-│  │  - Chat Interface                                        ││
-│  │  - Live Component Preview                                ││
-│  │  - Syntax Highlighted Code View                          ││
-│  │  - Provider/Model Selection                              ││
+│  │              Express MCP Server (Node.js)                ││
+│  │  - Serves React frontend                                 ││
+│  │  - API routes for story generation                       ││
+│  │  - Multi-provider LLM support                            ││
 │  └─────────────────────────────────────────────────────────┘│
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│               Cloudflare Workers Edge                        │
+│                            │                                 │
+│                            ▼                                 │
 │  ┌─────────────────────────────────────────────────────────┐│
-│  │  - /story-ui/providers → Available providers/models      ││
-│  │  - /story-ui/claude → Claude API proxy                   ││
-│  │  - /story-ui/openai → OpenAI API proxy                   ││
-│  │  - /story-ui/gemini → Gemini API proxy                   ││
-│  │  - /mcp → MCP JSON-RPC endpoint                          ││
+│  │              PostgreSQL Database                         ││
+│  │  - Story persistence across deployments                  ││
 │  └─────────────────────────────────────────────────────────┘│
-└─────────────────────────────────────────────────────────────┘
+└──────────────────────────────────────────────────────────────┘
 ```
 
-### Deploy to Cloudflare
+### Deploy to Railway
 
-**1. Deploy the Edge Worker (Backend)**
+Railway provides a complete deployment experience with PostgreSQL for story persistence.
 
-```bash
-cd cloudflare-edge
-wrangler deploy
-
-# Set your API keys as secrets
-wrangler secret put ANTHROPIC_API_KEY
-wrangler secret put OPENAI_API_KEY    # optional
-wrangler secret put GEMINI_API_KEY    # optional
-```
-
-**2. Deploy the Frontend**
+**Quick Start:**
 
 ```bash
-cd templates/production-app
-npm install
-npm run build
-wrangler pages deploy dist --project-name=your-app-name
-```
+# Install Railway CLI
+npm install -g @railway/cli
+railway login
 
-**3. Configure Environment**
+# Initialize project with PostgreSQL
+railway init
+railway add --plugin postgresql
 
-Update the frontend to point to your worker URL in the configuration.
-
-### Railway Deployment (Recommended)
-
-Railway provides the most complete deployment experience with:
-- Full Storybook dev server with HMR
-- Integrated Story UI MCP server
-- Live story generation directly in the sidebar
-- Easy environment variable management
-
-**1. Deploy to Railway**
-
-```bash
-# From your Storybook project with Story UI configured
-npx story-ui deploy --live --platform=railway --dry-run
-
-# Review the generated configuration, then deploy:
+# Deploy
 railway up
 ```
 
-**2. Set Environment Variables in Railway Dashboard:**
+**Environment Variables (set in Railway Dashboard):**
 - `ANTHROPIC_API_KEY` - Required for Claude models
 - `OPENAI_API_KEY` - Optional for OpenAI models
 - `GEMINI_API_KEY` - Optional for Gemini models
-- `STORY_UI_DEV_MODE=true` - Enable file-based story storage
+- `DATABASE_URL` - Auto-set by Railway PostgreSQL plugin
 
-**3. Connect External MCP Clients**
+**Connect MCP Clients:**
 
-Once deployed, your Railway instance provides an MCP endpoint that AI clients can connect to:
-
-```
-https://your-app.up.railway.app/story-ui
-```
-
-**For Claude Desktop/Claude Code:**
 ```bash
 # Add your Railway deployment as an MCP server
 claude mcp add --transport http story-ui https://your-app.up.railway.app/story-ui
 ```
 
-**For other MCP clients**, use the full URL:
-```
-https://your-app.up.railway.app/mcp
-```
-
-This allows you to generate stories from Claude Desktop, ChatGPT (with MCP support), or any other MCP-compatible AI client, and see them appear in your deployed Storybook instance.
+See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions, PostgreSQL setup, and troubleshooting.
 
 ---
 

@@ -14,7 +14,8 @@ import {
 import { FrameworkType, StoryGenerationOptions, getAdapter } from '../../story-generator/framework-adapters/index.js';
 import { loadUserConfig, validateConfig } from '../../story-generator/configLoader.js';
 import { setupProductionGitignore } from '../../story-generator/productionGitignoreManager.js';
-import { getInMemoryStoryService, GeneratedStory } from '../../story-generator/inMemoryStoryService.js';
+import { getStoryService } from '../../story-generator/storyServiceFactory.js';
+import type { GeneratedStory } from '../../story-generator/storyServiceInterface.js';
 import { extractAndValidateCodeBlock, createFallbackStory, validateStoryCode } from '../../story-generator/validateStory.js';
 import { isBlacklistedComponent, isBlacklistedIcon, getBlacklistErrorMessage, ICON_CORRECTIONS } from '../../story-generator/componentBlacklist.js';
 import { StoryTracker, StoryMapping } from '../../story-generator/storyTracker.js';
@@ -450,7 +451,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
 
     // Set up production-ready environment
     const gitignoreManager = setupProductionGitignore(config);
-    const storyService = getInMemoryStoryService(config);
+    const storyService = await getStoryService(config);
     const isProduction = gitignoreManager.isProductionMode();
 
     // Initialize story tracker for managing updates vs new creations
@@ -795,7 +796,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         components: extractComponentsFromContent(fixedFileContents)
       };
 
-      storyService.storeStory(generatedStory);
+      await storyService.storeStory(generatedStory);
 
       // Register with story tracker
       const mapping: StoryMapping = {

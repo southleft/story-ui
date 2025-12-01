@@ -38,7 +38,7 @@ import {
   getSyncedStoryById
 } from './routes/storySync.js';
 import { setupProductionGitignore, ProductionGitignoreManager } from '../story-generator/productionGitignoreManager.js';
-import { getInMemoryStoryService } from '../story-generator/inMemoryStoryService.js';
+import { getStoryService, getStorageType } from '../story-generator/storyServiceFactory.js';
 import { loadUserConfig } from '../story-generator/configLoader.js';
 import { loadConsiderations, considerationsToPrompt } from '../story-generator/considerationsLoader.js';
 import { DocumentationLoader } from '../story-generator/documentationLoader.js';
@@ -238,15 +238,15 @@ app.post('/story-ui/delete', async (req, res) => {
     
     console.log(`🗑️ Attempting to delete story: ${id}`);
     
-    // First try in-memory deletion (production mode)
-    const storyService = getInMemoryStoryService(config);
-    const inMemoryDeleted = storyService.deleteStory(id);
-    
-    if (inMemoryDeleted) {
-      console.log(`✅ Deleted story from memory: ${id}`);
+    // First try storage service deletion (production mode)
+    const storyService = await getStoryService(config);
+    const serviceDeleted = await storyService.deleteStory(id);
+
+    if (serviceDeleted) {
+      console.log(`✅ Deleted story from ${getStorageType()}: ${id}`);
       return res.json({
         success: true,
-        message: 'Story deleted successfully from memory'
+        message: `Story deleted successfully from ${getStorageType()}`
       });
     }
     
@@ -312,7 +312,6 @@ app.get('/story-ui/redirects.js', (req, res) => {
 // Set up production-ready gitignore and directory structure on startup
 const config = loadUserConfig();
 const gitignoreManager = setupProductionGitignore(config);
-const storyService = getInMemoryStoryService(config);
 
 // Initialize URL redirect service
 const redirectService = new UrlRedirectService(process.cwd());

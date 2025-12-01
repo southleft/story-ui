@@ -1,22 +1,24 @@
 import { Request, Response } from 'express';
-import { getInMemoryStoryService } from '../../story-generator/inMemoryStoryService.js';
+import { getStoryService, getStorageType } from '../../story-generator/storyServiceFactory.js';
 import { loadUserConfig } from '../../story-generator/configLoader.js';
 
 /**
  * Get all stories metadata
  */
-export function getStoriesMetadata(req: Request, res: Response) {
+export async function getStoriesMetadata(req: Request, res: Response) {
   try {
     const config = loadUserConfig();
-    const storyService = getInMemoryStoryService(config);
-    const metadata = storyService.getStoryMetadata();
+    const storyService = await getStoryService(config);
+    const metadata = await storyService.getStoryMetadata();
 
     res.json({
       success: true,
       stories: metadata,
-      count: metadata.length
+      count: metadata.length,
+      storage: getStorageType()
     });
   } catch (error) {
+    console.error('Error in getStoriesMetadata:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to retrieve stories metadata'
@@ -27,12 +29,12 @@ export function getStoriesMetadata(req: Request, res: Response) {
 /**
  * Get a specific story by ID
  */
-export function getStoryById(req: Request, res: Response) {
+export async function getStoryById(req: Request, res: Response) {
   try {
     const { id } = req.params;
     const config = loadUserConfig();
-    const storyService = getInMemoryStoryService(config);
-    const story = storyService.getStory(id);
+    const storyService = await getStoryService(config);
+    const story = await storyService.getStory(id);
 
     if (!story) {
       return res.status(404).json({
@@ -43,9 +45,11 @@ export function getStoryById(req: Request, res: Response) {
 
     res.json({
       success: true,
-      story
+      story,
+      storage: getStorageType()
     });
   } catch (error) {
+    console.error('Error in getStoryById:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to retrieve story'
@@ -56,12 +60,12 @@ export function getStoryById(req: Request, res: Response) {
 /**
  * Get story content for Storybook integration
  */
-export function getStoryContent(req: Request, res: Response) {
+export async function getStoryContent(req: Request, res: Response) {
   try {
     const { id } = req.params;
     const config = loadUserConfig();
-    const storyService = getInMemoryStoryService(config);
-    const content = storyService.getStoryContent(id);
+    const storyService = await getStoryService(config);
+    const content = await storyService.getStoryContent(id);
 
     if (!content) {
       return res.status(404).json({
@@ -74,6 +78,7 @@ export function getStoryContent(req: Request, res: Response) {
     res.setHeader('Content-Type', 'text/plain');
     res.send(content);
   } catch (error) {
+    console.error('Error in getStoryContent:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to retrieve story content'
@@ -84,12 +89,12 @@ export function getStoryContent(req: Request, res: Response) {
 /**
  * Delete a story by ID
  */
-export function deleteStory(req: Request, res: Response) {
+export async function deleteStory(req: Request, res: Response) {
   try {
     const { id } = req.params;
     const config = loadUserConfig();
-    const storyService = getInMemoryStoryService(config);
-    const deleted = storyService.deleteStory(id);
+    const storyService = await getStoryService(config);
+    const deleted = await storyService.deleteStory(id);
 
     if (!deleted) {
       return res.status(404).json({
@@ -100,9 +105,11 @@ export function deleteStory(req: Request, res: Response) {
 
     res.json({
       success: true,
-      message: 'Story deleted successfully'
+      message: 'Story deleted successfully',
+      storage: getStorageType()
     });
   } catch (error) {
+    console.error('Error in deleteStory:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to delete story'
@@ -113,17 +120,19 @@ export function deleteStory(req: Request, res: Response) {
 /**
  * Clear all stories
  */
-export function clearAllStories(req: Request, res: Response) {
+export async function clearAllStories(req: Request, res: Response) {
   try {
     const config = loadUserConfig();
-    const storyService = getInMemoryStoryService(config);
-    storyService.clearAllStories();
+    const storyService = await getStoryService(config);
+    await storyService.clearAllStories();
 
     res.json({
       success: true,
-      message: 'All stories cleared successfully'
+      message: 'All stories cleared successfully',
+      storage: getStorageType()
     });
   } catch (error) {
+    console.error('Error in clearAllStories:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to clear stories'
@@ -132,13 +141,13 @@ export function clearAllStories(req: Request, res: Response) {
 }
 
 /**
- * Get memory usage statistics
+ * Get storage usage statistics
  */
-export function getMemoryStats(req: Request, res: Response) {
+export async function getMemoryStats(req: Request, res: Response) {
   try {
     const config = loadUserConfig();
-    const storyService = getInMemoryStoryService(config);
-    const stats = storyService.getMemoryStats();
+    const storyService = await getStoryService(config);
+    const stats = await storyService.getStorageStats();
 
     res.json({
       success: true,
@@ -146,12 +155,14 @@ export function getMemoryStats(req: Request, res: Response) {
         ...stats,
         totalSizeMB: Math.round(stats.totalSizeBytes / 1024 / 1024 * 100) / 100,
         averageSizeKB: Math.round(stats.averageSizeBytes / 1024 * 100) / 100
-      }
+      },
+      storage: getStorageType()
     });
   } catch (error) {
+    console.error('Error in getMemoryStats:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to retrieve memory statistics'
+      error: 'Failed to retrieve storage statistics'
     });
   }
 }
