@@ -1,3 +1,10 @@
+## [3.4.2](https://github.com/southleft/story-ui/compare/v3.4.1...v3.4.2) (2025-12-01)
+
+
+### Bug Fixes
+
+* add /story-ui/stories endpoint and fix API_BASE for Railway ([9aa124f](https://github.com/southleft/story-ui/commit/9aa124fb6570e1f4c1bb7c76ad8e51509e5f35b5))
+
 ## [3.4.1](https://github.com/southleft/story-ui/compare/v3.4.0...v3.4.1) (2025-12-01)
 
 
