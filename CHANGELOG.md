@@ -1,3 +1,10 @@
+## [3.4.1](https://github.com/southleft/story-ui/compare/v3.4.0...v3.4.1) (2025-12-01)
+
+
+### Bug Fixes
+
+* add explicit startCommand to railway.json for combined deployment ([ef9ffbf](https://github.com/southleft/story-ui/commit/ef9ffbf8796c69fa9fc7614cb97b7c4818f535d7))
+
 # [3.4.0](https://github.com/southleft/story-ui/compare/v3.3.0...v3.4.0) (2025-12-01)
 
 
