@@ -1,3 +1,10 @@
+## [3.6.1](https://github.com/southleft/story-ui/compare/v3.6.0...v3.6.1) (2025-12-02)
+
+
+### Bug Fixes
+
+* show Delete button in empty state for generated stories ([e51c0d1](https://github.com/southleft/story-ui/commit/e51c0d123ea432c4dfc727d43ef2effcce268c08))
+
 # [3.6.0](https://github.com/southleft/story-ui/compare/v3.5.1...v3.6.0) (2025-12-01)
 
 
