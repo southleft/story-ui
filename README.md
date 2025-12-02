@@ -66,7 +66,7 @@ Story UI will guide you through:
 | **Gemini** (Google) | Gemini 3 Pro, Gemini 2.0 Flash, Gemini 1.5 Pro | Fast generation, cost efficiency |
 
 ### Production Deployment
-- **Railway**: Node.js backend with PostgreSQL for story persistence
+- **Railway**: Node.js backend with file-based story persistence
 - **MCP Integration**: Connect AI clients directly to production
 
 ---
@@ -328,22 +328,17 @@ Story UI v3 can be deployed as a standalone web application accessible from anyw
 │                    Railway Deployment                        │
 │  ┌─────────────────────────────────────────────────────────┐│
 │  │              Express MCP Server (Node.js)                ││
-│  │  - Serves React frontend                                 ││
+│  │  - Serves Storybook with Story UI addon                  ││
 │  │  - API routes for story generation                       ││
-│  │  - Multi-provider LLM support                            ││
-│  └─────────────────────────────────────────────────────────┘│
-│                            │                                 │
-│                            ▼                                 │
-│  ┌─────────────────────────────────────────────────────────┐│
-│  │              PostgreSQL Database                         ││
-│  │  - Story persistence across deployments                  ││
+│  │  - Multi-provider LLM support (Claude, OpenAI, Gemini)   ││
+│  │  - File-based story persistence                          ││
 │  └─────────────────────────────────────────────────────────┘│
 └──────────────────────────────────────────────────────────────┘
 ```
 
 ### Deploy to Railway
 
-Railway provides a complete deployment experience with PostgreSQL for story persistence.
+Railway provides a straightforward deployment experience with file-based story persistence.
 
 **Quick Start:**
 
@@ -352,11 +347,8 @@ Railway provides a complete deployment experience with PostgreSQL for story pers
 npm install -g @railway/cli
 railway login
 
-# Initialize project with PostgreSQL
+# Initialize and deploy
 railway init
-railway add --plugin postgresql
-
-# Deploy
 railway up
 ```
 
@@ -364,16 +356,15 @@ railway up
 - `ANTHROPIC_API_KEY` - Required for Claude models
 - `OPENAI_API_KEY` - Optional for OpenAI models
 - `GEMINI_API_KEY` - Optional for Gemini models
-- `DATABASE_URL` - Auto-set by Railway PostgreSQL plugin
 
 **Connect MCP Clients:**
 
 ```bash
 # Add your Railway deployment as an MCP server
-claude mcp add --transport http story-ui https://your-app.up.railway.app/story-ui
+claude mcp add --transport http story-ui https://your-app.up.railway.app/mcp-remote/mcp
 ```
 
-See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions, PostgreSQL setup, and troubleshooting.
+See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions and troubleshooting.
 
 ---
 

@@ -54,7 +54,7 @@ declare global {
  * Extract clean component usage JSX from a full Storybook story file.
  *
  * Transforms:
- *   import { Button } from '@mantine/core';
+ *   import { Button } from 'your-component-library';
  *   export default { title: 'Generated/Button' };
  *   export const Default: Story = { render: () => <Button>Click</Button> };
  *
@@ -511,8 +511,6 @@ const SourceCodePanel: React.FC<{ active?: boolean }> = ({ active }) => {
       const apiBase = getApiBaseUrl();
       const storyFileId = getStoryFileId(currentStoryId);
 
-      console.log('[Source Code Panel] Deleting story:', { currentStoryId, storyFileId, apiBase });
-
       // Try the RESTful DELETE endpoint first
       const response = await fetch(`${apiBase}/story-ui/stories/${storyFileId}`, {
         method: 'DELETE',
@@ -520,8 +518,6 @@ const SourceCodePanel: React.FC<{ active?: boolean }> = ({ active }) => {
       });
 
       if (response.ok) {
-        console.log('[Source Code Panel] Story deleted successfully');
-
         // Clear local cache
         const topWindow = window.top || window;
         if (topWindow.__STORY_UI_GENERATED_CODE__) {
@@ -596,21 +592,10 @@ const SourceCodePanel: React.FC<{ active?: boolean }> = ({ active }) => {
       let cachedCode = topWindow.__STORY_UI_GENERATED_CODE__?.[currentStoryId] ||
                         window.__STORY_UI_GENERATED_CODE__?.[currentStoryId];
 
-      console.log('[Source Code Panel DEBUG] Looking for code:', {
-        currentStoryId,
-        foundInWindowCache: !!cachedCode,
-        windowCacheKeys: Object.keys(topWindow.__STORY_UI_GENERATED_CODE__ || {}),
-      });
-
       // If not in memory cache, check localStorage (survives page navigation)
       if (!cachedCode) {
         try {
           const stored = JSON.parse(localStorage.getItem('storyui_generated_code') || '{}');
-
-          console.log('[Source Code Panel DEBUG] localStorage lookup:', {
-            localStorageKeys: Object.keys(stored),
-            localStorageKeyCount: Object.keys(stored).length,
-          });
 
           // Try multiple key formats since Storybook IDs differ from our storage keys
           // Storybook ID format: "generated-componentname--variant" or "generated/componentname--variant"
@@ -660,13 +645,10 @@ const SourceCodePanel: React.FC<{ active?: boolean }> = ({ active }) => {
             keysToTry.push(`${storyTitle.replace(/\s+/g, '')}.stories.tsx`);
           }
 
-          console.log('[Source Code Panel DEBUG] trying keys:', keysToTry);
-
           // Try each key format
           for (const key of keysToTry) {
             if (stored[key]) {
               cachedCode = stored[key];
-              console.log('[Source Code Panel DEBUG] found code with key:', key, 'codeLength:', cachedCode?.length);
               break;
             }
           }
@@ -682,11 +664,6 @@ const SourceCodePanel: React.FC<{ active?: boolean }> = ({ active }) => {
           console.warn('[Story UI] Failed to read from localStorage:', e);
         }
       }
-
-      console.log('[Source Code Panel DEBUG] final result:', {
-        foundCode: !!cachedCode,
-        codeLength: cachedCode?.length,
-      });
 
       if (cachedCode) {
         setSourceCode(cachedCode);

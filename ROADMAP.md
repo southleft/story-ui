@@ -1,8 +1,8 @@
 # Story UI v3 Roadmap & Task List
 
 > **Last Updated**: 2025-12-01
-> **Current Version**: 3.4.2
-> **Target Version**: 3.5.0
+> **Current Version**: 3.6.2
+> **Target Version**: 3.7.0
 
 This document tracks all pending tasks, enhancements, and bugs for the Story UI v3 overhaul. It serves as a persistent reference across conversation sessions.
 

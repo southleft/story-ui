@@ -41,7 +41,7 @@ Add the following to your Claude Desktop configuration file:
       "command": "npx",
       "args": ["@tpitre/story-ui", "mcp"],
       "env": {
-        "CLAUDE_API_KEY": "your-claude-api-key-here"
+        "ANTHROPIC_API_KEY": "your-anthropic-api-key-here"
       }
     }
   }
@@ -57,7 +57,7 @@ Or if you have Story UI installed globally:
       "command": "story-ui",
       "args": ["mcp"],
       "env": {
-        "CLAUDE_API_KEY": "your-claude-api-key-here"
+        "ANTHROPIC_API_KEY": "your-anthropic-api-key-here"
       }
     }
   }
@@ -143,7 +143,7 @@ In Claude Desktop, you can now interact with Story UI:
 ### MCP Server Not Connecting
 
 1. Ensure the HTTP server is running: `story-ui start`
-2. Check that the Claude API key is set in your environment
+2. Check that your LLM API key (ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY) is set
 3. Verify the configuration file path is correct
 4. Restart Claude Desktop after configuration changes
 
@@ -170,7 +170,7 @@ If port 4001 is in use, you can specify a different port:
          "command": "npx",
          "args": ["@tpitre/story-ui", "mcp", "--http-port", "4002"],
          "env": {
-           "CLAUDE_API_KEY": "your-claude-api-key-here"
+           "ANTHROPIC_API_KEY": "your-anthropic-api-key-here"
          }
        }
      }
@@ -190,7 +190,7 @@ If you're developing Story UI or want to run from source:
       "command": "node",
       "args": ["/path/to/story-ui-repo/dist/cli/index.js", "mcp"],
       "env": {
-        "CLAUDE_API_KEY": "your-claude-api-key-here"
+        "ANTHROPIC_API_KEY": "your-anthropic-api-key-here"
       }
     }
   }
@@ -208,7 +208,7 @@ You can pass additional environment variables:
       "command": "story-ui",
       "args": ["mcp"],
       "env": {
-        "CLAUDE_API_KEY": "your-claude-api-key-here",
+        "ANTHROPIC_API_KEY": "your-anthropic-api-key-here",
         "STORY_UI_CONFIG_PATH": "./custom-config.js",
         "NODE_ENV": "production"
       }
@@ -219,7 +219,7 @@ You can pass additional environment variables:
 
 ## Security Considerations
 
-1. **API Keys**: Keep your Claude API key secure and never commit it to version control
+1. **API Keys**: Keep your API keys secure and never commit them to version control
 2. **Network Access**: The MCP server communicates with the local HTTP server only
 3. **File System**: Generated stories are written to the configured directory only
 

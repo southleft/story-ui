@@ -1,7 +1,7 @@
 # Story UI - Claude Code Project Guide
 
 > **Last Updated**: December 1, 2025
-> **Current Version**: 3.4.2
+> **Current Version**: 3.6.2
 > **Production URL**: https://story-ui-demo.up.railway.app
 > **Backend URL**: Railway with file-based story persistence
 
