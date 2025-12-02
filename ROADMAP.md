@@ -503,6 +503,79 @@ The codebase should be design-system agnostic except for installation helpers.
 ### Critical
 1. Visual Builder has multiple UX bugs (DEFERRED - see Visual Builder section)
 
+2. **StoryUIPanel Only Works in React Storybooks** (ARCHITECTURE BUG - 2025-12-01)
+
+   **Problem**: StoryUIPanel is a React component that renders as a Storybook story in the preview iframe. Non-React Storybooks (Vue, Svelte, Angular, Web Components) cannot render React components in their preview iframe.
+
+   **Symptoms**:
+   - **Vue Storybook**: Blank/white preview, no errors in console
+   - **Svelte Storybook**: Error "Component_1 is not a function" with stack trace through MockProvider.svelte → DecoratorHandler.svelte → PreviewRender.svelte
+   - **Angular/Web Components**: Expected to show similar failures (not yet tested)
+   - **React Storybook**: Works correctly ✅
+
+   **Root Cause**:
+   Storybook has two distinct rendering contexts:
+   - **Manager**: Always React, regardless of project framework (addon panels live here)
+   - **Preview iframe**: Uses the project's framework renderer
+
+   StoryUIPanel.tsx is imported as a story (`StoryUIPanel.stories.tsx`) which renders in the preview iframe. When a Vue/Svelte/Angular project tries to render it, their framework-specific renderer fails because it cannot interpret React components.
+
+   **Current Workaround**: None. Story UI Panel is unusable in non-React Storybooks.
+
+   **Proposed Fix - Option A: MDX Wrapper (RECOMMENDED)**
+
+   Per suggestion from Steve Dodier-Lazaro (Storybook team): Use MDX instead of a story file.
+   MDX pages are processed by `@storybook/addon-docs` which always uses React, regardless of the project's framework.
+
+   Reference: https://storybook.js.org/docs/api/main-config/main-config-indexers#examples
+
+   **Why MDX works across all frameworks:**
+   - MDX is compiled by Storybook's build system, not the project's framework renderer
+   - Creates a "freeform React page without the whole story controls thing"
+   - Appears in sidebar as standalone entry (not story-specific)
+   - React components render directly in MDX regardless of project framework
+
+   **Files Affected**:
+   - `templates/StoryUI/StoryUIPanel.mdx` - New MDX wrapper (replaces .stories.tsx)
+   - `templates/StoryUI/StoryUIPanel.tsx` - Keep as-is, imported by MDX
+   - `templates/StoryUI/StoryUIPanel.stories.tsx` - Remove once MDX approach works
+
+   **Estimated Effort**: 4-8 hours
+
+   **Implementation Plan**:
+
+   **Phase 1: Create MDX Wrapper (2h)**
+   - [ ] Create `StoryUIPanel.mdx` that imports and renders the React component
+   - [ ] Configure proper meta/title for sidebar placement
+   - [ ] Ensure no story controls appear (pure React page)
+
+   **Phase 2: Test Across Frameworks (2-4h)**
+   - [ ] Test in React+Mantine environment (baseline)
+   - [ ] Test in Vue+Vuetify environment (critical test)
+   - [ ] Test in Svelte+Skeleton environment (critical test)
+   - [ ] Test in Angular+Material environment
+   - [ ] Test in Web Components+Shoelace environment
+
+   **Phase 3: Update Installation (1-2h)**
+   - [ ] Update `npx story-ui init` to copy MDX file instead of stories file
+   - [ ] Update documentation
+   - [ ] Test fresh installation flow
+
+   **Key Technical Considerations**:
+   - MDX requires `@storybook/addon-docs` (usually already installed)
+   - The MDX file acts as a wrapper that renders our React component
+   - No framework-specific code needed - MDX handles the React rendering
+   - Port configuration (VITE_STORY_UI_PORT) should work via import.meta.env
+
+   ---
+
+   **Alternative Fix - Option B: Manager Addon Panel**
+
+   Move StoryUIPanel to manager.tsx as an addon panel. Less recommended because:
+   - Manager panels are story-specific (only show when viewing a story)
+   - More complex refactoring required for addon context
+   - Requires addon channel for preview communication
+
 ### High
 1. No image upload capability in chat UI (backend supports vision)
 2. Frontend needs to integrate with new streaming endpoint
@@ -517,6 +590,37 @@ The codebase should be design-system agnostic except for installation helpers.
 ---
 
 ## Session Notes
+
+### 2025-12-01 (E2E Multi-Framework Testing - CRITICAL BUG FOUND)
+- **E2E Testing of Story UI Installation**: Tested Story UI Panel across 5 framework environments
+  - React+Mantine (port 6101/4101): ✅ **WORKS** - Chat interface renders correctly
+  - Vue+Vuetify (port 6102/4102): ❌ **FAILS** - Blank white preview, no errors
+  - Svelte+Skeleton (port 6104/4104): ❌ **FAILS** - Error "Component_1 is not a function"
+  - Angular+Material (port 6103/4103): ⚠️ Expected to fail (not tested)
+  - Web Components+Shoelace (port 6105/4105): ⚠️ Expected to fail (not tested)
+
+- **CRITICAL BUG DISCOVERED**: StoryUIPanel is a React component that only works in React Storybooks
+  - **Root Cause**: StoryUIPanel renders as a Storybook story in the preview iframe
+  - Preview iframe uses the project's framework renderer (Vue, Svelte, Angular, etc.)
+  - Non-React frameworks cannot render React components in their preview
+  - The manager.tsx only registers "Source Code" panel, not the main chat interface
+
+- **Expert Input from Steve Dodier-Lazaro (Storybook team)**:
+  - Suggested using **MDX wrapper** instead of story file
+  - MDX pages are processed by `@storybook/addon-docs` which always uses React
+  - Creates a "freeform React page without the whole story controls thing"
+  - Reference: https://storybook.js.org/docs/api/main-config/main-config-indexers#examples
+  - Manager addon panels are story-specific (not ideal for Story UI)
+
+- **RECOMMENDED FIX**: MDX Wrapper approach (4-8 hours)
+  - Create `StoryUIPanel.mdx` that imports and renders the React component
+  - MDX is compiled by Storybook's build system, not the project's framework renderer
+  - Works across all frameworks without modification to StoryUIPanel.tsx
+
+- **Test Environment Setup**:
+  - Created `.env` files for all 5 environments with `VITE_STORY_UI_PORT` values
+  - Copied StoryUIPanel.tsx from node_modules to each environment's stories folder
+  - All Story UI MCP servers responding correctly on ports 4101-4105
 
 ### 2025-12-01 (Codebase Integrity Audit)
 - **Codebase Cleanup**:

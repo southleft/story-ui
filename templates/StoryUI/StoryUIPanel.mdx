@@ -1,0 +1,50 @@
+{/*
+  Story UI Panel - MDX Documentation Page
+
+  This MDX file renders the Story UI Panel as a standalone documentation page.
+  Using MDX instead of a .stories.tsx file ensures the React component renders
+  correctly across ALL framework Storybooks (React, Vue, Svelte, Angular, Web Components).
+
+  Why this works:
+  - MDX is processed by @storybook/addon-docs which always uses React
+  - Regular .stories.tsx files render in the Preview iframe using the project's framework
+  - Non-React frameworks cannot render React components in their Preview
+  - MDX pages bypass this limitation by being compiled with React directly
+
+  Reference: Steve Dodier-Lazaro (Storybook team) recommendation
+*/}
+
+import { Meta } from '@storybook/addon-docs/blocks';
+import { StoryUIPanel } from './StoryUIPanel';
+
+<Meta title="Story UI/Story Generator" />
+
+export const StoryUIPanelWrapper = () => {
+  // Check for URL parameter override for MCP port
+  if (typeof window !== 'undefined') {
+    const urlParams = new URLSearchParams(window.location.search);
+    const mcpPortParam = urlParams.get('mcp-port');
+
+    if (mcpPortParam) {
+      // Set the global variable that the panel will use
+      window.STORY_UI_MCP_PORT = mcpPortParam;
+    }
+  }
+
+  return <StoryUIPanel />;
+};
+
+{/*
+  Full-screen container to match the original story layout.
+  The StoryUIPanel component handles its own internal styling.
+*/}
+<div style={{
+  position: 'fixed',
+  top: 0,
+  left: 0,
+  right: 0,
+  bottom: 0,
+  overflow: 'hidden'
+}}>
+  <StoryUIPanelWrapper />
+</div>

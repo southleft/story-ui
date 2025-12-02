@@ -20,7 +20,8 @@ This document provides context for AI assistants working on the Story UI codebas
 | Component Discovery | `story-generator/componentDiscovery.ts` |
 | LLM Providers | `story-generator/llm-providers/` |
 | Framework Adapters | `story-generator/framework-adapters/` |
-| Storybook Panel | `templates/StoryUI/StoryUIPanel.tsx` |
+| Storybook Panel (React) | `templates/StoryUI/StoryUIPanel.tsx` |
+| MDX Wrapper (Cross-framework) | `templates/StoryUI/StoryUIPanel.mdx` |
 | Production App Template | `templates/production-app/` |
 | Detailed Roadmap | `ROADMAP.md` |
 | Deployment Guide | `DEPLOYMENT.md` |
@@ -167,6 +168,8 @@ A deployed Storybook instance with Story UI:
 
 | Issue | Root Cause | Resolution |
 |-------|------------|------------|
+| StoryUIPanel not rendering in non-React Storybooks | React component can't render in Vue/Angular/Svelte Preview iframe | Created MDX wrapper (`StoryUIPanel.mdx`) processed by addon-docs which always uses React. Reference: Steve Dodier-Lazaro (Storybook team) |
+| Angular Storybook TypeScript error | Angular @ngtools/webpack couldn't compile TSX files | Added `"jsx": "react-jsx"` to compilerOptions and `"src/**/*.tsx"` to include array in tsconfig.json |
 | Model/provider not persisting | localStorage not properly syncing state | Fixed useLocalStorage hook with proper useEffect |
 | Broken image preview | FileReader errors not handled gracefully | Added validation and error handling for file reading |
 | Cloudflare Edge dead code | Unused ~150MB of Cloudflare Worker code | Removed cloudflare-edge directory completely |
@@ -191,6 +194,8 @@ A deployed Storybook instance with Story UI:
 3. **Don't use deprecated models** - Update model lists when providers release new versions
 4. **Don't skip prefill** - Always prefill with `<` to ensure JSX output
 5. **Don't ignore localStorage** - It's the primary persistence mechanism for user preferences
+6. **Don't use .stories.tsx for the panel in non-React projects** - Use MDX wrapper (`StoryUIPanel.mdx`) which is processed by addon-docs (always React)
+7. **Don't forget Angular tsconfig for TSX** - Angular projects need `"jsx": "react-jsx"` and `.tsx` in includes
 
 ---
 
