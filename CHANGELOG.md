@@ -1,3 +1,10 @@
+## [3.6.2](https://github.com/southleft/story-ui/compare/v3.6.1...v3.6.2) (2025-12-02)
+
+
+### Bug Fixes
+
+* make Delete Story button more descriptive ([99d26ea](https://github.com/southleft/story-ui/commit/99d26ea0b5215dd77385ed92483c7f179ed30c66))
+
 ## [3.6.1](https://github.com/southleft/story-ui/compare/v3.6.0...v3.6.1) (2025-12-02)
 
 
