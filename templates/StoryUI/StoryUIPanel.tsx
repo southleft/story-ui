@@ -303,57 +303,12 @@ const titleToStoryPath = (title: string): string => {
   return `generated-${kebabTitle}--default`;
 };
 
-// Extend window to include our code cache for the Source Code panel
-declare global {
-  interface Window {
-    __STORY_UI_GENERATED_CODE__?: Record<string, string>;
-  }
-}
-
-// Helper to store generated code for the Source Code panel to display
-const storeGeneratedCode = (storyId: string, code: string, title?: string) => {
-  const topWindow = window.top || window;
-
-  // Store code in the top window so it's accessible from manager frame
-  if (!topWindow.__STORY_UI_GENERATED_CODE__) {
-    topWindow.__STORY_UI_GENERATED_CODE__ = {};
-  }
-
-  // Store with story ID
-  topWindow.__STORY_UI_GENERATED_CODE__[storyId] = code;
-
-  // Also store in localStorage for persistence across page reloads
-  try {
-    const stored = JSON.parse(localStorage.getItem('storyui_generated_code') || '{}');
-    stored[storyId] = code;
-
-    // Also store with the title as key for easier lookup
-    if (title) {
-      const storyPath = titleToStoryPath(title);
-      stored[storyPath] = code;
-      stored[title] = code;
-      stored[title.replace(/\s+/g, '')] = code;
-      topWindow.__STORY_UI_GENERATED_CODE__[storyPath] = code;
-    }
-
-    localStorage.setItem('storyui_generated_code', JSON.stringify(stored));
-    console.log(`[Story UI] Stored code for story "${storyId}" in window cache and localStorage`);
-  } catch (e) {
-    console.warn('[Story UI] Failed to store code in localStorage:', e);
-  }
-};
-
 // Helper to navigate to a newly created story after generation completes
 // In dev mode with HMR, this prevents the "Couldn't find story after HMR" error
 // In all modes, this provides a better UX by auto-navigating to the new story
-const navigateToNewStory = (title: string, code?: string, delayMs: number = 1500) => {
+const navigateToNewStory = (title: string, _code?: string, delayMs: number = 1500) => {
   const storyPath = titleToStoryPath(title);
   console.log(`[Story UI] Will navigate to story "${storyPath}" in ${delayMs}ms...`);
-
-  // Store the code for the Source Code panel if provided
-  if (code) {
-    storeGeneratedCode(title, code, title);
-  }
 
   setTimeout(() => {
     // Navigate the TOP window (parent Storybook UI), not the iframe
@@ -1933,11 +1888,6 @@ function StoryUIPanel() {
       }
       saveChats(chats);
       setRecentChats(chats);
-
-      // Store code for Source Code panel
-      if (completion.code) {
-        storeGeneratedCode(activeChatId, completion.code, activeTitle || completion.title);
-      }
     } else {
       const chatId = completion.storyId || completion.fileName || Date.now().toString();
       const chatTitle = completion.title || userInput;
@@ -1964,11 +1914,6 @@ function StoryUIPanel() {
       // This prevents the "Couldn't find story after HMR" error by refreshing
       // after the file system has been updated and HMR has processed the change
       navigateToNewStory(chatTitle, completion.code);
-
-      // Store code for Source Code panel
-      if (completion.code) {
-        storeGeneratedCode(chatId, completion.code, chatTitle);
-      }
     }
   }, [activeChatId, activeTitle, conversation.length]);
 
@@ -2159,11 +2104,6 @@ function StoryUIPanel() {
             if (chatIndex !== -1) chats[chatIndex] = updatedSession;
             saveChats(chats);
             setRecentChats(chats);
-
-            // Store code for Source Code panel
-            if (data.code) {
-              storeGeneratedCode(activeChatId, data.code, activeTitle || data.title);
-            }
           } else {
             const chatId = data.storyId || data.fileName || Date.now().toString();
             const chatTitle = data.title || userInput;
@@ -2184,11 +2124,6 @@ function StoryUIPanel() {
 
             // Auto-navigate to the newly created story
             navigateToNewStory(chatTitle, data.code);
-
-            // Store code for Source Code panel
-            if (data.code) {
-              storeGeneratedCode(chatId, data.code, chatTitle);
-            }
           }
         } catch (fallbackErr: unknown) {
           const errorMessage = fallbackErr instanceof Error ? fallbackErr.message : 'Unknown error';
@@ -2234,11 +2169,6 @@ function StoryUIPanel() {
           if (chatIndex !== -1) chats[chatIndex] = updatedSession;
           saveChats(chats);
           setRecentChats(chats);
-
-          // Store code for Source Code panel
-          if (data.code) {
-            storeGeneratedCode(activeChatId, data.code, activeTitle || data.title);
-          }
         } else {
           const chatId = data.storyId || data.fileName || Date.now().toString();
           const chatTitle = data.title || userInput;
@@ -2256,11 +2186,6 @@ function StoryUIPanel() {
           if (chats.length > MAX_RECENT_CHATS) chats.splice(MAX_RECENT_CHATS);
           saveChats(chats);
           setRecentChats(chats);
-
-          // Store code for Source Code panel
-          if (data.code) {
-            storeGeneratedCode(chatId, data.code, chatTitle);
-          }
         }
       } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : 'Unknown error';

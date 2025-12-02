@@ -62,12 +62,133 @@ function generateSystemPrompt(config: StoryUIConfig): string {
   const libraryName = config.designSystemGuidelines?.name || config.importPath || 'configured library';
   const importPath = config.importPath || 'your-library';
 
+  // Determine the framework from config (componentFramework takes precedence)
+  const framework = config.componentFramework || config.framework || 'react';
+  const isReactFramework = framework === 'react' || framework.includes('react');
+  const storybookFramework = config.storybookFramework || '@storybook/react';
+
+  // Build framework-specific import instructions
+  let frameworkImportInstructions = '';
+  let frameworkExampleImports = '';
+
+  if (isReactFramework) {
+    frameworkImportInstructions = `
+🚨 CRITICAL: EVERY STORY MUST START WITH "import React from 'react';" AS THE FIRST LINE 🚨
+
+🔴 MANDATORY FIRST LINE - NO EXCEPTIONS:
+The VERY FIRST LINE of every story file MUST be:
+import React from 'react';
+
+CRITICAL IMPORT RULES - MUST FOLLOW EXACTLY:
+1. **LINE 1: import React from 'react';** (MANDATORY - NEVER SKIP THIS)
+2. **LINE 2: import type { StoryObj } from '${storybookFramework}';**
+3. **LINE 3: import { ComponentName } from '[your-import-path]';**
+
+⚠️  WITHOUT "import React from 'react';" THE STORY WILL FAIL WITH "React is not defined" ERROR ⚠️`;
+
+    frameworkExampleImports = `Example correct order:
+import React from 'react';
+import type { StoryObj } from '${storybookFramework}';
+import { ComponentName } from '[your-import-path]';
+
+REQUIRED STORY STRUCTURE:
+Every story MUST start with these three imports in this order:
+1. import React from 'react';
+2. import type { StoryObj } from '${storybookFramework}';
+3. import { ComponentName } from '[library-path]';`;
+  } else if (framework === 'vue') {
+    frameworkImportInstructions = `
+CRITICAL IMPORT RULES FOR VUE STORIES:
+1. **DO NOT import React** - This is a Vue project, not React!
+2. **LINE 1: import type { Meta, StoryObj } from '${storybookFramework}';**
+3. **LINE 2: import { ComponentName } from '[your-import-path]';**
+
+⚠️  DO NOT ADD "import React from 'react';" - Vue does NOT use React! ⚠️`;
+
+    frameworkExampleImports = `Example correct order for Vue:
+import type { Meta, StoryObj } from '${storybookFramework}';
+import { VBtn, VCard } from 'vuetify/components';
+
+REQUIRED STORY STRUCTURE:
+Every Vue story MUST start with:
+1. import type { Meta, StoryObj } from '${storybookFramework}';
+2. import { ComponentName } from '[library-path]';`;
+  } else if (framework === 'angular') {
+    frameworkImportInstructions = `
+CRITICAL IMPORT RULES FOR ANGULAR STORIES:
+1. **DO NOT import React** - This is an Angular project, not React!
+2. **LINE 1: import type { Meta, StoryObj } from '${storybookFramework}';**
+3. **LINE 2: Import Angular Material modules as needed**
+
+⚠️  DO NOT ADD "import React from 'react';" - Angular does NOT use React! ⚠️`;
+
+    frameworkExampleImports = `Example correct order for Angular:
+import type { Meta, StoryObj } from '${storybookFramework}';
+import { MatButtonModule } from '@angular/material/button';
+import { moduleMetadata } from '@storybook/angular';
+
+REQUIRED STORY STRUCTURE:
+Every Angular story MUST:
+1. Import from '${storybookFramework}';
+2. Import Angular Material modules from their specific paths
+3. Use moduleMetadata or applicationConfig decorators`;
+  } else if (framework === 'svelte') {
+    frameworkImportInstructions = `
+CRITICAL IMPORT RULES FOR SVELTE STORIES:
+1. **DO NOT import React** - This is a Svelte project, not React!
+2. **LINE 1: import type { Meta, StoryObj } from '${storybookFramework}';**
+3. **LINE 2: import { ComponentName } from '[your-import-path]';**
+
+⚠️  DO NOT ADD "import React from 'react';" - Svelte does NOT use React! ⚠️`;
+
+    frameworkExampleImports = `Example correct order for Svelte:
+import type { Meta, StoryObj } from '${storybookFramework}';
+import { Button, Card } from 'flowbite-svelte';
+
+REQUIRED STORY STRUCTURE:
+Every Svelte story MUST:
+1. Import from '${storybookFramework}';
+2. Import Svelte components from the library`;
+  } else if (framework === 'web-components') {
+    frameworkImportInstructions = `
+CRITICAL IMPORT RULES FOR WEB COMPONENTS STORIES:
+1. **DO NOT import React** - This is a Web Components project!
+2. **LINE 1: import { html } from 'lit';**
+3. **LINE 2: import type { Meta, StoryObj } from '${storybookFramework}';**
+4. **LINE 3: Import web components from the library**
+
+⚠️  DO NOT ADD "import React from 'react';" - Web Components do NOT use React! ⚠️
+⚠️  Use html\`\` template literals, NOT JSX! ⚠️`;
+
+    frameworkExampleImports = `Example correct order for Web Components:
+import { html } from 'lit';
+import type { Meta, StoryObj } from '${storybookFramework}';
+import '@shoelace-style/shoelace/dist/components/button/button.js';
+
+REQUIRED STORY STRUCTURE:
+Every Web Components story MUST:
+1. Import { html } from 'lit';
+2. Import from '${storybookFramework}';
+3. Import web components as side-effect imports`;
+  } else {
+    // Generic fallback
+    frameworkImportInstructions = `
+CRITICAL IMPORT RULES:
+1. Import type { Meta, StoryObj } from '${storybookFramework}';
+2. Import components from the configured library`;
+
+    frameworkExampleImports = `Example imports:
+import type { Meta, StoryObj } from '${storybookFramework}';
+import { ComponentName } from '[your-import-path]';`;
+  }
+
   return `
 ╔════════════════════════════════════════════════════════════════════╗
 ║                    🚨 MANDATORY LIBRARY CONSTRAINT 🚨                ║
 ╠════════════════════════════════════════════════════════════════════╣
 ║  REQUIRED LIBRARY: ${libraryName.padEnd(46)}║
 ║  IMPORT PATH:      ${importPath.padEnd(46)}║
+║  FRAMEWORK:        ${framework.padEnd(46)}║
 ╠════════════════════════════════════════════════════════════════════╣
 ║  ALL component imports MUST use:                                   ║
 ║  import { ComponentName } from '${importPath}';${' '.repeat(Math.max(0, 32 - importPath.length))}║
@@ -79,23 +200,11 @@ function generateSystemPrompt(config: StoryUIConfig): string {
 ║  - antd (unless configured)                                        ║
 ║  - Any library NOT matching: ${importPath.padEnd(36)}║
 ╚════════════════════════════════════════════════════════════════════╝
-
-🚨 CRITICAL: EVERY STORY MUST START WITH "import React from 'react';" AS THE FIRST LINE 🚨
+${frameworkImportInstructions}
 
 🔴 CRITICAL RULE: NEVER use children in args for ANY component or layout. Always use render functions. 🔴
 
-You are an expert UI developer creating Storybook stories. Use ONLY the React components from the ${componentSystemName} listed below.
-
-🔴 MANDATORY FIRST LINE - NO EXCEPTIONS:
-The VERY FIRST LINE of every story file MUST be:
-import React from 'react';
-
-CRITICAL IMPORT RULES - MUST FOLLOW EXACTLY:
-1. **LINE 1: import React from 'react';** (MANDATORY - NEVER SKIP THIS)
-2. **LINE 2: import type { StoryObj } from '@storybook/[framework]';**
-3. **LINE 3: import { ComponentName } from '[your-import-path]';**
-
-⚠️  WITHOUT "import React from 'react';" THE STORY WILL FAIL WITH "React is not defined" ERROR ⚠️
+You are an expert UI developer creating Storybook stories for ${framework.toUpperCase()}. Use ONLY the components from the ${componentSystemName} listed below.
 
 🚨 COMPONENT IMPORT VALIDATION - CRITICAL 🚨
 You can ONLY import components that are explicitly listed in the "Available components" section below.
@@ -105,27 +214,18 @@ If a component is not listed, DO NOT use it - choose an alternative from the ava
 
 🔴 IMPORT PATH RULE - MANDATORY 🔴
 ALWAYS use the EXACT import path shown in parentheses after each component name.
-For example: If the Available components list shows "Button (import from 'antd')", 
+For example: If the Available components list shows "Button (import from 'antd')",
 you MUST use: import { Button } from 'antd';
 NEVER use the main package import if a specific path is shown.
 This is critical for proper component resolution.
 
-Example correct order:
-import React from 'react';
-import type { StoryObj } from '@storybook/[framework]';
-import { ComponentName } from '[your-import-path]';
+${frameworkExampleImports}
 
 2. Use the correct Storybook framework import for your environment
 3. ONLY import components that are explicitly listed in the "Available components" section below
 4. Do NOT create or import any components that are not in the list
 5. Do NOT import story exports from other story files
 6. When in doubt, use the basic components listed below
-
-REQUIRED STORY STRUCTURE:
-Every story MUST start with these three imports in this order:
-1. import React from 'react';
-2. import type { StoryObj } from '@storybook/[framework]';
-3. import { ComponentName } from '[library-path]';
 
 GENERAL COMPONENT RULES:
 - StoryUIPanel is the Story UI interface, not a design system component - never import it
@@ -557,13 +657,43 @@ export async function buildClaudePrompt(
     ''
   );
 
+  // Determine framework from config for rules section
+  const framework = config.componentFramework || config.framework || 'react';
+  const isReactFramework = framework === 'react' || framework.includes('react');
+
+  // Build framework-specific first line rules
+  let frameworkFirstLineRules = '';
+  if (isReactFramework) {
+    frameworkFirstLineRules = `🚨 FINAL CRITICAL REMINDERS 🚨
+🔴 FIRST LINE MUST BE: import React from 'react';
+🔴 WITHOUT THIS IMPORT, THE STORY WILL BREAK!`;
+  } else if (framework === 'vue') {
+    frameworkFirstLineRules = `🚨 FINAL CRITICAL REMINDERS FOR VUE 🚨
+🔴 DO NOT import React - this is a Vue project!
+🔴 First line should be: import type { Meta, StoryObj } from '@storybook/vue3';`;
+  } else if (framework === 'angular') {
+    frameworkFirstLineRules = `🚨 FINAL CRITICAL REMINDERS FOR ANGULAR 🚨
+🔴 DO NOT import React - this is an Angular project!
+🔴 First line should be: import type { Meta, StoryObj } from '@storybook/angular';`;
+  } else if (framework === 'svelte') {
+    frameworkFirstLineRules = `🚨 FINAL CRITICAL REMINDERS FOR SVELTE 🚨
+🔴 DO NOT import React - this is a Svelte project!
+🔴 First line should be: import type { Meta, StoryObj } from '@storybook/svelte';`;
+  } else if (framework === 'web-components') {
+    frameworkFirstLineRules = `🚨 FINAL CRITICAL REMINDERS FOR WEB COMPONENTS 🚨
+🔴 DO NOT import React - this is a Web Components project!
+🔴 First line should be: import { html } from 'lit';
+🔴 Use html\`\` template literals, NOT JSX!`;
+  } else {
+    frameworkFirstLineRules = `🚨 FINAL CRITICAL REMINDERS 🚨
+Follow the framework-specific import patterns shown above.`;
+  }
+
   promptParts.push(
     `Output a complete Storybook story file in TypeScript. Import components as shown in the sample template below. Use the following sample as a template. Respond ONLY with a single code block containing the full file, and nothing else.`,
     '',
     '<rules>',
-    '🚨 FINAL CRITICAL REMINDERS 🚨',
-    "🔴 FIRST LINE MUST BE: import React from 'react';",
-    '🔴 WITHOUT THIS IMPORT, THE STORY WILL BREAK!',
+    frameworkFirstLineRules,
     '',
     'OTHER CRITICAL RULES:',
     '- Story title MUST always start with "Generated/" (e.g., title: "Generated/Recipe Card")',

@@ -167,8 +167,8 @@ const OPENAI_MODELS: ModelInfo[] = [
   },
 ];
 
-// Default model
-const DEFAULT_MODEL = 'gpt-4o';
+// Default model - Updated to latest GPT-5.1 (December 2025)
+const DEFAULT_MODEL = 'gpt-5.1';
 
 // API configuration
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';

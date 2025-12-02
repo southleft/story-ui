@@ -60,16 +60,25 @@ async function buildClaudePromptWithContext(
   let frameworkOptions: StoryGenerationOptions | undefined;
 
   if (options?.framework) {
-    // Explicit framework specified
+    // Explicit framework specified in request
     useFrameworkAware = true;
     frameworkOptions = { framework: options.framework };
     logger.log(`📦 Using specified framework: ${options.framework}`);
+  } else if (config.componentFramework || config.framework) {
+    // Framework configured in story-ui.config.js
+    const configFramework = (config.componentFramework || config.framework) as FrameworkType;
+    useFrameworkAware = true;
+    frameworkOptions = { framework: configFramework };
+    logger.log(`📦 Using framework from config: ${configFramework}`);
   } else if (options?.autoDetectFramework) {
     // Auto-detect framework from project
     try {
       const detectedFramework = await detectProjectFramework(process.cwd());
       useFrameworkAware = true;
       frameworkOptions = { framework: detectedFramework };
+      // CRITICAL: Also set config.componentFramework so validateStoryCode receives the correct framework
+      // This ensures React imports are properly removed for non-React frameworks during post-processing
+      config.componentFramework = detectedFramework;
       logger.log(`📦 Auto-detected framework: ${detectedFramework}`);
     } catch (error) {
       logger.warn('Failed to auto-detect framework, using React default', { error });
@@ -629,8 +638,10 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       return res.status(500).json({ error: 'Failed to generate valid TypeScript code.' });
     }
 
-    // Determine the framework being used (priority: request > config > auto-detect > default)
+    // Determine the framework being used (priority: request > config.componentFramework > config.framework > auto-detect > default)
+    // CRITICAL: Check config.componentFramework BEFORE config.framework - many projects use componentFramework (not framework)
     const detectedFramework = frameworkOptions.framework ||
+                              config.componentFramework as FrameworkType ||
                               config.framework as FrameworkType ||
                               (frameworkOptions.autoDetectFramework ? await detectProjectFramework(process.cwd()).catch(() => 'react' as FrameworkType) : 'react' as FrameworkType);
 
@@ -705,14 +716,20 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
     // FIX #5: Final validation after ALL post-processing
     // This catches any syntax errors introduced by post-processing (e.g., buggy regex replacements)
     const finalValidation = validateStoryCode(fixedFileContents, 'story.tsx', config);
+
+    // ALWAYS apply fixedCode if it exists - handles both:
+    // 1. Syntax error fixes (where isValid = false)
+    // 2. React import removal for non-React frameworks (where isValid = true but fixedCode exists)
+    if (finalValidation.fixedCode) {
+      logger.log('✅ Applied validation fixes (React import removal or syntax fixes)');
+      fixedFileContents = finalValidation.fixedCode;
+    }
+
     if (!finalValidation.isValid) {
       logger.log('⚠️ Post-processing introduced syntax errors:', finalValidation.errors);
 
-      // If we have fixed code from validation, use it
-      if (finalValidation.fixedCode) {
-        logger.log('✅ Auto-fixed post-processing errors');
-        fixedFileContents = finalValidation.fixedCode;
-      } else {
+      // If we don't have fixed code at this point, we can't recover
+      if (!finalValidation.fixedCode) {
         // Post-processing broke the code and we can't fix it
         // Return an error rather than serving broken code
         console.error('Post-processing introduced unfixable syntax errors:', finalValidation.errors);
@@ -749,7 +766,11 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
 
     if (isActualUpdate && (fileName || providedStoryId)) {
       // For updates, preserve the existing fileName and ID
+      // Ensure the filename has the proper .stories.tsx extension
       finalFileName = fileName;
+      if (finalFileName && !finalFileName.endsWith('.stories.tsx')) {
+        finalFileName = finalFileName + '.stories.tsx';
+      }
       
       // Use provided storyId or extract from fileName
       if (providedStoryId) {

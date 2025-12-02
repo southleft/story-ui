@@ -76,6 +76,8 @@ export interface StoryUIConfig {
   componentPrefix: string;
   /** Framework type for story generation (e.g., 'react', 'web-components', 'angular', 'vue', 'svelte') */
   framework?: string;
+  /** Component framework type for discovery routing (e.g., 'react', 'vue', 'angular', 'svelte', 'web-components') */
+  componentFramework?: string;
   components: ComponentConfig[];
   layoutComponents?: ComponentConfig[]; // Layout-specific components
   layoutRules: LayoutRules;

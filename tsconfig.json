@@ -22,7 +22,6 @@
   ],
   "exclude": [
     "node_modules/**/*",
-    "templates/StoryUI/manager.tsx",
     "templates/StoryUI/GeneratedStoryRenderer.stories.tsx",
     "templates/production-app/**/*"
   ]

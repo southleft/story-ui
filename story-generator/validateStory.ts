@@ -74,7 +74,8 @@ export function validateStoryCode(code: string, fileName: string = 'story.tsx', 
     result.errors.push(...semanticErrors);
 
     // Check for React import - but only for React-based frameworks
-    const framework = config?.framework || 'react';
+    // Check BOTH componentFramework and framework properties (componentFramework takes precedence)
+    const framework = config?.componentFramework || config?.framework || 'react';
     const isReactFramework = framework === 'react' || framework.includes('react');
     const hasJSX = code.includes('<') || code.includes('/>');
     const hasReactImport = code.includes('import React from \'react\';');
@@ -84,6 +85,13 @@ export function validateStoryCode(code: string, fileName: string = 'story.tsx', 
     if (hasJSX && !hasReactImport && isReactFramework && !hasLitHtml) {
       result.errors.push('Missing React import - add "import React from \'react\';" at the top of the file');
       result.isValid = false;
+    }
+
+    // CRITICAL: For non-React frameworks, REMOVE any React imports that the LLM incorrectly generated
+    if (!isReactFramework && hasReactImport) {
+      result.warnings.push(`Removed incorrect React import for ${framework} framework`);
+      code = removeReactImport(code);
+      result.fixedCode = code;
     }
 
     if (result.errors.length > 0) {
@@ -377,6 +385,30 @@ function fixMissingReactImport(code: string): string {
   }
 
   return code;
+}
+
+/**
+ * Removes React import for non-React frameworks (Vue, Angular, Svelte, Web Components)
+ * The LLM sometimes incorrectly generates React imports for these frameworks
+ */
+function removeReactImport(code: string): string {
+  // Remove various forms of React import
+  const reactImportPatterns = [
+    /import\s+React\s+from\s+['"]react['"]\s*;?\n?/g,
+    /import\s+\*\s+as\s+React\s+from\s+['"]react['"]\s*;?\n?/g,
+    /import\s+React,?\s*\{[^}]*\}\s+from\s+['"]react['"]\s*;?\n?/g,
+    /import\s+\{[^}]*\}\s+from\s+['"]react['"]\s*;?\n?/g,
+  ];
+
+  let cleanedCode = code;
+  for (const pattern of reactImportPatterns) {
+    cleanedCode = cleanedCode.replace(pattern, '');
+  }
+
+  // Clean up any resulting double newlines
+  cleanedCode = cleanedCode.replace(/\n\n\n+/g, '\n\n');
+
+  return cleanedCode;
 }
 
 /**

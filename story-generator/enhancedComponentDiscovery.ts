@@ -314,7 +314,24 @@ export class EnhancedComponentDiscovery {
   private async discoverFromNpmPackage(source: ComponentSource): Promise<void> {
     // Determine the project root from the generated stories path
     const projectRoot = this.getProjectRoot();
-    const packagePath = path.join(projectRoot, 'node_modules', source.path);
+
+    // Normalize package paths with subpath exports to their base package
+    // e.g., 'vuetify/components' -> 'vuetify', '@scope/pkg/sub' -> '@scope/pkg'
+    let normalizedPackageName = source.path;
+    if (!source.path.startsWith('@') && source.path.includes('/')) {
+      // Non-scoped package with subpath: extract base name
+      normalizedPackageName = source.path.split('/')[0];
+      logger.log(`🔧 Normalizing package path: ${source.path} → ${normalizedPackageName}`);
+    } else if (source.path.startsWith('@')) {
+      // Scoped package: keep @scope/name, strip anything after
+      const parts = source.path.split('/');
+      if (parts.length > 2) {
+        normalizedPackageName = `${parts[0]}/${parts[1]}`;
+        logger.log(`🔧 Normalizing scoped package path: ${source.path} → ${normalizedPackageName}`);
+      }
+    }
+
+    const packagePath = path.join(projectRoot, 'node_modules', normalizedPackageName);
 
     // Helper function to load known components as fallback
     const loadFallbackComponents = () => {
@@ -343,7 +360,7 @@ export class EnhancedComponentDiscovery {
           logger.log(`🔍 Dynamically discovering components from ${source.path}...`);
 
     // Use dynamic discovery to get real exports
-    const dynamicDiscovery = new DynamicPackageDiscovery(source.path, projectRoot);
+    const dynamicDiscovery = new DynamicPackageDiscovery(source.path, projectRoot, this.config.componentFramework);
     const packageExports = await dynamicDiscovery.getRealPackageExports();
 
     if (!packageExports) {
@@ -356,6 +373,15 @@ export class EnhancedComponentDiscovery {
     const realComponents = packageExports.components.filter(comp => comp.isComponent);
     console.log(`✅ Found ${realComponents.length} real components in ${source.path} v${packageExports.packageVersion}`);
           logger.log(`📦 Available components: ${realComponents.map(c => c.name).join(', ')}`);
+
+    // If dynamic discovery found 0 components, use fallback list
+    if (realComponents.length === 0) {
+      logger.log(`🔄 No components found dynamically, checking for known design system fallback...`);
+      loadFallbackComponents();
+      if (this.discoveredComponents.size > 0) {
+        return; // Fallback loaded successfully
+      }
+    }
 
     for (const realComp of realComponents) {
       // Get enhanced metadata from predefined list if available
@@ -522,6 +548,137 @@ export class EnhancedComponentDiscovery {
       return antdComponents.map(name => ({
         name,
         description: `${name} component from Ant Design`,
+        category: this.categorizeComponent(name, '') as any
+      }));
+    }
+
+    // Vuetify fallback components (Vue 3)
+    if (packageName === 'vuetify' || packageName === 'vuetify/components') {
+      const vuetifyComponents = [
+        // Layout
+        'VApp', 'VMain', 'VContainer', 'VRow', 'VCol', 'VSpacer', 'VDivider', 'VFooter', 'VToolbar',
+        'VAppBar', 'VNavigationDrawer', 'VSheet', 'VCard', 'VCardTitle', 'VCardSubtitle', 'VCardText', 'VCardActions',
+        // Buttons & Actions
+        'VBtn', 'VBtnToggle', 'VFab', 'VSpeedDial',
+        // Inputs & Forms
+        'VTextField', 'VTextarea', 'VSelect', 'VAutocomplete', 'VCombobox', 'VCheckbox', 'VRadio', 'VRadioGroup',
+        'VSwitch', 'VSlider', 'VRangeSlider', 'VFileInput', 'VForm', 'VColorPicker', 'VDatePicker', 'VTimePicker',
+        'VOtpInput', 'VNumberInput',
+        // Data Display
+        'VAvatar', 'VBadge', 'VChip', 'VChipGroup', 'VImg', 'VIcon', 'VList', 'VListItem', 'VListItemTitle',
+        'VListItemSubtitle', 'VListItemAction', 'VTable', 'VDataTable', 'VDataTableServer', 'VDataTableVirtual',
+        'VTimeline', 'VTimelineItem', 'VTooltip', 'VExpansionPanels', 'VExpansionPanel', 'VExpansionPanelTitle',
+        'VExpansionPanelText', 'VTreeview', 'VVirtualScroll',
+        // Navigation
+        'VTabs', 'VTab', 'VTabsWindow', 'VTabsWindowItem', 'VMenu', 'VBreadcrumbs', 'VBreadcrumbsItem',
+        'VPagination', 'VBottomNavigation', 'VStepper', 'VStepperHeader', 'VStepperItem', 'VStepperContent',
+        // Feedback
+        'VAlert', 'VSnackbar', 'VProgressLinear', 'VProgressCircular', 'VSkeleton', 'VSkeletonLoader',
+        'VDialog', 'VBottomSheet', 'VOverlay', 'VBanner',
+        // Typography
+        'VSystemBar', 'VLabel',
+        // Misc
+        'VCarousel', 'VCarouselItem', 'VParallax', 'VRating', 'VHover', 'VLazy', 'VThemeProvider',
+        'VDefaultsProvider', 'VLocaleProvider', 'VResponsive', 'VNoSsr', 'VInfiniteScroll'
+      ];
+
+      return vuetifyComponents.map(name => ({
+        name,
+        description: `${name} component from Vuetify`,
+        category: this.categorizeComponent(name, '') as any
+      }));
+    }
+
+    // Angular Material fallback components
+    if (packageName === '@angular/material' || packageName.startsWith('@angular/material/')) {
+      const angularMaterialComponents = [
+        // Form Controls
+        'MatAutocomplete', 'MatCheckbox', 'MatDatepicker', 'MatFormField', 'MatInput', 'MatRadioButton',
+        'MatRadioGroup', 'MatSelect', 'MatSlider', 'MatSlideToggle',
+        // Navigation
+        'MatMenu', 'MatSidenav', 'MatToolbar', 'MatList', 'MatListItem', 'MatNavList', 'MatTabs',
+        'MatTabGroup', 'MatStepper',
+        // Layout
+        'MatCard', 'MatCardHeader', 'MatCardTitle', 'MatCardContent', 'MatCardActions', 'MatDivider',
+        'MatExpansionPanel', 'MatAccordion', 'MatGridList', 'MatGridTile',
+        // Buttons & Indicators
+        'MatButton', 'MatButtonToggle', 'MatButtonToggleGroup', 'MatBadge', 'MatChip', 'MatChipList',
+        'MatChipListbox', 'MatIcon', 'MatProgressSpinner', 'MatProgressBar', 'MatRipple',
+        // Popups & Modals
+        'MatDialog', 'MatDialogTitle', 'MatDialogContent', 'MatDialogActions', 'MatSnackBar',
+        'MatTooltip', 'MatBottomSheet',
+        // Data Table
+        'MatTable', 'MatSort', 'MatSortHeader', 'MatPaginator',
+        // Tree
+        'MatTree', 'MatTreeNode', 'MatNestedTreeNode'
+      ];
+
+      return angularMaterialComponents.map(name => ({
+        name,
+        description: `${name} component from Angular Material`,
+        category: this.categorizeComponent(name, '') as any
+      }));
+    }
+
+    // Skeleton UI fallback components (Svelte)
+    if (packageName === '@skeletonlabs/skeleton' || packageName === '@skeletonlabs/skeleton-svelte') {
+      const skeletonComponents = [
+        // Layout
+        'AppShell', 'AppBar', 'AppRail', 'AppRailTile', 'AppRailAnchor',
+        // Navigation
+        'TabGroup', 'Tab', 'TabAnchor', 'Stepper', 'Step', 'Pagination',
+        // Surfaces
+        'Card', 'Accordion', 'AccordionItem',
+        // Input
+        'FileButton', 'FileDropzone', 'SlideToggle', 'RadioGroup', 'RangeSlider',
+        'InputChip', 'Autocomplete', 'ListBox', 'ListBoxItem', 'Ratings',
+        // Feedback
+        'Alert', 'Toast', 'ProgressBar', 'ProgressRadial', 'Drawer', 'Modal',
+        // Visualization
+        'Avatar', 'CodeBlock', 'Table', 'TableBody', 'TableHead',
+        // Utility
+        'Popup', 'ConicGradient', 'GradientHeading', 'LightSwitch',
+        // Typography
+        'Typography'
+      ];
+
+      return skeletonComponents.map(name => ({
+        name,
+        description: `${name} component from Skeleton UI`,
+        category: this.categorizeComponent(name, '') as any
+      }));
+    }
+
+    // Shoelace fallback components (Web Components)
+    if (packageName === '@shoelace-style/shoelace') {
+      const shoelaceComponents = [
+        // Layout
+        'SlCard', 'SlDivider', 'SlDrawer', 'SlDialog', 'SlDetails', 'SlPopup', 'SlCarousel',
+        'SlCarouselItem', 'SlSplitPanel', 'SlResizeObserver',
+        // Buttons & Actions
+        'SlButton', 'SlButtonGroup', 'SlCopyButton', 'SlIconButton',
+        // Form Controls
+        'SlInput', 'SlSelect', 'SlOption', 'SlOptgroup', 'SlTextarea', 'SlCheckbox',
+        'SlRadio', 'SlRadioButton', 'SlRadioGroup', 'SlSwitch', 'SlRange',
+        'SlColorPicker', 'SlRating',
+        // Data Display
+        'SlAvatar', 'SlBadge', 'SlTag', 'SlIcon', 'SlImage', 'SlImageComparer',
+        'SlFormatBytes', 'SlFormatDate', 'SlFormatNumber', 'SlRelativeTime', 'SlQrCode',
+        'SlTree', 'SlTreeItem',
+        // Navigation
+        'SlBreadcrumb', 'SlBreadcrumbItem', 'SlMenu', 'SlMenuItem', 'SlMenuLabel',
+        'SlTab', 'SlTabGroup', 'SlTabPanel',
+        // Feedback
+        'SlAlert', 'SlProgressBar', 'SlProgressRing', 'SlSpinner', 'SlSkeleton',
+        'SlTooltip',
+        // Typography & Misc
+        'SlAnimatedImage', 'SlAnimation', 'SlInclude', 'SlMutationObserver',
+        'SlVisuallyHidden'
+      ];
+
+      return shoelaceComponents.map(name => ({
+        name,
+        description: `${name} component from Shoelace`,
         category: this.categorizeComponent(name, '') as any
       }));
     }

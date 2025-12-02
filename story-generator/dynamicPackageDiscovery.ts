@@ -18,15 +18,21 @@ export interface PackageExports {
 }
 
 /**
- * Dynamically discovers what components are actually available in an installed package
+ * Dynamically discovers what components are actually available in an installed package.
+ *
+ * IMPORTANT: This class is FRAMEWORK-aware, not DESIGN-SYSTEM-aware.
+ * It uses GENERIC patterns based on the framework type (React, Vue, Angular, Svelte, Web Components)
+ * without any knowledge of specific design systems (Mantine, Vuetify, Material, Skeleton, Shoelace, etc.)
  */
 export class DynamicPackageDiscovery {
   private packageName: string;
   private projectRoot: string;
+  private framework: string;
 
-  constructor(packageName: string, projectRoot: string = process.cwd()) {
+  constructor(packageName: string, projectRoot: string = process.cwd(), framework: string = 'react') {
     this.packageName = packageName;
     this.projectRoot = projectRoot;
+    this.framework = framework.toLowerCase();
   }
 
   /**
@@ -34,10 +40,26 @@ export class DynamicPackageDiscovery {
    */
   async getRealPackageExports(): Promise<PackageExports | null> {
     try {
-      const packagePath = path.join(this.projectRoot, 'node_modules', this.packageName);
+      // GENERIC: Normalize package names with subpath exports to their base package
+      // e.g., 'packagename/components' -> 'packagename', '@scope/pkg/sub' -> '@scope/pkg'
+      let normalizedPackageName = this.packageName;
+      if (!this.packageName.startsWith('@') && this.packageName.includes('/')) {
+        // Non-scoped package with subpath: extract base name
+        normalizedPackageName = this.packageName.split('/')[0];
+        logger.log(`🔧 Normalizing package path: ${this.packageName} → ${normalizedPackageName}`);
+      } else if (this.packageName.startsWith('@')) {
+        // Scoped package: keep @scope/name, strip anything after
+        const parts = this.packageName.split('/');
+        if (parts.length > 2) {
+          normalizedPackageName = `${parts[0]}/${parts[1]}`;
+          logger.log(`🔧 Normalizing scoped package path: ${this.packageName} → ${normalizedPackageName}`);
+        }
+      }
+
+      const packagePath = path.join(this.projectRoot, 'node_modules', normalizedPackageName);
 
       if (!fs.existsSync(packagePath)) {
-        console.warn(`Package ${this.packageName} not found in node_modules`);
+        console.warn(`Package ${normalizedPackageName} not found in node_modules`);
         return null;
       }
 
@@ -410,19 +432,68 @@ export class DynamicPackageDiscovery {
   /**
    * Alternative discovery method when package imports fail due to CSS
    * Analyzes package.json exports and TypeScript definitions
+   *
+   * IMPORTANT: This uses GENERIC framework-based discovery patterns.
+   * It has NO knowledge of specific design systems - only framework types.
    */
   private discoverFromPackageStructure(): any {
     try {
-      const packagePath = path.join(this.projectRoot, 'node_modules', this.packageName);
+      // GENERIC: Normalize package name for subpath exports
+      let normalizedPackageName = this.packageName;
+      if (!this.packageName.startsWith('@') && this.packageName.includes('/')) {
+        normalizedPackageName = this.packageName.split('/')[0];
+      } else if (this.packageName.startsWith('@')) {
+        const parts = this.packageName.split('/');
+        if (parts.length > 2) {
+          normalizedPackageName = `${parts[0]}/${parts[1]}`;
+        }
+      }
+
+      const packagePath = path.join(this.projectRoot, 'node_modules', normalizedPackageName);
       const packageJsonPath = path.join(packagePath, 'package.json');
 
       if (!fs.existsSync(packageJsonPath)) {
-        logger.log(`📦 No package.json found for ${this.packageName}`);
+        logger.log(`📦 No package.json found for ${normalizedPackageName}`);
         return null;
       }
 
       const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
       const exports: any = {};
+
+      // GENERIC Framework-based discovery methods (prioritized by framework type)
+      logger.log(`🔧 Using GENERIC ${this.framework} framework discovery for ${this.packageName}...`);
+
+      // Vue framework: Parse ES module re-exports from lib/components/index.js
+      if (this.framework === 'vue') {
+        const vueComponents = this.discoverVueFrameworkComponents(packagePath);
+        if (vueComponents && Object.keys(vueComponents).length > 0) {
+          return vueComponents;
+        }
+      }
+
+      // Web Components framework: Parse custom-elements.json manifest
+      if (this.framework === 'web-components') {
+        const webComponents = this.discoverWebComponentsFromManifest(packagePath);
+        if (webComponents && Object.keys(webComponents).length > 0) {
+          return webComponents;
+        }
+      }
+
+      // Angular framework: Scan NgModule directories
+      if (this.framework === 'angular') {
+        const angularComponents = this.discoverAngularFrameworkComponents(packagePath);
+        if (angularComponents && Object.keys(angularComponents).length > 0) {
+          return angularComponents;
+        }
+      }
+
+      // Svelte framework: Check for CSS-only vs component packages
+      if (this.framework === 'svelte') {
+        const svelteComponents = this.discoverSvelteFrameworkComponents(packagePath, packageJson);
+        if (svelteComponents && Object.keys(svelteComponents).length > 0) {
+          return svelteComponents;
+        }
+      }
 
       // Method 1: Analyze package.json exports field
       if (packageJson.exports) {
@@ -450,6 +521,299 @@ export class DynamicPackageDiscovery {
 
     } catch (error) {
       console.warn(`Alternative discovery failed for ${this.packageName}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * GENERIC Vue Framework Discovery: Parse ES module re-exports
+   * Works with Vue component libraries that use: export * from "./ComponentName/index.js" pattern
+   * Searches common locations: lib/components/, src/components/, components/
+   */
+  private discoverVueFrameworkComponents(packagePath: string): any {
+    try {
+      // GENERIC: Try multiple common component index locations
+      const possibleIndexPaths = [
+        path.join(packagePath, 'lib', 'components', 'index.js'),
+        path.join(packagePath, 'lib', 'components', 'index.mjs'),
+        path.join(packagePath, 'src', 'components', 'index.js'),
+        path.join(packagePath, 'src', 'components', 'index.ts'),
+        path.join(packagePath, 'components', 'index.js'),
+        path.join(packagePath, 'dist', 'components', 'index.js'),
+      ];
+
+      let componentsIndexPath: string | null = null;
+      for (const p of possibleIndexPaths) {
+        if (fs.existsSync(p)) {
+          componentsIndexPath = p;
+          logger.log(`📁 Found Vue components index at: ${p}`);
+          break;
+        }
+      }
+
+      if (!componentsIndexPath) {
+        logger.log(`📁 No Vue components index found in common locations`);
+        return null;
+      }
+
+      const content = fs.readFileSync(componentsIndexPath, 'utf-8');
+      const exports: any = {};
+
+      // GENERIC: Match ES module re-export patterns
+      // export * from "./ComponentName/index.js" or export * from "./ComponentName/index.mjs"
+      const reExportRegex = /export\s+\*\s+from\s+["']\.\/([^/]+)\/index(?:\.m?js)?["']/g;
+      let match;
+
+      while ((match = reExportRegex.exec(content)) !== null) {
+        const componentDir = match[1];
+        // Component name is the directory name
+        if (this.isComponentName(componentDir)) {
+          exports[componentDir] = () => {};
+          exports[componentDir].displayName = componentDir;
+          // GENERIC: Use relative path from package, not hardcoded design system name
+          const relativePath = path.relative(packagePath, componentsIndexPath);
+          const componentsDir = path.dirname(relativePath);
+          exports[componentDir].__componentPath = `${this.packageName}/${componentsDir}/${componentDir}`;
+        }
+      }
+
+      logger.log(`✅ Vue Framework: Found ${Object.keys(exports).length} components from ${path.basename(componentsIndexPath)}`);
+      return exports;
+
+    } catch (error) {
+      logger.log(`❌ Vue framework discovery failed: ${error}`);
+      return null;
+    }
+  }
+
+  /**
+   * GENERIC Web Components Discovery: Parse custom-elements.json manifest
+   * Custom Elements Manifest is a standard spec for documenting Web Components
+   * Works with any Web Components library that provides a custom-elements.json manifest
+   */
+  private discoverWebComponentsFromManifest(packagePath: string): any {
+    try {
+      // GENERIC: Try multiple common locations for custom-elements.json manifest
+      const possiblePaths = [
+        path.join(packagePath, 'custom-elements.json'),
+        path.join(packagePath, 'dist', 'custom-elements.json'),
+        path.join(packagePath, 'cdn', 'custom-elements.json'),
+        path.join(packagePath, 'lib', 'custom-elements.json'),
+        path.join(packagePath, 'build', 'custom-elements.json'),
+      ];
+
+      let manifestPath: string | null = null;
+      for (const p of possiblePaths) {
+        if (fs.existsSync(p)) {
+          manifestPath = p;
+          logger.log(`📁 Found custom-elements.json manifest at: ${p}`);
+          break;
+        }
+      }
+
+      if (!manifestPath) {
+        logger.log(`📁 No custom-elements.json manifest found in common locations`);
+        return null;
+      }
+
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+      const exports: any = {};
+
+      // custom-elements.json structure (standard spec):
+      // { modules: [{ declarations: [{ kind: "class", name: "SlAlert", tagName: "sl-alert" }] }] }
+      if (manifest.modules && Array.isArray(manifest.modules)) {
+        for (const module of manifest.modules) {
+          if (module.declarations && Array.isArray(module.declarations)) {
+            for (const declaration of module.declarations) {
+              // Look for class declarations that are Custom Elements
+              if (declaration.kind === 'class' && declaration.name && declaration.tagName) {
+                const componentName = declaration.name;
+                exports[componentName] = () => {};
+                exports[componentName].displayName = componentName;
+                // GENERIC: Use package name, not hardcoded design system name
+                exports[componentName].__componentPath = `${this.packageName}/${module.path || ''}`;
+                exports[componentName].__tagName = declaration.tagName;
+              }
+            }
+          }
+        }
+      }
+
+      logger.log(`✅ Web Components: Found ${Object.keys(exports).length} components from custom-elements.json`);
+      return exports;
+
+    } catch (error) {
+      logger.log(`❌ Web Components manifest discovery failed: ${error}`);
+      return null;
+    }
+  }
+
+  /**
+   * GENERIC Angular Framework Discovery: Scan module directories
+   * Works with Angular component libraries that use NgModule patterns
+   * Discovers modules based on directory structure and file patterns
+   */
+  private discoverAngularFrameworkComponents(packagePath: string): any {
+    try {
+      const entries = fs.readdirSync(packagePath, { withFileTypes: true });
+      const exports: any = {};
+
+      // GENERIC: Common Angular-specific directories to exclude
+      const excludedDirs = new Set([
+        'node_modules', 'schematics', 'prebuilt-themes', 'core',
+        'esm2022', 'fesm2022', 'esm2020', 'fesm2020', 'esm2015', 'fesm2015',
+        'testing', 'bundles', 'cdk', 'src', 'lib', 'dist'
+      ]);
+
+      // Filter to potential component module directories
+      const componentModules = entries.filter(entry =>
+        entry.isDirectory() &&
+        !entry.name.startsWith('.') &&
+        !entry.name.startsWith('_') &&
+        !excludedDirs.has(entry.name)
+      );
+
+      for (const moduleDir of componentModules) {
+        const moduleName = moduleDir.name;
+        const modulePath = path.join(packagePath, moduleName);
+
+        // GENERIC: Check if this directory contains Angular-relevant content
+        let hasContent = false;
+        try {
+          const moduleContents = fs.readdirSync(modulePath);
+          hasContent = moduleContents.some(f =>
+            f.endsWith('.scss') ||
+            f.endsWith('.css') ||
+            f.includes('index') ||
+            f.endsWith('.html') ||
+            f.endsWith('.module.ts') ||
+            f.endsWith('.component.ts')
+          );
+        } catch {
+          continue;
+        }
+
+        if (hasContent) {
+          // GENERIC: Convert directory name to Angular component name pattern
+          // "button" -> "MatButton" or "MyButton" depending on package naming
+          // Try to detect prefix from package name
+          let prefix = 'Mat';
+          const packageNameParts = this.packageName.split('/');
+          const baseName = packageNameParts[packageNameParts.length - 1];
+          if (baseName && baseName !== 'material') {
+            // Use first 3 chars capitalized as prefix (e.g., @mylib/ui -> "Myl")
+            prefix = baseName.charAt(0).toUpperCase() + baseName.slice(1, 3);
+          }
+
+          const componentName = prefix + moduleName
+            .split('-')
+            .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+            .join('');
+
+          exports[componentName] = () => {};
+          exports[componentName].displayName = componentName;
+          // GENERIC: Use actual package name, not hardcoded
+          exports[componentName].__componentPath = `${this.packageName}/${moduleName}`;
+          exports[componentName].__moduleName = moduleName;
+        }
+      }
+
+      logger.log(`✅ Angular Framework: Found ${Object.keys(exports).length} component modules`);
+      return exports;
+
+    } catch (error) {
+      logger.log(`❌ Angular framework discovery failed: ${error}`);
+      return null;
+    }
+  }
+
+  /**
+   * GENERIC Svelte Framework Discovery: Scan for .svelte component files
+   * Works with any Svelte component library that includes .svelte files
+   * Searches common locations: dist/, src/, lib/, components/
+   * Also detects CSS-only packages that provide no Svelte components
+   */
+  private discoverSvelteFrameworkComponents(packagePath: string, packageJson: any): any {
+    try {
+      const exports: any = {};
+
+      // GENERIC: Try multiple common locations for Svelte components
+      const possibleDirs = [
+        path.join(packagePath, 'dist'),
+        path.join(packagePath, 'src'),
+        path.join(packagePath, 'lib'),
+        path.join(packagePath, 'components'),
+        path.join(packagePath, 'build'),
+      ];
+
+      for (const searchDir of possibleDirs) {
+        if (!fs.existsSync(searchDir)) continue;
+
+        const entries = fs.readdirSync(searchDir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory()) {
+            // Check for .svelte files in subdirectory
+            const subPath = path.join(searchDir, entry.name);
+            try {
+              const files = fs.readdirSync(subPath);
+              for (const file of files) {
+                if (file.endsWith('.svelte')) {
+                  const componentName = file.replace('.svelte', '');
+                  if (this.isComponentName(componentName)) {
+                    exports[componentName] = () => {};
+                    exports[componentName].displayName = componentName;
+                    // GENERIC: Use package name, not hardcoded design system name
+                    const relativePath = path.relative(packagePath, subPath);
+                    exports[componentName].__componentPath = `${this.packageName}/${relativePath}`;
+                  }
+                }
+              }
+            } catch {
+              continue;
+            }
+          } else if (entry.name.endsWith('.svelte')) {
+            // Direct .svelte files in the directory
+            const componentName = entry.name.replace('.svelte', '');
+            if (this.isComponentName(componentName)) {
+              exports[componentName] = () => {};
+              exports[componentName].displayName = componentName;
+              const relativePath = path.relative(packagePath, searchDir);
+              exports[componentName].__componentPath = `${this.packageName}/${relativePath}`;
+            }
+          }
+        }
+
+        if (Object.keys(exports).length > 0) {
+          logger.log(`📁 Found Svelte components in: ${searchDir}`);
+          break;
+        }
+      }
+
+      // GENERIC: Check if package.json exports only CSS (no components)
+      if (packageJson.exports && Object.keys(exports).length === 0) {
+        const mainExport = packageJson.exports['.'];
+        const isCSSOnly = (typeof mainExport === 'object')
+          ? (mainExport.import?.endsWith('.css') || mainExport.style?.endsWith('.css'))
+          : (typeof mainExport === 'string' && mainExport.endsWith('.css'));
+
+        if (isCSSOnly) {
+          logger.log(`⚠️ ${this.packageName} is CSS-only (Tailwind/CSS utilities). No Svelte components available.`);
+          logger.log(`💡 This package provides CSS utilities only. Use standard HTML elements with its CSS classes.`);
+
+          // Return a special marker indicating CSS-only
+          exports['__CSS_ONLY__'] = true;
+          exports['__MESSAGE__'] = `${this.packageName} provides CSS utilities only. Use standard HTML elements with CSS classes.`;
+        }
+      }
+
+      if (Object.keys(exports).length > 0 && !exports['__CSS_ONLY__']) {
+        logger.log(`✅ Svelte Framework: Found ${Object.keys(exports).length} components`);
+      }
+
+      return Object.keys(exports).length > 0 ? exports : null;
+
+    } catch (error) {
+      logger.log(`❌ Svelte framework discovery failed: ${error}`);
       return null;
     }
   }
