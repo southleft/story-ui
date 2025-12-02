@@ -757,7 +757,25 @@ const SourceCodePanel: React.FC<{ active?: boolean }> = ({ active }) => {
     return (
       <div style={styles.container}>
         <div style={styles.header}>
-          <span style={styles.title}>Source Code</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <span style={styles.title}>Source Code</span>
+          </div>
+          {isGeneratedStory && (
+            <button
+              style={{
+                ...styles.deleteButton,
+                ...(isDeleting ? styles.deleteButtonDeleting : {}),
+                ...(deleteHover && !isDeleting ? styles.deleteButtonHover : {}),
+              }}
+              onClick={handleDelete}
+              onMouseEnter={() => setDeleteHover(true)}
+              onMouseLeave={() => setDeleteHover(false)}
+              disabled={isDeleting}
+              title="Delete this generated story"
+            >
+              {isDeleting ? 'Deleting...' : 'Delete'}
+            </button>
+          )}
         </div>
         <div style={styles.emptyState}>
           <span>No source code available for this story</span>
