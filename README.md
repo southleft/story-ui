@@ -248,27 +248,40 @@ export class DataTableComponent { }
 
 Story UI includes a Model Context Protocol (MCP) server, allowing direct integration with AI clients like Claude Desktop and Claude Code.
 
-### Claude Code Integration (Recommended)
+### Claude Desktop Integration (Recommended)
 
-The easiest way to connect is via Claude Code's built-in MCP support:
+The easiest way to connect is via Claude Desktop's built-in connector UI:
+
+1. Open **Claude Desktop**
+2. Go to **Settings** → **Connectors**
+3. Click **"Add custom connector"**
+4. Enter:
+   - **Name**: `Story UI` (or any name you prefer)
+   - **URL**: `https://story-ui-demo.up.railway.app/mcp-remote/mcp` (production)
+5. Click **Add**
+6. **Restart Claude Desktop**
+
+Once connected, you'll have access to all Story UI tools directly in your Claude conversations:
+- `generate-story` - Generate Storybook stories from natural language
+- `list-components` - Discover available components
+- `list-stories` - View existing stories
+- `get-story` / `update-story` / `delete-story` - Manage stories
+- `get-component-props` - Get component property information
+- `test-connection` - Verify MCP connection
+
+### Claude Code Integration
+
+Connect via Claude Code's built-in MCP support:
 
 ```bash
-# Add remote HTTP MCP server
-claude mcp add --transport http story-ui https://your-worker.workers.dev/mcp
+# Add remote HTTP MCP server (production)
+claude mcp add --transport http story-ui https://story-ui-demo.up.railway.app/mcp-remote/mcp
 
 # Or for local development
-claude mcp add --transport http story-ui-local http://localhost:4005/mcp
+claude mcp add --transport http story-ui-local http://localhost:4005/mcp-remote/mcp
 ```
 
-### Claude Desktop Integration
-
-Claude Desktop now supports a connector UI for adding MCP servers. Simply:
-
-1. Open Claude Desktop Settings
-2. Navigate to the MCP Servers section
-3. Add a new server with:
-   - **Name**: Story UI
-   - **URL**: `https://your-worker.workers.dev/mcp` (production) or `http://localhost:4005/mcp` (local)
+### Manual Configuration (Advanced)
 
 For advanced users who prefer manual configuration, add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
 
@@ -292,7 +305,7 @@ For advanced users who prefer manual configuration, add to your Claude Desktop c
 npx story-ui start
 ```
 
-This starts the Story UI HTTP server with MCP endpoint at `http://localhost:4005/mcp`.
+This starts the Story UI HTTP server with MCP endpoint at `http://localhost:4005/mcp-remote/mcp`.
 
 ### Available MCP Commands
 
