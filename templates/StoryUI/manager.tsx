@@ -502,7 +502,7 @@ const SourceCodePanel: React.FC<{ active?: boolean }> = ({ active }) => {
   const handleDelete = useCallback(async () => {
     if (!currentStoryId || !isGeneratedStory || isDeleting) return;
 
-    const confirmed = window.confirm('Delete this generated story? This cannot be undone.');
+    const confirmed = window.confirm('Delete this story file and ALL its variants? This cannot be undone.');
     if (!confirmed) return;
 
     setIsDeleting(true);
@@ -771,9 +771,9 @@ const SourceCodePanel: React.FC<{ active?: boolean }> = ({ active }) => {
               onMouseEnter={() => setDeleteHover(true)}
               onMouseLeave={() => setDeleteHover(false)}
               disabled={isDeleting}
-              title="Delete this generated story"
+              title="Delete this story file and all its variants"
             >
-              {isDeleting ? 'Deleting...' : 'Delete'}
+              {isDeleting ? 'Deleting...' : 'Delete Story'}
             </button>
           )}
         </div>
@@ -834,9 +834,9 @@ const SourceCodePanel: React.FC<{ active?: boolean }> = ({ active }) => {
               onMouseEnter={() => setDeleteHover(true)}
               onMouseLeave={() => setDeleteHover(false)}
               disabled={isDeleting}
-              title="Delete this generated story"
+              title="Delete this story file and all its variants"
             >
-              {isDeleting ? 'Deleting...' : 'Delete'}
+              {isDeleting ? 'Deleting...' : 'Delete Story'}
             </button>
           )}
         </div>
