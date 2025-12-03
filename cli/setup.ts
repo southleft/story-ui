@@ -929,7 +929,7 @@ Material UI (MUI) is a React component library implementing Material Design.
 
   // Copy component files
   const templatesDir = path.resolve(__dirname, '../../templates/StoryUI');
-  const componentFiles = ['StoryUIPanel.tsx', 'StoryUIPanel.stories.tsx'];
+  const componentFiles = ['StoryUIPanel.tsx', 'StoryUIPanel.mdx'];
 
   console.log(chalk.blue('\n📦 Installing Story UI component...'));
 

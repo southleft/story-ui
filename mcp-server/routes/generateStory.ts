@@ -767,7 +767,14 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
     if (isActualUpdate && (fileName || providedStoryId)) {
       // For updates, preserve the existing fileName and ID
       // Ensure the filename has the proper .stories.tsx extension
-      finalFileName = fileName;
+      // FIX: Handle case where fileName is undefined but providedStoryId exists
+      if (fileName) {
+        finalFileName = fileName;
+      } else if (providedStoryId) {
+        // Generate filename from storyId when fileName not provided
+        finalFileName = `${providedStoryId}.stories.tsx`;
+        logger.log('📝 Generated filename from storyId:', finalFileName);
+      }
       if (finalFileName && !finalFileName.endsWith('.stories.tsx')) {
         finalFileName = finalFileName + '.stories.tsx';
       }

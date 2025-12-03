@@ -531,6 +531,7 @@ const meta = {
   parameters: {
     layout: 'centered',
   },
+  tags: ['autodocs'],
 } satisfies Meta;
 
 export default meta;
@@ -551,6 +552,7 @@ const meta = {
   parameters: {
     layout: 'centered',
   },
+  tags: ['autodocs'],
 } satisfies Meta<typeof ${mainComponent}>;
 
 export default meta;

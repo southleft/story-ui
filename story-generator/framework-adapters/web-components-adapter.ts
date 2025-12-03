@@ -321,6 +321,14 @@ export const Default: Story = {
     processed = processed.replace(/import React from ['"]react['"];?\n?/g, '');
     processed = processed.replace(/import \* as React from ['"]react['"];?\n?/g, '');
 
+    // Fix Shoelace imports - add /dist to the path
+    // Wrong: @shoelace-style/shoelace/components/...
+    // Right: @shoelace-style/shoelace/dist/components/...
+    processed = processed.replace(
+      /@shoelace-style\/shoelace\/components\//g,
+      '@shoelace-style/shoelace/dist/components/'
+    );
+
     // Fix common issues
     processed = processed
       // Remove React-style className

@@ -18,7 +18,7 @@ import {
   buildFrameworkAwarePrompt,
   detectProjectFramework,
 } from '../../story-generator/promptGenerator.js';
-import { FrameworkType, StoryGenerationOptions } from '../../story-generator/framework-adapters/index.js';
+import { FrameworkType, StoryGenerationOptions, getAdapter } from '../../story-generator/framework-adapters/index.js';
 import { loadUserConfig, validateConfig } from '../../story-generator/configLoader.js';
 import { extractAndValidateCodeBlock, createFallbackStory } from '../../story-generator/validateStory.js';
 import { isBlacklistedComponent, isBlacklistedIcon, getBlacklistErrorMessage, ICON_CORRECTIONS } from '../../story-generator/componentBlacklist.js';
@@ -148,9 +148,12 @@ async function analyzeIntent(
     hasImages?: boolean;
   }
 ): Promise<IntentPreview> {
-  // Determine framework
-  let framework = 'react';
-  if (options.framework) {
+  // Determine framework - priority: config > explicit option > auto-detect > default
+  let framework: string = 'react';
+  if (config.componentFramework) {
+    // First priority: use config.componentFramework if set
+    framework = config.componentFramework;
+  } else if (options.framework) {
     framework = options.framework;
   } else if (options.autoDetectFramework) {
     try {
@@ -713,12 +716,25 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
     currentStep++;
     stream.sendProgress(currentStep, totalSteps, 'post_processing', 'Applying finishing touches...');
 
-    // Ensure React import
-    if (!fileContents.includes("import React from 'react';")) {
+    // Detect framework from config or auto-detection
+    const detectedFramework = (config.componentFramework as FrameworkType) ||
+      (framework as FrameworkType) ||
+      (intent.framework as FrameworkType) ||
+      'react';
+
+    // Only add React import for React framework
+    if (detectedFramework === 'react' && !fileContents.includes("import React from 'react';")) {
       fileContents = "import React from 'react';\n" + fileContents;
     }
 
     let fixedFileContents = postProcessStory(fileContents, config.importPath);
+
+    // Apply framework-specific post-processing
+    const frameworkAdapter = getAdapter(detectedFramework);
+    if (frameworkAdapter) {
+      logger.log(`🔧 Applying ${detectedFramework} framework post-processing`);
+      fixedFileContents = frameworkAdapter.postProcess(fixedFileContents);
+    }
 
     // Generate title
     let aiTitle;
@@ -784,6 +800,11 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
       hash = crypto.createHash('sha1').update(prompt + timestamp).digest('hex').slice(0, 8);
       finalFileName = fileName || fileNameFromTitle(aiTitle, hash);
       storyId = `story-${hash}`;
+    }
+
+    // Ensure file extension is correct
+    if (finalFileName && !finalFileName.endsWith('.stories.tsx')) {
+      finalFileName = finalFileName + '.stories.tsx';
     }
 
     // Step 8: Save story
@@ -892,7 +913,12 @@ async function buildClaudePromptWithContext(
   let useFrameworkAware = false;
   let frameworkOptions: StoryGenerationOptions | undefined;
 
-  if (options?.framework) {
+  // Priority: config.componentFramework > explicit option > auto-detect
+  if (config.componentFramework) {
+    // First priority: use config.componentFramework if set
+    useFrameworkAware = true;
+    frameworkOptions = { framework: config.componentFramework as FrameworkType };
+  } else if (options?.framework) {
     useFrameworkAware = true;
     frameworkOptions = { framework: options.framework };
   } else if (options?.autoDetectFramework) {

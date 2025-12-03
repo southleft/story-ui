@@ -20,19 +20,25 @@ export function validateStoryCode(code: string, fileName: string = 'story.tsx', 
     warnings: []
   };
 
+  // Determine framework from config
+  const framework = config?.componentFramework || config?.framework || 'react';
+  const isJsxFramework = framework === 'react' || framework === 'vue';
+
     try {
     // Create a TypeScript source file
+    // Use appropriate script kind based on framework
+    const scriptKind = isJsxFramework ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
     const sourceFile = ts.createSourceFile(
       fileName,
       code,
       ts.ScriptTarget.Latest,
       true,
-      ts.ScriptKind.TSX
+      scriptKind
     );
 
     // Check for syntax errors using the program API
     const compilerOptions: ts.CompilerOptions = {
-      jsx: ts.JsxEmit.ReactJSX,
+      jsx: isJsxFramework ? ts.JsxEmit.ReactJSX : ts.JsxEmit.None,
       target: ts.ScriptTarget.Latest,
       module: ts.ModuleKind.ESNext,
       allowJs: true,
@@ -69,13 +75,14 @@ export function validateStoryCode(code: string, fileName: string = 'story.tsx', 
       }
     }
 
-    // Additional semantic checks
-    const semanticErrors = performSemanticChecks(sourceFile, config);
-    result.errors.push(...semanticErrors);
+    // Additional semantic checks - only for JSX frameworks (React, Vue with JSX)
+    // For non-JSX frameworks (Angular, Svelte, Web Components), skip JSX-specific validation
+    if (isJsxFramework) {
+      const semanticErrors = performSemanticChecks(sourceFile, config);
+      result.errors.push(...semanticErrors);
+    }
 
     // Check for React import - but only for React-based frameworks
-    // Check BOTH componentFramework and framework properties (componentFramework takes precedence)
-    const framework = config?.componentFramework || config?.framework || 'react';
     const isReactFramework = framework === 'react' || framework.includes('react');
     const hasJSX = code.includes('<') || code.includes('/>');
     const hasReactImport = code.includes('import React from \'react\';');
@@ -126,6 +133,7 @@ function performSemanticChecks(sourceFile: ts.SourceFile, config?: any): string[
   const errors: string[] = [];
   const availableComponents = new Set<string>();
   const importedComponents = new Set<string>();
+  const usedJsxComponents = new Set<string>();
 
   // If config is provided, collect available components
   if (config && config.componentsToImport) {
@@ -169,23 +177,63 @@ function performSemanticChecks(sourceFile: ts.SourceFile, config?: any): string[
             });
           }
         }
+
+        // Track all named imports from any module (React, icons, etc.)
+        if (ts.isNamedImports(node.importClause.namedBindings)) {
+          node.importClause.namedBindings.elements.forEach(element => {
+            importedComponents.add(element.name.text);
+          });
+        }
       }
     }
 
-    // Check for unclosed JSX elements
-    if (ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node)) {
-      // Additional JSX-specific checks could go here
+    // Track default imports (e.g., import React from 'react')
+    if (ts.isImportDeclaration(node) && node.importClause && node.importClause.name) {
+      importedComponents.add(node.importClause.name.text);
     }
 
-    // Check for missing imports
-    if (ts.isIdentifier(node) && node.text && /^[A-Z]/.test(node.text)) {
-      // This is a potential component reference - would need more context to validate
+    // Track JSX element names - CRITICAL: Catch undefined components
+    if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+      const tagName = node.tagName;
+
+      // Handle different tag name types
+      if (ts.isIdentifier(tagName)) {
+        // Simple identifier like <Card> or <CardSection>
+        const name = tagName.text;
+        // Only track PascalCase names (components, not HTML elements like div, span)
+        if (/^[A-Z]/.test(name)) {
+          usedJsxComponents.add(name);
+        }
+      } else if (ts.isPropertyAccessExpression(tagName)) {
+        // Compound component like <Card.Section>
+        // The parent (Card) needs to be imported, not Card.Section
+        if (ts.isIdentifier(tagName.expression)) {
+          const parentName = tagName.expression.text;
+          if (/^[A-Z]/.test(parentName)) {
+            usedJsxComponents.add(parentName);
+          }
+        }
+      }
     }
 
     ts.forEachChild(node, visit);
   }
 
   visit(sourceFile);
+
+  // CRITICAL CHECK: Verify all used JSX components are imported
+  // This catches bugs where a component is used but never imported
+  // This is framework-agnostic - works for any JSX-based framework
+  for (const componentName of usedJsxComponents) {
+    if (!importedComponents.has(componentName)) {
+      errors.push(
+        `JSX error: "${componentName}" is used but was never imported. ` +
+        `Either add it to your imports, or if you intended to use a sub-component, ` +
+        `use the correct syntax (e.g., Parent.Child instead of ParentChild).`
+      );
+    }
+  }
+
   return errors;
 }
 

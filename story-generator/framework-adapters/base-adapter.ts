@@ -158,13 +158,25 @@ export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
 
   /**
    * Post-process generated story content
+   * Removes React imports for non-React frameworks as a safety net
    */
   postProcess(storyContent: string): string {
-    // Default implementation - can be overridden by subclasses
-    return storyContent
+    let processed = storyContent
       .trim()
       .replace(/\r\n/g, '\n')
       .replace(/\n{3,}/g, '\n\n');
+
+    // For non-React frameworks, remove any React imports that may have been generated
+    // This is a safety net in case the LLM generates React imports for non-React frameworks
+    if (this.type !== 'react') {
+      processed = processed.replace(/import React from ['"]react['"];?\n?/g, '');
+      processed = processed.replace(/import \* as React from ['"]react['"];?\n?/g, '');
+      processed = processed.replace(/import { React } from ['"]react['"];?\n?/g, '');
+      // Clean up any resulting empty lines at the start of the file
+      processed = processed.replace(/^\n+/, '');
+    }
+
+    return processed;
   }
 
   /**

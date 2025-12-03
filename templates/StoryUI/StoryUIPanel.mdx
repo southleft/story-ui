@@ -11,24 +11,58 @@
   - Non-React frameworks cannot render React components in their Preview
   - MDX pages bypass this limitation by being compiled with React directly
 
+  Port Configuration:
+  - The port is automatically read from VITE_STORY_UI_PORT environment variable
+  - This is set during `npx story-ui init` and stored in .env
+  - URL parameter override: ?mcp-port=XXXX
+
   Reference: Steve Dodier-Lazaro (Storybook team) recommendation
 */}
 
 import { Meta } from '@storybook/addon-docs/blocks';
 import { StoryUIPanel } from './StoryUIPanel';
+import { useEffect, useState, useRef } from 'react';
 
 <Meta title="Story UI/Story Generator" />
 
 export const StoryUIPanelWrapper = () => {
-  // Check for URL parameter override for MCP port
-  if (typeof window !== 'undefined') {
-    const urlParams = new URLSearchParams(window.location.search);
-    const mcpPortParam = urlParams.get('mcp-port');
+  const [isReady, setIsReady] = useState(false);
+  const hasInitialized = useRef(false);
 
-    if (mcpPortParam) {
-      // Set the global variable that the panel will use
-      window.STORY_UI_MCP_PORT = mcpPortParam;
+  useEffect(() => {
+    // Only run once on mount
+    if (hasInitialized.current) return;
+    hasInitialized.current = true;
+
+    if (typeof window !== 'undefined') {
+      // Check for URL parameter override for MCP port
+      const urlParams = new URLSearchParams(window.location.search);
+      const mcpPortParam = urlParams.get('mcp-port');
+
+      if (mcpPortParam) {
+        // URL parameter takes highest priority
+        window.STORY_UI_MCP_PORT = mcpPortParam;
+      }
+      // Otherwise, let StoryUIPanel.tsx's getApiBaseUrl() handle port detection
+      // from VITE_STORY_UI_PORT environment variable (set during story-ui init)
     }
+
+    setIsReady(true);
+  }, []);
+
+  // Don't render until initialized to prevent hydration issues
+  if (!isReady) {
+    return (
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        height: '100vh',
+        color: '#666'
+      }}>
+        Loading Story UI...
+      </div>
+    );
   }
 
   return <StoryUIPanel />;

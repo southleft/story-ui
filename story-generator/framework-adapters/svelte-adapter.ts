@@ -57,10 +57,15 @@ CRITICAL RULES:
 - For slots, use render with a wrapper component
 - Events use on: directive in Svelte templates
 
+CRITICAL - SVELTE SLOT CONTENT:
+- Svelte components use SLOTS for content, NOT children props
+- Always use render function with 'slot' property for text/content
+- Never use 'children' in args - it will cause runtime errors
+
 Example structure:
 \`\`\`typescript
 import type { Meta, StoryObj } from '@storybook/svelte';
-import Button from 'your-library/Button.svelte';
+import { Button } from 'your-library';
 
 const meta: Meta<Button> = {
   title: 'Components/Button',
@@ -81,8 +86,12 @@ type Story = StoryObj<typeof meta>;
 export const Primary: Story = {
   args: {
     variant: 'primary',
-    children: 'Click me',
   },
+  render: (args) => ({
+    Component: Button,
+    props: args,
+    slot: 'Click me',
+  }),
 };
 \`\`\`
 
@@ -136,7 +145,7 @@ ${this.getCommonRules()}`;
 ### TypeScript Stories File
 \`\`\`typescript
 import type { Meta, StoryObj } from '@storybook/svelte';
-import Button from 'your-library/Button.svelte';
+import { Button } from 'your-library';
 
 const meta: Meta<Button> = {
   title: 'Components/Button',
@@ -158,20 +167,29 @@ const meta: Meta<Button> = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
+// IMPORTANT: Use render with slot property for content
 export const Default: Story = {
   args: {
     variant: 'primary',
     size: 'medium',
-    children: 'Button',
   },
+  render: (args) => ({
+    Component: Button,
+    props: args,
+    slot: 'Button',
+  }),
 };
 
 export const Disabled: Story = {
   args: {
     variant: 'primary',
     disabled: true,
-    children: 'Disabled',
   },
+  render: (args) => ({
+    Component: Button,
+    props: args,
+    slot: 'Disabled',
+  }),
 };
 \`\`\`
 
@@ -244,7 +262,7 @@ export const Disabled: Story = {
 \`\`\`typescript
 import type { Meta, StoryObj } from '@storybook/svelte';
 import { action } from '@storybook/addon-actions';
-import Button from 'your-library/Button.svelte';
+import { Button } from 'your-library';
 
 const meta: Meta<Button> = {
   title: 'Components/Button',
@@ -257,9 +275,13 @@ type Story = StoryObj<typeof meta>;
 export const WithClickHandler: Story = {
   args: {
     variant: 'primary',
-    children: 'Click me',
     onclick: action('button-clicked'),
   },
+  render: (args) => ({
+    Component: Button,
+    props: args,
+    slot: 'Click me',
+  }),
 };
 \`\`\`
 `;
@@ -343,6 +365,34 @@ export const Default: Story = {
     // Remove React imports if present
     processed = processed.replace(/import React from ['"]react['"];?\n?/g, '');
 
+    // Fix flowbite-svelte imports - convert deep path imports to named exports
+    // e.g., import Card from 'flowbite-svelte/dist/card/Card.svelte' → import { Card } from 'flowbite-svelte'
+    const flowbiteDeepImportPattern = /import\s+(\w+)\s+from\s+['"]flowbite-svelte\/[^'"]+['"];?/g;
+    const flowbiteImports: string[] = [];
+
+    processed = processed.replace(flowbiteDeepImportPattern, (match, componentName) => {
+      flowbiteImports.push(componentName);
+      return ''; // Remove the line, we'll add a consolidated import later
+    });
+
+    // If we found flowbite-svelte deep imports, add a consolidated named export import
+    if (flowbiteImports.length > 0) {
+      const uniqueImports = [...new Set(flowbiteImports)];
+      const consolidatedImport = `import { ${uniqueImports.join(', ')} } from 'flowbite-svelte';`;
+
+      // Find where to insert - after the @storybook/svelte import
+      const storybookImportMatch = processed.match(/import.*from\s+['"]@storybook\/svelte['"];?\n/);
+      if (storybookImportMatch) {
+        processed = processed.replace(
+          storybookImportMatch[0],
+          storybookImportMatch[0] + consolidatedImport + '\n'
+        );
+      } else {
+        // Insert at the beginning if no storybook import found
+        processed = consolidatedImport + '\n' + processed;
+      }
+    }
+
     // Fix JSX to Svelte syntax
     processed = processed
       // Fix className to class
@@ -351,6 +401,9 @@ export const Default: Story = {
       .replace(/onClick=/g, 'on:click=')
       .replace(/onChange=/g, 'on:change=')
       .replace(/onInput=/g, 'on:input=');
+
+    // Clean up multiple empty lines that might result from import removal
+    processed = processed.replace(/\n{3,}/g, '\n\n');
 
     return processed;
   }
