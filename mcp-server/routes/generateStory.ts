@@ -28,45 +28,23 @@ import { processImageInputs, ImageInput } from '../../story-generator/imageProce
 import { VisionPromptType, buildVisionAwarePrompt } from '../../story-generator/visionPrompts.js';
 import { ImageContent } from '../../story-generator/llm-providers/types.js';
 
-// Framework-specific component suggestions for error messages
-function getFrameworkComponentSuggestion(framework: string | undefined, importPath?: string): string {
-  // Check if importPath suggests a specific design system
-  const pathLower = importPath?.toLowerCase() || '';
-
-  // Vuetify detection (Vue framework with Vuetify library)
-  if (pathLower.includes('vuetify') || (framework === 'vue' && pathLower.includes('vuetify'))) {
-    return 'Try using Vuetify components like VCard, VBtn, VTextField, VContainer, VRow, VCol';
+// Build suggestion using the user's actual discovered components (design-system agnostic)
+function buildComponentSuggestion(components: Array<{ name: string }> | null): string {
+  if (!components?.length) {
+    return 'Check your story-ui.config.js to ensure components are properly configured.';
   }
 
-  // Mantine (React)
-  if (pathLower.includes('mantine')) {
-    return 'Try using Mantine components like Box, Stack, Button, Card, Text, Group';
-  }
+  // Show a sample of the user's actual available components (up to 5)
+  const sampleComponents = components
+    .slice(0, 5)
+    .map(c => c.name)
+    .join(', ');
 
-  // Chakra UI (React)
-  if (pathLower.includes('chakra')) {
-    return 'Try using Chakra components like Box, Flex, Button, Card, Text, Stack';
-  }
+  const moreCount = components.length > 5
+    ? ` and ${components.length - 5} more`
+    : '';
 
-  // Material UI (React)
-  if (pathLower.includes('mui') || pathLower.includes('@mui')) {
-    return 'Try using MUI components like Box, Stack, Button, Card, Typography, Container';
-  }
-
-  // Framework-based defaults
-  switch (framework) {
-    case 'vue':
-      return 'Try using your design system components (check your story-ui.config.js importPath)';
-    case 'angular':
-      return 'Try using Angular Material or your design system components';
-    case 'svelte':
-      return 'Try using your Svelte component library components';
-    case 'web-components':
-      return 'Try using your web components';
-    case 'react':
-    default:
-      return 'Try using basic components like Box, Stack, Button from your design system';
-  }
+  return `Your available components include: ${sampleComponents}${moreCount}. Check story-ui.config.js if expected components are missing.`;
 }
 
 // Legacy function - now uses flexible system with enhanced discovery
@@ -608,11 +586,11 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
 
     // Create enhanced component discovery for validation
     const discovery = new EnhancedComponentDiscovery(config);
-    await discovery.discoverAll();
+    const discoveredComponents = await discovery.discoverAll();
 
     // Pre-validate imports in the raw AI text to catch blacklisted components early
     const preValidation = await preValidateImports(aiText, config, discovery);
-    
+
     if (!preValidation.isValid) {
       console.error('Pre-validation failed - blacklisted components detected:', preValidation.errors);
 
@@ -620,7 +598,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       return res.status(400).json({
         error: 'Generated code contains invalid imports',
         details: preValidation.errors,
-        suggestion: `The AI tried to use components that do not exist. ${getFrameworkComponentSuggestion(frameworkOptions.framework, config.importPath)}`
+        suggestion: `The AI tried to use components that do not exist. ${buildComponentSuggestion(discoveredComponents)}`
       });
     }
 
