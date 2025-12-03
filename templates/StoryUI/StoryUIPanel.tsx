@@ -86,7 +86,7 @@ const renderMarkdown = (text: string): ReactNode => {
   return (
     <>
       {paragraphs.map((paragraph, index) => (
-        <div key={`p-${index}`} style={{ marginBottom: index < paragraphs.length - 1 ? '12px' : 0 }}>
+        <div key={`p-${index}`} style={{ marginBottom: index < paragraphs.length - 1 ? '8px' : 0 }}>
           {parseInline(paragraph.trim(), index)}
         </div>
       ))}
@@ -468,10 +468,10 @@ const syncWithActualStories = async (): Promise<ChatSession[]> => {
     // Update or add memory stories
     memoryStories.forEach((story: any) => {
       const storyId = story.storyId || story.fileName;
-      
+
       // Look for existing chat by ID or by matching fileName
       let existingChat = chatMap.get(storyId);
-      
+
       // If not found by ID, search by fileName
       if (!existingChat && story.fileName) {
         for (const [id, chat] of chatMap.entries()) {
@@ -670,11 +670,13 @@ const STYLES = {
   container: {
     display: 'flex',
     flexDirection: 'row' as const,
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif',
+    fontFamily: '"IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell", sans-serif',
     height: '100vh',
     overflow: 'hidden',
     background: 'linear-gradient(135deg, #1e293b 0%, #334155 100%)',
     color: '#e2e8f0',
+    fontSize: '14px',
+    lineHeight: '1.5',
   },
 
   // Sidebar
@@ -695,41 +697,41 @@ const STYLES = {
 
   sidebarToggle: {
     width: '100%',
-    padding: '8px 12px',
-    background: '#3b82f6',
-    color: 'white',
-    border: 'none',
-    borderRadius: '6px',
-    fontSize: '13px',
-    fontWeight: '500',
+    padding: '10px 14px',
+    background: 'rgba(59, 130, 246, 0.15)',
+    color: '#e2e8f0',
+    border: '1px solid rgba(59, 130, 246, 0.3)',
+    borderRadius: '8px',
+    fontSize: '14px',
+    fontWeight: '600',
     cursor: 'pointer',
     marginBottom: '8px',
     transition: 'all 0.2s ease',
     boxShadow: 'none',
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: '8px',
+    justifyContent: 'flex-start',
+    gap: '10px',
     lineHeight: '1',
   },
 
   newChatButton: {
     width: '100%',
-    padding: '8px 12px',
+    padding: '10px 14px',
     background: '#3b82f6',
     color: 'white',
     border: 'none',
-    borderRadius: '6px',
-    fontSize: '13px',
-    fontWeight: '500',
+    borderRadius: '8px',
+    fontSize: '14px',
+    fontWeight: '600',
     cursor: 'pointer',
-    marginBottom: '12px',
+    marginBottom: '16px',
     transition: 'all 0.2s ease',
-    boxShadow: 'none',
+    boxShadow: '0 2px 8px rgba(59, 130, 246, 0.25)',
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: '8px',
+    justifyContent: 'flex-start',
+    gap: '10px',
     lineHeight: '1',
   },
 
@@ -750,7 +752,7 @@ const STYLES = {
   },
 
   chatItemTitle: {
-    fontSize: '13px',
+    fontSize: '14px',
     fontWeight: '500',
     marginBottom: '2px',
     whiteSpace: 'nowrap' as const,
@@ -759,7 +761,7 @@ const STYLES = {
   },
 
   chatItemTime: {
-    fontSize: '11px',
+    fontSize: '12px',
     color: '#94a3b8',
   },
 
@@ -822,46 +824,49 @@ const STYLES = {
   // Message bubbles
   messageContainer: {
     display: 'flex',
-    marginBottom: '12px',
+    marginBottom: '8px',
   },
 
   userMessage: {
-    background: '#2f2f2f',
-    color: '#ececec',
-    borderRadius: '20px',
-    padding: '12px 20px',
-    maxWidth: '80%',
+    background: 'rgba(59, 130, 246, 0.12)',
+    color: '#e2e8f0',
+    borderRadius: '16px 16px 4px 16px',
+    padding: '10px 14px',
+    maxWidth: '85%',
     marginLeft: 'auto',
     fontSize: '14px',
-    lineHeight: '1.6',
+    lineHeight: '1.45',
     boxShadow: 'none',
     wordWrap: 'break-word' as const,
+    border: '1px solid rgba(59, 130, 246, 0.2)',
   },
 
   aiMessage: {
-    background: '#ffffff',
-    color: '#1a1a1a',
-    borderRadius: '20px',
-    padding: '16px 20px',
-    maxWidth: '100%',
+    background: 'rgba(255, 255, 255, 0.95)',
+    color: '#1f2937',
+    borderRadius: '16px 16px 16px 4px',
+    padding: '10px 14px',
+    maxWidth: '90%',
     fontSize: '14px',
-    lineHeight: '1.6',
-    boxShadow: 'none',
-    border: '1px solid rgba(0, 0, 0, 0.06)',
+    lineHeight: '1.45',
+    boxShadow: '0 1px 2px rgba(0, 0, 0, 0.06)',
+    border: '1px solid rgba(0, 0, 0, 0.08)',
     wordWrap: 'break-word' as const,
     whiteSpace: 'pre-wrap' as const,
   },
 
   loadingMessage: {
-    background: '#ffffff',
-    color: '#6b7280',
-    borderRadius: '20px',
-    padding: '16px 20px',
+    background: 'rgba(255, 255, 255, 0.95)',
+    color: '#4b5563',
+    borderRadius: '16px 16px 16px 4px',
+    padding: '10px 14px',
     fontSize: '14px',
+    lineHeight: '1.45',
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
-    border: '1px solid rgba(0, 0, 0, 0.06)',
+    border: '1px solid rgba(0, 0, 0, 0.08)',
+    boxShadow: '0 1px 2px rgba(0, 0, 0, 0.06)',
   },
 
   // Input form
@@ -893,19 +898,20 @@ const STYLES = {
 
   sendButton: {
     font: 'inherit',
-    padding: '6px 10px',
-    borderRadius: '6px',
-    border: '1px solid rgba(59, 130, 246, 0.3)',
-    background: 'transparent',
-    color: '#3b82f6',
-    fontSize: '11px',
-    fontWeight: '500',
+    padding: '10px 16px',
+    borderRadius: '10px',
+    border: 'none',
+    background: '#3b82f6',
+    color: 'white',
+    fontSize: '14px',
+    fontWeight: '600',
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
-    gap: '4px',
-    transition: 'all 0.15s ease',
-    boxShadow: 'none',
+    gap: '6px',
+    transition: 'all 0.2s ease',
+    boxShadow: '0 2px 8px rgba(59, 130, 246, 0.35)',
+    flexShrink: 0,
   },
 
   errorMessage: {
@@ -914,7 +920,7 @@ const STYLES = {
     padding: '8px 12px',
     borderRadius: '6px',
     fontSize: '13px',
-    marginBottom: '12px',
+    marginBottom: '8px',
     border: '1px solid rgba(248, 113, 113, 0.2)',
   },
 
@@ -946,17 +952,20 @@ const STYLES = {
   streamingContainer: {
     background: 'rgba(255, 255, 255, 0.95)',
     borderRadius: '16px 16px 16px 4px',
-    padding: '12px',
-    maxWidth: '85%',
-    boxShadow: '0 1px 3px rgba(0, 0, 0, 0.08)',
+    padding: '10px 14px',
+    maxWidth: '90%',
+    boxShadow: '0 1px 2px rgba(0, 0, 0, 0.06)',
+    border: '1px solid rgba(0, 0, 0, 0.08)',
+    fontSize: '14px',
+    lineHeight: '1.45',
   },
 
   intentPreview: {
-    background: 'rgba(59, 130, 246, 0.08)',
+    background: 'rgba(59, 130, 246, 0.06)',
     borderRadius: '8px',
-    padding: '12px',
-    marginBottom: '12px',
-    border: '1px solid rgba(59, 130, 246, 0.15)',
+    padding: '10px 12px',
+    marginBottom: '10px',
+    border: '1px solid rgba(59, 130, 246, 0.12)',
   },
 
   intentTitle: {
@@ -1008,15 +1017,17 @@ const STYLES = {
   },
 
   progressPhase: {
-    fontSize: '11px',
-    color: '#6b7280',
+    fontSize: '14px',
+    color: '#4b5563',
     display: 'flex',
     alignItems: 'center',
-    gap: '4px',
+    gap: '6px',
+    fontWeight: '500',
+    lineHeight: '1.45',
   },
 
   phaseIcon: {
-    fontSize: '12px',
+    fontSize: '14px',
   },
 
   validationBox: {
@@ -1057,32 +1068,33 @@ const STYLES = {
   },
 
   completionSummary: {
-    marginTop: '12px',
-    paddingTop: '12px',
-    borderTop: '1px solid rgba(0, 0, 0, 0.08)',
+    marginTop: '10px',
+    paddingTop: '10px',
+    borderTop: '1px solid rgba(0, 0, 0, 0.06)',
   },
 
   summaryTitle: {
     fontSize: '14px',
     fontWeight: '600',
     color: '#111827',
-    marginBottom: '8px',
+    marginBottom: '6px',
     display: 'flex',
     alignItems: 'center',
-    gap: '8px',
+    gap: '6px',
+    lineHeight: '1.45',
   },
 
   summaryDescription: {
-    fontSize: '12px',
+    fontSize: '14px',
     color: '#4b5563',
-    lineHeight: '1.5',
+    lineHeight: '1.45',
   },
 
   metricsRow: {
     display: 'flex',
-    gap: '12px',
-    marginTop: '8px',
-    fontSize: '11px',
+    gap: '10px',
+    marginTop: '6px',
+    fontSize: '13px',
     color: '#6b7280',
   },
 
@@ -1292,10 +1304,16 @@ const STYLES = {
   },
 };
 
-// Add custom style for loading animation
+// Add custom style for loading animation and IBM Plex Sans font
 // Use a unique ID to prevent duplicate stylesheets during HMR
 const STYLESHEET_ID = 'story-ui-panel-styles';
 if (!document.getElementById(STYLESHEET_ID)) {
+  // Load IBM Plex Sans font
+  const fontLink = document.createElement('link');
+  fontLink.rel = 'stylesheet';
+  fontLink.href = 'https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap';
+  document.head.appendChild(fontLink);
+
   const styleSheet = document.createElement('style');
   styleSheet.id = STYLESHEET_ID;
   styleSheet.textContent = `
@@ -1309,13 +1327,120 @@ if (!document.getElementById(STYLESHEET_ID)) {
       content: ".";
       animation: loadingDots 1.4s infinite;
     }
+
+    /* Override Storybook's default styles with !important */
+    .story-ui-panel,
+    .story-ui-panel * {
+      font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+    }
+
+    .story-ui-panel {
+      font-size: 14px !important;
+      line-height: 1.5 !important;
+    }
+
+    /* Message bubbles - consistent styling */
+    .story-ui-message {
+      font-size: 16px !important;
+      line-height: 1.45 !important;
+      padding: 12px 16px !important;
+    }
+
+    .story-ui-user-message {
+      background: rgba(59, 130, 246, 0.12) !important;
+      color: #e2e8f0 !important;
+      border-radius: 18px 18px 4px 18px !important;
+      border: 1px solid rgba(59, 130, 246, 0.2) !important;
+    }
+
+    .story-ui-ai-message {
+      background: rgba(255, 255, 255, 0.97) !important;
+      color: #1f2937 !important;
+      border-radius: 18px 18px 18px 4px !important;
+      border: 1px solid rgba(0, 0, 0, 0.08) !important;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08) !important;
+    }
+
+    /* Override nested elements in AI messages (from renderMarkdown)
+    .story-ui-ai-message p,
+    .story-ui-ai-message span,
+    .story-ui-ai-message strong,
+    .story-ui-ai-message em,
+    .story-ui-ai-message li,
+    .story-ui-ai-message ul,
+    .story-ui-ai-message ol {
+      font-size: 14px !important;
+      line-height: 1.45 !important;
+      margin: 0 !important;
+    } */
+
+    .story-ui-ai-message p + p {
+      margin-top: 8px !important;
+    }
+
+    /* Status text */
+    .story-ui-status {
+      font-size: 13px !important;
+      font-weight: 400 !important;
+    }
+
+    .story-ui-status-connected {
+      color: #10b981 !important;
+    }
+
+    .story-ui-status-disconnected {
+      color: #ef4444 !important;
+    }
+
+    /* Sidebar buttons */
+    .story-ui-sidebar button {
+      font-size: 14px !important;
+      font-weight: 600 !important;
+    }
+
+    /* Header text */
+    .story-ui-header h1 {
+      font-size: 24px !important;
+      font-weight: 700 !important;
+    }
+
+    .story-ui-header p {
+      font-size: 14px !important;
+      color: #94a3b8 !important;
+    }
+
+    /* Input field */
+    .story-ui-input {
+      font-size: 14px !important;
+      font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+    }
+
+    /* Code blocks in messages */
+    .story-ui-ai-message code {
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace !important;
+      font-size: 13px !important;
+      background: rgba(0, 0, 0, 0.06) !important;
+      padding: 2px 6px !important;
+      border-radius: 4px !important;
+    }
   `;
   document.head.appendChild(styleSheet);
 }
 
 // Helper function to format timestamp
 const formatTime = (timestamp: number): string => {
+  // Handle invalid timestamps
+  if (!timestamp || isNaN(timestamp) || timestamp <= 0) {
+    return '';
+  }
+
   const date = new Date(timestamp);
+
+  // Check if the date is valid
+  if (isNaN(date.getTime())) {
+    return '';
+  }
+
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffMins = Math.floor(diffMs / 60000);
@@ -1774,7 +1899,7 @@ function StoryUIPanel() {
       // Test connection first
       const connectionTest = await testMCPConnection();
       setConnectionStatus(connectionTest);
-      
+
       if (connectionTest.connected) {
         // Fetch available providers
         try {
@@ -1939,9 +2064,9 @@ function StoryUIPanel() {
     // In Edge mode, stories are stored in Durable Objects, not on filesystem
     if (!isUpdate && !hasShownRefreshHint.current) {
       if (isEdgeMode()) {
-        parts.push(`\n\n_Story saved to cloud. View code in chat history above._`);
+        parts.push(`\n\n_Story saved to cloud. View code in chat history recent chats navigation._`);
       } else {
-        parts.push(`\n\n_Refresh Storybook (Cmd/Ctrl + R) to see new stories in the sidebar._`);
+        parts.push(`\n\n_Might need toefresh Storybook (Cmd/Ctrl + R) to see new stories in the sidebar._`);
       }
       hasShownRefreshHint.current = true;
     }
@@ -2338,7 +2463,7 @@ function StoryUIPanel() {
   };
 
   return (
-    <div style={STYLES.container}>
+    <div className="story-ui-panel" style={STYLES.container}>
       {/* Sidebar */}
       <div style={{
         ...STYLES.sidebar,
@@ -2351,30 +2476,35 @@ function StoryUIPanel() {
               style={STYLES.sidebarToggle}
               title="Collapse sidebar"
               onMouseEnter={(e) => {
-                e.currentTarget.style.transform = 'translateY(-1px)';
-                e.currentTarget.style.boxShadow = '0 4px 16px rgba(59, 130, 246, 0.4)';
+                e.currentTarget.style.background = 'rgba(59, 130, 246, 0.25)';
+                e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.5)';
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.transform = 'translateY(0)';
-                e.currentTarget.style.boxShadow = '0 2px 8px rgba(59, 130, 246, 0.3)';
+                e.currentTarget.style.background = 'rgba(59, 130, 246, 0.15)';
+                e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.3)';
               }}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              </svg>
               <span>Chats</span>
             </button>
             <button
               onClick={handleNewChat}
               style={STYLES.newChatButton}
               onMouseEnter={(e) => {
-                e.currentTarget.style.transform = 'translateY(-1px)';
-                e.currentTarget.style.boxShadow = '0 4px 16px rgba(59, 130, 246, 0.4)';
+                e.currentTarget.style.background = '#2563eb';
+                e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.4)';
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.transform = 'translateY(0)';
-                e.currentTarget.style.boxShadow = '0 2px 8px rgba(59, 130, 246, 0.2)';
+                e.currentTarget.style.background = '#3b82f6';
+                e.currentTarget.style.boxShadow = '0 2px 8px rgba(59, 130, 246, 0.25)';
               }}
             >
-              <span style={{ lineHeight: '0.5', display: 'inline-block', alignItems: 'center', width: '10px', height: '10px' }}>+</span>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19"/>
+                <line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
               <span>New Chat</span>
             </button>
             {recentChats.length > 0 && (
@@ -2540,33 +2670,37 @@ function StoryUIPanel() {
 
         <div style={STYLES.chatHeader}>
           <h1 style={{
-            fontSize: '16px',
+            fontSize: '22px',
             margin: 0,
-            fontWeight: '600',
+            fontWeight: '700',
             background: 'linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%)',
             WebkitBackgroundClip: 'text',
             WebkitTextFillColor: 'transparent',
-            display: 'inline-block'
+            display: 'inline-block',
+            letterSpacing: '-0.02em'
           }}>
             Story UI
           </h1>
-          <p style={{ fontSize: '12px', margin: '4px 0 0 0', color: '#94a3b8' }}>
+          <p style={{ fontSize: '14px', margin: '6px 0 0 0', color: '#94a3b8', fontWeight: '500' }}>
             Generate Storybook stories with AI
           </p>
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: '8px', 
-            marginTop: '8px',
-            fontSize: '12px'
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            marginTop: '10px',
+            fontSize: '11px'
           }}>
             <div style={{
-              width: '8px',
-              height: '8px',
+              width: '6px',
+              height: '6px',
               borderRadius: '50%',
               backgroundColor: connectionStatus.connected ? '#10b981' : '#f87171'
             }}></div>
-            <span style={{ color: connectionStatus.connected ? '#10b981' : '#f87171' }}>
+            <span
+              className={`story-ui-status ${connectionStatus.connected ? 'story-ui-status-connected' : 'story-ui-status-disconnected'}`}
+              style={{ color: connectionStatus.connected ? '#10b981' : '#ef4444', fontWeight: '400' }}
+            >
               {connectionStatus.connected
                 ? `Connected to ${getConnectionDisplayText()}`
                 : `Disconnected: ${connectionStatus.error || 'Server not running'}`
@@ -2583,7 +2717,7 @@ function StoryUIPanel() {
               flexWrap: 'wrap'
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <label style={{ fontSize: '12px', color: '#94a3b8' }}>Provider:</label>
+                <label style={{ fontSize: '12px', color: '#94a3b8', fontWeight: '500' }}>Provider:</label>
                 <select
                   value={selectedProvider}
                   onChange={(e) => {
@@ -2611,7 +2745,7 @@ function StoryUIPanel() {
                 </select>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <label style={{ fontSize: '12px', color: '#94a3b8' }}>Model:</label>
+                <label style={{ fontSize: '12px', color: '#94a3b8', fontWeight: '500' }}>Model:</label>
                 <select
                   value={selectedModel}
                   onChange={(e) => setSelectedModel(e.target.value)}
@@ -2655,7 +2789,10 @@ function StoryUIPanel() {
 
           {conversation.map((msg, i) => (
             <div key={i} style={STYLES.messageContainer}>
-              <div style={msg.role === 'user' ? STYLES.userMessage : STYLES.aiMessage}>
+              <div
+                className={`story-ui-message ${msg.role === 'user' ? 'story-ui-user-message' : 'story-ui-ai-message'}`}
+                style={msg.role === 'user' ? STYLES.userMessage : STYLES.aiMessage}
+              >
                 {msg.role === 'ai' ? renderMarkdown(msg.content) : msg.content}
                 {/* Show attached images in user messages */}
                 {msg.role === 'user' && msg.attachedImages && msg.attachedImages.length > 0 && (
@@ -2793,27 +2930,29 @@ function StoryUIPanel() {
             style={{
               ...STYLES.sendButton,
               ...(loading || (!input.trim() && attachedImages.length === 0) ? {
-                opacity: 0.5,
+                opacity: 0.4,
                 cursor: 'not-allowed',
-                background: '#6b7280',
+                background: '#64748b',
                 boxShadow: 'none'
               } : {})
             }}
             onMouseEnter={(e) => {
               if (!loading && (input.trim() || attachedImages.length > 0)) {
-                e.currentTarget.style.transform = 'scale(1.05)';
-                e.currentTarget.style.boxShadow = '0 4px 16px rgba(16, 185, 129, 0.4)';
+                e.currentTarget.style.background = '#2563eb';
+                e.currentTarget.style.boxShadow = '0 4px 16px rgba(59, 130, 246, 0.5)';
               }
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.transform = 'scale(1)';
-              e.currentTarget.style.boxShadow = '0 2px 8px rgba(16, 185, 129, 0.3)';
+              if (!loading && (input.trim() || attachedImages.length > 0)) {
+                e.currentTarget.style.background = '#3b82f6';
+                e.currentTarget.style.boxShadow = '0 2px 8px rgba(59, 130, 246, 0.35)';
+              }
             }}
           >
-            <span>Send</span>
-            <svg width={16} height={16} viewBox="0 0 24 24" fill="currentColor">
+            <svg width={18} height={18} viewBox="0 0 24 24" fill="currentColor">
               <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
             </svg>
+            <span>Send</span>
           </button>
         </form>
       </div>

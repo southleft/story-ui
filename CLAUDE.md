@@ -1,6 +1,6 @@
 # Story UI - Claude Code Project Guide
 
-> **Last Updated**: December 1, 2025
+> **Last Updated**: December 3, 2025
 > **Current Version**: 3.6.2
 > **Production URL**: https://story-ui-demo.up.railway.app
 > **Backend URL**: Railway with file-based story persistence
@@ -173,6 +173,9 @@ A deployed Storybook instance with Story UI:
 | Model/provider not persisting | localStorage not properly syncing state | Fixed useLocalStorage hook with proper useEffect |
 | Broken image preview | FileReader errors not handled gracefully | Added validation and error handling for file reading |
 | Cloudflare Edge dead code | Unused ~150MB of Cloudflare Worker code | Removed cloudflare-edge directory completely |
+| Test environment MDX importing local files | MDX files imported from `./StoryUIPanel` instead of npm package | Updated all test environment MDX files to import from `@tpitre/story-ui/panel` |
+| Inconsistent port configurations in test environments | Angular MDX hardcoded port 4102, manager-head files had wrong ports | Standardized all MDX to use env variable, updated manager-head files to match .env |
+| MCP server --port flag not working | Server reads PORT from env, not CLI args | Use `PORT=4101 node dist/mcp-server/index.js` instead of `--port 4101` |
 
 ### Resolved Issues (November 2025)
 
@@ -257,6 +260,52 @@ story-ui/
 2. **Build**: `npm run build` (from repo root)
 3. **Test locally**: `npm run story-ui`
 4. **Deploy**: Push to deployment repo for Railway auto-deploy
+
+### Making Changes to StoryUIPanel
+
+**Important**: Changes to `templates/StoryUI/StoryUIPanel.tsx` require compilation because test environments import from the npm package (`@tpitre/story-ui/panel`), not the source files.
+
+**Change Propagation Flow**:
+```
+templates/StoryUI/StoryUIPanel.tsx (SOURCE)
+        ↓ npm run build
+dist/templates/StoryUI/StoryUIPanel.js (COMPILED)
+        ↓ npm link
+test-storybooks/*/node_modules/@tpitre/story-ui/
+        ↓ MDX imports from '@tpitre/story-ui/panel'
+Storybook renders compiled version
+```
+
+**Development Workflow**:
+```bash
+# From story-ui root directory:
+
+# Option 1: Single build
+npm run build
+
+# Option 2: Watch mode (recommended for active development)
+npm run dev  # Runs tsc --watch
+
+# Then in test environment (e.g., react-mantine):
+cd /path/to/test-storybooks/react-mantine
+rm -rf node_modules/.vite node_modules/.cache  # Clear Vite cache
+PORT=4101 node /path/to/story-ui/dist/mcp-server/index.js &  # Start MCP server
+npm run storybook  # Start Storybook
+```
+
+**Port Configuration**:
+- Each test environment has its own port in `.env` (`VITE_STORY_UI_PORT`)
+- react-mantine: 4101
+- angular-material: 4102
+- vue-vuetify: 4103
+- svelte-flowbite: 4104
+- web-components-shoelace: 4105
+
+**If changes don't appear**:
+1. Ensure `npm run build` was run (or `npm run dev` is running)
+2. Clear Vite cache: `rm -rf node_modules/.vite`
+3. Restart Storybook
+4. Hard refresh browser (Cmd+Shift+R)
 
 ### Railway Deployment
 
