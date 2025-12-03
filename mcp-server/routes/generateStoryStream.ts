@@ -134,6 +134,47 @@ class StreamWriter {
   }
 }
 
+// Framework-specific component suggestions for error messages
+function getFrameworkComponentSuggestion(framework: string | undefined, importPath?: string): string {
+  // Check if importPath suggests a specific design system
+  const pathLower = importPath?.toLowerCase() || '';
+
+  // Vuetify detection (Vue framework with Vuetify library)
+  if (pathLower.includes('vuetify') || (framework === 'vue' && pathLower.includes('vuetify'))) {
+    return 'Try using Vuetify components like VCard, VBtn, VTextField, VContainer, VRow, VCol';
+  }
+
+  // Mantine (React)
+  if (pathLower.includes('mantine')) {
+    return 'Try using Mantine components like Box, Stack, Button, Card, Text, Group';
+  }
+
+  // Chakra UI (React)
+  if (pathLower.includes('chakra')) {
+    return 'Try using Chakra components like Box, Flex, Button, Card, Text, Stack';
+  }
+
+  // Material UI (React)
+  if (pathLower.includes('mui') || pathLower.includes('@mui')) {
+    return 'Try using MUI components like Box, Stack, Button, Card, Typography, Container';
+  }
+
+  // Framework-based defaults
+  switch (framework) {
+    case 'vue':
+      return 'Try using your design system components (check your story-ui.config.js importPath)';
+    case 'angular':
+      return 'Try using Angular Material or your design system components';
+    case 'svelte':
+      return 'Try using your Svelte component library components';
+    case 'web-components':
+      return 'Try using your web components';
+    case 'react':
+    default:
+      return 'Try using basic components like Box, Stack, Button from your design system';
+  }
+}
+
 // Analyze prompt to determine intent
 async function analyzeIntent(
   prompt: string,
@@ -669,7 +710,7 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
         message: 'Generated code contains invalid imports',
         details: preValidation.errors.join('; '),
         recoverable: true,
-        suggestion: 'Try using basic components like Box, Stack, Button'
+        suggestion: getFrameworkComponentSuggestion(intent.framework, config.importPath)
       });
       res.end();
       return;
