@@ -894,6 +894,9 @@ function getFrameworkSpecificRules(framework: FrameworkType): string[] {
       rules.push('- Use JSX syntax for templates');
       rules.push('- NEVER pass children through args - use render functions');
       rules.push('- For layouts with multiple components, DO NOT set component in meta');
+      rules.push('- 🚫 NEVER use Angular Material (MatCardModule, MatButtonModule, etc.)');
+      rules.push('- 🚫 NEVER use Vue components (VCard, VBtn, etc.)');
+      rules.push('- ✅ ONLY use React components from the configured import path');
       break;
 
     case 'vue':
@@ -902,6 +905,10 @@ function getFrameworkSpecificRules(framework: FrameworkType): string[] {
       rules.push('- Use render functions with template for complex content');
       rules.push('- Event bindings use @event or v-on:event syntax');
       rules.push('- Slots use v-slot directive or # shorthand');
+      rules.push("- 🚫 NEVER import React from 'react' - this is Vue, NOT React!");
+      rules.push('- 🚫 NEVER use Angular Material (MatCardModule, MatButtonModule, etc.)');
+      rules.push('- 🚫 NEVER use @angular/material or moduleMetadata');
+      rules.push('- ✅ ONLY use Vue components from the configured import path');
       break;
 
     case 'angular':
@@ -910,6 +917,9 @@ function getFrameworkSpecificRules(framework: FrameworkType): string[] {
       rules.push('- Property binding: [property]="value"');
       rules.push('- Event binding: (event)="handler($event)"');
       rules.push('- Use Angular template syntax in render functions');
+      rules.push("- 🚫 NEVER import React from 'react' - this is Angular, NOT React!");
+      rules.push('- 🚫 NEVER use Vue components (VCard, VBtn, etc.)');
+      rules.push('- ✅ ONLY use Angular Material or configured library components');
       break;
 
     case 'svelte':
@@ -917,6 +927,9 @@ function getFrameworkSpecificRules(framework: FrameworkType): string[] {
       rules.push('- Import .svelte files directly as default exports');
       rules.push('- Events use on: directive (e.g., on:click)');
       rules.push('- Use bind: for two-way binding');
+      rules.push("- 🚫 NEVER import React from 'react' - this is Svelte, NOT React!");
+      rules.push('- 🚫 NEVER use Angular Material or Vue components');
+      rules.push('- ✅ ONLY use Svelte components from the configured import path');
       break;
 
     case 'web-components':
@@ -927,6 +940,9 @@ function getFrameworkSpecificRules(framework: FrameworkType): string[] {
       rules.push('- Property binding: .property=${value}');
       rules.push('- Event binding: @event=${handler}');
       rules.push('- Boolean attributes: ?disabled=${true}');
+      rules.push("- 🚫 NEVER import React from 'react' - this is Web Components, NOT React!");
+      rules.push('- 🚫 NEVER use JSX syntax - use html`` template literals only');
+      rules.push('- ✅ ONLY use Web Components from the configured import path');
       break;
 
     default:
