@@ -395,7 +395,7 @@ function findSimilarIcon(iconName: string, allowedIcons: Set<string>): string | 
   return null;
 }
 
-function fileNameFromTitle(title: string, hash: string): string {
+function fileNameFromTitle(title: string, hash: string, extension: string = '.stories.tsx'): string {
   if (!title || typeof title !== 'string') {
     title = 'untitled';
   }
@@ -409,7 +409,7 @@ function fileNameFromTitle(title: string, hash: string): string {
     .replace(/^-+|-+$/g, '')
     .replace(/"|'/g, '')
     .slice(0, 60);
-  return `${base}-${hash}.stories.tsx`;
+  return `${base}-${hash}${extension}`;
 }
 
 export async function generateStoryFromPrompt(req: Request, res: Response) {
@@ -797,9 +797,11 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       // For new stories, ALWAYS generate new IDs with timestamp to ensure uniqueness
       const timestamp = Date.now();
       hash = crypto.createHash('sha1').update(prompt + timestamp).digest('hex').slice(0, 8);
-      finalFileName = fileName || fileNameFromTitle(aiTitle, hash);
+      // Use the framework adapter's defaultExtension for the correct file extension
+      const fileExtension = frameworkAdapter?.defaultExtension || '.stories.tsx';
+      finalFileName = fileName || fileNameFromTitle(aiTitle, hash, fileExtension);
       storyId = `story-${hash}`;
-      logger.log('🆕 Creating new story:', { storyId, fileName: finalFileName });
+      logger.log('🆕 Creating new story:', { storyId, fileName: finalFileName, extension: fileExtension });
     }
 
     // Write story to file system

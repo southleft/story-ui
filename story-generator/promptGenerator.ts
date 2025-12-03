@@ -909,6 +909,10 @@ function getFrameworkSpecificRules(framework: FrameworkType): string[] {
       rules.push('- 🚫 NEVER use Angular Material (MatCardModule, MatButtonModule, etc.)');
       rules.push('- 🚫 NEVER use @angular/material or moduleMetadata');
       rules.push('- ✅ ONLY use Vue components from the configured import path');
+      rules.push('- ✅ Use KEBAB-CASE in templates: <v-btn>, <v-card>, NOT <VBtn>, <VCard>');
+      rules.push('- ✅ Vuetify components: v-btn, v-card, v-text-field, v-row, v-col, etc.');
+      rules.push('- ✅ Import with PascalCase: import { VBtn } from "vuetify/components"');
+      rules.push('- ✅ Use kebab-case in template: <v-btn v-bind="args">Click</v-btn>');
       break;
 
     case 'angular':

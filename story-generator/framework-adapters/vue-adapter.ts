@@ -316,8 +316,10 @@ export const Default: Story = {
   postProcess(storyContent: string): string {
     let processed = super.postProcess(storyContent);
 
-    // Remove React imports if present
+    // Remove React imports if present (multiple patterns)
     processed = processed.replace(/import React from ['"]react['"];?\n?/g, '');
+    processed = processed.replace(/import \* as React from ['"]react['"];?\n?/g, '');
+    processed = processed.replace(/import { .* } from ['"]react['"];?\n?/g, '');
 
     // Fix JSX to Vue template syntax
     processed = processed
@@ -327,6 +329,32 @@ export const Default: Story = {
       .replace(/onClick=/g, '@click=')
       .replace(/onChange=/g, '@change=')
       .replace(/onInput=/g, '@input=');
+
+    // Convert Vuetify PascalCase to kebab-case in templates
+    // Match opening tags like <VBtn, <VCard, etc. and convert to <v-btn, <v-card
+    processed = processed.replace(
+      /<(V[A-Z][a-zA-Z]*)/g,
+      (match, componentName) => {
+        // Convert VBtn -> v-btn, VCard -> v-card, VTextField -> v-text-field
+        const kebabCase = componentName
+          .replace(/^V/, 'v-')
+          .replace(/([a-z])([A-Z])/g, '$1-$2')
+          .toLowerCase();
+        return '<' + kebabCase;
+      }
+    );
+
+    // Convert closing tags </VBtn> -> </v-btn>
+    processed = processed.replace(
+      /<\/(V[A-Z][a-zA-Z]*)/g,
+      (match, componentName) => {
+        const kebabCase = componentName
+          .replace(/^V/, 'v-')
+          .replace(/([a-z])([A-Z])/g, '$1-$2')
+          .toLowerCase();
+        return '</' + kebabCase;
+      }
+    );
 
     return processed;
   }
