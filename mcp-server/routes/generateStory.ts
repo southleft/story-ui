@@ -39,6 +39,11 @@ import {
   formatErrorsForLog,
   selectBestAttempt,
 } from '../../story-generator/selfHealingLoop.js';
+import {
+  validateStoryRuntime,
+  formatRuntimeErrorForHealing,
+  isRuntimeValidationEnabled,
+} from '../../story-generator/runtimeValidator.js';
 
 // Build suggestion using the user's actual discovered components (design-system agnostic)
 function buildComponentSuggestion(components: Array<{ name: string }> | null): string {
@@ -882,6 +887,35 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
 
     logger.log(`Story ${isActualUpdate ? 'updated' : 'written'} to:`, outPath);
 
+    // --- RUNTIME VALIDATION: Check if story loads in Storybook ---
+    // This catches errors that static validation cannot detect, like CSF module loader errors
+    let runtimeValidationResult = { success: true, storyExists: true } as Awaited<ReturnType<typeof validateStoryRuntime>>;
+    let hasRuntimeError = false;
+
+    if (isRuntimeValidationEnabled()) {
+      logger.info('🔍 Running runtime validation...');
+      try {
+        runtimeValidationResult = await validateStoryRuntime(fixedFileContents, aiTitle, config.storyPrefix);
+
+        if (!runtimeValidationResult.success) {
+          hasRuntimeError = true;
+          hasValidationWarnings = true;
+          logger.error(`❌ Runtime validation failed: ${runtimeValidationResult.renderError}`);
+          logger.error(`   Error type: ${runtimeValidationResult.errorType}`);
+
+          // Format the error for potential future self-healing
+          const runtimeErrorMessage = formatRuntimeErrorForHealing(runtimeValidationResult);
+          logger.debug('Runtime error details:', runtimeErrorMessage);
+        } else {
+          logger.info('✅ Runtime validation passed - story loads correctly in Storybook');
+        }
+      } catch (runtimeErr: any) {
+        // Don't fail the request if runtime validation itself fails (e.g., Storybook not running)
+        logger.warn(`⚠️ Runtime validation could not complete: ${runtimeErr.message}`);
+        logger.warn('   Story was saved but runtime status is unknown');
+      }
+    }
+
     // Track URL redirect if this is an update and the title changed
     if (isActualUpdate && oldTitle && oldStoryUrl) {
       const newTitleMatch = fixedFileContents.match(/title:\s*["']([^"']+)['"]/);
@@ -913,6 +947,14 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         warnings: [],
         selfHealingUsed,
         attempts
+      },
+      runtimeValidation: {
+        enabled: isRuntimeValidationEnabled(),
+        success: runtimeValidationResult.success,
+        storyExists: runtimeValidationResult.storyExists,
+        error: runtimeValidationResult.renderError,
+        errorType: runtimeValidationResult.errorType,
+        details: runtimeValidationResult.details
       }
     });
   } catch (err: any) {
