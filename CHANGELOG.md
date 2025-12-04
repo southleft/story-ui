@@ -1,3 +1,11 @@
+# [3.9.0](https://github.com/southleft/story-ui/compare/v3.8.0...v3.9.0) (2025-12-04)
+
+
+### Features
+
+* add story management UI with bulk delete and clear all ([2177fa7](https://github.com/southleft/story-ui/commit/2177fa7e36803140bdd55452b143d145e975a33a))
+* add story-ui update command for production deployments ([b1fff60](https://github.com/southleft/story-ui/commit/b1fff6065fe45a13a393d6e23bc2e4f90e44032e))
+
 # [3.8.0](https://github.com/southleft/story-ui/compare/v3.7.0...v3.8.0) (2025-12-04)
 
 
