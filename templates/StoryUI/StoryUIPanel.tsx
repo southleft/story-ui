@@ -1656,6 +1656,8 @@ function StoryUIPanel() {
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([]);
   const [considerations, setConsiderations] = useState<string>('');
   const [orphanStories, setOrphanStories] = useState<OrphanStory[]>([]);
+  const [selectedStoryIds, setSelectedStoryIds] = useState<Set<string>>(new Set());
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -2462,6 +2464,92 @@ function StoryUIPanel() {
     }
   };
 
+  // Toggle story selection for bulk operations
+  const toggleStorySelection = (storyId: string) => {
+    setSelectedStoryIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(storyId)) {
+        newSet.delete(storyId);
+      } else {
+        newSet.add(storyId);
+      }
+      return newSet;
+    });
+  };
+
+  // Select/deselect all stories
+  const toggleSelectAll = () => {
+    if (selectedStoryIds.size === orphanStories.length) {
+      setSelectedStoryIds(new Set());
+    } else {
+      setSelectedStoryIds(new Set(orphanStories.map(s => s.id)));
+    }
+  };
+
+  // Bulk delete selected stories
+  const handleBulkDelete = async () => {
+    if (selectedStoryIds.size === 0) return;
+
+    const count = selectedStoryIds.size;
+    if (!confirm(`Delete ${count} selected ${count === 1 ? 'story' : 'stories'}? This action cannot be undone.`)) {
+      return;
+    }
+
+    setIsBulkDeleting(true);
+    try {
+      const response = await fetch(`${STORIES_API}/delete-bulk`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(selectedStoryIds) }),
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        // Remove deleted stories from state
+        setOrphanStories(prev => prev.filter(s => !selectedStoryIds.has(s.id)));
+        setSelectedStoryIds(new Set());
+        console.log(`Deleted ${result.deleted?.length || count} stories`);
+      } else {
+        alert('Failed to delete some stories. Please try again.');
+      }
+    } catch (err) {
+      console.error('Error bulk deleting stories:', err);
+      alert('Failed to delete stories. Please try again.');
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
+
+  // Clear all generated stories
+  const handleClearAll = async () => {
+    if (orphanStories.length === 0) return;
+
+    if (!confirm(`Delete ALL ${orphanStories.length} generated stories? This action cannot be undone.`)) {
+      return;
+    }
+
+    setIsBulkDeleting(true);
+    try {
+      const response = await fetch(STORIES_API, {
+        method: 'DELETE',
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        setOrphanStories([]);
+        setSelectedStoryIds(new Set());
+        console.log(`Cleared ${result.deleted || 'all'} stories`);
+      } else {
+        alert('Failed to clear stories. Please try again.');
+      }
+    } catch (err) {
+      console.error('Error clearing stories:', err);
+      alert('Failed to clear stories. Please try again.');
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
+
   return (
     <div className="story-ui-panel" style={STYLES.container}>
       {/* Sidebar */}
@@ -2558,40 +2646,173 @@ function StoryUIPanel() {
             {/* Generated Files Section - orphan stories without chat history */}
             {orphanStories.length > 0 && (
               <>
+                {/* Header with Select All and Count */}
                 <div style={{
-                  color: '#64748b',
-                  fontSize: '12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
                   marginTop: '16px',
                   marginBottom: '8px',
-                  fontWeight: '500',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
                 }}>
-                  Generated Files
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedStoryIds.size === orphanStories.length && orphanStories.length > 0}
+                      onChange={toggleSelectAll}
+                      style={{
+                        width: '14px',
+                        height: '14px',
+                        cursor: 'pointer',
+                        accentColor: '#3b82f6',
+                      }}
+                      title={selectedStoryIds.size === orphanStories.length ? 'Deselect all' : 'Select all'}
+                    />
+                    <span style={{
+                      color: '#64748b',
+                      fontSize: '12px',
+                      fontWeight: '500',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                    }}>
+                      Generated Files ({orphanStories.length})
+                    </span>
+                  </div>
                 </div>
+
+                {/* Bulk Action Buttons */}
+                {selectedStoryIds.size > 0 && (
+                  <div style={{
+                    display: 'flex',
+                    gap: '8px',
+                    marginBottom: '12px',
+                  }}>
+                    <button
+                      onClick={handleBulkDelete}
+                      disabled={isBulkDeleting}
+                      style={{
+                        flex: 1,
+                        padding: '6px 10px',
+                        fontSize: '11px',
+                        fontWeight: '500',
+                        background: 'rgba(239, 68, 68, 0.15)',
+                        color: '#f87171',
+                        border: '1px solid rgba(239, 68, 68, 0.3)',
+                        borderRadius: '6px',
+                        cursor: isBulkDeleting ? 'not-allowed' : 'pointer',
+                        opacity: isBulkDeleting ? 0.6 : 1,
+                        transition: 'all 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isBulkDeleting) {
+                          e.currentTarget.style.background = 'rgba(239, 68, 68, 0.25)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)';
+                      }}
+                    >
+                      {isBulkDeleting ? 'Deleting...' : `Delete Selected (${selectedStoryIds.size})`}
+                    </button>
+                  </div>
+                )}
+
+                {/* Clear All Button (always visible) */}
+                <div style={{
+                  display: 'flex',
+                  gap: '8px',
+                  marginBottom: '12px',
+                }}>
+                  <button
+                    onClick={handleClearAll}
+                    disabled={isBulkDeleting || orphanStories.length === 0}
+                    style={{
+                      flex: 1,
+                      padding: '6px 10px',
+                      fontSize: '11px',
+                      fontWeight: '500',
+                      background: 'rgba(100, 116, 139, 0.15)',
+                      color: '#94a3b8',
+                      border: '1px solid rgba(100, 116, 139, 0.3)',
+                      borderRadius: '6px',
+                      cursor: (isBulkDeleting || orphanStories.length === 0) ? 'not-allowed' : 'pointer',
+                      opacity: (isBulkDeleting || orphanStories.length === 0) ? 0.6 : 1,
+                      transition: 'all 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!isBulkDeleting && orphanStories.length > 0) {
+                        e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)';
+                        e.currentTarget.style.color = '#f87171';
+                        e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = 'rgba(100, 116, 139, 0.15)';
+                      e.currentTarget.style.color = '#94a3b8';
+                      e.currentTarget.style.borderColor = 'rgba(100, 116, 139, 0.3)';
+                    }}
+                  >
+                    Clear All Stories
+                  </button>
+                </div>
+
+                {/* Story List */}
                 {orphanStories.map(story => (
                   <div
                     key={story.id}
                     style={{
                       ...STYLES.chatItem,
-                      background: 'rgba(251, 191, 36, 0.1)',
-                      borderLeft: '3px solid rgba(251, 191, 36, 0.5)',
+                      background: selectedStoryIds.has(story.id)
+                        ? 'rgba(59, 130, 246, 0.15)'
+                        : 'rgba(251, 191, 36, 0.1)',
+                      borderLeft: selectedStoryIds.has(story.id)
+                        ? '3px solid rgba(59, 130, 246, 0.5)'
+                        : '3px solid rgba(251, 191, 36, 0.5)',
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: '8px',
                     }}
                     onMouseEnter={(e) => {
-                      e.currentTarget.style.background = 'rgba(251, 191, 36, 0.15)';
+                      if (!selectedStoryIds.has(story.id)) {
+                        e.currentTarget.style.background = 'rgba(251, 191, 36, 0.15)';
+                      }
                       const deleteBtn = e.currentTarget.querySelector('.delete-orphan-btn') as HTMLElement;
                       if (deleteBtn) deleteBtn.style.opacity = '1';
                     }}
                     onMouseLeave={(e) => {
-                      e.currentTarget.style.background = 'rgba(251, 191, 36, 0.1)';
+                      if (!selectedStoryIds.has(story.id)) {
+                        e.currentTarget.style.background = 'rgba(251, 191, 36, 0.1)';
+                      }
                       const deleteBtn = e.currentTarget.querySelector('.delete-orphan-btn') as HTMLElement;
                       if (deleteBtn) deleteBtn.style.opacity = '0';
                     }}
                   >
-                    <div style={STYLES.chatItemTitle}>{story.title}</div>
-                    <div style={{ ...STYLES.chatItemTime, fontSize: '11px' }}>
-                      {story.fileName}
+                    {/* Checkbox */}
+                    <input
+                      type="checkbox"
+                      checked={selectedStoryIds.has(story.id)}
+                      onChange={() => toggleStorySelection(story.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{
+                        width: '14px',
+                        height: '14px',
+                        cursor: 'pointer',
+                        accentColor: '#3b82f6',
+                        marginTop: '2px',
+                        flexShrink: 0,
+                      }}
+                    />
+                    {/* Story Info */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={STYLES.chatItemTitle}>{story.title}</div>
+                      <div style={{ ...STYLES.chatItemTime, fontSize: '11px' }}>
+                        {story.fileName}
+                      </div>
                     </div>
+                    {/* Delete Button */}
                     <button
                       className="delete-orphan-btn"
                       onClick={async (e) => {
@@ -2602,6 +2823,11 @@ function StoryUIPanel() {
                           });
                           if (response.ok) {
                             setOrphanStories(prev => prev.filter(s => s.id !== story.id));
+                            setSelectedStoryIds(prev => {
+                              const newSet = new Set(prev);
+                              newSet.delete(story.id);
+                              return newSet;
+                            });
                           } else {
                             console.error('Failed to delete orphan story');
                           }

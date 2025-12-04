@@ -323,6 +323,95 @@ app.post('/story-ui/delete', async (req, res) => {
   }
 });
 
+// Bulk delete stories
+app.post('/story-ui/stories/delete-bulk', async (req, res) => {
+  try {
+    const { ids } = req.body;
+
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'ids array is required' });
+    }
+
+    console.log(`🗑️ Bulk deleting ${ids.length} stories`);
+
+    const storiesPath = config.generatedStoriesPath;
+    const deleted: string[] = [];
+    const notFound: string[] = [];
+    const errors: string[] = [];
+
+    for (const id of ids) {
+      try {
+        const fileName = id.endsWith('.stories.tsx') ? id : `${id}.stories.tsx`;
+        const filePath = path.join(storiesPath, fileName);
+
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+          deleted.push(id);
+          console.log(`✅ Deleted: ${fileName}`);
+        } else {
+          notFound.push(id);
+        }
+      } catch (err) {
+        errors.push(id);
+        console.error(`❌ Error deleting ${id}:`, err);
+      }
+    }
+
+    console.log(`📊 Bulk delete complete: ${deleted.length} deleted, ${notFound.length} not found, ${errors.length} errors`);
+
+    return res.json({
+      success: true,
+      deleted,
+      notFound,
+      errors,
+      summary: {
+        requested: ids.length,
+        deleted: deleted.length,
+        notFound: notFound.length,
+        errors: errors.length
+      }
+    });
+  } catch (error) {
+    console.error('Error in bulk delete:', error);
+    return res.status(500).json({ error: 'Failed to bulk delete stories' });
+  }
+});
+
+// Clear all generated stories
+app.delete('/story-ui/stories', async (req, res) => {
+  try {
+    const storiesPath = config.generatedStoriesPath;
+    console.log(`🗑️ Clearing all stories from: ${storiesPath}`);
+
+    if (!fs.existsSync(storiesPath)) {
+      return res.json({ success: true, deleted: 0, message: 'No stories directory found' });
+    }
+
+    const files = fs.readdirSync(storiesPath);
+    const storyFiles = files.filter(file => file.endsWith('.stories.tsx'));
+    let deleted = 0;
+
+    for (const file of storyFiles) {
+      try {
+        fs.unlinkSync(path.join(storiesPath, file));
+        deleted++;
+      } catch (err) {
+        console.error(`Error deleting ${file}:`, err);
+      }
+    }
+
+    console.log(`✅ Cleared ${deleted} stories`);
+    return res.json({
+      success: true,
+      deleted,
+      message: `Cleared ${deleted} stories`
+    });
+  } catch (error) {
+    console.error('Error clearing stories:', error);
+    return res.status(500).json({ error: 'Failed to clear stories' });
+  }
+});
+
 // MCP Remote HTTP transport routes (for Claude Desktop remote connections)
 // Provides Streamable HTTP and legacy SSE endpoints for remote MCP access
 app.use('/mcp-remote', mcpRemoteRouter);

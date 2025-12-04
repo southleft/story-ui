@@ -301,10 +301,16 @@ const DESIGN_SYSTEM_CONFIGS: Record<string, {
     framework: 'vue'
   },
   vuetify: {
-    packages: ['vuetify'],
+    packages: ['vuetify', '@mdi/font', '@fontsource/roboto'],
     name: 'Vuetify',
     importPath: 'vuetify',
-    additionalSetup: 'import "vuetify/styles";',
+    additionalSetup: `import "vuetify/styles";
+import "@mdi/font/css/materialdesignicons.css";
+// Roboto font required for proper Vuetify typography
+import "@fontsource/roboto/300.css";
+import "@fontsource/roboto/400.css";
+import "@fontsource/roboto/500.css";
+import "@fontsource/roboto/700.css";`,
     framework: 'vue'
   },
   'element-plus': {
