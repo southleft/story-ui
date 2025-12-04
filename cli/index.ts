@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import { createStoryUIConfig } from '../story-ui.config.js';
 import { setupCommand, cleanupDefaultStorybookComponents } from './setup.js';
 import { deployCommand } from './deploy.js';
+import { updateCommand, statusCommand } from './update.js';
 import net from 'net';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -320,6 +321,29 @@ program
     process.on('SIGINT', () => {
       mcpServer.kill('SIGINT');
     });
+  });
+
+program
+  .command('update')
+  .description('Update Story UI managed files to the latest version')
+  .option('-f, --force', 'Skip confirmation prompts')
+  .option('--no-backup', 'Skip creating backups of existing files')
+  .option('-n, --dry-run', 'Show what would be updated without making changes')
+  .option('-v, --verbose', 'Show detailed output')
+  .action(async (options) => {
+    await updateCommand({
+      force: options.force,
+      backup: options.backup,
+      dryRun: options.dryRun,
+      verbose: options.verbose
+    });
+  });
+
+program
+  .command('status')
+  .description('Show Story UI installation status and version info')
+  .action(() => {
+    statusCommand();
   });
 
 program.parse(process.argv);

@@ -10,6 +10,23 @@ import { execSync } from 'child_process';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+/**
+ * Get the Story UI package version for version tracking
+ */
+function getStoryUIVersion(): string {
+  try {
+    const pkgRoot = path.resolve(__dirname, '..');
+    const packageJsonPath = path.join(pkgRoot, 'package.json');
+    if (fs.existsSync(packageJsonPath)) {
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+      return packageJson.version || 'unknown';
+    }
+  } catch (error) {
+    // Fallback
+  }
+  return 'unknown';
+}
+
 // FIRST_EDIT: helper functions to check for free ports
 async function isPortAvailable(port: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -907,6 +924,9 @@ Material UI (MUI) is a React component library implementing Material Design.
   config.storybookFramework = storybookFramework; // e.g., @storybook/react-vite, @storybook/angular
   config.llmProvider = answers.llmProvider || 'claude'; // claude, openai, or gemini
 
+  // Add version tracking for update command
+  config._storyUIVersion = getStoryUIVersion();
+  config._lastUpdated = new Date().toISOString();
 
   // Create configuration file
   const configContent = `module.exports = ${JSON.stringify(config, null, 2)};`;
