@@ -26,6 +26,19 @@ import { StoryTracker, StoryMapping } from '../../story-generator/storyTracker.j
 import { getDocumentation } from '../../story-generator/documentation-sources.js';
 import { postProcessStory } from '../../story-generator/postProcessStory.js';
 import { validateStory, ValidationError } from '../../story-generator/storyValidator.js';
+import { validateStoryCode, ValidationResult } from '../../story-generator/validateStory.js';
+import {
+  ValidationErrors,
+  SelfHealingOptions,
+  aggregateValidationErrors,
+  shouldContinueRetrying,
+  buildSelfHealingPrompt,
+  hasNoErrors,
+  getTotalErrorCount,
+  createEmptyErrors,
+  formatErrorsForLog,
+  selectBestAttempt,
+} from '../../story-generator/selfHealingLoop.js';
 import { StoryHistoryManager } from '../../story-generator/storyHistory.js';
 import { logger } from '../../story-generator/logger.js';
 import { UrlRedirectService } from '../../story-generator/urlRedirectService.js';
@@ -604,32 +617,62 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
       { role: 'user', content: initialPrompt }
     ];
 
-    // Step 4: Call LLM
+    // Step 4: Call LLM with Self-Healing Loop
     currentStep++;
     stream.sendProgress(currentStep, totalSteps, 'llm_thinking', 'AI is generating your story...');
 
-    // Validation and retry loop
-    let aiText = '';
-    let validationErrors: ValidationError[] = [];
-    const maxRetries = 3;
-    let attempts = 0;
+    // Determine framework for self-healing options
+    const detectedFrameworkForHealing = (config.componentFramework as FrameworkType) ||
+      (framework as FrameworkType) ||
+      (intent.framework as FrameworkType) ||
+      'react';
 
-    while (attempts < maxRetries) {
+    // Get available component names for self-healing prompts
+    const availableComponentNames = components.map(c => c.name);
+
+    // Self-healing options (design-system agnostic)
+    const selfHealingOptions: SelfHealingOptions = {
+      maxAttempts: 3,
+      availableComponents: availableComponentNames,
+      framework: detectedFrameworkForHealing,
+      importPath: config.importPath,
+    };
+
+    // Initialize self-healing state
+    let aiText = '';
+    let finalErrors: ValidationErrors = createEmptyErrors();
+    const errorHistory: ValidationErrors[] = [];
+    const allAttempts: Array<{ code: string; errors: ValidationErrors }> = [];
+    let attempts = 0;
+    let selfHealingUsed = false;
+    let lastClaudeResponse = '';
+
+    // Self-Healing Retry Loop
+    while (attempts < selfHealingOptions.maxAttempts) {
       attempts++;
       stream.trackLLMCall();
 
       if (attempts > 1) {
-        stream.sendRetry(attempts, maxRetries, 'Fixing validation errors',
-          validationErrors.map(e => e.message)
-        );
+        selfHealingUsed = true;
+        const allErrors = [
+          ...finalErrors.syntaxErrors,
+          ...finalErrors.patternErrors,
+          ...finalErrors.importErrors,
+        ];
+        stream.sendRetry(attempts, selfHealingOptions.maxAttempts, 'AI self-healing: fixing validation errors', allErrors);
+        logger.log(`🔄 Self-healing attempt ${attempts}/${selfHealingOptions.maxAttempts}`);
       }
 
+      // Call LLM
       const claudeResponse = await callLLM(messages, processedImages.length > 0 ? processedImages : undefined);
+      lastClaudeResponse = claudeResponse;
+
+      // Extract code block
       const extractedCode = extractCodeBlock(claudeResponse);
 
       if (!extractedCode) {
         aiText = claudeResponse;
-        if (attempts < maxRetries) {
+        if (attempts < selfHealingOptions.maxAttempts) {
           messages.push({ role: 'assistant', content: aiText });
           messages.push({ role: 'user', content: 'You did not provide a code block. Please provide the complete story in a single `tsx` code block.' });
           continue;
@@ -640,53 +683,102 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
         aiText = extractedCode;
       }
 
-      // Step 5: Validate
+      // Step 5: Comprehensive Validation (Pattern + AST + Import)
       currentStep = 5;
       stream.sendProgress(currentStep, totalSteps, 'validating', 'Validating generated code...');
 
-      validationErrors = validateStory(aiText);
+      // 1. Pattern validation
+      const patternErrors = validateStory(aiText);
 
-      if (validationErrors.length === 0) {
+      // 2. AST validation with auto-fix attempt
+      let astResult: ValidationResult | null = null;
+      let codeToValidate = aiText;
+      try {
+        astResult = validateStoryCode(aiText, 'story.tsx', config);
+        if (astResult.fixedCode) {
+          codeToValidate = astResult.fixedCode;
+          aiText = codeToValidate;
+          logger.log('🔧 Auto-fix applied for syntax issues');
+        }
+      } catch (astError) {
+        logger.error('AST validation error:', astError);
+      }
+
+      // 3. Import validation
+      const importValidation = await preValidateImports(codeToValidate, config, discovery);
+      const importErrors = importValidation.isValid ? [] : importValidation.errors;
+
+      // Aggregate all errors
+      const currentErrors = aggregateValidationErrors(astResult, patternErrors, importErrors);
+      errorHistory.push(currentErrors);
+      allAttempts.push({ code: aiText, errors: currentErrors });
+
+      // Check if we have no errors
+      if (hasNoErrors(currentErrors)) {
+        logger.log('✅ Validation passed on attempt', attempts);
         stream.sendValidation({
           isValid: true,
           errors: [],
           warnings: [],
-          autoFixApplied: false
+          autoFixApplied: !!astResult?.fixedCode
         });
+        finalErrors = currentErrors;
         break;
       }
 
+      // Log validation failures
+      logger.log(`⚠️ Attempt ${attempts} validation errors: ${formatErrorsForLog(currentErrors)}`);
       stream.sendValidation({
         isValid: false,
-        errors: validationErrors.map(e => e.message),
+        errors: [
+          ...currentErrors.syntaxErrors,
+          ...currentErrors.patternErrors,
+          ...currentErrors.importErrors,
+        ],
         warnings: [],
-        autoFixApplied: false
+        autoFixApplied: !!astResult?.fixedCode
       });
 
-      if (attempts < maxRetries) {
-        const errorFeedback = validationErrors
-          .map(err => `- Line ${err.line}: ${err.message}`)
-          .join('\n');
+      finalErrors = currentErrors;
 
-        const retryPrompt = `Your previous attempt failed validation with the following errors:\n${errorFeedback}\n\nPlease correct these issues and provide the full, valid story code.`;
+      // Check if we should continue retrying
+      const retryDecision = shouldContinueRetrying(attempts, selfHealingOptions.maxAttempts, errorHistory);
+      if (!retryDecision.shouldRetry) {
+        logger.log(`🛑 Stopping retries: ${retryDecision.reason}`);
+        break;
+      }
 
-        messages.push({ role: 'assistant', content: claudeResponse });
-        messages.push({ role: 'user', content: retryPrompt });
+      // Build self-healing prompt and add to messages
+      const healingPrompt = buildSelfHealingPrompt(aiText, currentErrors, attempts, selfHealingOptions);
+      messages.push({ role: 'assistant', content: claudeResponse });
+      messages.push({ role: 'user', content: healingPrompt });
+    }
+
+    // Select best attempt if we still have errors
+    if (!hasNoErrors(finalErrors) && allAttempts.length > 0) {
+      const bestAttempt = selectBestAttempt(allAttempts);
+      if (bestAttempt) {
+        aiText = bestAttempt.code;
+        finalErrors = bestAttempt.errors;
+        logger.log(`📌 Selected best attempt with ${getTotalErrorCount(finalErrors)} errors`);
       }
     }
 
-    // Step 6: Code extraction and validation
+    // Log self-healing summary
+    if (selfHealingUsed) {
+      logger.log(`🔄 Self-healing summary: ${attempts} attempts, final errors: ${formatErrorsForLog(finalErrors)}`);
+    }
+
+    // Step 6: Code extraction and final processing
     currentStep = 6;
     stream.sendProgress(currentStep, totalSteps, 'code_extracted', 'Processing generated code...');
 
-    // Pre-validate imports
-    const preValidation = await preValidateImports(aiText, config, discovery);
-
-    if (!preValidation.isValid) {
+    // If we still have import errors after all attempts, report them
+    if (finalErrors.importErrors.length > 0) {
       stream.sendError({
         code: 'INVALID_IMPORTS',
         message: 'Generated code contains invalid imports',
-        details: preValidation.errors.join('; '),
+        details: finalErrors.importErrors.join('; '),
         recoverable: true,
         suggestion: buildComponentSuggestion(components)
       });

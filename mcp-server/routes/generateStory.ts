@@ -27,6 +27,18 @@ import { chatCompletion, generateTitle as llmGenerateTitle, isProviderConfigured
 import { processImageInputs, ImageInput } from '../../story-generator/imageProcessor.js';
 import { VisionPromptType, buildVisionAwarePrompt } from '../../story-generator/visionPrompts.js';
 import { ImageContent } from '../../story-generator/llm-providers/types.js';
+import {
+  ValidationErrors,
+  SelfHealingOptions,
+  aggregateValidationErrors,
+  shouldContinueRetrying,
+  buildSelfHealingPrompt,
+  hasNoErrors,
+  getTotalErrorCount,
+  createEmptyErrors,
+  formatErrorsForLog,
+  selectBestAttempt,
+} from '../../story-generator/selfHealingLoop.js';
 
 // Build suggestion using the user's actual discovered components (design-system agnostic)
 function buildComponentSuggestion(components: Array<{ name: string }> | null): string {
@@ -514,11 +526,12 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       }
     }
 
-    // --- Start of Validation and Retry Loop ---
+    // --- Start of Self-Healing Validation and Retry Loop ---
     let aiText = '';
     let validationErrors: ValidationError[] = [];
     const maxRetries = 3;
     let attempts = 0;
+    let selfHealingUsed = false;
 
     // Build framework-aware options with vision support
     const frameworkOptions = {
@@ -527,6 +540,23 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       visionMode: visionMode as VisionPromptType | undefined,
       designSystem: designSystem as string | undefined,
     };
+
+    // Create enhanced component discovery BEFORE the loop for use in self-healing
+    const discovery = new EnhancedComponentDiscovery(config);
+    const discoveredComponents = await discovery.discoverAll();
+    const componentNames = discoveredComponents.map(c => c.name);
+
+    // Self-healing options for retry prompts
+    const selfHealingOptions: SelfHealingOptions = {
+      maxAttempts: maxRetries,
+      availableComponents: componentNames,
+      framework: frameworkOptions.framework || 'react',
+      importPath: config.importPath || 'your-library',
+    };
+
+    // Track all attempts for best-attempt selection
+    const allAttempts: Array<{ code: string; errors: ValidationErrors; autoFixed: boolean }> = [];
+    const errorHistory: ValidationErrors[] = [];
 
     const initialPrompt = await buildClaudePromptWithContext(prompt, config, conversation, previousCode, frameworkOptions);
     const messages: { role: 'user' | 'assistant', content: string }[] = [{ role: 'user', content: initialPrompt }];
@@ -547,107 +577,109 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
           continue;
         } else {
           // On last attempt, accept the response as is
-           break;
+          break;
         }
       } else {
         aiText = extractedCode;
       }
 
+      // --- COMPREHENSIVE VALIDATION (Pattern + AST + Import) ---
+
+      // 1. Pattern validation (storyValidator)
       validationErrors = validateStory(aiText);
 
-      if (validationErrors.length === 0) {
-        logger.log('✅ Validation successful!');
+      // 2. TypeScript AST validation (validateStory.ts)
+      const astValidation = validateStoryCode(aiText, 'story.tsx', config);
+
+      // 3. Import validation (check against discovered components)
+      const importValidation = await preValidateImports(aiText, config, discovery);
+
+      // Aggregate all errors
+      const aggregatedErrors = aggregateValidationErrors(
+        astValidation,
+        validationErrors,
+        importValidation.isValid ? [] : importValidation.errors
+      );
+
+      // Track this attempt
+      const autoFixApplied = !!astValidation.fixedCode;
+      allAttempts.push({
+        code: astValidation.fixedCode || aiText,
+        errors: aggregatedErrors,
+        autoFixed: autoFixApplied,
+      });
+      errorHistory.push(aggregatedErrors);
+
+      // Log validation results
+      logger.log(`Validation: ${formatErrorsForLog(aggregatedErrors)}`);
+      if (autoFixApplied) {
+        logger.log('Auto-fix applied to code');
+        aiText = astValidation.fixedCode!;
+      }
+
+      // Check if all validations pass
+      if (hasNoErrors(aggregatedErrors)) {
+        logger.log('✅ All validations passed!');
         break; // Exit loop on success
       }
 
-      logger.log(`❌ Validation failed with ${validationErrors.length} errors:`);
-      validationErrors.forEach(err => logger.log(`  - Line ${err.line}: ${err.message}`));
-
-      if (attempts < maxRetries) {
-        const errorFeedback = validationErrors
-          .map(err => `- Line ${err.line}: ${err.message}`)
-          .join('\n');
-
-        const retryPrompt = `Your previous attempt failed validation with the following errors:\n${errorFeedback}\n\nPlease correct these issues and provide the full, valid story code. Do not use the forbidden patterns.`;
-
-        messages.push({ role: 'assistant', content: claudeResponse });
-        messages.push({ role: 'user', content: retryPrompt });
+      // Check if we should continue retrying
+      const retryDecision = shouldContinueRetrying(attempts, maxRetries, errorHistory);
+      if (!retryDecision.shouldRetry) {
+        logger.log(`🛑 Stopping retries: ${retryDecision.reason}`);
+        break;
       }
+
+      // --- SELF-HEALING: Send errors back to LLM for correction ---
+      selfHealingUsed = true;
+      logger.log(`🔄 Self-healing attempt ${attempts} of ${maxRetries}`);
+      logger.log(`   Errors: Syntax(${aggregatedErrors.syntaxErrors.length}), Pattern(${aggregatedErrors.patternErrors.length}), Import(${aggregatedErrors.importErrors.length})`);
+
+      // Build the self-healing prompt with all errors
+      const selfHealingPrompt = buildSelfHealingPrompt(
+        aiText,
+        aggregatedErrors,
+        attempts,
+        selfHealingOptions
+      );
+
+      messages.push({ role: 'assistant', content: claudeResponse });
+      messages.push({ role: 'user', content: selfHealingPrompt });
     }
+    // --- End of Self-Healing Validation and Retry Loop ---
 
-    if (validationErrors.length > 0) {
-      console.error(`Story generation failed after ${maxRetries} attempts.`);
-      // Optional: decide if you want to return an error or proceed with the last attempt
-      // For now, we'll proceed with the last attempt and let the user see the result
-    }
-    // --- End of Validation and Retry Loop ---
-
-    logger.log('Claude final response:', aiText);
-
-    // Create enhanced component discovery for validation
-    const discovery = new EnhancedComponentDiscovery(config);
-    const discoveredComponents = await discovery.discoverAll();
-
-    // Pre-validate imports in the raw AI text to catch blacklisted components early
-    const preValidation = await preValidateImports(aiText, config, discovery);
-
-    if (!preValidation.isValid) {
-      console.error('Pre-validation failed - blacklisted components detected:', preValidation.errors);
-
-      // Return error immediately without creating file
-      return res.status(400).json({
-        error: 'Generated code contains invalid imports',
-        details: preValidation.errors,
-        suggestion: `The AI tried to use components that do not exist. ${buildComponentSuggestion(discoveredComponents)}`
-      });
-    }
-
-    // Use the new robust validation system
-    const validationResult = extractAndValidateCodeBlock(aiText, config);
-
+    // Determine the best code to use
     let fileContents: string;
     let hasValidationWarnings = false;
 
-    logger.log('Validation result:', {
-      isValid: validationResult.isValid,
-      errors: validationResult.errors,
-      warnings: validationResult.warnings,
-      hasFixedCode: !!validationResult.fixedCode
-    });
+    // Select the best attempt (fewest errors)
+    const bestAttempt = selectBestAttempt(allAttempts);
+    const finalErrors = bestAttempt ? bestAttempt.errors : createEmptyErrors();
+    const finalErrorCount = getTotalErrorCount(finalErrors);
 
-    if (!validationResult.isValid && !validationResult.fixedCode) {
-      console.error('Generated code validation failed:', validationResult.errors);
+    logger.log(`Generation complete: ${attempts} attempts, self-healing=${selfHealingUsed}, final errors=${finalErrorCount}`);
 
-      // Create fallback story only if we can't fix the code
-      logger.log('Creating fallback story due to validation failure');
-      fileContents = createFallbackStory(prompt, config);
-      hasValidationWarnings = true;
-    } else {
-      // Use fixed code if available, otherwise use the extracted code
-      if (validationResult.fixedCode) {
-        fileContents = validationResult.fixedCode;
+    if (finalErrorCount > 0 && bestAttempt) {
+      logger.log(`⚠️ Using best attempt with ${finalErrorCount} remaining errors`);
+      logger.log(`   Remaining: ${formatErrorsForLog(finalErrors)}`);
+
+      // If there are still errors but we have an attempt, use the best one
+      // Only create fallback if we have no valid code at all
+      if (bestAttempt.code && bestAttempt.code.includes('export')) {
+        fileContents = bestAttempt.code;
         hasValidationWarnings = true;
-        logger.log('Using auto-fixed code');
       } else {
-        // Extract the validated code
-        const codeMatch = aiText.match(/```(?:tsx|jsx|typescript|ts|js|javascript)?\s*([\s\S]*?)\s*```/i);
-        if (codeMatch) {
-          fileContents = codeMatch[1].trim();
-        } else {
-          // Fallback: extract from import to end of valid TypeScript
-          const importIdx = aiText.indexOf('import');
-          if (importIdx !== -1) {
-            fileContents = aiText;
-          } else {
-            fileContents = aiText.trim();
-          }
-        }
-      }
-
-      if (validationResult.warnings && validationResult.warnings.length > 0) {
+        // Create fallback story only if we have no usable code
+        logger.log('Creating fallback story - no usable code generated');
+        fileContents = createFallbackStory(prompt, config);
         hasValidationWarnings = true;
-        logger.log('Validation warnings:', validationResult.warnings);
       }
+    } else if (bestAttempt) {
+      // Success - use the best attempt (which should have no errors)
+      fileContents = bestAttempt.code;
+    } else {
+      // No attempts at all (shouldn't happen)
+      fileContents = aiText;
     }
 
     if (!fileContents) {
@@ -877,8 +909,10 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       isUpdate: isActualUpdate,
       validation: {
         hasWarnings: hasValidationWarnings,
-        errors: validationResult?.errors || [],
-        warnings: validationResult?.warnings || []
+        errors: [...finalErrors.syntaxErrors, ...finalErrors.patternErrors, ...finalErrors.importErrors],
+        warnings: [],
+        selfHealingUsed,
+        attempts
       }
     });
   } catch (err: any) {
