@@ -1,3 +1,10 @@
+# [3.8.0](https://github.com/southleft/story-ui/compare/v3.7.0...v3.8.0) (2025-12-04)
+
+
+### Features
+
+* add runtime validation to catch Storybook runtime errors ([c32276b](https://github.com/southleft/story-ui/commit/c32276b796ae5800e39058dffabf48737430fdf5))
+
 # [3.7.0](https://github.com/southleft/story-ui/compare/v3.6.2...v3.7.0) (2025-12-04)
 
 
