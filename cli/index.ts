@@ -283,11 +283,6 @@ program
   .option('--backend-url <url>', 'Use existing backend URL for app/frontend')
   .option('--storybook-dir <dir>', 'Path to Storybook project')
   .option('--project-name <name>', 'Project name prefix', 'story-ui')
-  // Legacy flags (deprecated)
-  .option('--init', '[DEPRECATED] Use --live instead')
-  .option('--edge', '[DEPRECATED] Use --live instead')
-  .option('--pages', '[DEPRECATED] Use --live instead')
-  .option('--all', '[DEPRECATED] Use --live instead')
   .action(async (options) => {
     await deployCommand(options);
   });
