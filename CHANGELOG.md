@@ -1,3 +1,22 @@
+# [3.7.0](https://github.com/southleft/story-ui/compare/v3.6.2...v3.7.0) (2025-12-04)
+
+
+### Bug Fixes
+
+* add explicit framework prohibitions to prevent cross-framework component confusion ([c196e47](https://github.com/southleft/story-ui/commit/c196e471fa74a714a6d56cf9d09c3098a23e9f32))
+* add framework-aware error suggestions for invalid import validation ([0f6386c](https://github.com/southleft/story-ui/commit/0f6386c2f812d5f76c1b3c3fa63c6fcabbfe198e))
+* improve Vue/Vuetify story generation syntax ([f4d93b3](https://github.com/southleft/story-ui/commit/f4d93b30115d79ba8e75899eaa75a2d486ad8af6))
+* make error suggestions design-system agnostic ([ac093df](https://github.com/southleft/story-ui/commit/ac093df37372df87c39752c51e613eadeb5f4b53))
+* override Storybook CSS with !important for consistent styling ([5059957](https://github.com/southleft/story-ui/commit/5059957391678ec950922f8544a4d597a3fd87f8))
+
+
+### Features
+
+* add AI self-healing loop for story generation ([c607022](https://github.com/southleft/story-ui/commit/c6070224cf89a562348fa3fe47687f4c845934b6))
+* add MDX wrapper for cross-framework StoryUIPanel rendering ([1c5b183](https://github.com/southleft/story-ui/commit/1c5b1834bdad948998d1bde8bf3087827335a143))
+* remove custom Source Code addon in favor of native Storybook Docs ([2354352](https://github.com/southleft/story-ui/commit/23543527622fc57cec134593161f06653aaf4669))
+* replace Unicode icons with SVGs, add human-readable model names ([e5433c3](https://github.com/southleft/story-ui/commit/e5433c3e96536add726b70646e5ca2d48738fa79))
+
 ## [3.6.2](https://github.com/southleft/story-ui/compare/v3.6.1...v3.6.2) (2025-12-02)
 
 

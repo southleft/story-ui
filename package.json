@@ -1,6 +1,6 @@
 {
   "name": "@tpitre/story-ui",
-  "version": "3.6.2",
+  "version": "3.7.0",
   "description": "AI-powered Storybook story generator with dynamic component discovery",
   "type": "module",
   "main": "dist/index.js",
