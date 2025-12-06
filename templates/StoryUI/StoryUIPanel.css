@@ -1,0 +1,1440 @@
+/**
+ * StoryUIPanel CSS - ShadCN-Inspired Design
+ *
+ * A clean, minimal interface inspired by ShadCN UI and Google Gemini.
+ * Self-contained CSS with no external dependencies.
+ * Supports both light mode (default) and dark mode.
+ */
+
+/* ============================================
+   CSS Custom Properties (ShadCN-style tokens)
+   ============================================ */
+.sui-root {
+  /* Font System */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
+
+  /* Base Colors - Light Mode */
+  --background: 0 0% 100%;
+  --foreground: 240 10% 3.9%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 10% 3.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 10% 3.9%;
+  --primary: 240 5.9% 10%;
+  --primary-foreground: 0 0% 98%;
+  --secondary: 240 4.8% 95.9%;
+  --secondary-foreground: 240 5.9% 10%;
+  --muted: 240 4.8% 95.9%;
+  --muted-foreground: 240 3.8% 46.1%;
+  --accent: 240 4.8% 95.9%;
+  --accent-foreground: 240 5.9% 10%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 240 5.9% 90%;
+  --input: 240 5.9% 90%;
+  --ring: 240 5.9% 10%;
+
+  /* User Bubble - Light bluish-gray tint */
+  --user-bubble-bg: 210 35% 95%;
+  --user-bubble-fg: 240 10% 3.9%;
+  --user-bubble-border: 210 25% 88%;
+
+  /* AI Bubble - Pure white */
+  --ai-bubble-bg: 0 0% 100%;
+  --ai-bubble-fg: 240 10% 3.9%;
+  --ai-bubble-border: 0 0% 90%;
+
+  /* Semantic Colors */
+  --success: 142 76% 36%;
+  --success-foreground: 0 0% 100%;
+  --warning: 38 92% 50%;
+  --warning-foreground: 0 0% 0%;
+  --info: 221 83% 53%;
+  --info-foreground: 0 0% 100%;
+
+  /* Radius */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.5rem;
+  --radius-full: 9999px;
+
+  /* Spacing */
+  --space-0: 0;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+
+  /* Transitions */
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-normal: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Layout */
+  --sidebar-width: 280px;
+  --header-height: 56px;
+  --input-height: 52px;
+  --max-chat-width: 768px;
+}
+
+/* Dark Mode - Using softer dark tones instead of pure black */
+.sui-root.dark {
+  --background: 222 47% 11%;
+  --foreground: 210 40% 98%;
+  --card: 222 47% 11%;
+  --card-foreground: 210 40% 98%;
+  --popover: 222 47% 11%;
+  --popover-foreground: 210 40% 98%;
+  --primary: 210 40% 98%;
+  --primary-foreground: 222 47% 11%;
+  --secondary: 217 33% 17%;
+  --secondary-foreground: 210 40% 98%;
+  --muted: 217 33% 17%;
+  --muted-foreground: 215 20% 75%;
+  --accent: 217 33% 17%;
+  --accent-foreground: 210 40% 98%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 217 33% 22%;
+  --input: 217 33% 22%;
+  --ring: 213 94% 68%;
+
+  /* User Bubble - Light bluish-gray tint (same in dark mode for chat consistency) */
+  --user-bubble-bg: 210 35% 95%;
+  --user-bubble-fg: 240 10% 3.9%;
+  --user-bubble-border: 210 25% 88%;
+
+  /* AI Bubble - Pure white (same in dark mode for chat consistency) */
+  --ai-bubble-bg: 0 0% 100%;
+  --ai-bubble-fg: 240 10% 3.9%;
+  --ai-bubble-border: 0 0% 90%;
+
+  --success: 142 69% 58%;
+  --warning: 48 96% 53%;
+  --info: 217 91% 60%;
+}
+
+/* Dark mode fallback using system preference when .dark class not applied */
+@media (prefers-color-scheme: dark) {
+  .sui-root:not(.light) {
+    --background: 222 47% 11%;
+    --foreground: 210 40% 98%;
+    --card: 222 47% 11%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222 47% 11%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 210 40% 98%;
+    --primary-foreground: 222 47% 11%;
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 75%;
+    --accent: 217 33% 17%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 217 33% 22%;
+    --input: 217 33% 22%;
+    --ring: 213 94% 68%;
+
+    /* User Bubble - Light bluish-gray tint (same in dark mode for chat consistency) */
+    --user-bubble-bg: 210 35% 95%;
+    --user-bubble-fg: 240 10% 3.9%;
+    --user-bubble-border: 210 25% 88%;
+
+    /* AI Bubble - Pure white (same in dark mode for chat consistency) */
+    --ai-bubble-bg: 0 0% 100%;
+    --ai-bubble-fg: 240 10% 3.9%;
+    --ai-bubble-border: 0 0% 90%;
+
+    --success: 142 69% 58%;
+    --warning: 48 96% 53%;
+    --info: 217 91% 60%;
+  }
+}
+
+/* ============================================
+   Base Reset
+   ============================================ */
+.sui-root,
+.sui-root *,
+.sui-root *::before,
+.sui-root *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+.sui-root {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  color: hsl(var(--foreground));
+  background-color: hsl(var(--background));
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  height: 100%;
+  width: 100%;
+  display: flex;
+}
+
+/* ============================================
+   Layout Structure
+   ============================================ */
+
+/* Sidebar */
+.sui-sidebar {
+  width: var(--sidebar-width);
+  background: hsl(var(--card));
+  border-right: 1px solid hsl(var(--border));
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  transition: width var(--transition-normal), opacity var(--transition-normal);
+  overflow: hidden;
+}
+
+.sui-sidebar.collapsed {
+  width: 56px;
+  border-right: 1px solid hsl(var(--border));
+}
+
+.sui-sidebar-header {
+  padding: var(--space-4);
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.sui-sidebar-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: var(--space-3);
+}
+
+/* Sidebar chat list - flex grow to fill space */
+.sui-sidebar-chats {
+  flex: 1;
+  overflow-y: auto;
+  margin-bottom: var(--space-4);
+}
+
+/* Context Menu */
+.sui-context-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 50;
+  min-width: 140px;
+  padding: var(--space-1);
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.sui-context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font-size: 0.8125rem;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+}
+
+.sui-context-menu-item:hover {
+  background: hsl(var(--accent));
+}
+
+.sui-context-menu-item-danger {
+  color: hsl(var(--destructive));
+}
+
+.sui-context-menu-item-danger:hover {
+  background: hsl(var(--destructive) / 0.1);
+}
+
+/* Rename input */
+.sui-chat-item-rename {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.sui-rename-input {
+  flex: 1;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-sm);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-size: 0.875rem;
+  outline: none;
+}
+
+.sui-rename-input:focus {
+  border-color: hsl(var(--ring));
+}
+
+/* Main Content */
+.sui-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: relative;
+  background: hsl(var(--background));
+}
+
+/* Header */
+.sui-header {
+  height: var(--header-height);
+  padding: 0 var(--space-6);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
+  flex-shrink: 0;
+}
+
+.sui-header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.sui-header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.sui-header-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+.sui-header-subtitle {
+  font-size: 0.875rem;
+  color: hsl(var(--muted-foreground));
+}
+
+/* Chat Area */
+.sui-chat-area {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+}
+
+.sui-chat-messages {
+  flex: 1;
+  max-width: var(--max-chat-width);
+  width: 100%;
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* Input Area */
+.sui-input-area {
+  padding: var(--space-4) var(--space-6) var(--space-6);
+  background: linear-gradient(transparent, hsl(var(--background)) 20%);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.sui-input-container {
+  max-width: var(--max-chat-width);
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* ============================================
+   Button Component (Storybook-inspired)
+   ============================================ */
+.sui-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  white-space: nowrap;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  transition: all var(--transition-fast);
+  cursor: pointer;
+  border: none;
+  background: none;
+  outline: none;
+}
+
+.sui-button:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+.sui-button:disabled {
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+/* Button Variants - Storybook-style */
+.sui-button-default {
+  background: hsl(var(--secondary));
+  color: hsl(var(--secondary-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-md);
+  height: 2rem;
+  padding: 0 var(--space-3);
+}
+
+.sui-button-default:hover {
+  background: hsl(var(--accent));
+  border-color: hsl(var(--muted-foreground) / 0.3);
+}
+
+.sui-button-secondary {
+  background: hsl(var(--secondary));
+  color: hsl(var(--secondary-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-md);
+  height: 2rem;
+  padding: 0 var(--space-3);
+}
+
+.sui-button-secondary:hover {
+  background: hsl(var(--accent));
+}
+
+.sui-button-ghost {
+  color: hsl(var(--foreground));
+  border-radius: var(--radius-md);
+  height: 2rem;
+  padding: 0 var(--space-3);
+}
+
+.sui-button-ghost:hover {
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+
+.sui-button-outline {
+  border: 1px solid hsl(var(--border));
+  background: transparent;
+  color: hsl(var(--foreground));
+  border-radius: var(--radius-md);
+  height: 2rem;
+  padding: 0 var(--space-3);
+}
+
+.sui-button-outline:hover {
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+
+.sui-button-destructive {
+  background: hsl(var(--destructive));
+  color: hsl(var(--destructive-foreground));
+  border-radius: var(--radius-md);
+  height: 2rem;
+  padding: 0 var(--space-3);
+}
+
+.sui-button-destructive:hover {
+  background: hsl(var(--destructive) / 0.9);
+}
+
+/* Button Sizes */
+.sui-button-sm {
+  height: 1.75rem;
+  padding: 0 var(--space-2);
+  font-size: 0.75rem;
+}
+
+.sui-button-lg {
+  height: 2.25rem;
+  padding: 0 var(--space-4);
+}
+
+.sui-button-icon {
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+}
+
+.sui-button-icon.sui-button-sm {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+
+/* ============================================
+   ShadCN-Style Input Component
+   ============================================ */
+.sui-input {
+  display: flex;
+  height: 2.5rem;
+  width: 100%;
+  border-radius: var(--radius-md);
+  border: 1px solid hsl(var(--input));
+  background: hsl(var(--background));
+  padding: 0 var(--space-3);
+  font-size: 0.875rem;
+  color: hsl(var(--foreground));
+  transition: all var(--transition-fast);
+}
+
+.sui-input::placeholder {
+  color: hsl(var(--muted-foreground));
+}
+
+.sui-input:focus {
+  outline: none;
+  border-color: hsl(var(--ring));
+  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.2);
+}
+
+.sui-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* ============================================
+   ShadCN-Style Select Component
+   ============================================ */
+.sui-select {
+  position: relative;
+  display: inline-block;
+}
+
+.sui-select-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  height: 2.25rem;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid hsl(var(--input));
+  background: hsl(var(--background));
+  font-size: 0.875rem;
+  color: hsl(var(--foreground));
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  min-width: 120px;
+}
+
+.sui-select-trigger:hover {
+  background: hsl(var(--accent));
+}
+
+.sui-select-trigger:focus {
+  outline: none;
+  border-color: hsl(var(--ring));
+  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.2);
+}
+
+.sui-select-native {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  width: 100%;
+  height: 100%;
+}
+
+.sui-select-icon {
+  width: 1rem;
+  height: 1rem;
+  color: hsl(var(--muted-foreground));
+  flex-shrink: 0;
+}
+
+/* ============================================
+   ShadCN-Style Badge Component
+   ============================================ */
+.sui-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0.125rem var(--space-2);
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  font-weight: 500;
+  transition: all var(--transition-fast);
+}
+
+.sui-badge-default {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.sui-badge-secondary {
+  background: hsl(var(--secondary));
+  color: hsl(var(--secondary-foreground));
+}
+
+.sui-badge-success {
+  background: hsl(var(--success) / 0.15);
+  color: hsl(var(--success));
+}
+
+.sui-badge-destructive {
+  background: hsl(var(--destructive) / 0.15);
+  color: hsl(var(--destructive));
+}
+
+/* Dark mode: make destructive badge more visible */
+.sui-root.dark .sui-badge-destructive {
+  background: hsl(0 72% 25% / 0.4);
+  color: hsl(0 85% 70%);
+}
+
+.sui-badge-outline {
+  border: 1px solid hsl(var(--border));
+  background: transparent;
+  color: hsl(var(--foreground));
+}
+
+/* Status dot inside badge */
+.sui-badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* ============================================
+   ShadCN-Style Card Component
+   ============================================ */
+.sui-card {
+  border-radius: var(--radius-lg);
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+}
+
+.sui-card-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-6);
+}
+
+.sui-card-title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.sui-card-description {
+  font-size: 0.875rem;
+  color: hsl(var(--muted-foreground));
+}
+
+.sui-card-content {
+  padding: 0 var(--space-6) var(--space-6);
+}
+
+.sui-card-footer {
+  display: flex;
+  align-items: center;
+  padding: var(--space-6);
+  border-top: 1px solid hsl(var(--border));
+}
+
+/* ============================================
+   Chat Item (Sidebar) - Gemini-style
+   ============================================ */
+.sui-chat-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  color: hsl(var(--foreground));
+  position: relative;
+}
+
+.sui-chat-item:hover {
+  background: hsl(var(--accent));
+}
+
+.sui-chat-item.active {
+  background: hsl(var(--accent));
+}
+
+.sui-chat-item.menu-open {
+  background: hsl(var(--accent));
+}
+
+.sui-chat-item-title {
+  flex: 1;
+  font-size: 0.875rem;
+  font-weight: 400;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.sui-chat-item-actions {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.sui-chat-item-menu {
+  opacity: 0;
+  padding: var(--space-1);
+  border-radius: var(--radius-sm);
+  color: hsl(var(--muted-foreground));
+  transition: all var(--transition-fast);
+}
+
+.sui-chat-item:hover .sui-chat-item-menu,
+.sui-chat-item.menu-open .sui-chat-item-menu {
+  opacity: 1;
+}
+
+.sui-chat-item-menu:hover {
+  background: hsl(var(--muted) / 0.5);
+  color: hsl(var(--foreground));
+}
+
+/* ============================================
+   Welcome State (Gemini-inspired)
+   ============================================ */
+.sui-welcome {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--space-8);
+}
+
+.sui-welcome-greeting {
+  font-size: 1.75rem;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+  margin-bottom: var(--space-3);
+  line-height: 1.3;
+}
+
+/* Dark mode: ensure greeting is clearly visible - WCAG AA compliant */
+.sui-root.dark .sui-welcome-greeting {
+  color: #ffffff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.sui-welcome-subtitle {
+  font-size: 1rem;
+  color: hsl(var(--muted-foreground));
+  margin-bottom: var(--space-8);
+  max-width: 400px;
+}
+
+/* Dark mode: make subtitle more visible */
+.sui-root.dark .sui-welcome-subtitle {
+  color: hsl(210 25% 80%);
+}
+
+.sui-welcome-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  justify-content: center;
+  max-width: 600px;
+}
+
+/* ============================================
+   Suggestion Chips (Simple pill style)
+   ============================================ */
+.sui-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem 1rem;
+  background: hsl(var(--secondary));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-full);
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1;
+  color: hsl(var(--foreground));
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.sui-chip:hover {
+  background: hsl(var(--accent));
+  border-color: hsl(var(--muted-foreground) / 0.3);
+}
+
+.sui-chip:active {
+  transform: scale(0.98);
+}
+
+/* ============================================
+   Messages
+   ============================================ */
+.sui-message {
+  animation: sui-fade-in var(--transition-normal);
+}
+
+@keyframes sui-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.sui-message-user {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.sui-message-ai {
+  display: flex;
+  justify-content: flex-start;
+}
+
+/* Base bubble styles - shared between user and AI */
+.sui-message-bubble {
+  max-width: 85%;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-2xl);
+  font-size: 0.9375rem !important;
+  line-height: 1.5 !important;
+  border: 1px solid hsl(var(--border));
+}
+
+/* User bubble - light bluish-gray */
+.sui-message-user .sui-message-bubble {
+  background: hsl(var(--user-bubble-bg));
+  color: hsl(var(--user-bubble-fg));
+  border-color: hsl(var(--user-bubble-border));
+  border-bottom-right-radius: var(--radius-sm);
+}
+
+/* AI bubble - pure white */
+.sui-message-ai .sui-message-bubble {
+  background: hsl(var(--ai-bubble-bg));
+  color: hsl(var(--ai-bubble-fg));
+  border-color: hsl(var(--ai-bubble-border));
+  border-bottom-left-radius: var(--radius-sm);
+}
+
+/*
+ * Markdown content styling
+ * Using .sui-message-bubble prefix for higher specificity (0,2,x)
+ * to beat Storybook's .css-xxx :where(p) selectors (0,1,x)
+ */
+.sui-message-bubble .sui-markdown {
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  font-family: var(--font-sans);
+}
+
+/* Paragraph styling - higher specificity beats Storybook */
+.sui-message-bubble .sui-markdown p {
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  margin: 0;
+  padding: 6px 0 4px 0;
+}
+
+.sui-message-bubble .sui-markdown p:first-child {
+  padding-top: 0;
+}
+
+.sui-message-bubble .sui-markdown p:last-child {
+  padding-bottom: 0;
+}
+
+.sui-message-bubble strong {
+  font-weight: 600;
+}
+
+.sui-message-bubble em {
+  font-style: italic;
+}
+
+/* Inline code styling */
+.sui-message-bubble code {
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  background: hsl(var(--muted) / 0.5);
+  padding: 0.1em 0.35em;
+  border-radius: var(--radius-sm);
+}
+
+.sui-message-ai .sui-message-bubble code {
+  background: hsl(var(--ai-bubble-border) / 0.5);
+}
+
+.sui-message-images {
+  display: flex;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.sui-message-image {
+  max-width: 200px;
+  max-height: 150px;
+  border-radius: var(--radius-lg);
+  object-fit: cover;
+}
+
+/* ============================================
+   Input Form (Gemini-style pill)
+   ============================================ */
+.sui-input-form {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-2xl);
+  padding: 8px;
+  min-height: 56px;
+  transition: all var(--transition-fast);
+}
+
+.sui-input-form:focus-within {
+  border-color: hsl(var(--ring));
+  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.2);
+}
+
+.sui-input-form-upload {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: hsl(var(--muted-foreground));
+  flex-shrink: 0;
+  border: 1px solid hsl(var(--border) / 0.5);
+  background: none;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.sui-input-form-upload:hover:not(:disabled) {
+  background: hsl(var(--accent));
+  color: hsl(var(--foreground));
+}
+
+.sui-input-form-upload:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sui-input-form-field {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font-size: 0.9375rem;
+  padding: 0 var(--space-3);
+  height: 40px;
+  min-width: 0;
+  resize: none;
+  outline: none;
+  /* Input type="text" auto-centers text vertically */
+}
+
+.sui-input-form-field::placeholder {
+  color: hsl(var(--muted-foreground));
+}
+
+.sui-input-form-send {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  flex-shrink: 0;
+  border: none;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.sui-input-form-send:hover:not(:disabled) {
+  opacity: 0.9;
+  transform: scale(1.05);
+}
+
+.sui-input-form-send:disabled {
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ============================================
+   Image Previews
+   ============================================ */
+.sui-image-previews {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.sui-image-preview-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: 0.8125rem;
+  color: hsl(var(--muted-foreground));
+}
+
+.sui-image-preview-item {
+  position: relative;
+}
+
+.sui-image-preview-thumb {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+  border: 1px solid hsl(var(--border));
+}
+
+.sui-image-preview-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-full);
+  background: hsl(var(--destructive));
+  color: hsl(var(--destructive-foreground));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  border: none;
+  cursor: pointer;
+}
+
+/* ============================================
+   Progress Indicator
+   ============================================ */
+.sui-progress {
+  background: hsl(var(--muted));
+  border-radius: var(--radius-2xl);
+  padding: var(--space-4);
+}
+
+.sui-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+}
+
+.sui-progress-label {
+  font-weight: 500;
+  font-size: 0.875rem;
+  color: hsl(var(--foreground));
+}
+
+.sui-progress-step {
+  font-size: 0.75rem;
+  color: hsl(var(--muted-foreground));
+}
+
+.sui-progress-bar {
+  height: 4px;
+  background: hsl(var(--secondary));
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.sui-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, hsl(var(--info)), hsl(285 70% 50%));
+  border-radius: var(--radius-full);
+  transition: width var(--transition-normal);
+}
+
+.sui-progress-retry {
+  margin-top: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  background: hsl(var(--warning) / 0.15);
+  color: hsl(var(--warning));
+  border-radius: var(--radius-md);
+  font-size: 0.75rem;
+  display: inline-block;
+}
+
+/* ============================================
+   Drop Overlay
+   ============================================ */
+.sui-drop-overlay {
+  position: absolute;
+  inset: 0;
+  background: hsl(var(--info) / 0.1);
+  border: 2px dashed hsl(var(--info));
+  border-radius: var(--radius-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  backdrop-filter: blur(4px);
+}
+
+.sui-drop-overlay-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  color: hsl(var(--info));
+  font-weight: 500;
+}
+
+/* ============================================
+   Error Message
+   ============================================ */
+.sui-error {
+  background: hsl(var(--destructive) / 0.15);
+  color: hsl(var(--destructive));
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  font-size: 0.875rem;
+}
+
+/* ============================================
+   Completion Card - shares bubble styling with message bubbles
+   ============================================ */
+.sui-completion {
+  max-width: 85%;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-2xl);
+  border-bottom-left-radius: var(--radius-sm);
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+}
+
+.sui-completion-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 500;
+  color: hsl(var(--success));
+}
+
+.sui-completion-components {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.sui-completion-tag {
+  padding: 0.125rem var(--space-2);
+  background: hsl(var(--info) / 0.15);
+  color: hsl(var(--info));
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+}
+
+.sui-completion-metrics {
+  display: flex;
+  gap: var(--space-4);
+  margin-top: var(--space-3);
+  font-size: 0.8125rem;
+  color: hsl(var(--muted-foreground));
+}
+
+/* ============================================
+   Checkbox
+   ============================================ */
+.sui-checkbox {
+  width: 1rem;
+  height: 1rem;
+  accent-color: hsl(var(--primary));
+  cursor: pointer;
+}
+
+/* ============================================
+   Loading Animation
+   ============================================ */
+.sui-loading::after {
+  content: '';
+  animation: sui-dots 1.5s infinite;
+}
+
+@keyframes sui-dots {
+  0%, 20% { content: '.'; }
+  40% { content: '..'; }
+  60%, 100% { content: '...'; }
+}
+
+/* ============================================
+   Markdown Content
+   ============================================ */
+.sui-markdown strong {
+  font-weight: 600;
+}
+
+.sui-markdown em {
+  font-style: italic;
+}
+
+.sui-markdown code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: hsl(var(--muted));
+  padding: 0.125em 0.375em;
+  border-radius: var(--radius-sm);
+}
+
+.sui-markdown p {
+  margin-bottom: var(--space-3);
+  line-height: 1.6;
+}
+
+.sui-markdown p:last-child {
+  margin-bottom: 0;
+}
+
+/* Headings */
+.sui-markdown h1,
+.sui-markdown h2,
+.sui-markdown h3,
+.sui-markdown h4,
+.sui-markdown h5,
+.sui-markdown h6 {
+  font-weight: 600;
+  margin-top: var(--space-4);
+  margin-bottom: var(--space-3);
+  line-height: 1.3;
+}
+
+.sui-markdown h1:first-child,
+.sui-markdown h2:first-child,
+.sui-markdown h3:first-child {
+  margin-top: 0;
+}
+
+.sui-markdown h1 { font-size: 1.5em; }
+.sui-markdown h2 { font-size: 1.25em; }
+.sui-markdown h3 { font-size: 1.125em; }
+.sui-markdown h4 { font-size: 1em; }
+
+/* Lists */
+.sui-markdown ul,
+.sui-markdown ol {
+  margin-bottom: var(--space-3);
+  padding-left: var(--space-5);
+  line-height: 1.6;
+}
+
+.sui-markdown ul {
+  list-style-type: disc;
+}
+
+.sui-markdown ol {
+  list-style-type: decimal;
+}
+
+.sui-markdown li {
+  margin-bottom: var(--space-2);
+  line-height: 1.6;
+}
+
+.sui-markdown li:last-child {
+  margin-bottom: 0;
+}
+
+.sui-markdown li > ul,
+.sui-markdown li > ol {
+  margin-top: var(--space-2);
+  margin-bottom: 0;
+}
+
+/* Code blocks */
+.sui-markdown pre {
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  line-height: 1.5;
+}
+
+.sui-markdown pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+}
+
+/* Blockquotes */
+.sui-markdown blockquote {
+  border-left: 3px solid hsl(var(--primary));
+  padding-left: var(--space-4);
+  margin-left: 0;
+  margin-bottom: var(--space-3);
+  color: hsl(var(--muted-foreground));
+  font-style: italic;
+}
+
+/* Tables */
+.sui-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: var(--space-3);
+  font-size: 0.875em;
+}
+
+.sui-markdown th,
+.sui-markdown td {
+  border: 1px solid hsl(var(--border));
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+}
+
+.sui-markdown th {
+  background: hsl(var(--muted));
+  font-weight: 600;
+}
+
+/* Horizontal rule */
+.sui-markdown hr {
+  border: none;
+  border-top: 1px solid hsl(var(--border));
+  margin: var(--space-4) 0;
+}
+
+/* Links */
+.sui-markdown a {
+  color: hsl(var(--primary));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.sui-markdown a:hover {
+  opacity: 0.8;
+}
+
+/* Inline status icons */
+.sui-icon-inline {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  margin-right: 0.25rem;
+}
+
+.sui-icon-success {
+  color: hsl(var(--success));
+}
+
+.sui-icon-error {
+  color: hsl(var(--destructive));
+}
+
+.sui-icon-tip {
+  color: hsl(var(--warning));
+}
+
+/* Dark mode: make warning/tip icon more visible */
+.sui-root.dark .sui-icon-tip {
+  color: hsl(48 96% 65%);
+}
+
+.sui-icon-wrench {
+  color: hsl(var(--info));
+}
+
+/* ============================================
+   Scrollbar Styling
+   ============================================ */
+.sui-root ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.sui-root ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sui-root ::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3);
+  border-radius: var(--radius-full);
+}
+
+.sui-root ::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+
+/* ============================================
+   Utility Classes
+   ============================================ */
+.sui-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.sui-hidden {
+  display: none;
+}
