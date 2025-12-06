@@ -1,3 +1,10 @@
+# [3.10.0](https://github.com/southleft/story-ui/compare/v3.9.0...v3.10.0) (2025-12-06)
+
+
+### Features
+
+* redesign StoryUI panel with ShadCN-inspired chat interface ([d8bd165](https://github.com/southleft/story-ui/commit/d8bd1655f8d2759c0772634634404495a1fa0997))
+
 # [3.9.0](https://github.com/southleft/story-ui/compare/v3.8.0...v3.9.0) (2025-12-04)
 
 
