@@ -57,6 +57,26 @@ CRITICAL RULES:
 - Use Angular template syntax in render functions
 - Event bindings use (event) syntax
 
+TYPESCRIPT STRICT MODE COMPATIBILITY (CRITICAL):
+- NEVER use "this.property" syntax in render functions or templates
+- NEVER try to manage state with "this.isEnabled", "this.clickCount++", etc.
+- Angular Storybook stories should be STATELESS - show component states via args
+- For interactive demos, use argTypes with action: 'actionName' for event logging
+- The args object has an index signature - direct property access causes TS4111 errors
+
+CORRECT PATTERNS FOR INTERACTIVITY:
+1. For events - use argTypes actions, NOT state management:
+   argTypes: { onChange: { action: 'changed' } }
+
+2. For showing states - create separate stories:
+   export const Enabled: Story = { args: { checked: true } };
+   export const Disabled: Story = { args: { checked: false } };
+
+3. NEVER generate code like:
+   - this.isEnabled = event.checked; // TS4111 ERROR
+   - this.clickCount++; // TS4111 ERROR
+   - props.someValue = newValue; // Will not work
+
 Example structure (Standalone Components):
 \`\`\`typescript
 import type { Meta, StoryObj } from '@storybook/angular';
@@ -245,7 +265,7 @@ export const ProductCard: Story = {
 };
 \`\`\`
 
-### With Event Handling
+### With Event Handling (STATELESS - CORRECT PATTERN)
 \`\`\`typescript
 import type { Meta, StoryObj } from '@storybook/angular';
 import { applicationConfig } from '@storybook/angular';
@@ -260,14 +280,16 @@ const meta: Meta<ButtonComponent> = {
     }),
   ],
   argTypes: {
-    // Use argTypes with action for event logging instead of addon-actions
+    // Use argTypes with action for event logging - DO NOT manage state
     onClick: { action: 'clicked' },
+    onToggle: { action: 'toggled' },
   },
 };
 
 export default meta;
 type Story = StoryObj<ButtonComponent>;
 
+// CORRECT: Events logged via argTypes actions
 export const WithClick: Story = {
   render: (args) => ({
     props: args,
@@ -278,6 +300,23 @@ export const WithClick: Story = {
     \`,
   }),
 };
+
+// CORRECT: Show different states via separate stories
+export const EnabledState: Story = {
+  args: { disabled: false },
+};
+
+export const DisabledState: Story = {
+  args: { disabled: true },
+};
+
+// WRONG - DO NOT DO THIS (causes TS4111 error):
+// export const Interactive: Story = {
+//   render: (args) => ({
+//     props: { ...args, isEnabled: false },
+//     template: \`<mat-slide-toggle (change)="this.isEnabled = $event.checked">\`,
+//   }),
+// };
 \`\`\`
 
 ### With Forms
@@ -454,6 +493,26 @@ export const Default: Story = {
       !storyContent.includes('component:')
     ) {
       errors.push('Missing moduleMetadata or applicationConfig decorator');
+    }
+
+    // Check for TS4111-causing patterns (noPropertyAccessFromIndexSignature)
+    // These patterns cause errors when strict TypeScript is enabled
+    const ts4111Patterns = [
+      /this\.\w+\s*=\s*\w+/g,  // this.property = value
+      /this\.\w+\+\+/g,        // this.property++
+      /this\.\w+--/g,          // this.property--
+      /\+\+this\.\w+/g,        // ++this.property
+      /--this\.\w+/g,          // --this.property
+    ];
+
+    for (const pattern of ts4111Patterns) {
+      if (pattern.test(storyContent)) {
+        errors.push(
+          'Angular stories should not use "this.property" state management. ' +
+          'Use args-based patterns instead. This causes TS4111 errors with strict TypeScript.'
+        );
+        break;
+      }
     }
 
     return {
