@@ -1,3 +1,10 @@
+## [3.10.5](https://github.com/southleft/story-ui/compare/v3.10.4...v3.10.5) (2025-12-07)
+
+
+### Bug Fixes
+
+* **ui:** auto-refresh Storybook for new stories to fix Vite HMR import error ([aa1b976](https://github.com/southleft/story-ui/commit/aa1b976bcbbc424e0ab8714bd5abd5e454c36625))
+
 ## [3.10.4](https://github.com/southleft/story-ui/compare/v3.10.3...v3.10.4) (2025-12-07)
 
 
