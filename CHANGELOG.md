@@ -1,3 +1,10 @@
+## [3.10.1](https://github.com/southleft/story-ui/compare/v3.10.0...v3.10.1) (2025-12-07)
+
+
+### Bug Fixes
+
+* detect custom domains as cloud deployments for MCP connection ([c76d049](https://github.com/southleft/story-ui/commit/c76d04984adfe0cc8bbbd42a7cd70bb521bfc98a))
+
 # [3.10.0](https://github.com/southleft/story-ui/compare/v3.9.0...v3.10.0) (2025-12-06)
 
 
