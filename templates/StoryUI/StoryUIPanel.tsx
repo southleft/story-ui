@@ -308,7 +308,11 @@ function getApiBaseUrl(): string {
     if ((window as any).__STORY_UI_EDGE_URL__) {
       return (window as any).__STORY_UI_EDGE_URL__;
     }
-    if (window.location.hostname.includes('railway.app')) {
+    // Detect cloud deployments: Railway, custom domains, or any non-localhost
+    const hostname = window.location.hostname;
+    const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname.startsWith('192.168.') || hostname.startsWith('10.');
+    if (!isLocalhost) {
+      // Cloud deployment - use same origin (works for Railway, custom domains, etc.)
       return window.location.origin;
     }
   }
@@ -333,14 +337,24 @@ const STORIES_API = `${API_BASE}/story-ui/stories`;
 const CONSIDERATIONS_API = `${API_BASE}/mcp/considerations`;
 
 function isEdgeMode(): boolean {
-  const baseUrl = getApiBaseUrl();
-  return baseUrl.includes('railway.app') || baseUrl.includes('workers.dev');
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname.startsWith('192.168.') || hostname.startsWith('10.');
+    return !isLocalhost;
+  }
+  return false;
 }
 
 function getConnectionDisplayText(): string {
   const baseUrl = getApiBaseUrl();
-  if (baseUrl.includes('railway.app')) return 'Railway Cloud';
-  if (baseUrl.includes('workers.dev')) return 'Cloudflare Edge';
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    if (hostname.includes('railway.app')) return 'Railway Cloud';
+    if (hostname.includes('workers.dev')) return 'Cloudflare Edge';
+    if (hostname.includes('southleft.com')) return 'Southleft Cloud';
+    const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname.startsWith('192.168.') || hostname.startsWith('10.');
+    if (!isLocalhost) return `Cloud (${hostname})`;
+  }
   const port = baseUrl.match(/:(\d+)/)?.[1] || '4001';
   return `localhost:${port}`;
 }
