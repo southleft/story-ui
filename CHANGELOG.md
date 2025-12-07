@@ -1,3 +1,10 @@
+## [3.10.4](https://github.com/southleft/story-ui/compare/v3.10.3...v3.10.4) (2025-12-07)
+
+
+### Bug Fixes
+
+* eliminate hardcoded React fallbacks for multi-framework support ([aa790ac](https://github.com/southleft/story-ui/commit/aa790ac4636628fcfc25e4112d8ba3d622e4eb2b))
+
 ## [3.10.3](https://github.com/southleft/story-ui/compare/v3.10.2...v3.10.3) (2025-12-07)
 
 
