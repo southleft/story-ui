@@ -23,6 +23,8 @@ export function validateStory(storyContent: string): ValidationError[] {
     { pattern: /this\.\w+\s*=\s*\$?event\./i, message: 'Do not use "this.property = event.value" in Angular stories. This causes TS4111 errors. Use argTypes with action property for events and create separate stories for different states.' },
     { pattern: /this\.\w+\+\+/i, message: 'Do not use "this.property++" in Angular stories. This causes TS4111 errors. Use argTypes with action property for events instead of managing state.' },
     { pattern: /this\.\w+--/i, message: 'Do not use "this.property--" in Angular stories. This causes TS4111 errors. Use argTypes with action property for events instead of managing state.' },
+    // Catch flowbite-svelte deep path imports that break in production
+    { pattern: /from\s+['"]flowbite-svelte\/[^'"]+['"]/i, message: 'Do not use deep path imports for flowbite-svelte. Use named exports from root: import { Component } from "flowbite-svelte"' },
   ];
 
   lines.forEach((line, index) => {

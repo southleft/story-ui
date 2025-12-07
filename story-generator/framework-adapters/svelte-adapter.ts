@@ -341,12 +341,27 @@ export const Default: Story = {
     processed = processed.replace(/import React from ['"]react['"];?\n?/g, '');
 
     // Fix flowbite-svelte imports - convert deep path imports to named exports
+    // Handles both default and named imports with deep paths:
     // e.g., import Card from 'flowbite-svelte/dist/card/Card.svelte' → import { Card } from 'flowbite-svelte'
-    const flowbiteDeepImportPattern = /import\s+(\w+)\s+from\s+['"]flowbite-svelte\/[^'"]+['"];?/g;
+    // e.g., import { Card } from "flowbite-svelte/dist/card" → import { Card } from 'flowbite-svelte'
     const flowbiteImports: string[] = [];
 
-    processed = processed.replace(flowbiteDeepImportPattern, (match, componentName) => {
+    // Pattern 1: Default imports with deep paths
+    // e.g., import Card from 'flowbite-svelte/dist/card/Card.svelte'
+    const flowbiteDefaultImportPattern = /import\s+(\w+)\s+from\s+['"]flowbite-svelte\/[^'"]+['"];?\n?/g;
+    processed = processed.replace(flowbiteDefaultImportPattern, (match, componentName) => {
       flowbiteImports.push(componentName);
+      return ''; // Remove the line, we'll add a consolidated import later
+    });
+
+    // Pattern 2: Named imports with deep paths
+    // e.g., import { Card } from "flowbite-svelte/dist/card"
+    // e.g., import { Card, Badge } from "flowbite-svelte/dist/components"
+    const flowbiteNamedImportPattern = /import\s*\{\s*([^}]+)\s*\}\s*from\s*['"]flowbite-svelte\/[^'"]+['"];?\n?/g;
+    processed = processed.replace(flowbiteNamedImportPattern, (match, namedImports) => {
+      // Extract individual component names from the named imports
+      const names = namedImports.split(',').map((name: string) => name.trim()).filter((name: string) => name);
+      flowbiteImports.push(...names);
       return ''; // Remove the line, we'll add a consolidated import later
     });
 
