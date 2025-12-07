@@ -241,7 +241,6 @@ export const ProductCard: Story = {
 \`\`\`typescript
 import type { Meta, StoryObj } from '@storybook/angular';
 import { applicationConfig } from '@storybook/angular';
-import { action } from '@storybook/addon-actions';
 import { ButtonComponent } from 'your-library';
 
 const meta: Meta<ButtonComponent> = {
@@ -252,16 +251,18 @@ const meta: Meta<ButtonComponent> = {
       providers: [],
     }),
   ],
+  argTypes: {
+    // Use argTypes with action for event logging instead of addon-actions
+    onClick: { action: 'clicked' },
+  },
 };
 
 export default meta;
 type Story = StoryObj<ButtonComponent>;
 
 export const WithClick: Story = {
-  render: () => ({
-    props: {
-      onClick: action('button-click'),
-    },
+  render: (args) => ({
+    props: args,
     template: \`
       <app-button (click)="onClick($event)" variant="primary">
         Click me

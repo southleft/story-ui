@@ -13,8 +13,10 @@ export function validateStory(storyContent: string): ValidationError[] {
     { pattern: /UNSAFE_style\s*=\s*\{/i, message: 'The `UNSAFE_style` prop is strictly forbidden. Do not use it for any reason.' },
     { pattern: /UNSAFE_className\s*=\s*['"]/i, message: 'The `UNSAFE_className` prop is forbidden.' },
     { pattern: /<Text\s+as\s*=\s*["']h[1-6]["']/i, message: 'Text component does not support heading elements (h1-h6) in the "as" prop. Use Heading component instead.' },
-    // Remove overly strict rules - divs, imgs, and inline styles are fine in moderation
-    // Only check for actual syntax errors or patterns that would break Storybook
+    // Catch imports that don't exist in production environments
+    { pattern: /from\s+['"]@storybook\/addon-actions['"]/i, message: 'Do not import from @storybook/addon-actions. Use argTypes with action property instead: argTypes: { onClick: { action: "clicked" } }' },
+    // Catch Svelte slot property which doesn't work in modern Storybook
+    { pattern: /slot:\s*['"][^'"]+['"]/i, message: 'The slot property in render functions does not work in Svelte Storybook. Use simple args-based stories instead.' },
   ];
 
   lines.forEach((line, index) => {

@@ -40,43 +40,40 @@ Use ONLY the Svelte components from the ${componentSystemName} listed below.
 
 MANDATORY IMPORTS - First lines of every story file:
 1. import type { Meta, StoryObj } from '@storybook/svelte';
-2. import ComponentName from '${config.importPath || 'your-library'}/ComponentName.svelte';
+2. import { ComponentName } from '${config.importPath || 'flowbite-svelte'}';
 
-SVELTE STORY FORMAT:
-- Import .svelte files directly
+SVELTE STORY FORMAT (CSF 3.0):
+- Use named imports from flowbite-svelte (NOT default imports from .svelte files)
 - Props are passed via args object
-- Use render function for complex templates
+- Use render function ONLY for multiple components or complex layouts
 
-STORY STRUCTURE (CSF 3.0):
+STORY STRUCTURE:
 - Meta object with component, title, and parameters
-- Stories use args for simple prop passing
-- Use render for component composition
+- Stories use args for prop passing
+- Keep stories simple - avoid complex render functions when possible
 
 CRITICAL RULES:
-- Import Svelte components (default export from .svelte files)
-- For slots, use render with a wrapper component
-- Events use on: directive in Svelte templates
+- Import using named exports: import { Button, Card } from 'flowbite-svelte';
+- DO NOT use 'slot' property in render functions - it does NOT work
+- DO NOT use 'children' in args
+- For components that need text content, use the component's text/label prop if available
+- For button text, most Flowbite components accept text as a prop or the component handles it
 
-CRITICAL - SVELTE SLOT CONTENT:
-- Svelte components use SLOTS for content, NOT children props
-- Always use render function with 'slot' property for text/content
-- Never use 'children' in args - it will cause runtime errors
-
-Example structure:
+SIMPLE EXAMPLE (PREFERRED):
 \`\`\`typescript
 import type { Meta, StoryObj } from '@storybook/svelte';
-import { Button } from 'your-library';
+import { Button } from 'flowbite-svelte';
 
 const meta: Meta<Button> = {
   title: 'Components/Button',
   component: Button,
   tags: ['autodocs'],
+  parameters: { layout: 'centered' },
   argTypes: {
-    variant: {
+    color: {
       control: 'select',
-      options: ['primary', 'secondary', 'ghost'],
+      options: ['primary', 'blue', 'alternative', 'dark', 'light', 'green', 'red'],
     },
-    onclick: { action: 'clicked' },
   },
 };
 
@@ -85,203 +82,181 @@ type Story = StoryObj<typeof meta>;
 
 export const Primary: Story = {
   args: {
-    variant: 'primary',
+    color: 'primary',
   },
-  render: (args) => ({
+};
+
+export const AllColors: Story = {
+  render: () => ({
     Component: Button,
-    props: args,
-    slot: 'Click me',
+    props: { color: 'blue' },
   }),
 };
 \`\`\`
 
-For stories with slots (using wrapper component):
-\`\`\`svelte
-<!-- ButtonWithIcon.stories.svelte -->
-<script context="module" lang="ts">
-  import type { Meta } from '@storybook/svelte';
-  import Button from 'your-library/Button.svelte';
-  import Icon from 'your-library/Icon.svelte';
+FOR MULTIPLE COMPONENTS (use render with template):
+\`\`\`typescript
+import type { Meta, StoryObj } from '@storybook/svelte';
+import { ButtonGroup, Button } from 'flowbite-svelte';
 
-  export const meta: Meta<Button> = {
-    title: 'Components/Button/WithIcon',
-    component: Button,
-  };
-</script>
+const meta: Meta<ButtonGroup> = {
+  title: 'Components/ButtonGroup',
+  component: ButtonGroup,
+  tags: ['autodocs'],
+  parameters: { layout: 'centered' },
+};
 
-<script lang="ts">
-  import { Story } from '@storybook/svelte';
-</script>
+export default meta;
+type Story = StoryObj<typeof meta>;
 
-<Story name="With Icon">
-  <Button variant="primary">
-    <Icon slot="icon" name="star" />
-    Starred
-  </Button>
-</Story>
+// For simple button groups, just show the component
+export const Default: Story = {
+  args: {},
+};
 \`\`\`
 
 SVELTE TEMPLATE SYNTAX:
 - Props: property={value}
-- Events: on:event={handler}
+- Events: onclick={handler} (Svelte 5 syntax, NOT on:click)
 - Two-way binding: bind:value
 - Conditionals: {#if condition}...{/if}
 - Loops: {#each items as item}...{/each}
-
-SLOTS:
-- Default slot: Content between tags
-- Named slots: <span slot="name">content</span>
-- Slot props: let:prop
 
 ${this.getCommonRules()}`;
   }
 
   generateExamples(config: StoryUIConfig): string {
-    const lib = config.importPath || 'your-library';
+    const lib = config.importPath || 'flowbite-svelte';
 
     return `
-## Example Stories for Svelte
+## Example Stories for Svelte (CSF 3.0 Format)
 
-### TypeScript Stories File
+### Simple Component Story (PREFERRED)
 \`\`\`typescript
 import type { Meta, StoryObj } from '@storybook/svelte';
-import { Button } from 'your-library';
+import { Button } from '${lib}';
 
 const meta: Meta<Button> = {
   title: 'Components/Button',
   component: Button,
   tags: ['autodocs'],
+  parameters: { layout: 'centered' },
   argTypes: {
-    variant: {
+    color: {
       control: 'select',
-      options: ['primary', 'secondary', 'ghost'],
+      options: ['primary', 'blue', 'alternative', 'dark', 'light', 'green', 'red'],
     },
     size: {
       control: 'select',
-      options: ['small', 'medium', 'large'],
+      options: ['xs', 'sm', 'md', 'lg', 'xl'],
     },
-    onclick: { action: 'clicked' },
   },
 };
 
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-// IMPORTANT: Use render with slot property for content
-export const Default: Story = {
+export const Primary: Story = {
   args: {
-    variant: 'primary',
-    size: 'medium',
+    color: 'primary',
+    size: 'md',
   },
-  render: (args) => ({
-    Component: Button,
-    props: args,
-    slot: 'Button',
-  }),
 };
 
 export const Disabled: Story = {
   args: {
-    variant: 'primary',
+    color: 'primary',
     disabled: true,
   },
-  render: (args) => ({
+};
+
+export const AllSizes: Story = {
+  render: () => ({
     Component: Button,
-    props: args,
-    slot: 'Disabled',
+    props: { color: 'blue', size: 'lg' },
   }),
 };
 \`\`\`
 
-### Svelte Stories File (for complex templates)
-\`\`\`svelte
-<!-- Card.stories.svelte -->
-<script context="module" lang="ts">
-  import type { Meta } from '@storybook/svelte';
-  import Card from '${lib}/Card.svelte';
-  import Button from 'your-library/Button.svelte';
-  import Text from '${lib}/Text.svelte';
-
-  export const meta: Meta<Card> = {
-    title: 'Components/Card',
-    component: Card,
-  };
-</script>
-
-<script lang="ts">
-  import { Story, Template } from '@storybook/svelte';
-</script>
-
-<Story name="Product Card">
-  <Card style="width: 300px">
-    <img
-      slot="media"
-      src="https://picsum.photos/300/200"
-      alt="Product"
-    />
-    <Text slot="title" variant="heading">Product Name</Text>
-    <Text>$99.00</Text>
-    <Button slot="actions" variant="primary">Add to Cart</Button>
-  </Card>
-</Story>
-
-<Story name="Simple Card">
-  <Card>
-    <Text>Simple card content</Text>
-  </Card>
-</Story>
-\`\`\`
-
-### With Reactive State
-\`\`\`svelte
-<!-- Input.stories.svelte -->
-<script context="module" lang="ts">
-  import type { Meta } from '@storybook/svelte';
-  import Input from '${lib}/Input.svelte';
-
-  export const meta: Meta<Input> = {
-    title: 'Components/Input',
-    component: Input,
-  };
-</script>
-
-<script lang="ts">
-  import { Story } from '@storybook/svelte';
-  let value = '';
-</script>
-
-<Story name="Controlled">
-  <div>
-    <Input bind:value placeholder="Type here..." />
-    <p>Value: {value}</p>
-  </div>
-</Story>
-\`\`\`
-
-### With Event Handling
+### Card Component Story
 \`\`\`typescript
 import type { Meta, StoryObj } from '@storybook/svelte';
-import { action } from '@storybook/addon-actions';
-import { Button } from 'your-library';
+import { Card } from '${lib}';
 
-const meta: Meta<Button> = {
-  title: 'Components/Button',
-  component: Button,
+const meta: Meta<Card> = {
+  title: 'Components/Card',
+  component: Card,
+  tags: ['autodocs'],
+  parameters: { layout: 'centered' },
 };
 
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const WithClickHandler: Story = {
+export const Default: Story = {
   args: {
-    variant: 'primary',
-    onclick: action('button-clicked'),
+    class: 'max-w-sm',
   },
-  render: (args) => ({
-    Component: Button,
-    props: args,
-    slot: 'Click me',
-  }),
+};
+
+export const WithImage: Story = {
+  args: {
+    img: 'https://picsum.photos/300/200',
+    class: 'max-w-sm',
+  },
+};
+
+export const Horizontal: Story = {
+  args: {
+    horizontal: true,
+    class: 'max-w-xl',
+  },
+};
+\`\`\`
+
+### Alert Component Story
+\`\`\`typescript
+import type { Meta, StoryObj } from '@storybook/svelte';
+import { Alert } from '${lib}';
+
+const meta: Meta<Alert> = {
+  title: 'Components/Alert',
+  component: Alert,
+  tags: ['autodocs'],
+  parameters: { layout: 'centered' },
+  argTypes: {
+    color: {
+      control: 'select',
+      options: ['primary', 'blue', 'red', 'green', 'yellow', 'dark'],
+    },
+  },
+};
+
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+export const Info: Story = {
+  args: {
+    color: 'blue',
+  },
+};
+
+export const Success: Story = {
+  args: {
+    color: 'green',
+  },
+};
+
+export const Warning: Story = {
+  args: {
+    color: 'yellow',
+  },
+};
+
+export const Error: Story = {
+  args: {
+    color: 'red',
+  },
 };
 \`\`\`
 `;
