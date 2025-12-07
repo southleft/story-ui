@@ -738,17 +738,63 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       aiTitle = cleanPromptForTitle(prompt);
     }
 
-    // Escape the title for TypeScript
-    const prettyPrompt = escapeTitleForTS(aiTitle);
+    // Generate unique ID and filename FIRST so we can include hash in title
+    // This is done early to ensure unique titles prevent Storybook duplicate ID errors
+    const fileExtension = frameworkAdapter?.defaultExtension || '.stories.tsx';
+    const timestamp = Date.now();
 
-    // Fix title with storyPrefix - handle both single-line and multi-line formats
+    // Always generate a hash - either from existing IDs or new
+    let hash: string;
+    let finalFileName: string;
+    let storyId: string;
+
+    if (isActualUpdate && (fileName || providedStoryId)) {
+      // For updates, preserve the existing fileName and ID
+      if (providedStoryId) {
+        storyId = providedStoryId;
+        const hashMatch = providedStoryId.match(/^story-([a-f0-9]{8})$/);
+        hash = hashMatch ? hashMatch[1] : crypto.createHash('sha1').update(prompt + timestamp).digest('hex').slice(0, 8);
+        finalFileName = fileName || `${providedStoryId}.stories.tsx`;
+        logger.log('📝 Using provided storyId:', finalFileName);
+      } else if (fileName) {
+        const hashMatch = fileName.match(/-([a-f0-9]{8})(?:\.stories\.tsx)?$/);
+        hash = hashMatch ? hashMatch[1] : crypto.createHash('sha1').update(prompt + timestamp).digest('hex').slice(0, 8);
+        storyId = `story-${hash}`;
+        finalFileName = fileName;
+      } else {
+        // Fallback - should not reach here given the if condition, but satisfies TypeScript
+        hash = crypto.createHash('sha1').update(prompt + timestamp).digest('hex').slice(0, 8);
+        storyId = `story-${hash}`;
+        finalFileName = fileNameFromTitle(aiTitle, hash, fileExtension);
+      }
+
+      if (!finalFileName.endsWith('.stories.tsx')) {
+        finalFileName = finalFileName + '.stories.tsx';
+      }
+      logger.log('📌 Preserving story identity for update:', { storyId, fileName: finalFileName });
+    } else {
+      // For new stories, ALWAYS generate new IDs with timestamp to ensure uniqueness
+      hash = crypto.createHash('sha1').update(prompt + timestamp).digest('hex').slice(0, 8);
+      finalFileName = fileName || fileNameFromTitle(aiTitle, hash, fileExtension);
+      storyId = `story-${hash}`;
+      logger.log('🆕 Creating new story:', { storyId, fileName: finalFileName });
+    }
+
+    // Escape the title for TypeScript and append hash for uniqueness
+    const prettyPrompt = escapeTitleForTS(aiTitle);
+    // Append hash to title to prevent Storybook duplicate ID errors
+    const uniqueTitle = `${prettyPrompt} (${hash})`;
+
+    // Fix title with storyPrefix and hash - handle both single-line and multi-line formats
+    // Note: (?::\s*\w+(?:<[^>]+>)?)? handles TypeScript type annotations including generics
+    // e.g., "const meta: Meta = {" or "const meta: Meta<typeof Button> = {"
     fixedFileContents = fixedFileContents.replace(
-      /(const\s+meta\s*=\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
+      /(const\s+meta\s*(?::\s*\w+(?:<[^>]+>)?)?\s*=\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
       (match, p1, oldTitle, p3) => {
         // Check if the title already has the prefix to avoid double prefixing
-        const titleToUse = prettyPrompt.startsWith(config.storyPrefix) 
-          ? prettyPrompt 
-          : config.storyPrefix + prettyPrompt;
+        const titleToUse = uniqueTitle.startsWith(config.storyPrefix)
+          ? uniqueTitle
+          : config.storyPrefix + uniqueTitle;
         return p1 + titleToUse + p3;
       }
     );
@@ -759,9 +805,9 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         /(export\s+default\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
         (match, p1, oldTitle, p3) => {
           // Check if the title already has the prefix to avoid double prefixing
-          const titleToUse = prettyPrompt.startsWith(config.storyPrefix)
-            ? prettyPrompt
-            : config.storyPrefix + prettyPrompt;
+          const titleToUse = uniqueTitle.startsWith(config.storyPrefix)
+            ? uniqueTitle
+            : config.storyPrefix + uniqueTitle;
           return p1 + titleToUse + p3;
         }
       );
@@ -800,62 +846,6 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       }
     } else {
       logger.log('✅ Final validation passed after post-processing');
-    }
-
-    // Check if this is an update to an existing story
-    // ONLY consider it an update if we're in the same conversation context
-    let existingStory = null;
-    if (isActualUpdate && fileName) {
-      // When updating within a conversation, look for the story by fileName
-      existingStory = storyTracker.findByTitle(aiTitle);
-      if (existingStory && existingStory.fileName !== fileName) {
-        // If found story has different fileName, it's not the same story
-        existingStory = null;
-      }
-    }
-    // Remove the automatic "find by prompt" logic that was preventing duplicates
-
-    // Generate unique ID and filename
-    let hash, finalFileName, storyId;
-
-    if (isActualUpdate && (fileName || providedStoryId)) {
-      // For updates, preserve the existing fileName and ID
-      // Ensure the filename has the proper .stories.tsx extension
-      // FIX: Handle case where fileName is undefined but providedStoryId exists
-      if (fileName) {
-        finalFileName = fileName;
-      } else if (providedStoryId) {
-        // Generate filename from storyId when fileName not provided
-        finalFileName = `${providedStoryId}.stories.tsx`;
-        logger.log('📝 Generated filename from storyId:', finalFileName);
-      }
-      if (finalFileName && !finalFileName.endsWith('.stories.tsx')) {
-        finalFileName = finalFileName + '.stories.tsx';
-      }
-      
-      // Use provided storyId or extract from fileName
-      if (providedStoryId) {
-        storyId = providedStoryId;
-        // Extract hash from storyId
-        const hashMatch = providedStoryId.match(/^story-([a-f0-9]{8})$/);
-        hash = hashMatch ? hashMatch[1] : crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 8);
-      } else {
-        // Extract hash from existing fileName if possible
-        const hashMatch = fileName.match(/-([a-f0-9]{8})(?:\.stories\.tsx)?$/);
-        hash = hashMatch ? hashMatch[1] : crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 8);
-        storyId = `story-${hash}`;
-      }
-      
-      logger.log('📌 Preserving story identity for update:', { storyId, fileName: finalFileName });
-    } else {
-      // For new stories, ALWAYS generate new IDs with timestamp to ensure uniqueness
-      const timestamp = Date.now();
-      hash = crypto.createHash('sha1').update(prompt + timestamp).digest('hex').slice(0, 8);
-      // Use the framework adapter's defaultExtension for the correct file extension
-      const fileExtension = frameworkAdapter?.defaultExtension || '.stories.tsx';
-      finalFileName = fileName || fileNameFromTitle(aiTitle, hash, fileExtension);
-      storyId = `story-${hash}`;
-      logger.log('🆕 Creating new story:', { storyId, fileName: finalFileName, extension: fileExtension });
     }
 
     // Write story to file system

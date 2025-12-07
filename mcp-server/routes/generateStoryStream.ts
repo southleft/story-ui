@@ -864,32 +864,7 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
       aiTitle = cleanPromptForTitle(prompt);
     }
 
-    const prettyPrompt = escapeTitleForTS(aiTitle);
-
-    // Fix title with storyPrefix
-    fixedFileContents = fixedFileContents.replace(
-      /(const\s+meta\s*=\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
-      (match, p1, oldTitle, p3) => {
-        const titleToUse = prettyPrompt.startsWith(config.storyPrefix)
-          ? prettyPrompt
-          : config.storyPrefix + prettyPrompt;
-        return p1 + titleToUse + p3;
-      }
-    );
-
-    if (!fixedFileContents.includes(config.storyPrefix)) {
-      fixedFileContents = fixedFileContents.replace(
-        /(export\s+default\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
-        (match, p1, oldTitle, p3) => {
-          const titleToUse = prettyPrompt.startsWith(config.storyPrefix)
-            ? prettyPrompt
-            : config.storyPrefix + prettyPrompt;
-          return p1 + titleToUse + p3;
-        }
-      );
-    }
-
-    // Generate IDs
+    // Generate IDs FIRST so we can include hash in title for uniqueness
     let hash: string;
     let finalFileName: string;
     let storyId: string;
@@ -911,6 +886,36 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
       hash = crypto.createHash('sha1').update(prompt + timestamp).digest('hex').slice(0, 8);
       finalFileName = fileName || fileNameFromTitle(aiTitle, hash);
       storyId = `story-${hash}`;
+    }
+
+    // Now create title with hash suffix to ensure uniqueness
+    const prettyPrompt = escapeTitleForTS(aiTitle);
+    // Append hash to title to prevent Storybook duplicate ID errors
+    const uniqueTitle = `${prettyPrompt} (${hash})`;
+
+    // Fix title with storyPrefix and hash
+    // Note: (?::\s*\w+(?:<[^>]+>)?)? handles TypeScript type annotations including generics
+    // e.g., "const meta: Meta = {" or "const meta: Meta<typeof Button> = {"
+    fixedFileContents = fixedFileContents.replace(
+      /(const\s+meta\s*(?::\s*\w+(?:<[^>]+>)?)?\s*=\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
+      (match, p1, oldTitle, p3) => {
+        const titleToUse = uniqueTitle.startsWith(config.storyPrefix)
+          ? uniqueTitle
+          : config.storyPrefix + uniqueTitle;
+        return p1 + titleToUse + p3;
+      }
+    );
+
+    if (!fixedFileContents.includes(config.storyPrefix)) {
+      fixedFileContents = fixedFileContents.replace(
+        /(export\s+default\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
+        (match, p1, oldTitle, p3) => {
+          const titleToUse = uniqueTitle.startsWith(config.storyPrefix)
+            ? uniqueTitle
+            : config.storyPrefix + uniqueTitle;
+          return p1 + titleToUse + p3;
+        }
+      );
     }
 
     // Ensure file extension is correct

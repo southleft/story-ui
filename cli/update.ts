@@ -38,6 +38,11 @@ const MANAGED_FILES = [
     description: 'Main chat panel component'
   },
   {
+    source: 'templates/StoryUI/StoryUIPanel.css',
+    target: 'src/stories/StoryUI/StoryUIPanel.css',
+    description: 'Panel styles'
+  },
+  {
     source: 'templates/StoryUI/StoryUIPanel.mdx',
     target: 'src/stories/StoryUI/StoryUIPanel.mdx',
     description: 'Cross-framework MDX wrapper'

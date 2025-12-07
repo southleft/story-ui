@@ -2,7 +2,7 @@
 
 > **Last Updated**: December 4, 2025
 > **Current Version**: 3.6.2
-> **Production URL**: https://story-ui-demo.up.railway.app
+> **Production URL**: https://app-production-16de.up.railway.app (Vue/Vuetify example)
 > **Repository**: https://github.com/southleft/story-ui
 
 This document provides comprehensive context for AI assistants working on the Story UI codebase. It captures what the project is, how it works, architecture decisions, and development workflows to minimize token consumption during codebase analysis.
@@ -462,7 +462,7 @@ npm run storybook
 
 - **Repository**: https://github.com/southleft/story-ui
 - **NPM Package**: @tpitre/story-ui
-- **Production Demo**: https://story-ui-demo.up.railway.app
+- **Production Demo**: https://app-production-16de.up.railway.app
 - **Deployment Repo**: https://github.com/tpitre/story-ui-mantine-live
 
 ---
