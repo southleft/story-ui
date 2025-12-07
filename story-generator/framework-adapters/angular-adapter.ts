@@ -145,6 +145,14 @@ CONTENT PROJECTION (ng-content):
 - Default slot: Content between tags
 - Named slots: Use ngProjectAs or select attribute
 
+MATERIAL ICONS (CRITICAL - If using @angular/material):
+- ALWAYS use full icon names, NEVER abbreviate: "favorite" (not "fav"), "home" (not "ho"), "delete" (not "de"), "settings" (not "se")
+- Always import MatIconModule in moduleMetadata when using <mat-icon>
+- Correct syntax: <mat-icon>favorite</mat-icon>, <mat-icon>home</mat-icon>
+- Common icons: home, favorite, delete, settings, search, menu, close, add, remove, edit, save, cancel, check, arrow_back, arrow_forward
+- For filled variants: favorite, star, check_circle
+- For outlined variants: favorite_border, star_border, check_circle_outline
+
 ${this.getCommonRules()}`;
   }
 

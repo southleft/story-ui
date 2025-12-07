@@ -17,6 +17,8 @@ export function validateStory(storyContent: string): ValidationError[] {
     { pattern: /from\s+['"]@storybook\/addon-actions['"]/i, message: 'Do not import from @storybook/addon-actions. Use argTypes with action property instead: argTypes: { onClick: { action: "clicked" } }' },
     // Catch Svelte slot property which doesn't work in modern Storybook
     { pattern: /slot:\s*['"][^'"]+['"]/i, message: 'The slot property in render functions does not work in Svelte Storybook. Use simple args-based stories instead.' },
+    // Catch abbreviated Material icon names that will render as text instead of icons
+    { pattern: /<mat-icon>\s*(fav|ho|de|se|sta|che|add|rem|edi|sav|can|men|clo|sea)\s*<\/mat-icon>/i, message: 'Material icon name appears to be abbreviated. Use full icon names: "favorite" (not "fav"), "home" (not "ho"), "delete" (not "de"), "settings" (not "se"), etc.' },
   ];
 
   lines.forEach((line, index) => {

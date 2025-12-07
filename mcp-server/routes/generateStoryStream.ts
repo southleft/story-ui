@@ -20,7 +20,8 @@ import {
 } from '../../story-generator/promptGenerator.js';
 import { FrameworkType, StoryGenerationOptions, getAdapter } from '../../story-generator/framework-adapters/index.js';
 import { loadUserConfig, validateConfig } from '../../story-generator/configLoader.js';
-import { extractAndValidateCodeBlock, createFallbackStory } from '../../story-generator/validateStory.js';
+import { extractAndValidateCodeBlock } from '../../story-generator/validateStory.js';
+import { createFrameworkAwareFallbackStory } from './storyHelpers.js';
 import { isBlacklistedComponent, isBlacklistedIcon, getBlacklistErrorMessage, ICON_CORRECTIONS } from '../../story-generator/componentBlacklist.js';
 import { StoryTracker, StoryMapping } from '../../story-generator/storyTracker.js';
 import { getDocumentation } from '../../story-generator/documentation-sources.js';
@@ -167,33 +168,27 @@ function buildComponentSuggestion(components: Array<{ name: string }> | null): s
 }
 
 // Analyze prompt to determine intent
+// NOTE: Framework is now REQUIRED - caller must detect it first
 async function analyzeIntent(
   prompt: string,
   config: any,
   conversation: any[] | undefined,
   previousCode: string | undefined,
   options: {
-    framework?: FrameworkType;
-    autoDetectFramework?: boolean;
+    framework: FrameworkType;  // REQUIRED - from early detection
+    autoDetectFramework?: boolean;  // Deprecated - kept for compatibility but ignored
     visionMode?: VisionPromptType;
     designSystem?: string;
     hasImages?: boolean;
   }
 ): Promise<IntentPreview> {
-  // Determine framework - priority: config > explicit option > auto-detect > default
-  let framework: string = 'react';
-  if (config.componentFramework) {
-    // First priority: use config.componentFramework if set
-    framework = config.componentFramework;
-  } else if (options.framework) {
-    framework = options.framework;
-  } else if (options.autoDetectFramework) {
-    try {
-      framework = await detectProjectFramework(process.cwd());
-    } catch {
-      framework = 'react';
-    }
+  // SIMPLIFIED: Trust the passed framework from early detection
+  // The caller (main handler) is responsible for detecting the framework once
+  // We no longer re-detect here - this eliminates duplicate detection and inconsistency
+  if (!options.framework) {
+    throw new Error('Framework must be passed to analyzeIntent - early detection should have determined it');
   }
+  const framework: string = options.framework;
 
   // Analyze prompt for likely components
   const componentKeywords: Record<string, string[]> = {
@@ -525,6 +520,57 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
       return;
     }
 
+    // EARLY FRAMEWORK DETECTION - detect once and use consistently throughout
+    // Priority: request > config.componentFramework > config.framework > auto-detect
+    // CRITICAL: Fail explicitly if no framework can be determined rather than silently defaulting to React
+    let detectedFramework: FrameworkType;
+    if (framework) {
+      detectedFramework = framework as FrameworkType;
+      logger.log(`🎯 Using explicit framework from request: ${detectedFramework}`);
+    } else if (config.componentFramework) {
+      detectedFramework = config.componentFramework as FrameworkType;
+      logger.log(`🎯 Using framework from config.componentFramework: ${detectedFramework}`);
+    } else if ((config as any).framework) {
+      detectedFramework = (config as any).framework as FrameworkType;
+      logger.log(`🎯 Using framework from config.framework: ${detectedFramework}`);
+    } else if (autoDetectFramework) {
+      try {
+        detectedFramework = await detectProjectFramework(process.cwd());
+        logger.log(`🎯 Auto-detected framework: ${detectedFramework}`);
+      } catch (error) {
+        // FAIL EXPLICITLY rather than silently defaulting to React
+        logger.error('Failed to auto-detect framework and no framework configured', { error });
+        stream.sendError({
+          code: 'FRAMEWORK_DETECTION_FAILED',
+          message: 'Could not auto-detect framework',
+          details: 'Please set componentFramework in story-ui.config.js or pass framework in the request.',
+          recoverable: false,
+          suggestion: 'Add componentFramework: "react" (or vue, angular, svelte, web-components) to your story-ui.config.js'
+        });
+        res.end();
+        return;
+      }
+    } else {
+      // Default to React only with a warning - this is the ONLY place we default
+      detectedFramework = 'react';
+      logger.warn('⚠️ No framework configured, defaulting to React. Consider setting componentFramework in story-ui.config.js');
+    }
+
+    // Get the framework adapter early for consistent use
+    const frameworkAdapter = getAdapter(detectedFramework);
+    if (!frameworkAdapter) {
+      logger.error(`No adapter found for framework: ${detectedFramework}`);
+      stream.sendError({
+        code: 'ADAPTER_NOT_FOUND',
+        message: `No adapter found for framework: ${detectedFramework}`,
+        recoverable: false,
+        suggestion: 'Check that the framework name is correct: react, vue, angular, svelte, or web-components'
+      });
+      res.end();
+      return;
+    }
+    logger.log(`🔧 Using framework adapter: ${frameworkAdapter.name}`);
+
     // Process images if provided
     let processedImages: ImageContent[] = [];
     if (images && Array.isArray(images) && images.length > 0) {
@@ -584,9 +630,10 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
     }
 
     // INTENT PREVIEW: Analyze and show what we're going to do
+    // Pass the already-detected framework - no need for the function to re-detect
     const intent = await analyzeIntent(prompt, config, conversation, previousCode, {
-      framework: framework as FrameworkType | undefined,
-      autoDetectFramework: autoDetectFramework === true,
+      framework: detectedFramework,  // Use early-detected framework, not request's framework
+      autoDetectFramework: false,     // Already detected, don't re-detect
       visionMode: visionMode as VisionPromptType | undefined,
       designSystem,
       hasImages: processedImages.length > 0
@@ -601,9 +648,10 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
       hasContext: intent.promptAnalysis.hasConversationContext
     });
 
+    // Pass detected framework to prompt builder - no re-detection needed
     const frameworkOptions = {
-      framework: framework as FrameworkType | undefined,
-      autoDetectFramework: autoDetectFramework === true,
+      framework: detectedFramework,  // Use early-detected framework
+      autoDetectFramework: false,    // Already detected, don't re-detect
       visionMode: visionMode as VisionPromptType | undefined,
       designSystem: designSystem as string | undefined,
       considerations: considerations as string | undefined,
@@ -621,20 +669,15 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
     currentStep++;
     stream.sendProgress(currentStep, totalSteps, 'llm_thinking', 'AI is generating your story...');
 
-    // Determine framework for self-healing options
-    const detectedFrameworkForHealing = (config.componentFramework as FrameworkType) ||
-      (framework as FrameworkType) ||
-      (intent.framework as FrameworkType) ||
-      'react';
-
     // Get available component names for self-healing prompts
     const availableComponentNames = components.map(c => c.name);
 
     // Self-healing options (design-system agnostic)
+    // Uses detectedFramework from early detection - no need to re-detect
     const selfHealingOptions: SelfHealingOptions = {
       maxAttempts: 3,
       availableComponents: availableComponentNames,
-      framework: detectedFrameworkForHealing,
+      framework: detectedFramework,
       importPath: config.importPath,
     };
 
@@ -792,7 +835,8 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
     let hasValidationWarnings = false;
 
     if (!validationResult.isValid && !validationResult.fixedCode) {
-      fileContents = createFallbackStory(prompt, config);
+      // Use framework-aware fallback story
+      fileContents = createFrameworkAwareFallbackStory(prompt, config, detectedFramework);
       hasValidationWarnings = true;
 
       stream.sendValidation({
@@ -827,25 +871,14 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
     currentStep++;
     stream.sendProgress(currentStep, totalSteps, 'post_processing', 'Applying finishing touches...');
 
-    // Detect framework from config or auto-detection
-    const detectedFramework = (config.componentFramework as FrameworkType) ||
-      (framework as FrameworkType) ||
-      (intent.framework as FrameworkType) ||
-      'react';
-
-    // Only add React import for React framework
-    if (detectedFramework === 'react' && !fileContents.includes("import React from 'react';")) {
-      fileContents = "import React from 'react';\n" + fileContents;
-    }
-
+    // Framework detection already done at start - use detectedFramework and frameworkAdapter
+    // The adapter's postProcess() method handles React import injection (or removal for non-React)
     let fixedFileContents = postProcessStory(fileContents, config.importPath);
 
-    // Apply framework-specific post-processing
-    const frameworkAdapter = getAdapter(detectedFramework);
-    if (frameworkAdapter) {
-      logger.log(`🔧 Applying ${detectedFramework} framework post-processing`);
-      fixedFileContents = frameworkAdapter.postProcess(fixedFileContents);
-    }
+    // Apply framework-specific post-processing via adapter
+    const fileExtension = frameworkAdapter?.defaultExtension || '.stories.tsx';
+    logger.log(`🔧 Applying ${detectedFramework} framework post-processing`);
+    fixedFileContents = frameworkAdapter.postProcess(fixedFileContents);
 
     // Generate title
     let aiTitle;
@@ -875,23 +908,25 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
         const hashMatch = providedStoryId.match(/^story-([a-f0-9]{8})$/);
         hash = hashMatch ? hashMatch[1] : crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 8);
       } else {
-        const hashMatch = fileName?.match(/-([a-f0-9]{8})(?:\.stories\.tsx)?$/);
+        // Match hash from filename, supporting both .tsx and .ts extensions
+        const hashMatch = fileName?.match(/-([a-f0-9]{8})(?:\.stories\.tsx?)?$/);
         hash = hashMatch ? hashMatch[1] : crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 8);
         storyId = `story-${hash}`;
       }
       // Ensure finalFileName is always set
-      finalFileName = fileName || fileNameFromTitle(aiTitle, hash);
+      finalFileName = fileName || fileNameFromTitle(aiTitle, hash, fileExtension);
     } else {
       const timestamp = Date.now();
       hash = crypto.createHash('sha1').update(prompt + timestamp).digest('hex').slice(0, 8);
-      finalFileName = fileName || fileNameFromTitle(aiTitle, hash);
+      finalFileName = fileName || fileNameFromTitle(aiTitle, hash, fileExtension);
       storyId = `story-${hash}`;
     }
 
-    // Now create title with hash suffix to ensure uniqueness
+    // Create title for the story
     const prettyPrompt = escapeTitleForTS(aiTitle);
-    // Append hash to title to prevent Storybook duplicate ID errors
-    const uniqueTitle = `${prettyPrompt} (${hash})`;
+    // Use the title without hash suffix for cleaner sidebar display
+    // The filename already contains the hash for uniqueness
+    const uniqueTitle = prettyPrompt;
 
     // Fix title with storyPrefix and hash
     // Note: (?::\s*\w+(?:<[^>]+>)?)? handles TypeScript type annotations including generics
@@ -918,9 +953,9 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
       );
     }
 
-    // Ensure file extension is correct
-    if (finalFileName && !finalFileName.endsWith('.stories.tsx')) {
-      finalFileName = finalFileName + '.stories.tsx';
+    // Ensure file extension is correct (use framework-specific extension)
+    if (finalFileName && !finalFileName.endsWith(fileExtension)) {
+      finalFileName = finalFileName + fileExtension;
     }
 
     // Step 8: Save story
@@ -1009,6 +1044,7 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
 
 // Helper functions (copied from generateStory.ts for consistency)
 
+// NOTE: Framework is now REQUIRED - caller must pass the detected framework
 async function buildClaudePromptWithContext(
   userPrompt: string,
   config: any,
@@ -1016,8 +1052,8 @@ async function buildClaudePromptWithContext(
   previousCode?: string,
   components?: any[],
   options?: {
-    framework?: FrameworkType;
-    autoDetectFramework?: boolean;
+    framework: FrameworkType;  // REQUIRED - from early detection
+    autoDetectFramework?: boolean;  // Deprecated - kept for compatibility but ignored
     visionMode?: VisionPromptType;
     designSystem?: string;
     considerations?: string;
@@ -1026,40 +1062,23 @@ async function buildClaudePromptWithContext(
   const discovery = new EnhancedComponentDiscovery(config);
   const discoveredComponents = components || await discovery.discoverAll();
 
-  let useFrameworkAware = false;
-  let frameworkOptions: StoryGenerationOptions | undefined;
-
-  // Priority: config.componentFramework > explicit option > auto-detect
-  if (config.componentFramework) {
-    // First priority: use config.componentFramework if set
-    useFrameworkAware = true;
-    frameworkOptions = { framework: config.componentFramework as FrameworkType };
-  } else if (options?.framework) {
-    useFrameworkAware = true;
-    frameworkOptions = { framework: options.framework };
-  } else if (options?.autoDetectFramework) {
-    try {
-      const detectedFramework = await detectProjectFramework(process.cwd());
-      useFrameworkAware = true;
-      frameworkOptions = { framework: detectedFramework };
-    } catch {
-      // Default to React
-    }
+  // SIMPLIFIED: Trust the passed framework from early detection
+  // No more duplicate detection logic here
+  if (!options?.framework) {
+    throw new Error('Framework must be passed to buildClaudePromptWithContext - early detection should have determined it');
   }
 
-  let prompt: string;
-  if (useFrameworkAware && frameworkOptions) {
-    prompt = await buildFrameworkAwarePrompt(userPrompt, config, discoveredComponents, frameworkOptions);
-  } else {
-    prompt = await buildFlexiblePrompt(userPrompt, config, discoveredComponents);
-  }
+  const frameworkOptions: StoryGenerationOptions = { framework: options.framework };
+
+  // Always use framework-aware prompt since we now always have a framework
+  let prompt = await buildFrameworkAwarePrompt(userPrompt, config, discoveredComponents, frameworkOptions);
 
   if (options?.visionMode) {
     const visionPrompts = buildVisionAwarePrompt({
       promptType: options.visionMode,
       userDescription: userPrompt,
       availableComponents: discoveredComponents.map((c: any) => c.name),
-      framework: frameworkOptions?.framework || 'react',
+      framework: options.framework,  // Use the required framework, no fallback
       designSystem: options.designSystem,
     });
     prompt = `${visionPrompts.systemPrompt}\n\n---\n\n${prompt}\n\n---\n\n${visionPrompts.userPrompt}`;
@@ -1184,7 +1203,7 @@ function escapeTitleForTS(title: string): string {
     .replace(/\t/g, '\\t');
 }
 
-function fileNameFromTitle(title: string, hash: string): string {
+function fileNameFromTitle(title: string, hash: string, extension: string = '.stories.tsx'): string {
   if (!title || typeof title !== 'string') {
     title = 'untitled';
   }
@@ -1197,7 +1216,7 @@ function fileNameFromTitle(title: string, hash: string): string {
     .replace(/^-+|-+$/g, '')
     .replace(/"|'/g, '')
     .slice(0, 60);
-  return `${base}-${hash}.stories.tsx`;
+  return `${base}-${hash}${extension}`;
 }
 
 function extractImportsFromCode(code: string, importPath: string): string[] {

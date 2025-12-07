@@ -162,8 +162,11 @@ export function extractImportsFromCode(code: string, importPath: string): string
 
 /**
  * Generate a filename from a story title and hash.
+ * @param title - The story title
+ * @param hash - The unique hash for the story
+ * @param extension - The file extension (e.g., '.stories.tsx' or '.stories.ts')
  */
-export function fileNameFromTitle(title: string, hash: string): string {
+export function fileNameFromTitle(title: string, hash: string, extension: string = '.stories.tsx'): string {
   if (!title || typeof title !== 'string') {
     title = 'untitled';
   }
@@ -178,7 +181,7 @@ export function fileNameFromTitle(title: string, hash: string): string {
     .replace(/"|'/g, '')
     .slice(0, 60);
 
-  return `${base}-${hash}.stories.tsx`;
+  return `${base}-${hash}${extension}`;
 }
 
 /**
@@ -209,4 +212,168 @@ export function findSimilarIcon(iconName: string, allowedIcons: Set<string>): st
   }
 
   return null;
+}
+
+/**
+ * Creates a framework-aware fallback story when generation fails.
+ * Uses the adapter to generate framework-appropriate code.
+ */
+export function createFrameworkAwareFallbackStory(
+  prompt: string,
+  config: any,
+  framework: string
+): string {
+  const title = prompt.length > 50 ? prompt.substring(0, 50) + '...' : prompt;
+  const escapedTitle = title.replace(/"/g, '\\"').replace(/'/g, "\\'");
+  const storyPrefix = config.storyPrefix || 'Generated/';
+
+  // Framework-specific fallback templates
+  switch (framework) {
+    case 'vue':
+      return `import type { Meta, StoryObj } from '@storybook/vue3';
+
+// Fallback story generated due to AI generation error
+const meta: Meta = {
+  title: '${storyPrefix}${escapedTitle}',
+  parameters: {
+    docs: {
+      description: {
+        story: 'This is a fallback story created when the AI generation failed due to syntax errors.'
+      }
+    }
+  }
+};
+
+export default meta;
+type Story = StoryObj;
+
+export const Default: Story = {
+  render: () => ({
+    template: \`
+      <div style="padding: 2rem; text-align: center; border: 2px dashed #ccc; border-radius: 8px;">
+        <h2>Story Generation Error</h2>
+        <p>The AI-generated story contained syntax errors and could not be created.</p>
+        <p><strong>Original prompt:</strong> ${escapedTitle}</p>
+        <p>Please try rephrasing your request.</p>
+      </div>
+    \`
+  })
+};`;
+
+    case 'angular':
+      return `import type { Meta, StoryObj } from '@storybook/angular';
+
+// Fallback story generated due to AI generation error
+const meta: Meta = {
+  title: '${storyPrefix}${escapedTitle}',
+  parameters: {
+    docs: {
+      description: {
+        story: 'This is a fallback story created when the AI generation failed due to syntax errors.'
+      }
+    }
+  }
+};
+
+export default meta;
+type Story = StoryObj;
+
+export const Default: Story = {
+  render: () => ({
+    template: \`
+      <div style="padding: 2rem; text-align: center; border: 2px dashed #ccc; border-radius: 8px;">
+        <h2>Story Generation Error</h2>
+        <p>The AI-generated story contained syntax errors and could not be created.</p>
+        <p><strong>Original prompt:</strong> ${escapedTitle}</p>
+        <p>Please try rephrasing your request.</p>
+      </div>
+    \`
+  })
+};`;
+
+    case 'svelte':
+      return `import type { Meta, StoryObj } from '@storybook/svelte';
+
+// Fallback story generated due to AI generation error
+const meta: Meta = {
+  title: '${storyPrefix}${escapedTitle}',
+  parameters: {
+    docs: {
+      description: {
+        story: 'This is a fallback story created when the AI generation failed due to syntax errors.'
+      }
+    }
+  }
+};
+
+export default meta;
+type Story = StoryObj;
+
+export const Default: Story = {
+  render: () => ({
+    Component: null,
+    props: {}
+  })
+};`;
+
+    case 'web-components':
+      return `import { html } from 'lit';
+import type { Meta, StoryObj } from '@storybook/web-components';
+
+// Fallback story generated due to AI generation error
+const meta: Meta = {
+  title: '${storyPrefix}${escapedTitle}',
+  parameters: {
+    docs: {
+      description: {
+        story: 'This is a fallback story created when the AI generation failed due to syntax errors.'
+      }
+    }
+  }
+};
+
+export default meta;
+type Story = StoryObj;
+
+export const Default: Story = {
+  render: () => html\`
+    <div style="padding: 2rem; text-align: center; border: 2px dashed #ccc; border-radius: 8px;">
+      <h2>Story Generation Error</h2>
+      <p>The AI-generated story contained syntax errors and could not be created.</p>
+      <p><strong>Original prompt:</strong> ${escapedTitle}</p>
+      <p>Please try rephrasing your request.</p>
+    </div>
+  \`
+};`;
+
+    case 'react':
+    default:
+      const storybookFramework = config.storybookFramework || '@storybook/react';
+      return `import React from 'react';
+import type { StoryObj } from '${storybookFramework}';
+
+// Fallback story generated due to AI generation error
+export default {
+  title: '${storyPrefix}${escapedTitle}',
+  component: () => (
+    <div style={{ padding: '2rem', textAlign: 'center', border: '2px dashed #ccc', borderRadius: '8px' }}>
+      <h2>Story Generation Error</h2>
+      <p>The AI-generated story contained syntax errors and could not be created.</p>
+      <p><strong>Original prompt:</strong> ${escapedTitle}</p>
+      <p>Please try rephrasing your request or contact support.</p>
+    </div>
+  ),
+  parameters: {
+    docs: {
+      description: {
+        story: 'This is a fallback story created when the AI generation failed due to syntax errors.'
+      }
+    }
+  }
+};
+
+export const Default: StoryObj = {
+  args: {}
+};`;
+  }
 }

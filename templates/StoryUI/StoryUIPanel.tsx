@@ -720,7 +720,7 @@ const ProgressIndicator: React.FC<ProgressIndicatorProps> = ({ streamingState })
         {completion.metrics && (
           <div className="sui-completion-metrics">
             <span>{(completion.metrics.totalTimeMs / 1000).toFixed(1)}s</span>
-            <span>{completion.metrics.llmCallsCount} LLM calls</span>
+            <span>{completion.metrics.llmCallsCount} {completion.metrics.llmCallsCount === 1 ? 'generation' : 'generations'}</span>
           </div>
         )}
       </div>
@@ -729,7 +729,7 @@ const ProgressIndicator: React.FC<ProgressIndicatorProps> = ({ streamingState })
   return (
     <div className="sui-progress" role="progressbar" aria-valuenow={progress?.step} aria-valuemax={progress?.totalSteps}>
       <div className="sui-progress-header">
-        <span className="sui-progress-label">{progress?.message || 'Generating story...'}</span>
+        <span className="sui-progress-label">{progress?.message || 'Please give us a moment while we generate your story...'}</span>
         {progress && <span className="sui-progress-step">{progress.step}/{progress.totalSteps}</span>}
       </div>
       {progress && (
@@ -1621,7 +1621,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                 <div className="sui-message sui-message-ai">
                   {state.streamingState ? <ProgressIndicator streamingState={state.streamingState} /> : (
                     <div className="sui-progress">
-                      <span className="sui-progress-label">Generating story<span className="sui-loading" /></span>
+                      <span className="sui-progress-label">Please give us a moment while we generate your story<span className="sui-loading" /></span>
                     </div>
                   )}
                 </div>
