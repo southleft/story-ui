@@ -1,3 +1,10 @@
+## [3.10.6](https://github.com/southleft/story-ui/compare/v3.10.5...v3.10.6) (2025-12-07)
+
+
+### Bug Fixes
+
+* **generator:** prevent Angular TS4111 errors from state management patterns ([9df6f80](https://github.com/southleft/story-ui/commit/9df6f80f473a36789871baea8ecd3ffb4db86e97))
+
 ## [3.10.5](https://github.com/southleft/story-ui/compare/v3.10.4...v3.10.5) (2025-12-07)
 
 
