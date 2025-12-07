@@ -1091,7 +1091,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
       parts.push(`\n\n[TIP] **Tip:** ${completion.suggestions[0]}`);
     }
     if (!isUpdate && !hasShownRefreshHint.current) {
-      parts.push(isEdgeMode() ? `\n\n_Story saved to cloud._` : `\n\n_Might need to refresh Storybook (Cmd/Ctrl + R) to see new stories._`);
+      parts.push(isEdgeMode() ? `\n\n_Story saved to cloud._` : `\n\n_Storybook will auto-refresh in 2 seconds to register the new story..._`);
       hasShownRefreshHint.current = true;
     }
     if (completion.metrics?.totalTimeMs) {
@@ -1099,6 +1099,37 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     }
     return parts.join('');
   };
+
+  /**
+   * Trigger a Storybook refresh to fix Vite HMR issues with new story files.
+   * This is a workaround for the known Storybook + Vite bug where new story files
+   * aren't properly registered in Vite's import map until a page refresh.
+   * See: https://github.com/storybookjs/storybook/issues/30431
+   */
+  const triggerStorybookRefresh = useCallback((storyTitle: string, delayMs: number = 2000) => {
+    // Only refresh for new stories (not updates) to avoid disrupting workflow
+    console.log(`[Story UI] Scheduling Storybook refresh in ${delayMs}ms for new story: ${storyTitle}`);
+
+    setTimeout(() => {
+      try {
+        // Try to refresh the parent Storybook frame
+        if (window.top && window.top !== window) {
+          console.log('[Story UI] Refreshing Storybook to register new story file...');
+          window.top.location.reload();
+        } else if (window.parent && window.parent !== window) {
+          console.log('[Story UI] Refreshing parent frame...');
+          window.parent.location.reload();
+        } else {
+          // Fallback: refresh current window
+          console.log('[Story UI] Refreshing current window...');
+          window.location.reload();
+        }
+      } catch (error) {
+        // Cross-origin restrictions may prevent programmatic refresh
+        console.warn('[Story UI] Could not auto-refresh Storybook. Please refresh manually (Cmd/Ctrl + R).');
+      }
+    }, delayMs);
+  }, []);
 
   // Finalize streaming
   const finalizeStreamingConversation = useCallback((newConversation: Message[], completion: CompletionFeedback, userInput: string) => {
@@ -1137,8 +1168,14 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
       if (chats.length > MAX_RECENT_CHATS) chats.splice(MAX_RECENT_CHATS);
       saveChats(chats);
       dispatch({ type: 'SET_RECENT_CHATS', payload: chats });
+
+      // Auto-refresh Storybook for NEW stories to fix Vite HMR import map issue
+      // This fixes the "importers[path] is not a function" error
+      if (completion.success && completion.title) {
+        triggerStorybookRefresh(completion.title);
+      }
     }
-  }, [state.activeChatId, state.activeTitle, state.conversation.length]);
+  }, [state.activeChatId, state.activeTitle, state.conversation.length, triggerStorybookRefresh]);
 
   // Handle send
   const handleSend = async (e?: React.FormEvent) => {
