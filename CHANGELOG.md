@@ -1,3 +1,10 @@
+## [3.10.3](https://github.com/southleft/story-ui/compare/v3.10.2...v3.10.3) (2025-12-07)
+
+
+### Bug Fixes
+
+* **generator:** resolve Svelte slot and Angular addon-actions errors ([6c84035](https://github.com/southleft/story-ui/commit/6c84035f8be76db5ebe5d8fa3509c1f20845d7f6))
+
 ## [3.10.2](https://github.com/southleft/story-ui/compare/v3.10.1...v3.10.2) (2025-12-07)
 
 
