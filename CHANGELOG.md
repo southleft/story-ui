@@ -1,3 +1,10 @@
+## [3.10.2](https://github.com/southleft/story-ui/compare/v3.10.1...v3.10.2) (2025-12-07)
+
+
+### Bug Fixes
+
+* prevent Storybook duplicate ID errors with unique story titles ([7576998](https://github.com/southleft/story-ui/commit/7576998a94a89d88f79acc8a3770f819f3d8bdbb))
+
 ## [3.10.1](https://github.com/southleft/story-ui/compare/v3.10.0...v3.10.1) (2025-12-07)
 
 
