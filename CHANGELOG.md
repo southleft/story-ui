@@ -1,3 +1,10 @@
+## [3.10.7](https://github.com/southleft/story-ui/compare/v3.10.6...v3.10.7) (2025-12-07)
+
+
+### Bug Fixes
+
+* **generator:** handle Svelte named imports with deep paths for flowbite-svelte ([438a89e](https://github.com/southleft/story-ui/commit/438a89ea2a28c8d6a112d362df6e9fa3a86581be))
+
 ## [3.10.6](https://github.com/southleft/story-ui/compare/v3.10.5...v3.10.6) (2025-12-07)
 
 
