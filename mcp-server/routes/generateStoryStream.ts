@@ -127,7 +127,9 @@ class StreamWriter {
     console.log('[Story UI Server DEBUG] sendCompletion called:', {
       hasCode: !!fullCompletion.code,
       codeLength: fullCompletion.code?.length,
-      title: fullCompletion.title
+      title: fullCompletion.title,
+      fileName: fullCompletion.fileName,
+      storyId: fullCompletion.storyId
     });
     this.send(createStreamEvent('completion', fullCompletion));
   }
@@ -488,6 +490,16 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
     designSystem,
     considerations
   } = req.body as StreamGenerateRequest;
+
+  // DEBUG: Trace incoming fileName for iteration bug
+  const _debug = req.body._debug;
+  console.log('[Story UI Server DEBUG] Request received:', {
+    fileName,
+    storyId: providedStoryId,
+    isUpdate,
+    conversationLength: conversation?.length || 0,
+    _debug,
+  });
 
   if (!prompt) {
     stream.sendError({

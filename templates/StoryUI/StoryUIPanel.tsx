@@ -1133,22 +1133,51 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
 
   // Finalize streaming
   const finalizeStreamingConversation = useCallback((newConversation: Message[], completion: CompletionFeedback, userInput: string) => {
+    // DEBUG: Trace completion data
+    console.log('[StoryUI DEBUG] finalizeStreamingConversation completion:', {
+      storyId: completion.storyId,
+      fileName: completion.fileName,
+      title: completion.title,
+      action: completion.summary?.action,
+    });
+
     const isUpdate = completion.summary.action === 'updated';
     const responseMessage = buildConversationalResponse(completion, isUpdate);
     const aiMsg: Message = { role: 'ai', content: responseMessage };
     const updatedConversation = [...newConversation, aiMsg];
     dispatch({ type: 'SET_CONVERSATION', payload: updatedConversation });
     const isExistingSession = state.activeChatId && state.conversation.length > 0;
+    // DEBUG: Trace session detection
+    console.log('[StoryUI DEBUG] isExistingSession check:', {
+      activeChatId: state.activeChatId,
+      conversationLength: state.conversation.length,
+      isExistingSession,
+    });
+
     if (isExistingSession && state.activeChatId) {
+      // Load existing session to preserve fileName if completion doesn't include it
+      // This fixes the bug where iterations would corrupt fileName with storyId
+      const chats = loadChats();
+      const chatIndex = chats.findIndex(c => c.id === state.activeChatId);
+      const existingFileName = chatIndex !== -1 ? chats[chatIndex].fileName : '';
+
       const updatedSession: ChatSession = {
         id: state.activeChatId,
         title: state.activeTitle,
-        fileName: completion.fileName || state.activeChatId,
+        // Use completion.fileName if provided, otherwise preserve existing fileName
+        // NEVER fall back to storyId (activeChatId) as that corrupts the fileName
+        fileName: completion.fileName || existingFileName || '',
         conversation: updatedConversation,
         lastUpdated: Date.now(),
       };
-      const chats = loadChats();
-      const chatIndex = chats.findIndex(c => c.id === state.activeChatId);
+      // DEBUG: Trace what's being saved for UPDATE
+      console.log('[StoryUI DEBUG] Saving UPDATED session:', {
+        id: updatedSession.id,
+        title: updatedSession.title,
+        fileName: updatedSession.fileName,
+        completionFileName: completion.fileName,
+        existingFileName,
+      });
       if (chatIndex !== -1) chats[chatIndex] = updatedSession;
       saveChats(chats);
       dispatch({ type: 'SET_RECENT_CHATS', payload: chats });
@@ -1163,6 +1192,12 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
         conversation: updatedConversation,
         lastUpdated: Date.now(),
       };
+      // DEBUG: Trace what's being saved
+      console.log('[StoryUI DEBUG] Saving NEW session:', {
+        id: newSession.id,
+        title: newSession.title,
+        fileName: newSession.fileName,
+      });
       const chats = loadChats().filter(c => c.id !== chatId);
       chats.unshift(newSession);
       if (chats.length > MAX_RECENT_CHATS) chats.splice(MAX_RECENT_CHATS);
@@ -1204,30 +1239,58 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     dispatch({ type: 'SET_INPUT', payload: '' });
     clearAttachedImages();
 
+    // Get the actual fileName from localStorage (not React state which may be stale)
+    // This ensures updates overwrite the correct file instead of creating duplicates
+    const freshChats = loadChats();
+    const activeChat = freshChats.find(c => c.id === state.activeChatId);
+    const activeFileName = activeChat?.fileName || undefined;
+
+    // DEBUG: Trace fileName lookup for iteration bug
+    console.log('[StoryUI DEBUG] handleSend fileName lookup:', {
+      activeChatId: state.activeChatId,
+      freshChatsCount: freshChats.length,
+      freshChatsIds: freshChats.map(c => c.id),
+      foundChat: activeChat ? { id: activeChat.id, fileName: activeChat.fileName } : null,
+      activeFileName,
+    });
+
     if (USE_STREAMING) {
       try {
         if (abortControllerRef.current) abortControllerRef.current.abort();
         abortControllerRef.current = new AbortController();
         dispatch({ type: 'SET_STREAMING_STATE', payload: {} });
-        const imagePayload = hasImages
-          ? imagesToSend.map(img => ({ type: 'base64' as const, data: img.base64, mediaType: img.file.type }))
-          : undefined;
+        // DEBUG: Log exact request body before sending
+        const requestBody = {
+          prompt: userInput,
+          conversation: newConversation,
+          fileName: activeFileName,
+          isUpdate: state.activeChatId && state.conversation.length > 0,
+          originalTitle: state.activeTitle || undefined,
+          storyId: state.activeChatId || undefined,
+          _debug: {
+            activeChatId: state.activeChatId,
+            freshChatsCount: freshChats.length,
+            foundChatFileName: activeChat?.fileName,
+            activeFileName,
+          },
+          images: hasImages
+            ? imagesToSend.map(img => ({ type: 'base64' as const, data: img.base64, mediaType: img.file.type }))
+            : undefined,
+          visionMode: hasImages ? 'screenshot_to_story' : undefined,
+          provider: state.selectedProvider || undefined,
+          model: state.selectedModel || undefined,
+          considerations: state.considerations || undefined,
+        };
+        console.log('[StoryUI DEBUG] Request body being sent:', {
+          fileName: requestBody.fileName,
+          storyId: requestBody.storyId,
+          isUpdate: requestBody.isUpdate,
+          activeChatId: state.activeChatId,
+        });
         const response = await fetch(MCP_STREAM_API, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            prompt: userInput,
-            conversation: newConversation,
-            fileName: state.activeChatId || undefined,
-            isUpdate: state.activeChatId && state.conversation.length > 0,
-            originalTitle: state.activeTitle || undefined,
-            storyId: state.activeChatId || undefined,
-            images: imagePayload,
-            visionMode: hasImages ? 'screenshot_to_story' : undefined,
-            provider: state.selectedProvider || undefined,
-            model: state.selectedModel || undefined,
-            considerations: state.considerations || undefined,
-          }),
+          body: JSON.stringify(requestBody),
           signal: abortControllerRef.current.signal,
         });
         if (!response.ok) throw new Error(`Streaming request failed: ${response.status}`);
@@ -1293,7 +1356,10 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
             body: JSON.stringify({
               prompt: userInput,
               conversation: newConversation,
-              fileName: state.activeChatId || undefined,
+              fileName: activeFileName,
+              isUpdate: state.activeChatId && state.conversation.length > 0,
+              originalTitle: state.activeTitle || undefined,
+              storyId: state.activeChatId || undefined,
               provider: state.selectedProvider || undefined,
               model: state.selectedModel || undefined,
               considerations: state.considerations || undefined,
