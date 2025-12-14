@@ -872,8 +872,41 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
           fixDetails: ['Applied automatic corrections to fix validation errors']
         });
       } else {
-        const codeMatch = aiText.match(/```(?:tsx|jsx|typescript|ts|js|javascript)?\s*([\s\S]*?)\s*```/i);
-        fileContents = codeMatch ? codeMatch[1].trim() : aiText.trim();
+        // Universal: Standard code blocks with language identifiers
+        const codeMatch = aiText.match(/```(?:tsx|jsx|typescript|ts|js|javascript|svelte|html|vue)?\s*([\s\S]*?)\s*```/i);
+        let extractedCode = codeMatch ? codeMatch[1].trim() : null;
+
+        // Framework-specific fallbacks
+        if (!extractedCode) {
+          if (detectedFramework === 'svelte') {
+            // Svelte: look for <script module> (addon-svelte-csf v5+ format)
+            const scriptModuleIdx = aiText.indexOf('<script module>');
+            if (scriptModuleIdx !== -1) {
+              extractedCode = aiText.slice(scriptModuleIdx).trim();
+            } else {
+              // Svelte: look for <script context="module"> (legacy format)
+              const scriptContextIdx = aiText.indexOf('<script context="module">');
+              if (scriptContextIdx !== -1) {
+                extractedCode = aiText.slice(scriptContextIdx).trim();
+              }
+            }
+          } else if (detectedFramework === 'vue') {
+            // Vue: look for <script setup>
+            const scriptSetupIdx = aiText.indexOf('<script setup');
+            if (scriptSetupIdx !== -1) {
+              extractedCode = aiText.slice(scriptSetupIdx).trim();
+            }
+          }
+        }
+
+        // Universal fallback: look for import statement
+        if (!extractedCode) {
+          const importIdx = aiText.indexOf('import');
+          if (importIdx !== -1) {
+            extractedCode = aiText.slice(importIdx).trim();
+          }
+        }
+        fileContents = extractedCode || aiText.trim();
 
         if (validationResult.warnings?.length) {
           hasValidationWarnings = true;
@@ -1140,9 +1173,40 @@ async function buildClaudePromptWithContext(
   return contextualPrompt;
 }
 
-function extractCodeBlock(text: string): string | null {
-  const codeBlock = text.match(/```(?:tsx|jsx|typescript|ts|js|javascript)?([\s\S]*?)```/i);
-  return codeBlock ? codeBlock[1].trim() : null;
+function extractCodeBlock(text: string, framework?: string): string | null {
+  // Universal: Standard code blocks with language identifiers
+  const codeBlock = text.match(/```(?:tsx|jsx|typescript|ts|js|javascript|svelte|html|vue)?\s*([\s\S]*?)\s*```/i);
+  if (codeBlock) {
+    return codeBlock[1].trim();
+  }
+
+  // Framework-specific fallbacks
+  if (framework === 'svelte') {
+    // Svelte: look for <script module> (addon-svelte-csf v5+ format)
+    const scriptModuleIndex = text.indexOf('<script module>');
+    if (scriptModuleIndex !== -1) {
+      return text.slice(scriptModuleIndex).trim();
+    }
+    // Svelte: look for <script context="module"> (legacy format)
+    const scriptContextIndex = text.indexOf('<script context="module">');
+    if (scriptContextIndex !== -1) {
+      return text.slice(scriptContextIndex).trim();
+    }
+  } else if (framework === 'vue') {
+    // Vue: look for <script setup> or <template>
+    const scriptSetupIndex = text.indexOf('<script setup');
+    if (scriptSetupIndex !== -1) {
+      return text.slice(scriptSetupIndex).trim();
+    }
+  }
+
+  // Universal fallback: look for import statement
+  const importIndex = text.indexOf('import');
+  if (importIndex !== -1) {
+    return text.slice(importIndex).trim();
+  }
+
+  return null;
 }
 
 async function callLLM(

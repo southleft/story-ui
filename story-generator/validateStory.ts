@@ -674,24 +674,50 @@ function findInsertPosition(code: string): number {
  * Extracts and validates code blocks from AI responses
  */
 export function extractAndValidateCodeBlock(aiResponse: string, config?: any, fileName: string = 'story.tsx'): ValidationResult {
-  // Try multiple extraction methods
-  const extractionMethods = [
-    // Standard code blocks
+  const framework = config?.componentFramework || 'react';
+
+  // Build extraction methods based on framework
+  const extractionMethods: Array<(text: string) => string | null> = [
+    // Universal: Standard code blocks with common language identifiers
     (text: string) => {
-      const match = text.match(/```(?:tsx|jsx|typescript|ts|js|javascript)?\s*([\s\S]*?)\s*```/i);
+      const match = text.match(/```(?:tsx|jsx|typescript|ts|js|javascript|svelte|html|vue)?\s*([\s\S]*?)\s*```/i);
       return match ? match[1].trim() : null;
-    },
-    // Code starting with import
+    }
+  ];
+
+  // Framework-specific extraction methods
+  if (framework === 'svelte') {
+    // Svelte: Code starting with <script module> (addon-svelte-csf v5+ format)
+    extractionMethods.push((text: string) => {
+      const scriptModuleIndex = text.indexOf('<script module>');
+      return scriptModuleIndex !== -1 ? text.slice(scriptModuleIndex).trim() : null;
+    });
+    // Svelte: Code starting with <script context="module"> (legacy format)
+    extractionMethods.push((text: string) => {
+      const scriptContextIndex = text.indexOf('<script context="module">');
+      return scriptContextIndex !== -1 ? text.slice(scriptContextIndex).trim() : null;
+    });
+  } else if (framework === 'vue') {
+    // Vue: Code starting with <script setup> or <template>
+    extractionMethods.push((text: string) => {
+      const scriptSetupIndex = text.indexOf('<script setup');
+      return scriptSetupIndex !== -1 ? text.slice(scriptSetupIndex).trim() : null;
+    });
+  }
+
+  // Universal fallbacks (all frameworks)
+  extractionMethods.push(
+    // Code starting with import (React, Angular, Web Components, etc.)
     (text: string) => {
       const importIndex = text.indexOf('import');
       return importIndex !== -1 ? text.slice(importIndex).trim() : null;
     },
-    // Code starting with export
+    // Code starting with export (CSF format)
     (text: string) => {
       const exportIndex = text.indexOf('export');
       return exportIndex !== -1 ? text.slice(exportIndex).trim() : null;
     }
-  ];
+  );
 
   let extractedCode: string | null = null;
 

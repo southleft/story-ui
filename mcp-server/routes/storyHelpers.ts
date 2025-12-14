@@ -30,11 +30,44 @@ export function slugify(str: string): string {
 
 /**
  * Extract code block from LLM response text.
- * Accepts various language identifiers (tsx, jsx, typescript, etc.)
+ * Accepts various language identifiers (tsx, jsx, typescript, svelte, vue, etc.)
+ * @param text - The text to extract code from
+ * @param framework - Optional framework for framework-specific extraction fallbacks
  */
-export function extractCodeBlock(text: string): string | null {
-  const codeBlock = text.match(/```(?:tsx|jsx|typescript|ts|js|javascript)?([\s\S]*?)```/i);
-  return codeBlock ? codeBlock[1].trim() : null;
+export function extractCodeBlock(text: string, framework?: string): string | null {
+  // Universal: Standard code blocks with language identifiers
+  const codeBlock = text.match(/```(?:tsx|jsx|typescript|ts|js|javascript|svelte|html|vue)?\s*([\s\S]*?)\s*```/i);
+  if (codeBlock) {
+    return codeBlock[1].trim();
+  }
+
+  // Framework-specific fallbacks
+  if (framework === 'svelte') {
+    // Svelte: look for <script module> (addon-svelte-csf v5+ format)
+    const scriptModuleIndex = text.indexOf('<script module>');
+    if (scriptModuleIndex !== -1) {
+      return text.slice(scriptModuleIndex).trim();
+    }
+    // Svelte: look for <script context="module"> (legacy format)
+    const scriptContextIndex = text.indexOf('<script context="module">');
+    if (scriptContextIndex !== -1) {
+      return text.slice(scriptContextIndex).trim();
+    }
+  } else if (framework === 'vue') {
+    // Vue: look for <script setup> or <template>
+    const scriptSetupIndex = text.indexOf('<script setup');
+    if (scriptSetupIndex !== -1) {
+      return text.slice(scriptSetupIndex).trim();
+    }
+  }
+
+  // Universal fallback: look for import statement
+  const importIndex = text.indexOf('import');
+  if (importIndex !== -1) {
+    return text.slice(importIndex).trim();
+  }
+
+  return null;
 }
 
 /**

@@ -47,12 +47,24 @@ export function validateStory(storyContent: string): ValidationError[] {
     });
   }
 
-  // Check for proper story structure
-  if (!storyContent.includes('export default meta')) {
-    errors.push({
-      message: 'Story is missing required "export default meta" statement.',
-      line: 1,
-    });
+  // Check for proper story structure (framework-aware)
+  // Svelte uses defineMeta() instead of export default meta
+  const isSvelteNativeFormat = storyContent.includes('defineMeta(') ||
+                               storyContent.includes('<script module>') ||
+                               storyContent.includes('<script context="module">');
+
+  // Vue SFC might use <script setup>
+  const isVueSfcFormat = storyContent.includes('<script setup') ||
+                         storyContent.includes('<template>');
+
+  if (!isSvelteNativeFormat && !isVueSfcFormat) {
+    // Standard CSF format check - only for React/Angular/Web Components
+    if (!storyContent.includes('export default meta') && !storyContent.includes('export default {')) {
+      errors.push({
+        message: 'Story is missing required "export default meta" statement.',
+        line: 1,
+      });
+    }
   }
 
   return errors;
