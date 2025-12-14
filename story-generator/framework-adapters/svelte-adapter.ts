@@ -348,34 +348,56 @@ ${this.getCommonRules()}`;
     processed = processed.replace(/<script\s+context="module">/g, '<script module>');
 
     // Detect and convert old export const meta pattern to defineMeta
-    const oldMetaPattern = /export\s+const\s+meta\s*=\s*\{([^}]+)\};\s*(?:\n\s*export\s+default\s+meta;)?/;
-    const oldMetaMatch = processed.match(oldMetaPattern);
+    // Use a more robust approach that handles nested objects
+    const exportMetaMatch = processed.match(/export\s+const\s+meta\s*=\s*\{/);
 
-    if (oldMetaMatch) {
-      // Extract meta properties
-      const metaProps = oldMetaMatch[1];
+    if (exportMetaMatch) {
+      const startIndex = exportMetaMatch.index! + exportMetaMatch[0].length - 1; // Position of opening {
+      let braceCount = 1;
+      let endIndex = startIndex + 1;
 
-      // Replace the old pattern with defineMeta
-      processed = processed.replace(oldMetaPattern, `const { Story } = defineMeta({${metaProps}});`);
-
-      // Add defineMeta import if not present
-      if (!processed.includes("import { defineMeta }")) {
-        // Find the script module tag and add import after it
-        processed = processed.replace(
-          /<script module>/,
-          `<script module>\n  import { defineMeta } from '@storybook/addon-svelte-csf';`
-        );
+      // Find the matching closing brace
+      while (braceCount > 0 && endIndex < processed.length) {
+        const char = processed[endIndex];
+        if (char === '{') braceCount++;
+        else if (char === '}') braceCount--;
+        endIndex++;
       }
 
-      // Remove separate Story/Template imports as Story comes from defineMeta now
-      processed = processed.replace(/import\s*\{\s*Story(?:\s*,\s*Template)?\s*\}\s*from\s*['"]@storybook\/addon-svelte-csf['"];?\n?/g, '');
-      processed = processed.replace(/import\s*\{\s*Template(?:\s*,\s*Story)?\s*\}\s*from\s*['"]@storybook\/addon-svelte-csf['"];?\n?/g, '');
+      if (braceCount === 0) {
+        // Extract the meta object content (without the outer braces)
+        const metaContent = processed.substring(startIndex + 1, endIndex - 1);
 
-      // Remove any second <script> block that only had Story/Template imports
-      processed = processed.replace(/<script>\s*\n\s*<\/script>\n?/g, '');
+        // Find the full statement including optional semicolon and export default
+        const afterMeta = processed.substring(endIndex);
+        const trailingMatch = afterMeta.match(/^;\s*(?:\n\s*export\s+default\s+meta;)?/);
+        const trailingLength = trailingMatch ? trailingMatch[0].length : 0;
 
-      // Remove Template components as they're not needed in v5+
-      processed = processed.replace(/<Template[^>]*>[\s\S]*?<\/Template>\n?/g, '');
+        // Build the replacement
+        const fullMatch = processed.substring(exportMetaMatch.index!, endIndex + trailingLength);
+        const replacement = `const { Story } = defineMeta({${metaContent}});`;
+
+        processed = processed.replace(fullMatch, replacement);
+
+        // Add defineMeta import if not present
+        if (!processed.includes("import { defineMeta }")) {
+          // Find the script module tag and add import after it
+          processed = processed.replace(
+            /<script module>/,
+            `<script module>\n  import { defineMeta } from '@storybook/addon-svelte-csf';`
+          );
+        }
+
+        // Remove separate Story/Template imports as Story comes from defineMeta now
+        processed = processed.replace(/import\s*\{\s*Story(?:\s*,\s*Template)?\s*\}\s*from\s*['"]@storybook\/addon-svelte-csf['"];?\n?/g, '');
+        processed = processed.replace(/import\s*\{\s*Template(?:\s*,\s*Story)?\s*\}\s*from\s*['"]@storybook\/addon-svelte-csf['"];?\n?/g, '');
+
+        // Remove any second <script> block that only had Story/Template imports
+        processed = processed.replace(/<script>\s*\n\s*<\/script>\n?/g, '');
+
+        // Remove Template components as they're not needed in v5+
+        processed = processed.replace(/<Template[^>]*>[\s\S]*?<\/Template>\n?/g, '');
+      }
     }
 
     // Remove any remaining "export default meta;" lines
