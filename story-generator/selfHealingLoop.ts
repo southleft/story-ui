@@ -223,6 +223,7 @@ function getFrameworkSpecificInstructions(framework: string, importPath: string)
     instructions.push('- TypeScript CSF 3.0 format (`const meta: Meta<typeof Component>`)');
     instructions.push('- React imports (`import React from "react"`)');
     instructions.push('- JSX syntax (`className`, `onClick`)');
+    instructions.push('- NESTING a component inside itself: `<Comp><Comp>text</Comp></Comp>` is WRONG!');
     instructions.push('');
     instructions.push('**Correct Svelte story structure:**');
     instructions.push('```svelte');
@@ -338,22 +339,21 @@ export function buildSelfHealingPrompt(
   sections.push('3. Do NOT add new features - only fix the errors');
 
   if (options.framework === 'svelte') {
-    sections.push('4. Use proper Svelte syntax (class=, on:click=, etc.)');
+    sections.push('4. Use proper Svelte 5 syntax (class=, onclick=, NOT on:click=)');
+    sections.push('5. NEVER nest a component inside itself: <Comp><Comp>X</Comp></Comp> is WRONG! Use <Comp>X</Comp>');
     sections.push(
-      `5. Only import components that exist in "${options.importPath}" (no deep paths)`
+      `6. Only import components that exist in "${options.importPath}" (no deep paths)`
     );
-    sections.push(`6. Return the COMPLETE corrected code in a \`\`\`svelte code block`);
+    sections.push(`7. Return the COMPLETE corrected code in a \`\`\`svelte code block`);
+    sections.push('8. Do NOT include any explanation - just the corrected code block');
   } else {
     sections.push('4. Ensure all JSX elements are properly opened and closed');
     sections.push(
       `5. Only import components that exist in "${options.importPath}"`
     );
     sections.push(`6. Return the COMPLETE corrected code in a \`\`\`${codeBlockLang} code block`);
+    sections.push('7. Do NOT include any explanation - just the corrected code block');
   }
-
-  sections.push(
-    '7. Do NOT include any explanation - just the corrected code block'
-  );
 
   return sections.join('\n');
 }

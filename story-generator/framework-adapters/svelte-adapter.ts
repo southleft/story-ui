@@ -136,7 +136,25 @@ WRONG - DO NOT DO THIS:
 <script>
   import { Story } from '@storybook/addon-svelte-csf';
 </script>
+
+<!-- WRONG: Double-nesting the SAME component inside itself -->
+<Story name="DoubleNested">
+  <Component><Component>content</Component></Component>  <!-- WRONG! -->
+</Story>
 \`\`\`
+
+🚨 CRITICAL: NEVER NEST A COMPONENT INSIDE ITSELF! 🚨
+This is a VERY COMMON mistake. The component in defineMeta() tells Storybook what the story is ABOUT.
+It does NOT mean you wrap content in another instance of that component.
+
+❌ WRONG (nesting same component inside itself):
+  <ComponentName><ComponentName>content</ComponentName></ComponentName>
+
+✅ CORRECT (single component with content directly inside):
+  <ComponentName>content</ComponentName>
+
+Note: Layout components (divs, grids, containers) CAN be nested when building layouts.
+This rule applies to UI components being duplicated unnecessarily.
 
 SVELTE 5 TEMPLATE SYNTAX:
 - Props: property={value} or property="value"
@@ -495,9 +513,10 @@ ${this.getCommonRules()}`;
       errors.push('React import found in Svelte story');
     }
 
-    // Check for JSX-style event handlers
+    // Check for JSX-style event handlers (camelCase)
+    // Svelte 5 uses lowercase: onclick, onchange
     if (/onClick=\{/.test(storyContent)) {
-      errors.push('Using JSX-style onClick - use onclick or on:click for Svelte');
+      errors.push('Using JSX-style onClick - use onclick (lowercase) for Svelte 5');
     }
 
     return {

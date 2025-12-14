@@ -887,13 +887,15 @@ function validateSvelteStory(code: string, config?: any): ValidationResult {
     result.isValid = false;
   }
 
+  // Check for JSX-style camelCase event handlers (onClick, onChange)
+  // Svelte 5 uses lowercase: onclick, onchange (NOT on:click which was Svelte 4)
   if (/\sonClick\s*=/.test(code)) {
-    result.errors.push('Using JSX "onClick" attribute. Use "on:click" instead for Svelte.');
+    result.errors.push('Using JSX "onClick" attribute. Use "onclick" (lowercase) for Svelte 5.');
     result.isValid = false;
   }
 
   if (/\sonChange\s*=/.test(code)) {
-    result.errors.push('Using JSX "onChange" attribute. Use "on:change" instead for Svelte.');
+    result.errors.push('Using JSX "onChange" attribute. Use "onchange" (lowercase) for Svelte 5.');
     result.isValid = false;
   }
 

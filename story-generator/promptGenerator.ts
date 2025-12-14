@@ -929,7 +929,7 @@ function getFrameworkSpecificRules(framework: FrameworkType): string[] {
     case 'svelte':
       rules.push("- Import from '@storybook/svelte'");
       rules.push('- Import .svelte files directly as default exports');
-      rules.push('- Events use on: directive (e.g., on:click)');
+      rules.push('- Svelte 5 events use lowercase: onclick, onchange (NOT on:click which is Svelte 4)');
       rules.push('- Use bind: for two-way binding');
       rules.push("- 🚫 NEVER import React from 'react' - this is Svelte, NOT React!");
       rules.push('- 🚫 NEVER use Angular Material or Vue components');
