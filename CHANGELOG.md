@@ -1,3 +1,10 @@
+## [4.1.1](https://github.com/southleft/story-ui/compare/v4.1.0...v4.1.1) (2025-12-14)
+
+
+### Bug Fixes
+
+* **generator:** remove hash from story titles in Storybook navigation ([0472569](https://github.com/southleft/story-ui/commit/0472569386cad0955aa925a9de1038a80971bedb))
+
 # [4.1.0](https://github.com/southleft/story-ui/compare/v4.0.1...v4.1.0) (2025-12-14)
 
 
