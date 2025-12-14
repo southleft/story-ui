@@ -1,3 +1,10 @@
+## [4.0.1](https://github.com/southleft/story-ui/compare/v4.0.0...v4.0.1) (2025-12-14)
+
+
+### Bug Fixes
+
+* **generator:** respect provider/model selection from UI ([89fbebd](https://github.com/southleft/story-ui/commit/89fbebd2d6da522f313749f8ce74585da9b5df89))
+
 # [4.0.0](https://github.com/southleft/story-ui/compare/v3.10.7...v4.0.0) (2025-12-14)
 
 
