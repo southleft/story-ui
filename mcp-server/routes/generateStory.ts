@@ -851,13 +851,14 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       logger.log('🆕 Creating new story:', { storyId, fileName: finalFileName });
     }
 
-    // Create title for the story
+    // Create title for the story (clean, without hash - hash goes in id for uniqueness)
     const prettyPrompt = escapeTitleForTS(aiTitle);
-    // Include hash suffix to ensure unique titles and prevent Storybook duplicate story ID errors
-    // This is critical because multiple "Alert" or "Button" stories would otherwise collide
-    const uniqueTitle = `${prettyPrompt} (${hash})`;
+    // Title is now clean without hash - uniqueness is ensured via Storybook's id parameter
+    const cleanTitle = prettyPrompt;
+    // Generate Storybook-compatible ID with hash for uniqueness (prevents duplicate story errors)
+    const storyIdSlug = `${prettyPrompt.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${hash}`;
 
-    // Fix title with storyPrefix and hash - handle multiple story formats
+    // Fix title with storyPrefix - handle multiple story formats
     // Note: (?::\s*\w+(?:<[^>]+>)?)? handles TypeScript type annotations including generics
     // e.g., "const meta: Meta = {" or "const meta: Meta<typeof Button> = {"
 
@@ -866,9 +867,9 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       /(const\s+meta\s*(?::\s*\w+(?:<[^>]+>)?)?\s*=\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
       (match, p1, oldTitle, p3) => {
         // Check if the title already has the prefix to avoid double prefixing
-        const titleToUse = uniqueTitle.startsWith(config.storyPrefix)
-          ? uniqueTitle
-          : config.storyPrefix + uniqueTitle;
+        const titleToUse = cleanTitle.startsWith(config.storyPrefix)
+          ? cleanTitle
+          : config.storyPrefix + cleanTitle;
         return p1 + titleToUse + p3;
       }
     );
@@ -879,9 +880,9 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         /(export\s+default\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
         (match, p1, oldTitle, p3) => {
           // Check if the title already has the prefix to avoid double prefixing
-          const titleToUse = uniqueTitle.startsWith(config.storyPrefix)
-            ? uniqueTitle
-            : config.storyPrefix + uniqueTitle;
+          const titleToUse = cleanTitle.startsWith(config.storyPrefix)
+            ? cleanTitle
+            : config.storyPrefix + cleanTitle;
           return p1 + titleToUse + p3;
         }
       );
@@ -894,11 +895,22 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       fixedFileContents = fixedFileContents.replace(
         /(defineMeta\s*\(\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
         (match, p1, oldTitle, p3) => {
-          const titleToUse = uniqueTitle.startsWith(config.storyPrefix)
-            ? uniqueTitle
-            : config.storyPrefix + uniqueTitle;
+          const titleToUse = cleanTitle.startsWith(config.storyPrefix)
+            ? cleanTitle
+            : config.storyPrefix + cleanTitle;
           return p1 + titleToUse + p3;
         }
+      );
+    }
+
+    // Add Storybook id parameter for uniqueness (after title line)
+    // This ensures unique story IDs without polluting the visible title
+    // Pattern: After title line, add id: '...' if not already present
+    if (!fixedFileContents.includes("id:")) {
+      // Add id after title for CSF format
+      fixedFileContents = fixedFileContents.replace(
+        /(title:\s*["'][^"']+["'])(,?\s*\n)/,
+        `$1,\n  id: '${storyIdSlug}'$2`
       );
     }
 
