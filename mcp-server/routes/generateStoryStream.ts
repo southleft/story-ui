@@ -971,13 +971,15 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
 
     // Create title for the story
     const prettyPrompt = escapeTitleForTS(aiTitle);
-    // Use the title without hash suffix for cleaner sidebar display
-    // The filename already contains the hash for uniqueness
-    const uniqueTitle = prettyPrompt;
+    // Include hash suffix to ensure unique titles and prevent Storybook duplicate story ID errors
+    // This is critical because multiple "Alert" or "Button" stories would otherwise collide
+    const uniqueTitle = `${prettyPrompt} (${hash})`;
 
-    // Fix title with storyPrefix and hash
+    // Fix title with storyPrefix and hash - handle multiple story formats
     // Note: (?::\s*\w+(?:<[^>]+>)?)? handles TypeScript type annotations including generics
     // e.g., "const meta: Meta = {" or "const meta: Meta<typeof Button> = {"
+
+    // Pattern 1: CSF format - const meta = { title: "..." }
     fixedFileContents = fixedFileContents.replace(
       /(const\s+meta\s*(?::\s*\w+(?:<[^>]+>)?)?\s*=\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
       (match, p1, oldTitle, p3) => {
@@ -988,9 +990,25 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
       }
     );
 
+    // Pattern 2: export default { title: "..." } format
     if (!fixedFileContents.includes(config.storyPrefix)) {
       fixedFileContents = fixedFileContents.replace(
         /(export\s+default\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
+        (match, p1, oldTitle, p3) => {
+          const titleToUse = uniqueTitle.startsWith(config.storyPrefix)
+            ? uniqueTitle
+            : config.storyPrefix + uniqueTitle;
+          return p1 + titleToUse + p3;
+        }
+      );
+    }
+
+    // Pattern 3: Svelte native format - defineMeta({ title: "..." })
+    // This is CRITICAL for Svelte - without this, all Svelte stories get generic titles
+    // causing duplicate story ID errors that break the entire Storybook
+    if (!fixedFileContents.includes(config.storyPrefix)) {
+      fixedFileContents = fixedFileContents.replace(
+        /(defineMeta\s*\(\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
         (match, p1, oldTitle, p3) => {
           const titleToUse = uniqueTitle.startsWith(config.storyPrefix)
             ? uniqueTitle
