@@ -1074,7 +1074,9 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   const buildConversationalResponse = (completion: CompletionFeedback, isUpdate: boolean): string => {
     const parts: string[] = [];
     const statusMarker = completion.success ? '[SUCCESS]' : '[ERROR]';
-    parts.push(isUpdate ? `${statusMarker} **Updated: "${completion.title}"**` : `${statusMarker} **Created: "${completion.title}"**`);
+    // Show "Failed:" when success is false, otherwise "Created:" or "Updated:"
+    const actionWord = completion.success ? (isUpdate ? 'Updated' : 'Created') : 'Failed';
+    parts.push(`${statusMarker} **${actionWord}: "${completion.title}"**`);
     const componentCount = completion.componentsUsed?.length || 0;
     if (componentCount > 0) {
       const names = completion.componentsUsed.slice(0, 5).map(c => `\`${c.name}\``).join(', ');
