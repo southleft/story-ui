@@ -35,32 +35,25 @@ export class SvelteAdapter extends BaseFrameworkAdapter {
       ? `${config.componentPrefix.replace(/^[A-Z]+/, '')} design system`
       : 'component library';
 
-    return `You are an expert Svelte developer creating Storybook stories using the @storybook/addon-svelte-csf format.
+    return `You are an expert Svelte developer creating Storybook stories using the @storybook/addon-svelte-csf v5+ format.
 Use ONLY the Svelte components from the ${componentSystemName} listed below.
 
-CRITICAL: Generate .stories.svelte files, NOT .stories.ts files!
+CRITICAL: Generate .stories.svelte files using the NEW defineMeta() syntax (required for addon-svelte-csf v5+)!
 
 STORY FILE FORMAT (.stories.svelte):
-The file must use this EXACT structure:
+The file must use this EXACT structure with defineMeta():
 
 \`\`\`svelte
-<script context="module">
+<script module>
+  import { defineMeta } from '@storybook/addon-svelte-csf';
   import { ComponentName } from '${config.importPath || 'flowbite-svelte'}';
 
-  export const meta = {
+  const { Story } = defineMeta({
     title: 'Generated/ComponentName',
     component: ComponentName,
     tags: ['autodocs'],
-  };
+  });
 </script>
-
-<script>
-  import { Story, Template } from '@storybook/addon-svelte-csf';
-</script>
-
-<Template let:args>
-  <ComponentName {...args}>Default Content</ComponentName>
-</Template>
 
 <Story name="Default">
   <ComponentName>Default Story</ComponentName>
@@ -72,15 +65,19 @@ The file must use this EXACT structure:
 \`\`\`
 
 MANDATORY STRUCTURE:
-1. First <script context="module">: Component imports + export const meta
-2. Second <script>: Import Story and Template from @storybook/addon-svelte-csf
-3. <Template let:args>: Default template with args spread
+1. Single <script module> block (NOT <script context="module">)
+2. Import defineMeta from '@storybook/addon-svelte-csf'
+3. Destructure { Story } from defineMeta() call
 4. Multiple <Story name="..."> blocks for each story variation
 
-CRITICAL RULES:
+CRITICAL RULES FOR addon-svelte-csf v5+:
+- Use <script module> NOT <script context="module">
+- Use defineMeta() function to define meta - NOT export const meta
+- Destructure Story from defineMeta() - do NOT import Story separately
+- DO NOT use "export const meta" or "export default meta" - this will cause parser errors!
 - Use named imports: import { Button, Card } from 'flowbite-svelte';
 - Story title MUST start with "Generated/" (e.g., title: 'Generated/Button')
-- Include tags: ['autodocs'] in meta
+- Include tags: ['autodocs'] in defineMeta
 - Each <Story> needs a unique name attribute
 - Put component content BETWEEN the component tags, not in props
 - DO NOT use 'children' or 'slot' props
@@ -109,10 +106,22 @@ CORRECT EXAMPLES:
     <p class="font-normal text-gray-700">Card description here.</p>
   </Card>
 </Story>
+
+<!-- Using args with snippets (Svelte 5 style) -->
+<Story name="WithArgs" args={{ color: 'primary', size: 'lg' }}>
+  {#snippet children(args)}
+    <Button {...args}>Button with Args</Button>
+  {/snippet}
+</Story>
 \`\`\`
 
 WRONG - DO NOT DO THIS:
 \`\`\`svelte
+<!-- WRONG: Old export const meta syntax (causes parser errors in v5) -->
+<script context="module">
+  export const meta = { title: 'Generated/Button' };
+</script>
+
 <!-- WRONG: No children prop -->
 <Story name="Wrong">
   <Button children="Click Me" />
@@ -122,15 +131,21 @@ WRONG - DO NOT DO THIS:
 <Story name="Also Wrong">
   <Button slot="Click Me" />
 </Story>
+
+<!-- WRONG: Importing Story separately -->
+<script>
+  import { Story } from '@storybook/addon-svelte-csf';
+</script>
 \`\`\`
 
-SVELTE TEMPLATE SYNTAX:
+SVELTE 5 TEMPLATE SYNTAX:
 - Props: property={value} or property="value"
-- Events: onclick={handler} (Svelte 5) or on:click={handler} (Svelte 4)
+- Events: onclick={handler} (Svelte 5 style)
 - Two-way binding: bind:value
 - Conditionals: {#if condition}...{/if}
 - Loops: {#each items as item}...{/each}
 - Classes: class="flex gap-2" (use Tailwind classes)
+- Snippets: {#snippet name(args)}...{/snippet}
 
 ${this.getCommonRules()}`;
   }
@@ -139,27 +154,20 @@ ${this.getCommonRules()}`;
     const lib = config.importPath || 'flowbite-svelte';
 
     return `
-## Example Stories for Svelte (.stories.svelte Format)
+## Example Stories for Svelte (.stories.svelte Format) - addon-svelte-csf v5+ Syntax
 
 ### Button Component Story
 \`\`\`svelte
-<script context="module">
+<script module>
+  import { defineMeta } from '@storybook/addon-svelte-csf';
   import { Button } from '${lib}';
 
-  export const meta = {
+  const { Story } = defineMeta({
     title: 'Generated/Button',
     component: Button,
     tags: ['autodocs'],
-  };
+  });
 </script>
-
-<script>
-  import { Story, Template } from '@storybook/addon-svelte-csf';
-</script>
-
-<Template let:args>
-  <Button {...args}>Button</Button>
-</Template>
 
 <Story name="Primary">
   <Button color="primary">Primary</Button>
@@ -190,26 +198,16 @@ ${this.getCommonRules()}`;
 
 ### Card Component Story
 \`\`\`svelte
-<script context="module">
+<script module>
+  import { defineMeta } from '@storybook/addon-svelte-csf';
   import { Card, Button } from '${lib}';
 
-  export const meta = {
+  const { Story } = defineMeta({
     title: 'Generated/Card',
     component: Card,
     tags: ['autodocs'],
-  };
+  });
 </script>
-
-<script>
-  import { Story, Template } from '@storybook/addon-svelte-csf';
-</script>
-
-<Template let:args>
-  <Card {...args} class="max-w-sm">
-    <h5 class="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">Card Title</h5>
-    <p class="font-normal text-gray-700 dark:text-gray-400">Card content goes here.</p>
-  </Card>
-</Template>
 
 <Story name="Default">
   <Card class="max-w-sm">
@@ -236,23 +234,16 @@ ${this.getCommonRules()}`;
 
 ### Alert Component Story
 \`\`\`svelte
-<script context="module">
+<script module>
+  import { defineMeta } from '@storybook/addon-svelte-csf';
   import { Alert } from '${lib}';
 
-  export const meta = {
+  const { Story } = defineMeta({
     title: 'Generated/Alert',
     component: Alert,
     tags: ['autodocs'],
-  };
+  });
 </script>
-
-<script>
-  import { Story, Template } from '@storybook/addon-svelte-csf';
-</script>
-
-<Template let:args>
-  <Alert {...args}>Alert message here</Alert>
-</Template>
 
 <Story name="Info">
   <Alert color="blue">This is an informational alert.</Alert>
@@ -290,15 +281,13 @@ ${this.getCommonRules()}`;
     const firstComponent = components[0];
 
     if (!firstComponent) {
-      return `<script context="module">
-  export const meta = {
+      return `<script module>
+  import { defineMeta } from '@storybook/addon-svelte-csf';
+
+  const { Story } = defineMeta({
     title: 'Generated/Sample',
     tags: ['autodocs'],
-  };
-</script>
-
-<script>
-  import { Story } from '@storybook/addon-svelte-csf';
+  });
 </script>
 
 <Story name="Default">
@@ -307,23 +296,16 @@ ${this.getCommonRules()}`;
 `;
     }
 
-    return `<script context="module">
+    return `<script module>
+  import { defineMeta } from '@storybook/addon-svelte-csf';
   import { ${firstComponent.name} } from '${lib}';
 
-  export const meta = {
+  const { Story } = defineMeta({
     title: 'Generated/${firstComponent.name}',
     component: ${firstComponent.name},
     tags: ['autodocs'],
-  };
+  });
 </script>
-
-<script>
-  import { Story, Template } from '@storybook/addon-svelte-csf';
-</script>
-
-<Template let:args>
-  <${firstComponent.name} {...args}>${firstComponent.name}</${firstComponent.name}>
-</Template>
 
 <Story name="Default">
   <${firstComponent.name}>${firstComponent.name}</${firstComponent.name}>
@@ -333,23 +315,16 @@ ${this.getCommonRules()}`;
 
   getStoryTemplate(options?: StoryGenerationOptions): string {
     return `
-<script context="module">
+<script module>
+  import { defineMeta } from '@storybook/addon-svelte-csf';
   import { {{componentName}} } from '{{importPath}}';
 
-  export const meta = {
+  const { Story } = defineMeta({
     title: '{{category}}/{{componentName}}',
     component: {{componentName}},
     tags: ['autodocs'],
-  };
+  });
 </script>
-
-<script>
-  import { Story, Template } from '@storybook/addon-svelte-csf';
-</script>
-
-<Template let:args>
-  <{{componentName}} {...args}>{{componentName}}</{{componentName}}>
-</Template>
 
 <Story name="Default">
   <{{componentName}}>{{componentName}}</{{componentName}}>
@@ -365,6 +340,46 @@ ${this.getCommonRules()}`;
 
     // Remove React imports if present
     processed = processed.replace(/import React from ['"]react['"];?\n?/g, '');
+
+    // CRITICAL: Convert old CSF syntax to new defineMeta() syntax for addon-svelte-csf v5+
+    // This handles cases where the LLM generates the old format
+
+    // Convert <script context="module"> to <script module>
+    processed = processed.replace(/<script\s+context="module">/g, '<script module>');
+
+    // Detect and convert old export const meta pattern to defineMeta
+    const oldMetaPattern = /export\s+const\s+meta\s*=\s*\{([^}]+)\};\s*(?:\n\s*export\s+default\s+meta;)?/;
+    const oldMetaMatch = processed.match(oldMetaPattern);
+
+    if (oldMetaMatch) {
+      // Extract meta properties
+      const metaProps = oldMetaMatch[1];
+
+      // Replace the old pattern with defineMeta
+      processed = processed.replace(oldMetaPattern, `const { Story } = defineMeta({${metaProps}});`);
+
+      // Add defineMeta import if not present
+      if (!processed.includes("import { defineMeta }")) {
+        // Find the script module tag and add import after it
+        processed = processed.replace(
+          /<script module>/,
+          `<script module>\n  import { defineMeta } from '@storybook/addon-svelte-csf';`
+        );
+      }
+
+      // Remove separate Story/Template imports as Story comes from defineMeta now
+      processed = processed.replace(/import\s*\{\s*Story(?:\s*,\s*Template)?\s*\}\s*from\s*['"]@storybook\/addon-svelte-csf['"];?\n?/g, '');
+      processed = processed.replace(/import\s*\{\s*Template(?:\s*,\s*Story)?\s*\}\s*from\s*['"]@storybook\/addon-svelte-csf['"];?\n?/g, '');
+
+      // Remove any second <script> block that only had Story/Template imports
+      processed = processed.replace(/<script>\s*\n\s*<\/script>\n?/g, '');
+
+      // Remove Template components as they're not needed in v5+
+      processed = processed.replace(/<Template[^>]*>[\s\S]*?<\/Template>\n?/g, '');
+    }
+
+    // Remove any remaining "export default meta;" lines
+    processed = processed.replace(/\n\s*export\s+default\s+meta;\s*\n?/g, '\n');
 
     // Fix flowbite-svelte imports - convert deep path imports to named exports
     // Handles both default and named imports with deep paths:
@@ -396,16 +411,16 @@ ${this.getCommonRules()}`;
       const uniqueImports = [...new Set(flowbiteImports)];
       const consolidatedImport = `import { ${uniqueImports.join(', ')} } from 'flowbite-svelte';`;
 
-      // Find where to insert - after the @storybook/svelte import
-      const storybookImportMatch = processed.match(/import.*from\s+['"]@storybook\/svelte['"];?\n/);
-      if (storybookImportMatch) {
+      // Find where to insert - after the defineMeta import
+      const defineMetaImportMatch = processed.match(/import\s*\{\s*defineMeta\s*\}\s*from\s*['"]@storybook\/addon-svelte-csf['"];?\n/);
+      if (defineMetaImportMatch) {
         processed = processed.replace(
-          storybookImportMatch[0],
-          storybookImportMatch[0] + consolidatedImport + '\n'
+          defineMetaImportMatch[0],
+          defineMetaImportMatch[0] + '  ' + consolidatedImport + '\n'
         );
       } else {
-        // Insert at the beginning if no storybook import found
-        processed = consolidatedImport + '\n' + processed;
+        // Insert after script module tag if no defineMeta import found
+        processed = processed.replace(/<script module>\n/, `<script module>\n  ${consolidatedImport}\n`);
       }
     }
 
@@ -413,10 +428,10 @@ ${this.getCommonRules()}`;
     processed = processed
       // Fix className to class
       .replace(/className=/g, 'class=')
-      // Fix onClick to on:click
-      .replace(/onClick=/g, 'on:click=')
-      .replace(/onChange=/g, 'on:change=')
-      .replace(/onInput=/g, 'on:input=');
+      // Fix onClick to on:click (Svelte 4 style) or onclick (Svelte 5 style)
+      .replace(/onClick=/g, 'onclick=')
+      .replace(/onChange=/g, 'onchange=')
+      .replace(/onInput=/g, 'oninput=');
 
     // Clean up multiple empty lines that might result from import removal
     processed = processed.replace(/\n{3,}/g, '\n\n');
@@ -431,18 +446,36 @@ ${this.getCommonRules()}`;
     const baseValidation = super.validate(storyContent);
     const errors = [...baseValidation.errors];
 
-    // Svelte-specific validations
-    if (!storyContent.includes('@storybook/svelte')) {
-      errors.push("Missing '@storybook/svelte' import");
+    // Svelte-specific validations for addon-svelte-csf v5+
+
+    // Check for defineMeta import (required for v5+)
+    if (!storyContent.includes('defineMeta') && !storyContent.includes('@storybook/addon-svelte-csf')) {
+      errors.push("Missing 'defineMeta' from '@storybook/addon-svelte-csf' - required for v5+");
+    }
+
+    // Check for old CSF syntax patterns that cause parser errors
+    if (storyContent.includes('export const meta') || storyContent.includes('export default meta')) {
+      errors.push("Using old CSF syntax 'export const/default meta' - use defineMeta() instead for addon-svelte-csf v5+");
+    }
+
+    // Check for old script context="module" syntax
+    if (storyContent.includes('<script context="module">')) {
+      errors.push("Using old '<script context=\"module\">' - use '<script module>' for Svelte 5");
+    }
+
+    // Check for separate Story/Template imports (should come from defineMeta in v5+)
+    if (/import\s*\{[^}]*Story[^}]*\}\s*from\s*['"]@storybook\/addon-svelte-csf['"]/.test(storyContent) &&
+        !storyContent.includes('defineMeta')) {
+      errors.push("Importing Story separately - use 'const { Story } = defineMeta(...)' instead");
     }
 
     if (storyContent.includes("import React from 'react'")) {
       errors.push('React import found in Svelte story');
     }
 
-    // Check for JSX-style event handlers in .ts files
-    if (storyContent.includes('.ts') && /onClick=\{/.test(storyContent)) {
-      errors.push('Using JSX-style event handlers instead of Svelte on: syntax');
+    // Check for JSX-style event handlers
+    if (/onClick=\{/.test(storyContent)) {
+      errors.push('Using JSX-style onClick - use onclick or on:click for Svelte');
     }
 
     return {
