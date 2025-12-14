@@ -398,10 +398,46 @@ app.post('/story-ui/stories/delete-bulk', async (req, res) => {
   }
 });
 
-// Clear all generated stories
+// Clear all generated stories OR delete single story by fileName query param
 app.delete('/story-ui/stories', async (req, res) => {
   try {
     const storiesPath = config.generatedStoriesPath;
+    const { fileName } = req.query;
+
+    // If fileName query param provided, delete that specific file
+    if (fileName && typeof fileName === 'string') {
+      console.log(`🗑️ Deleting story by fileName: ${fileName}`);
+
+      if (!fs.existsSync(storiesPath)) {
+        return res.status(404).json({ success: false, error: 'Stories directory not found' });
+      }
+
+      // Try exact match first
+      let filePath = path.join(storiesPath, fileName);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        console.log(`✅ Deleted story: ${filePath}`);
+        return res.json({ success: true, message: 'Story deleted successfully' });
+      }
+
+      // Try matching by hash pattern (e.g., "button-a1b2c3d4" without extension)
+      const hashMatch = fileName.match(/-([a-f0-9]{8})(?:\.stories\.[a-z]+)?$/);
+      if (hashMatch) {
+        const hash = hashMatch[1];
+        const files = fs.readdirSync(storiesPath);
+        const matchingFile = files.find(f => f.includes(`-${hash}.stories.`));
+        if (matchingFile) {
+          filePath = path.join(storiesPath, matchingFile);
+          fs.unlinkSync(filePath);
+          console.log(`✅ Deleted story by hash match: ${filePath}`);
+          return res.json({ success: true, message: 'Story deleted successfully' });
+        }
+      }
+
+      return res.status(404).json({ success: false, error: 'Story not found' });
+    }
+
+    // No fileName - clear ALL stories
     console.log(`🗑️ Clearing all stories from: ${storiesPath}`);
 
     if (!fs.existsSync(storiesPath)) {
@@ -409,7 +445,12 @@ app.delete('/story-ui/stories', async (req, res) => {
     }
 
     const files = fs.readdirSync(storiesPath);
-    const storyFiles = files.filter(file => file.endsWith('.stories.tsx'));
+    // Support all story file extensions: .tsx, .ts, .svelte
+    const storyFiles = files.filter(file =>
+      file.endsWith('.stories.tsx') ||
+      file.endsWith('.stories.ts') ||
+      file.endsWith('.stories.svelte')
+    );
     let deleted = 0;
 
     for (const file of storyFiles) {
