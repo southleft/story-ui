@@ -483,7 +483,9 @@ export async function setupCommand(options: SetupOptions = {}) {
   // Check for any Storybook framework
   const storybookPackages = [
     '@storybook/react', '@storybook/react-vite', '@storybook/react-webpack5', '@storybook/nextjs',
-    '@storybook/angular', '@storybook/vue3', '@storybook/svelte', '@storybook/web-components'
+    '@storybook/angular', '@storybook/vue3', '@storybook/vue3-vite',
+    '@storybook/svelte', '@storybook/svelte-vite',
+    '@storybook/web-components', '@storybook/web-components-vite'
   ];
   const hasStorybook = storybookPackages.some(pkg => devDeps[pkg] || deps[pkg]) ||
                       fs.existsSync(path.join(process.cwd(), '.storybook'));
@@ -517,20 +519,32 @@ export async function setupCommand(options: SetupOptions = {}) {
     componentFramework = 'angular';
     console.log(chalk.green('✅ Detected Angular Storybook'));
   }
-  // Check for Vue Storybook
-  else if (devDeps['@storybook/vue3'] || deps['@storybook/vue3']) {
+  // Check for Vue Storybook (vite variant first)
+  else if (devDeps['@storybook/vue3-vite'] || deps['@storybook/vue3-vite']) {
+    storybookFramework = '@storybook/vue3-vite';
+    componentFramework = 'vue';
+    console.log(chalk.green('✅ Detected Vite-based Vue 3 Storybook'));
+  } else if (devDeps['@storybook/vue3'] || deps['@storybook/vue3']) {
     storybookFramework = '@storybook/vue3';
     componentFramework = 'vue';
     console.log(chalk.green('✅ Detected Vue 3 Storybook'));
   }
-  // Check for Svelte Storybook
-  else if (devDeps['@storybook/svelte'] || deps['@storybook/svelte']) {
+  // Check for Svelte Storybook (vite variant first)
+  else if (devDeps['@storybook/svelte-vite'] || deps['@storybook/svelte-vite']) {
+    storybookFramework = '@storybook/svelte-vite';
+    componentFramework = 'svelte';
+    console.log(chalk.green('✅ Detected Vite-based Svelte Storybook'));
+  } else if (devDeps['@storybook/svelte'] || deps['@storybook/svelte']) {
     storybookFramework = '@storybook/svelte';
     componentFramework = 'svelte';
     console.log(chalk.green('✅ Detected Svelte Storybook'));
   }
-  // Check for Web Components Storybook
-  else if (devDeps['@storybook/web-components'] || deps['@storybook/web-components']) {
+  // Check for Web Components Storybook (vite variant first)
+  else if (devDeps['@storybook/web-components-vite'] || deps['@storybook/web-components-vite']) {
+    storybookFramework = '@storybook/web-components-vite';
+    componentFramework = 'web-components';
+    console.log(chalk.green('✅ Detected Vite-based Web Components Storybook'));
+  } else if (devDeps['@storybook/web-components'] || deps['@storybook/web-components']) {
     storybookFramework = '@storybook/web-components';
     componentFramework = 'web-components';
     console.log(chalk.green('✅ Detected Web Components Storybook'));
@@ -998,9 +1012,7 @@ Material UI (MUI) is a React component library implementing Material Design.
     } else if (componentFramework === 'angular') {
       // Angular uses webpack - needs CSS loaders
       if (!mainContent.includes('webpackFinal')) {
-        // Add webpackFinal config before the closing brace of the config object
-        const webpackConfig = `
-  webpackFinal: async (config) => {
+        const webpackConfig = `webpackFinal: async (config) => {
     // Story UI: Add CSS loader for StoryUIPanel CSS imports
     config.module?.rules?.push({
       test: /\\.css$/,
@@ -1008,8 +1020,14 @@ Material UI (MUI) is a React component library implementing Material Design.
     });
     return config;
   },`;
-        mainContent = mainContent.replace(/(\n};?\s*$)/, `${webpackConfig}$1`);
-        configUpdated = true;
+        // Insert webpackFinal inside the config object, before the closing };
+        if (mainContent.match(/};\s*\n+\s*export\s+default/)) {
+          mainContent = mainContent.replace(
+            /(\n)(};\s*\n+\s*export\s+default)/,
+            `\n  ${webpackConfig}\n$2`
+          );
+          configUpdated = true;
+        }
       }
 
       // Install required loaders for Angular
@@ -1023,8 +1041,7 @@ Material UI (MUI) is a React component library implementing Material Design.
     } else {
       // Vite-based frameworks (React, Vue, Svelte, Web Components)
       if (!mainContent.includes('viteFinal')) {
-        const viteConfig = `
-  viteFinal: async (config) => {
+        const viteConfig = `viteFinal: async (config) => {
     // Story UI: Exclude from dependency optimization to handle CSS imports correctly
     config.optimizeDeps = {
       ...config.optimizeDeps,
@@ -1035,8 +1052,16 @@ Material UI (MUI) is a React component library implementing Material Design.
     };
     return config;
   },`;
-        mainContent = mainContent.replace(/(\n};?\s*$)/, `${viteConfig}$1`);
-        configUpdated = true;
+        // Insert viteFinal inside the config object, before the closing };
+        // Find the last property line and add viteFinal after it
+        // Pattern: match the closing }; that ends the config object (before export default)
+        if (mainContent.match(/};\s*\n+\s*export\s+default/)) {
+          mainContent = mainContent.replace(
+            /(\n)(};\s*\n+\s*export\s+default)/,
+            `\n  ${viteConfig}\n$2`
+          );
+          configUpdated = true;
+        }
       }
     }
 
