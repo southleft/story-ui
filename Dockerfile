@@ -52,8 +52,9 @@ RUN chmod +x ./start-live.sh
 EXPOSE ${PORT:-4001}
 
 # Health check - verify MCP server is responding
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT:-4001}/story-ui/providers || exit 1
+# Use shell form for runtime $PORT expansion (Railway sets PORT dynamically)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD /bin/sh -c 'wget --no-verbose --tries=1 --spider http://localhost:${PORT:-4001}/story-ui/providers || exit 1'
 
 # Start both servers
 CMD ["./start-live.sh"]

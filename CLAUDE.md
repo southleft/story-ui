@@ -1,7 +1,7 @@
 # Story UI - AI Assistant Project Guide
 
-> **Last Updated**: December 4, 2025
-> **Current Version**: 3.6.2
+> **Last Updated**: December 14, 2025
+> **Current Version**: 3.10.8
 > **Production URL**: https://app-production-16de.up.railway.app (Vue/Vuetify example)
 > **Repository**: https://github.com/southleft/story-ui
 

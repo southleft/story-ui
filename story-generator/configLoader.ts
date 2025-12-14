@@ -1,6 +1,10 @@
 import fs from 'fs';
 import path from 'path';
+import { createRequire } from 'module';
 import { StoryUIConfig, DEFAULT_CONFIG, createStoryUIConfig } from '../story-ui.config.js';
+
+// Create require function for ESM compatibility
+const require = createRequire(import.meta.url);
 
 // Config cache to prevent excessive loading
 let cachedConfig: StoryUIConfig | null = null;
@@ -37,47 +41,64 @@ export function loadUserConfig(): StoryUIConfig {
         } else {
           console.log(`Loading Story UI config from: ${configPath}`);
         }
-        // Read and evaluate the config file
-        const configContent = fs.readFileSync(configPath, 'utf-8');
 
-        // Handle both CommonJS and ES modules
-        if (configContent.includes('module.exports') || configContent.includes('export default')) {
-          // Create a temporary module context
-          const module = { exports: {} };
-          const exports = module.exports;
+        // Use require() for safe config loading (no eval)
+        // Clear require cache to ensure fresh config on reload
+        const resolvedPath = path.resolve(configPath);
+        delete require.cache[resolvedPath];
 
-          // For ES modules, convert to CommonJS for evaluation
-          let evalContent = configContent;
-          if (configContent.includes('export default')) {
-            evalContent = configContent.replace(/export\s+default\s+/, 'module.exports = ');
+        let userConfig: any;
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const loadedModule = require(resolvedPath);
+          userConfig = loadedModule.default || loadedModule;
+        } catch (requireError) {
+          // If require() fails (e.g., ESM project with CJS config), fall back to parsing
+          // This handles "type": "module" projects with module.exports configs
+          const configContent = fs.readFileSync(configPath, 'utf-8');
+
+          // Try to extract the config object from CommonJS module.exports
+          // Match module.exports = { ... } with potential trailing semicolons and whitespace
+          const match = configContent.match(/module\.exports\s*=\s*(\{[\s\S]*\})\s*;*/);
+          if (match) {
+            try {
+              // Clean the config object: remove JS comments for JSON.parse compatibility
+              let configObj = match[1]
+                .replace(/\/\/[^\n]*/g, '') // Remove single-line comments
+                .replace(/,(\s*[}\]])/g, '$1'); // Remove trailing commas
+
+              // Use Function constructor (safer than eval, runs in isolated scope)
+              const configFn = new Function(`return ${configObj}`);
+              userConfig = configFn();
+            } catch (parseError) {
+              console.warn(`Failed to parse config from ${configPath}:`, parseError);
+              throw requireError; // Re-throw original error
+            }
+          } else {
+            throw requireError; // Re-throw if we can't parse it
           }
+        }
+        const config = createStoryUIConfig(userConfig);
 
-          // Evaluate the config file content
-          eval(evalContent);
-
-          const userConfig = module.exports as any;
-          const config = createStoryUIConfig(userConfig.default || userConfig);
-
-          // Detect Storybook framework if not already specified
-          if (!config.storybookFramework) {
-            const packageJsonPath = path.join(process.cwd(), 'package.json');
-            if (fs.existsSync(packageJsonPath)) {
-              try {
-                const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
-                const dependencies = { ...packageJson.dependencies, ...packageJson.devDependencies };
-                config.storybookFramework = detectStorybookFramework(dependencies);
-              } catch (error) {
-                console.warn('Failed to detect Storybook framework:', error);
-              }
+        // Detect Storybook framework if not already specified
+        if (!config.storybookFramework) {
+          const packageJsonPath = path.join(process.cwd(), 'package.json');
+          if (fs.existsSync(packageJsonPath)) {
+            try {
+              const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+              const dependencies = { ...packageJson.dependencies, ...packageJson.devDependencies };
+              config.storybookFramework = detectStorybookFramework(dependencies);
+            } catch (error) {
+              console.warn('Failed to detect Storybook framework:', error);
             }
           }
-
-          // Cache the loaded config
-          cachedConfig = config;
-          configLoadTime = now;
-
-          return config;
         }
+
+        // Cache the loaded config
+        cachedConfig = config;
+        configLoadTime = now;
+
+        return config;
       } catch (error) {
         console.warn(`Failed to load config from ${configPath}:`, error);
       }

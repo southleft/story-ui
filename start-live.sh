@@ -17,17 +17,37 @@ cd "$STORYBOOK_DIR"
 npm run storybook -- --port "$STORYBOOK_PORT" --host 0.0.0.0 --ci --no-open &
 STORYBOOK_PID=$!
 
-# Wait for Storybook to initialize
+# Wait for Storybook to be ready (up to 60 seconds)
 echo "⏳ Waiting for Storybook to start..."
-sleep 10
+MAX_WAIT=60
+WAIT_INTERVAL=2
+ELAPSED=0
 
-# Verify Storybook is running
-if ! kill -0 $STORYBOOK_PID 2>/dev/null; then
-    echo "❌ Storybook failed to start"
+while [ $ELAPSED -lt $MAX_WAIT ]; do
+    # Check if process is still running
+    if ! kill -0 $STORYBOOK_PID 2>/dev/null; then
+        echo "❌ Storybook process exited unexpectedly"
+        exit 1
+    fi
+
+    # Check if Storybook is responding to HTTP requests
+    if wget -q --spider http://localhost:${STORYBOOK_PORT}/ 2>/dev/null; then
+        echo "✅ Storybook dev server is ready on port ${STORYBOOK_PORT}"
+        break
+    fi
+
+    # Wait and retry
+    sleep $WAIT_INTERVAL
+    ELAPSED=$((ELAPSED + WAIT_INTERVAL))
+    echo "   Still waiting... (${ELAPSED}s/${MAX_WAIT}s)"
+done
+
+# Final check - if we exhausted the wait time
+if [ $ELAPSED -ge $MAX_WAIT ]; then
+    echo "❌ Storybook failed to start within ${MAX_WAIT} seconds"
+    kill $STORYBOOK_PID 2>/dev/null
     exit 1
 fi
-
-echo "✅ Storybook dev server running on port ${STORYBOOK_PORT}"
 
 # Start MCP server with Storybook proxy enabled
 echo "🤖 Starting MCP server on port ${MCP_PORT}..."

@@ -1195,6 +1195,35 @@
   color: hsl(var(--muted-foreground));
 }
 
+/* Fallback story styling (error placeholder was created) */
+.sui-completion-fallback .sui-completion-header {
+  color: hsl(var(--warning, 38 92% 50%));
+}
+
+.sui-completion-fallback-warning {
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: hsl(var(--warning, 38 92% 50%) / 0.15);
+  border-radius: var(--radius-md);
+  font-size: 0.8125rem;
+}
+
+.sui-completion-fallback-warning strong {
+  display: block;
+  color: hsl(var(--warning, 38 92% 50%));
+  margin-bottom: var(--space-1);
+}
+
+.sui-completion-fallback-warning p {
+  margin: 0;
+  color: hsl(var(--muted-foreground));
+}
+
+/* Error completion styling (generation failed completely) */
+.sui-completion-error .sui-completion-header {
+  color: hsl(var(--destructive));
+}
+
 /* ============================================
    Checkbox
    ============================================ */

@@ -80,6 +80,7 @@ interface StyleChoice {
 
 interface CompletionFeedback {
   success: boolean;
+  isFallback?: boolean; // True when a fallback error placeholder was created
   storyId?: string;
   fileName?: string;
   title?: string;
@@ -704,12 +705,23 @@ const ProgressIndicator: React.FC<ProgressIndicatorProps> = ({ streamingState })
     );
   }
   if (completion) {
+    // Determine status icon and class based on success and fallback state
+    const isFallback = completion.isFallback === true;
+    const statusIcon = completion.success ? '\u2705' : (isFallback ? '\u26A0\uFE0F' : '\u274C');
+    const statusClass = completion.success ? '' : (isFallback ? 'sui-completion-fallback' : 'sui-completion-error');
+
     return (
-      <div className="sui-completion">
+      <div className={`sui-completion ${statusClass}`}>
         <div className="sui-completion-header">
-          <span>{completion.success ? '\u2705' : '\u274C'}</span>
+          <span>{statusIcon}</span>
           <span>{completion.summary.action}: {completion.title}</span>
         </div>
+        {isFallback && (
+          <div className="sui-completion-fallback-warning">
+            <strong>Error Placeholder Created</strong>
+            <p>Generation failed after retries. A placeholder story was saved that you may want to delete or regenerate.</p>
+          </div>
+        )}
         {completion.componentsUsed.length > 0 && (
           <div className="sui-completion-components">
             {completion.componentsUsed.map((comp, i) => (
@@ -1073,10 +1085,16 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   // Build response message
   const buildConversationalResponse = (completion: CompletionFeedback, isUpdate: boolean): string => {
     const parts: string[] = [];
-    const statusMarker = completion.success ? '[SUCCESS]' : '[ERROR]';
+    const isFallback = completion.isFallback === true;
+    const statusMarker = completion.success ? '[SUCCESS]' : (isFallback ? '[WARNING]' : '[ERROR]');
     // Show "Failed:" when success is false, otherwise "Created:" or "Updated:"
-    const actionWord = completion.success ? (isUpdate ? 'Updated' : 'Created') : 'Failed';
+    const actionWord = completion.success ? (isUpdate ? 'Updated' : 'Created') : (isFallback ? 'Placeholder' : 'Failed');
     parts.push(`${statusMarker} **${actionWord}: "${completion.title}"**`);
+
+    // Add fallback-specific warning
+    if (isFallback) {
+      parts.push(`\n\n⚠️ **Generation failed** - An error placeholder was saved. You may want to delete this story and try again with a simpler request.`);
+    }
     const componentCount = completion.componentsUsed?.length || 0;
     if (componentCount > 0) {
       const names = completion.componentsUsed.slice(0, 5).map(c => `\`${c.name}\``).join(', ');
