@@ -204,7 +204,9 @@ app.get('/story-ui/stories', async (req, res) => {
 
         // Extract title from story file
         const titleMatch = content.match(/title:\s*['"]([^'"]+)['"]/);
-        const title = titleMatch ? titleMatch[1].replace('Generated/', '') : file.replace('.stories.tsx', '');
+        let title = titleMatch ? titleMatch[1].replace('Generated/', '') : file.replace('.stories.tsx', '');
+        // Remove hash suffix like " (a1b2c3d4)" from display title - hash is for Storybook uniqueness only
+        title = title.replace(/\s*\([a-f0-9]{8}\)$/i, '');
 
         return {
           id: file.replace('.stories.tsx', ''),

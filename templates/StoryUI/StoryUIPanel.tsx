@@ -294,6 +294,7 @@ function panelReducer(state: PanelState, action: PanelAction): PanelState {
 const USE_STREAMING = true;
 const MAX_RECENT_CHATS = 20;
 const CHAT_STORAGE_KEY = 'story-ui-chats';
+const PROVIDER_PREFS_KEY = 'story-ui-provider-prefs';
 const MAX_IMAGES = 4;
 const MAX_IMAGE_SIZE_MB = 20;
 
@@ -375,6 +376,29 @@ function saveChats(chats: ChatSession[]): void {
     localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(chats));
   } catch (e) {
     console.error('Failed to save chats:', e);
+  }
+}
+
+interface ProviderPrefs {
+  provider: string;
+  model: string;
+}
+
+function loadProviderPrefs(): ProviderPrefs | null {
+  try {
+    const stored = localStorage.getItem(PROVIDER_PREFS_KEY);
+    if (stored) return JSON.parse(stored);
+  } catch (e) {
+    console.error('Failed to load provider preferences:', e);
+  }
+  return null;
+}
+
+function saveProviderPrefs(provider: string, model: string): void {
+  try {
+    localStorage.setItem(PROVIDER_PREFS_KEY, JSON.stringify({ provider, model }));
+  } catch (e) {
+    console.error('Failed to save provider preferences:', e);
   }
 }
 
@@ -903,8 +927,31 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           const res = await fetch(PROVIDERS_API);
           if (res.ok) {
             const data: ProvidersResponse = await res.json();
-            dispatch({ type: 'SET_PROVIDERS', payload: data.providers.filter(p => p.configured) });
-            if (data.current) {
+            const configuredProviders = data.providers.filter(p => p.configured);
+            dispatch({ type: 'SET_PROVIDERS', payload: configuredProviders });
+
+            // Check for saved provider preferences first
+            const savedPrefs = loadProviderPrefs();
+            if (savedPrefs) {
+              // Verify saved provider is still configured
+              const savedProviderExists = configuredProviders.some(p => p.type === savedPrefs.provider);
+              if (savedProviderExists) {
+                dispatch({ type: 'SET_SELECTED_PROVIDER', payload: savedPrefs.provider });
+                // Verify saved model exists for this provider
+                const providerInfo = configuredProviders.find(p => p.type === savedPrefs.provider);
+                if (providerInfo?.models.includes(savedPrefs.model)) {
+                  dispatch({ type: 'SET_SELECTED_MODEL', payload: savedPrefs.model });
+                } else if (providerInfo?.models.length) {
+                  // Model no longer available, use first model of saved provider
+                  dispatch({ type: 'SET_SELECTED_MODEL', payload: providerInfo.models[0] });
+                }
+              } else if (data.current) {
+                // Saved provider no longer configured, fall back to server default
+                dispatch({ type: 'SET_SELECTED_PROVIDER', payload: data.current.provider.toLowerCase() });
+                dispatch({ type: 'SET_SELECTED_MODEL', payload: data.current.model });
+              }
+            } else if (data.current) {
+              // No saved preferences, use server default
               dispatch({ type: 'SET_SELECTED_PROVIDER', payload: data.current.provider.toLowerCase() });
               dispatch({ type: 'SET_SELECTED_MODEL', payload: data.current.model });
             }
@@ -942,6 +989,13 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [state.conversation, state.loading]);
+
+  // Save provider preferences when they change
+  useEffect(() => {
+    if (state.selectedProvider && state.selectedModel) {
+      saveProviderPrefs(state.selectedProvider, state.selectedModel);
+    }
+  }, [state.selectedProvider, state.selectedModel]);
 
   // File handling
   const fileToBase64 = (file: File): Promise<string> => {
