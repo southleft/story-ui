@@ -1,3 +1,10 @@
+# [4.1.0](https://github.com/southleft/story-ui/compare/v4.0.1...v4.1.0) (2025-12-14)
+
+
+### Features
+
+* **ui:** persist provider preferences and hide hash from titles ([e40b450](https://github.com/southleft/story-ui/commit/e40b45067d25c6e9d183b8c3cdda331433b3cc9e))
+
 ## [4.0.1](https://github.com/southleft/story-ui/compare/v4.0.0...v4.0.1) (2025-12-14)
 
 
