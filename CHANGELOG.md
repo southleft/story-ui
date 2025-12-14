@@ -1,3 +1,46 @@
+# [4.0.0](https://github.com/southleft/story-ui/compare/v3.10.7...v4.0.0) (2025-12-14)
+
+
+### Bug Fixes
+
+* **cli:** add CSS file copy and auto-configure bundler for StoryUIPanel ([488ccef](https://github.com/southleft/story-ui/commit/488ccefbac5432fa6b5f7364d3685cc83eccdfe1))
+* **cli:** detect Vite-based Storybook variants for Vue, Svelte, Web Components ([8ef6029](https://github.com/southleft/story-ui/commit/8ef602983d4903a0132c553eeb6a0e983e91d06c))
+* **config:** add build step to prepare script for GitHub installs ([78bf77b](https://github.com/southleft/story-ui/commit/78bf77b940be439799378905f688f0dfa57bcf36))
+* **config:** check for git dir before running husky in prepare script ([4bccf64](https://github.com/southleft/story-ui/commit/4bccf643660a6ad21eb5515a5f486135dfb99075))
+* **config:** make prepare script resilient to missing git context ([afc1de1](https://github.com/southleft/story-ui/commit/afc1de1b553d46e4f6238b17147ca962a39efbb8))
+* **generator:** add asChild prop to Svelte stories to prevent double-wrapping ([96f28d6](https://github.com/southleft/story-ui/commit/96f28d6260998a12ebda097d0b34737df9f08aa8))
+* **generator:** add explicit guidance against deep import paths for Svelte ([409a154](https://github.com/southleft/story-ui/commit/409a154d93ad30755c8cc6a1661022659f425007))
+* **generator:** add Svelte defineMeta title replacement to prevent duplicate story IDs ([3306480](https://github.com/southleft/story-ui/commit/33064805339d6c18984e09d9c90d590dc4d8341b))
+* **generator:** handle Svelte CSF format in usable code detection and fallback ([c17f068](https://github.com/southleft/story-ui/commit/c17f0688e48b176f4ee1029abd2cd819226e92bf))
+* **generator:** improve Svelte adapter regex to handle nested meta objects ([da96c79](https://github.com/southleft/story-ui/commit/da96c79b3c702c9aab91ffbdb0c8f2f8a6c02643))
+* **generator:** make self-healing loop and validation framework-aware for Svelte ([9b42b4d](https://github.com/southleft/story-ui/commit/9b42b4d534ac74882869ae6481f25aee577cc683))
+* **generator:** prevent double-nesting and update to Svelte 5 event syntax ([7f70930](https://github.com/southleft/story-ui/commit/7f709300cd73881f6327f343caa2387e23aceda9))
+* **generator:** resolve 4 critical production bugs across frameworks ([daa97e8](https://github.com/southleft/story-ui/commit/daa97e864e7ba0673e2671d44ac7e06e3c36b0ca))
+* **generator:** resolve Svelte code extraction and validation issues ([288cfb6](https://github.com/southleft/story-ui/commit/288cfb6d72e88ede19e8c4fd45dff0fec8c11fff))
+* **generator:** return success:false when fallback error story is created ([299b535](https://github.com/southleft/story-ui/commit/299b5351c8769ad2561d0f4371e539bb4bd8edeb))
+* **generator:** route Svelte code to Svelte validator in extractAndValidateCodeBlock ([26bdfb0](https://github.com/southleft/story-ui/commit/26bdfb0ce872cfc1468012fda9a9354869fbcbdd))
+* **generator:** support addon-svelte-csf v5+ defineMeta syntax ([a2ed93e](https://github.com/southleft/story-ui/commit/a2ed93e839eaacfac04da31496ec8b1d20cc13ca))
+* **generator:** update Svelte adapter for addon-svelte-csf v5+ defineMeta() syntax ([42e7ca8](https://github.com/southleft/story-ui/commit/42e7ca8f71005aa8c17159b291e00bdc5b337ecd))
+* **mcp:** support fileName query param in delete endpoint ([bdcb422](https://github.com/southleft/story-ui/commit/bdcb422a9bd3a6d4ee330504fac7be92cf543ebc))
+* security and ux improvements from llm audit ([faeb155](https://github.com/southleft/story-ui/commit/faeb155b28714da1417dc5da9c9905b972512982))
+* sync package.json version with npm registry (3.10.9) ([c73f895](https://github.com/southleft/story-ui/commit/c73f895cd25d01ba73eb2e078c9216861c23a3a1))
+* **ui:** preserve fileName during story iterations to prevent duplicates ([35f0345](https://github.com/southleft/story-ui/commit/35f0345f3418f8b34521604f4f332a14b2e39b84))
+* **ui:** show 'Failed:' instead of 'Created:' when story generation fails ([a954626](https://github.com/southleft/story-ui/commit/a954626c379406602054481eb3cef4201aefcc1d))
+
+
+### BREAKING CHANGES
+
+* **generator:** for Svelte 5 / addon-svelte-csf v5.0.10+:
+- Replace 'export const meta' with defineMeta() function
+- Use '<script module>' instead of '<script context="module">'
+- Destructure { Story } from defineMeta() return value
+- Remove Template component (no longer needed in v5+)
+- Add post-processing to convert old syntax to new
+- Update validation to catch old CSF syntax patterns
+
+This fixes the SB_SVELTE_CSF_PARSER_EXTRACT_SVELTE_0009 parser error
+that occurs when using the old CSF export syntax with v5+ of the addon.
+
 ## [3.10.7](https://github.com/southleft/story-ui/compare/v3.10.6...v3.10.7) (2025-12-07)
 
 
