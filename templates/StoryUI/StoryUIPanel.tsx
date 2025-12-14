@@ -1137,6 +1137,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   const finalizeStreamingConversation = useCallback((newConversation: Message[], completion: CompletionFeedback, userInput: string) => {
     // DEBUG: Trace completion data
     console.log('[StoryUI DEBUG] finalizeStreamingConversation completion:', {
+      success: completion.success,
       storyId: completion.storyId,
       fileName: completion.fileName,
       title: completion.title,
