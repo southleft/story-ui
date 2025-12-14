@@ -75,7 +75,8 @@ CRITICAL RULES FOR addon-svelte-csf v5+:
 - Use defineMeta() function to define meta - NOT export const meta
 - Destructure Story from defineMeta() - do NOT import Story separately
 - DO NOT use "export const meta" or "export default meta" - this will cause parser errors!
-- Use named imports: import { Button, Card } from 'flowbite-svelte';
+- 🚨 IMPORT RULE: Use named imports from ROOT ONLY: import { Button, Card } from '${config.importPath || 'flowbite-svelte'}';
+- 🚫 NEVER use deep paths like '${config.importPath || 'flowbite-svelte'}/dist/...' or '${config.importPath || 'flowbite-svelte'}/components/...'
 - Story title MUST start with "Generated/" (e.g., title: 'Generated/Button')
 - Include tags: ['autodocs'] in defineMeta
 - Each <Story> needs a unique name attribute

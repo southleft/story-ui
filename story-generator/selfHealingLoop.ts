@@ -342,7 +342,7 @@ export function buildSelfHealingPrompt(
     sections.push('4. Use proper Svelte 5 syntax (class=, onclick=, NOT on:click=)');
     sections.push('5. NEVER nest a component inside itself: <Comp><Comp>X</Comp></Comp> is WRONG! Use <Comp>X</Comp>');
     sections.push(
-      `6. Only import components that exist in "${options.importPath}" (no deep paths)`
+      `6. Only import from ROOT: import { Comp } from "${options.importPath}" - NEVER use deep paths like "${options.importPath}/dist/..." or "${options.importPath}/components/..."`
     );
     sections.push(`7. Return the COMPLETE corrected code in a \`\`\`svelte code block`);
     sections.push('8. Do NOT include any explanation - just the corrected code block');
