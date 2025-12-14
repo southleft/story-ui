@@ -760,17 +760,29 @@ function validateSvelteStory(code: string, config?: any): ValidationResult {
   };
 
   // Check for required Svelte story structure
-  const requiredPatterns = [
-    { pattern: /<script\s+context=["']module["']>/i, name: 'script context="module"' },
-    { pattern: /export\s+const\s+meta\s*=/, name: 'export const meta' },
-    { pattern: /<Story\s+name=["'][^"']+["']/, name: '<Story name="..."> component' }
-  ];
+  // Support both OLD format (addon-svelte-csf v4) and NEW format (addon-svelte-csf v5+)
+  const hasOldScriptModule = /<script\s+context=["']module["']>/i.test(code);
+  const hasNewScriptModule = /<script\s+module>/i.test(code);
+  const hasOldMetaExport = /export\s+const\s+meta\s*=/.test(code);
+  const hasNewDefineMeta = /const\s*\{\s*Story\s*\}\s*=\s*defineMeta\s*\(/.test(code);
+  const hasStoryComponent = /<Story\s+name=["'][^"']+["']/.test(code);
 
-  for (const { pattern, name } of requiredPatterns) {
-    if (!pattern.test(code)) {
-      result.errors.push(`Missing required Svelte story element: ${name}`);
-      result.isValid = false;
-    }
+  // Validate script module block (either old or new format)
+  if (!hasOldScriptModule && !hasNewScriptModule) {
+    result.errors.push('Missing required Svelte story element: <script module> or <script context="module">');
+    result.isValid = false;
+  }
+
+  // Validate meta definition (either old export const meta or new defineMeta)
+  if (!hasOldMetaExport && !hasNewDefineMeta) {
+    result.errors.push('Missing required Svelte story element: defineMeta() or export const meta');
+    result.isValid = false;
+  }
+
+  // Validate Story component
+  if (!hasStoryComponent) {
+    result.errors.push('Missing required Svelte story element: <Story name="..."> component');
+    result.isValid = false;
   }
 
   // Check for common issues
