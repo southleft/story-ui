@@ -692,7 +692,14 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
 
       // If there are still errors but we have an attempt, use the best one
       // Only create fallback if we have no valid code at all
-      if (bestAttempt.code && bestAttempt.code.includes('export')) {
+      // Check for framework-specific code patterns (Svelte uses defineMeta, not export)
+      const hasUsableCode = bestAttempt.code && (
+        bestAttempt.code.includes('export') ||
+        bestAttempt.code.includes('defineMeta') ||
+        bestAttempt.code.includes('<script module>') ||
+        bestAttempt.code.includes('<script context="module">')
+      );
+      if (hasUsableCode) {
         fileContents = bestAttempt.code;
         hasValidationWarnings = true;
       } else {

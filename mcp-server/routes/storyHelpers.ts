@@ -292,29 +292,32 @@ export const Default: Story = {
 };`;
 
     case 'svelte':
-      return `import type { Meta, StoryObj } from '@storybook/svelte';
+      // Use native .stories.svelte format with defineMeta for addon-svelte-csf v5+
+      return `<script module>
+  import { defineMeta } from '@storybook/addon-svelte-csf';
 
-// Fallback story generated due to AI generation error
-const meta: Meta = {
-  title: '${storyPrefix}${escapedTitle}',
-  parameters: {
-    docs: {
-      description: {
-        story: 'This is a fallback story created when the AI generation failed due to syntax errors.'
+  // Fallback story generated due to AI generation error
+  const { Story } = defineMeta({
+    title: '${storyPrefix}${escapedTitle}',
+    tags: ['autodocs'],
+    parameters: {
+      docs: {
+        description: {
+          story: 'This is a fallback story created when the AI generation failed due to syntax errors.'
+        }
       }
     }
-  }
-};
+  });
+</script>
 
-export default meta;
-type Story = StoryObj;
-
-export const Default: Story = {
-  render: () => ({
-    Component: null,
-    props: {}
-  })
-};`;
+<Story name="Error">
+  <div style="padding: 2rem; text-align: center; border: 2px dashed #ccc; border-radius: 8px;">
+    <h2 style="color: #374151; margin-bottom: 1rem;">Story Generation Error</h2>
+    <p style="color: #6b7280;">The AI-generated story contained syntax errors and could not be created.</p>
+    <p style="color: #6b7280;"><strong>Original prompt:</strong> ${escapedTitle}</p>
+    <p style="color: #6b7280;">Please try rephrasing your request.</p>
+  </div>
+</Story>`;
 
     case 'web-components':
       return `import { html } from 'lit';
