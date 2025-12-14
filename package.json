@@ -35,7 +35,7 @@
     "release": "semantic-release",
     "release:dry-run": "semantic-release --dry-run",
     "commit": "cz",
-    "prepare": "husky && npm run build",
+    "prepare": "(husky || true) && npm run build",
     "story-ui": "story-ui start --port 4001"
   },
   "keywords": [
