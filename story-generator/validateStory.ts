@@ -672,9 +672,31 @@ function findInsertPosition(code: string): number {
 
 /**
  * Extracts and validates code blocks from AI responses
+ * Automatically uses framework-appropriate filenames for validation routing
  */
-export function extractAndValidateCodeBlock(aiResponse: string, config?: any, fileName: string = 'story.tsx'): ValidationResult {
+export function extractAndValidateCodeBlock(aiResponse: string, config?: any, fileName?: string): ValidationResult {
   const framework = config?.componentFramework || 'react';
+
+  // CRITICAL: Use framework-appropriate filename for proper validation routing
+  // The validateStoryCode function uses fileName to determine which validator to use
+  if (!fileName) {
+    switch (framework) {
+      case 'svelte':
+        fileName = 'story.stories.svelte';
+        break;
+      case 'vue':
+        fileName = 'story.stories.vue';
+        break;
+      case 'angular':
+        fileName = 'story.stories.ts';
+        break;
+      case 'web-components':
+        fileName = 'story.stories.ts';
+        break;
+      default:
+        fileName = 'story.stories.tsx';
+    }
+  }
 
   // Build extraction methods based on framework
   const extractionMethods: Array<(text: string) => string | null> = [
