@@ -847,11 +847,15 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
     const validationResult = extractAndValidateCodeBlock(aiText, config);
     let fileContents: string;
     let hasValidationWarnings = false;
+    let isFallbackStory = false;  // Track if we created a fallback error story
 
     if (!validationResult.isValid && !validationResult.fixedCode) {
       // Use framework-aware fallback story
-      fileContents = createFrameworkAwareFallbackStory(prompt, config, detectedFramework);
+      // Pass both the raw prompt (for error display) and the aiTitle (for proper story title casing)
+      // aiTitle may not be set yet at this point, so always use cleanPromptForTitle for fallbacks
+      fileContents = createFrameworkAwareFallbackStory(prompt, cleanPromptForTitle(prompt), config, detectedFramework);
       hasValidationWarnings = true;
+      isFallbackStory = true;  // Mark that we created a fallback error story
 
       stream.sendValidation({
         isValid: false,
@@ -1068,25 +1072,30 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
     }
 
     // COMPLETION: Send detailed feedback
+    // IMPORTANT: success is FALSE when we had to create a fallback error story
     stream.sendCompletion({
-      success: true,
+      success: !isFallbackStory,
       title: aiTitle,
       fileName: finalFileName,
       storyId,
       summary: {
-        action: isActualUpdate ? 'updated' : 'created',
-        description: isActualUpdate
-          ? `Updated story based on your request: "${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}"`
-          : `Created new story for: "${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}"`
+        action: isFallbackStory ? 'failed' : (isActualUpdate ? 'updated' : 'created'),
+        description: isFallbackStory
+          ? `Story generation failed for: "${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}" - an error placeholder was created`
+          : (isActualUpdate
+            ? `Updated story based on your request: "${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}"`
+            : `Created new story for: "${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}"`)
       },
       componentsUsed: analysis.componentsUsed,
       layoutChoices: analysis.layoutChoices,
       styleChoices: analysis.styleChoices,
-      suggestions: hasValidationWarnings
-        ? ['Some automatic fixes were applied. Review the generated code.']
-        : undefined,
+      suggestions: isFallbackStory
+        ? ['Story generation failed. Please try rephrasing your request.']
+        : (hasValidationWarnings
+          ? ['Some automatic fixes were applied. Review the generated code.']
+          : undefined),
       validation: {
-        isValid: !hasValidationWarnings,
+        isValid: !hasValidationWarnings && !isFallbackStory,
         errors: validationResult?.errors || [],
         warnings: validationResult?.warnings || [],
         autoFixApplied: !!validationResult?.fixedCode

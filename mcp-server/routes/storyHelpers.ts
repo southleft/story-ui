@@ -250,14 +250,22 @@ export function findSimilarIcon(iconName: string, allowedIcons: Set<string>): st
 /**
  * Creates a framework-aware fallback story when generation fails.
  * Uses the adapter to generate framework-appropriate code.
+ * @param prompt - The original user prompt (used in error message)
+ * @param displayTitle - The properly formatted title for the story (with proper casing)
+ * @param config - The story-ui config
+ * @param framework - The target framework
  */
 export function createFrameworkAwareFallbackStory(
   prompt: string,
+  displayTitle: string,
   config: any,
   framework: string
 ): string {
-  const title = prompt.length > 50 ? prompt.substring(0, 50) + '...' : prompt;
-  const escapedTitle = title.replace(/"/g, '\\"').replace(/'/g, "\\'");
+  // Use the displayTitle for the story title (properly cased)
+  // Use the prompt for the "Original prompt" in the error message
+  const truncatedTitle = displayTitle.length > 50 ? displayTitle.substring(0, 50) + '...' : displayTitle;
+  const escapedTitle = truncatedTitle.replace(/"/g, '\\"').replace(/'/g, "\\'");
+  const escapedPrompt = prompt.replace(/"/g, '\\"').replace(/'/g, "\\'");
   const storyPrefix = config.storyPrefix || 'Generated/';
 
   // Framework-specific fallback templates
@@ -286,7 +294,7 @@ export const Default: Story = {
       <div style="padding: 2rem; text-align: center; border: 2px dashed #ccc; border-radius: 8px;">
         <h2>Story Generation Error</h2>
         <p>The AI-generated story contained syntax errors and could not be created.</p>
-        <p><strong>Original prompt:</strong> ${escapedTitle}</p>
+        <p><strong>Original prompt:</strong> ${escapedPrompt}</p>
         <p>Please try rephrasing your request.</p>
       </div>
     \`
@@ -317,7 +325,7 @@ export const Default: Story = {
       <div style="padding: 2rem; text-align: center; border: 2px dashed #ccc; border-radius: 8px;">
         <h2>Story Generation Error</h2>
         <p>The AI-generated story contained syntax errors and could not be created.</p>
-        <p><strong>Original prompt:</strong> ${escapedTitle}</p>
+        <p><strong>Original prompt:</strong> ${escapedPrompt}</p>
         <p>Please try rephrasing your request.</p>
       </div>
     \`
@@ -347,7 +355,7 @@ export const Default: Story = {
   <div style="padding: 2rem; text-align: center; border: 2px dashed #ccc; border-radius: 8px;">
     <h2 style="color: #374151; margin-bottom: 1rem;">Story Generation Error</h2>
     <p style="color: #6b7280;">The AI-generated story contained syntax errors and could not be created.</p>
-    <p style="color: #6b7280;"><strong>Original prompt:</strong> ${escapedTitle}</p>
+    <p style="color: #6b7280;"><strong>Original prompt:</strong> ${escapedPrompt}</p>
     <p style="color: #6b7280;">Please try rephrasing your request.</p>
   </div>
 </Story>`;
@@ -376,7 +384,7 @@ export const Default: Story = {
     <div style="padding: 2rem; text-align: center; border: 2px dashed #ccc; border-radius: 8px;">
       <h2>Story Generation Error</h2>
       <p>The AI-generated story contained syntax errors and could not be created.</p>
-      <p><strong>Original prompt:</strong> ${escapedTitle}</p>
+      <p><strong>Original prompt:</strong> ${escapedPrompt}</p>
       <p>Please try rephrasing your request.</p>
     </div>
   \`
@@ -395,7 +403,7 @@ export default {
     <div style={{ padding: '2rem', textAlign: 'center', border: '2px dashed #ccc', borderRadius: '8px' }}>
       <h2>Story Generation Error</h2>
       <p>The AI-generated story contained syntax errors and could not be created.</p>
-      <p><strong>Original prompt:</strong> ${escapedTitle}</p>
+      <p><strong>Original prompt:</strong> ${escapedPrompt}</p>
       <p>Please try rephrasing your request or contact support.</p>
     </div>
   ),

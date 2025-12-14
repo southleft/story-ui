@@ -708,6 +708,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
     // Determine the best code to use
     let fileContents: string;
     let hasValidationWarnings = false;
+    let isFallbackStory = false;  // Track if we created a fallback error story
 
     // Select the best attempt (fewest errors)
     const bestAttempt = selectBestAttempt(allAttempts);
@@ -734,9 +735,12 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         hasValidationWarnings = true;
       } else {
         // Create fallback story only if we have no usable code
+        // Pass both the raw prompt (for error display) and the aiTitle (for proper story title casing)
         logger.log('Creating fallback story - no usable code generated');
-        fileContents = createFrameworkAwareFallbackStory(prompt, config, detectedFramework);
+        // aiTitle may not be set yet at this point, so always use cleanPromptForTitle for fallbacks
+        fileContents = createFrameworkAwareFallbackStory(prompt, cleanPromptForTitle(prompt), config, detectedFramework);
         hasValidationWarnings = true;
+        isFallbackStory = true;  // Mark that we created a fallback error story
       }
     } else if (bestAttempt) {
       // Success - use the best attempt (which should have no errors)
@@ -989,7 +993,10 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
     }
 
     res.json({
-      success: true,
+      // IMPORTANT: success is FALSE when we had to create a fallback error story
+      // This allows the UI to properly inform the user that generation failed
+      success: !isFallbackStory,
+      isFallback: isFallbackStory,  // Explicit flag for fallback detection
       fileName: finalFileName,
       storyId,
       outPath,
@@ -1002,7 +1009,8 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
         errors: [...finalErrors.syntaxErrors, ...finalErrors.patternErrors, ...finalErrors.importErrors],
         warnings: [],
         selfHealingUsed,
-        attempts
+        attempts,
+        isFallback: isFallbackStory  // Also in validation for convenience
       },
       runtimeValidation: {
         enabled: isRuntimeValidationEnabled(),
