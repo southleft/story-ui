@@ -79,16 +79,34 @@ export function getAvailableProviders(): Array<{
 /**
  * Simple chat completion for story generation
  * Maintains backwards compatibility with the old callClaude interface
+ * Now supports explicit provider selection from UI
  */
 export async function chatCompletion(
   messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
   options?: {
+    provider?: ProviderType;  // Explicit provider selection from UI
     model?: string;
     maxTokens?: number;
     temperature?: number;
   }
 ): Promise<string> {
-  const provider = getStoryProvider();
+  ensureInitialized();
+
+  // Use explicitly requested provider, or fall back to first configured
+  let provider: LLMProvider;
+  if (options?.provider) {
+    const registry = getProviderRegistry();
+    const requestedProvider = registry.get(options.provider);
+    if (requestedProvider && requestedProvider.isConfigured()) {
+      provider = requestedProvider;
+      logger.log(`🎯 Using explicitly requested provider: ${provider.name}`);
+    } else {
+      logger.warn(`Requested provider '${options.provider}' not configured, falling back to default`);
+      provider = getStoryProvider();
+    }
+  } else {
+    provider = getStoryProvider();
+  }
 
   if (!provider.isConfigured()) {
     throw new Error(`${provider.name} provider is not configured. Please set the API key.`);
@@ -133,6 +151,7 @@ export async function chatCompletion(
 /**
  * Chat completion with image support for vision-based story generation
  * Supports sending images alongside text prompts
+ * Now supports explicit provider selection from UI
  */
 export async function chatCompletionWithImages(
   messages: Array<{
@@ -140,12 +159,29 @@ export async function chatCompletionWithImages(
     content: string | MessageContent[];
   }>,
   options?: {
+    provider?: ProviderType;  // Explicit provider selection from UI
     model?: string;
     maxTokens?: number;
     temperature?: number;
   }
 ): Promise<string> {
-  const provider = getStoryProvider();
+  ensureInitialized();
+
+  // Use explicitly requested provider, or fall back to first configured
+  let provider: LLMProvider;
+  if (options?.provider) {
+    const registry = getProviderRegistry();
+    const requestedProvider = registry.get(options.provider);
+    if (requestedProvider && requestedProvider.isConfigured()) {
+      provider = requestedProvider;
+      logger.log(`🎯 Using explicitly requested provider for vision: ${provider.name}`);
+    } else {
+      logger.warn(`Requested provider '${options.provider}' not configured, falling back to default`);
+      provider = getStoryProvider();
+    }
+  } else {
+    provider = getStoryProvider();
+  }
 
   if (!provider.isConfigured()) {
     throw new Error(`${provider.name} provider is not configured. Please set the API key.`);

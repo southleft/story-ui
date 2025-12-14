@@ -490,7 +490,9 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
     images,
     visionMode,
     designSystem,
-    considerations
+    considerations,
+    provider,            // LLM provider selected in UI (claude, openai, gemini)
+    model                // Model selected in UI
   } = req.body as StreamGenerateRequest;
 
   // DEBUG: Trace incoming fileName for iteration bug
@@ -721,7 +723,11 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
       }
 
       // Call LLM
-      const claudeResponse = await callLLM(messages, processedImages.length > 0 ? processedImages : undefined);
+      const claudeResponse = await callLLM(
+        messages,
+        processedImages.length > 0 ? processedImages : undefined,
+        { provider, model }
+      );
       lastClaudeResponse = claudeResponse;
 
       // Extract code block
@@ -1240,11 +1246,24 @@ function extractCodeBlock(text: string, framework?: string): string | null {
 
 async function callLLM(
   messages: { role: 'user' | 'assistant', content: string }[],
-  images?: ImageContent[]
+  images?: ImageContent[],
+  options?: { provider?: string; model?: string }
 ): Promise<string> {
   if (!isProviderConfigured()) {
     throw new Error('No LLM provider configured');
   }
+
+  // Log which provider will be used
+  if (options?.provider) {
+    logger.log(`🎯 Explicit provider requested: ${options.provider} (model: ${options.model || 'default'})`);
+  }
+
+  // Build options to pass to chat completion
+  const llmOptions: { provider?: any; model?: string; maxTokens: number } = {
+    maxTokens: 8192,
+    provider: options?.provider,
+    model: options?.model,
+  };
 
   if (images && images.length > 0) {
     const providerInfo = getProviderInfo();
@@ -1262,10 +1281,10 @@ async function callLLM(
       return msg;
     });
 
-    return await chatCompletionWithImages(messagesWithImages, { maxTokens: 8192 });
+    return await chatCompletionWithImages(messagesWithImages, llmOptions);
   }
 
-  return await chatCompletion(messages, { maxTokens: 8192 });
+  return await chatCompletion(messages, llmOptions);
 }
 
 function cleanPromptForTitle(prompt: string): string {
