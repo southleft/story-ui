@@ -955,7 +955,7 @@ Material UI (MUI) is a React component library implementing Material Design.
 
   // Copy component files
   const templatesDir = path.resolve(__dirname, '../../templates/StoryUI');
-  const componentFiles = ['StoryUIPanel.tsx', 'StoryUIPanel.mdx'];
+  const componentFiles = ['StoryUIPanel.tsx', 'StoryUIPanel.mdx', 'StoryUIPanel.css'];
 
   console.log(chalk.blue('\n📦 Installing Story UI component...'));
 
@@ -979,6 +979,94 @@ Material UI (MUI) is a React component library implementing Material Design.
     } else {
       console.warn(chalk.yellow(`⚠️  Template file not found: ${file}`));
     }
+  }
+
+  // Configure Storybook bundler for StoryUIPanel requirements
+  console.log(chalk.blue('\n🔧 Configuring Storybook for Story UI...'));
+  const mainConfigPath = path.join(process.cwd(), '.storybook', 'main.ts');
+  const mainConfigPathJs = path.join(process.cwd(), '.storybook', 'main.js');
+  const actualMainPath = fs.existsSync(mainConfigPath) ? mainConfigPath :
+                         fs.existsSync(mainConfigPathJs) ? mainConfigPathJs : null;
+
+  if (actualMainPath) {
+    let mainContent = fs.readFileSync(actualMainPath, 'utf-8');
+    let configUpdated = false;
+
+    // Check if StoryUI config already exists
+    if (mainContent.includes('@tpitre/story-ui') || mainContent.includes('StoryUIPanel')) {
+      console.log(chalk.blue('ℹ️  Storybook already configured for Story UI'));
+    } else if (componentFramework === 'angular') {
+      // Angular uses webpack - needs CSS loaders
+      if (!mainContent.includes('webpackFinal')) {
+        // Add webpackFinal config before the closing brace of the config object
+        const webpackConfig = `
+  webpackFinal: async (config) => {
+    // Story UI: Add CSS loader for StoryUIPanel CSS imports
+    config.module?.rules?.push({
+      test: /\\.css$/,
+      use: ['style-loader', 'css-loader'],
+    });
+    return config;
+  },`;
+        mainContent = mainContent.replace(/(\n};?\s*$)/, `${webpackConfig}$1`);
+        configUpdated = true;
+      }
+
+      // Install required loaders for Angular
+      console.log(chalk.blue('📦 Installing CSS loaders for Angular...'));
+      try {
+        execSync('npm install --save-dev style-loader css-loader', { stdio: 'inherit' });
+        console.log(chalk.green('✅ Installed style-loader and css-loader'));
+      } catch (error) {
+        console.warn(chalk.yellow('⚠️  Could not install CSS loaders. You may need to run: npm install --save-dev style-loader css-loader'));
+      }
+    } else {
+      // Vite-based frameworks (React, Vue, Svelte, Web Components)
+      if (!mainContent.includes('viteFinal')) {
+        const viteConfig = `
+  viteFinal: async (config) => {
+    // Story UI: Exclude from dependency optimization to handle CSS imports correctly
+    config.optimizeDeps = {
+      ...config.optimizeDeps,
+      exclude: [
+        ...(config.optimizeDeps?.exclude || []),
+        '@tpitre/story-ui'
+      ]
+    };
+    return config;
+  },`;
+        mainContent = mainContent.replace(/(\n};?\s*$)/, `${viteConfig}$1`);
+        configUpdated = true;
+      }
+    }
+
+    // For Web Components: Update tsconfig.json for TSX support
+    if (componentFramework === 'web-components') {
+      const tsconfigPath = path.join(process.cwd(), 'tsconfig.json');
+      if (fs.existsSync(tsconfigPath)) {
+        try {
+          let tsconfigContent = fs.readFileSync(tsconfigPath, 'utf-8');
+          if (!tsconfigContent.includes('"jsx"')) {
+            // Add jsx config for TSX compilation
+            tsconfigContent = tsconfigContent.replace(
+              /"compilerOptions"\s*:\s*\{/,
+              '"compilerOptions": {\n    "jsx": "react-jsx",'
+            );
+            fs.writeFileSync(tsconfigPath, tsconfigContent);
+            console.log(chalk.green('✅ Added JSX support to tsconfig.json'));
+          }
+        } catch (error) {
+          console.warn(chalk.yellow('⚠️  Could not update tsconfig.json. You may need to add "jsx": "react-jsx" manually.'));
+        }
+      }
+    }
+
+    if (configUpdated) {
+      fs.writeFileSync(actualMainPath, mainContent);
+      console.log(chalk.green('✅ Updated Storybook configuration for Story UI'));
+    }
+  } else {
+    console.warn(chalk.yellow('⚠️  Could not find .storybook/main.ts or main.js'));
   }
 
   // Create considerations file
