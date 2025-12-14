@@ -213,8 +213,9 @@ function getFrameworkSpecificInstructions(framework: string, importPath: string)
     instructions.push('2. Import defineMeta: `import { defineMeta } from "@storybook/addon-svelte-csf";`');
     instructions.push(`3. Import components: \`import { ComponentName } from "${importPath}";\``);
     instructions.push('4. Destructure Story from defineMeta: `const { Story } = defineMeta({ title: "...", component: ... });`');
-    instructions.push('5. Use `<Story name="StoryName">` components (NOT `export const StoryName`)');
-    instructions.push('6. Close the script tag properly: `</script>`');
+    instructions.push('5. Use `<Story name="StoryName" asChild>` components (NOT `export const StoryName`)');
+    instructions.push('6. ALWAYS add asChild prop to Story to prevent double-wrapping: `<Story name="X" asChild>`');
+    instructions.push('7. Close the script tag properly: `</script>`');
     instructions.push('');
     instructions.push('**FORBIDDEN in Svelte stories:**');
     instructions.push('- `export const meta = { ... }` (old CSF format)');
@@ -237,7 +238,7 @@ function getFrameworkSpecificInstructions(framework: string, importPath: string)
     instructions.push('  });');
     instructions.push('</script>');
     instructions.push('');
-    instructions.push('<Story name="Default">');
+    instructions.push('<Story name="Default" asChild>');
     instructions.push('  <Button>Click Me</Button>');
     instructions.push('</Story>');
     instructions.push('```');

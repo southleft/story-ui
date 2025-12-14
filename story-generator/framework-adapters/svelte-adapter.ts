@@ -55,11 +55,11 @@ The file must use this EXACT structure with defineMeta():
   });
 </script>
 
-<Story name="Default">
+<Story name="Default" asChild>
   <ComponentName>Default Story</ComponentName>
 </Story>
 
-<Story name="Variant">
+<Story name="Variant" asChild>
   <ComponentName color="primary">Primary Variant</ComponentName>
 </Story>
 \`\`\`
@@ -80,19 +80,20 @@ CRITICAL RULES FOR addon-svelte-csf v5+:
 - Story title MUST start with "Generated/" (e.g., title: 'Generated/Button')
 - Include tags: ['autodocs'] in defineMeta
 - Each <Story> needs a unique name attribute
+- ALWAYS add asChild prop to <Story> to prevent double-wrapping: <Story name="X" asChild>
 - Put component content BETWEEN the component tags, not in props
 - DO NOT use 'children' or 'slot' props
 - For buttons and components that display text, put text between opening and closing tags
 
 CORRECT EXAMPLES:
 \`\`\`svelte
-<!-- Button with text content -->
-<Story name="Primary">
+<!-- Button with text content - asChild prevents double-wrapping -->
+<Story name="Primary" asChild>
   <Button color="primary">Click Me</Button>
 </Story>
 
 <!-- Multiple components in a story -->
-<Story name="Colors">
+<Story name="Colors" asChild>
   <div class="flex gap-2 flex-wrap">
     <Button color="primary">Primary</Button>
     <Button color="blue">Blue</Button>
@@ -101,14 +102,14 @@ CORRECT EXAMPLES:
 </Story>
 
 <!-- Card with content -->
-<Story name="Card Example">
+<Story name="Card Example" asChild>
   <Card class="max-w-sm">
     <h5 class="text-2xl font-bold tracking-tight text-gray-900">Card Title</h5>
     <p class="font-normal text-gray-700">Card description here.</p>
   </Card>
 </Story>
 
-<!-- Using args with snippets (Svelte 5 style) -->
+<!-- Using args with snippets (Svelte 5 style) - no asChild needed with snippets -->
 <Story name="WithArgs" args={{ color: 'primary', size: 'lg' }}>
   {#snippet children(args)}
     <Button {...args}>Button with Args</Button>
