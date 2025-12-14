@@ -125,6 +125,8 @@ class StreamWriter {
       }
     };
     console.log('[Story UI Server DEBUG] sendCompletion called:', {
+      success: fullCompletion.success,
+      action: fullCompletion.summary?.action,
       hasCode: !!fullCompletion.code,
       codeLength: fullCompletion.code?.length,
       title: fullCompletion.title,
