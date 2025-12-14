@@ -84,7 +84,7 @@ import { applicationConfig, argsToTemplate } from '@storybook/angular';
 import { ButtonComponent } from 'your-library';
 
 const meta: Meta<ButtonComponent> = {
-  title: 'Components/Button',
+  title: 'Generated/Button',
   component: ButtonComponent,
   tags: ['autodocs'],
   decorators: [
@@ -130,7 +130,8 @@ import { moduleMetadata } from '@storybook/angular';
 import { ButtonModule } from 'your-library';
 
 const meta: Meta = {
-  title: 'Components/Button',
+  title: 'Generated/Button',
+  tags: ['autodocs'],
   decorators: [
     moduleMetadata({
       imports: [ButtonModule],
@@ -189,7 +190,7 @@ import { applicationConfig } from '@storybook/angular';
 import { ButtonComponent } from 'your-library';
 
 const meta: Meta<ButtonComponent> = {
-  title: 'Components/Button',
+  title: 'Generated/Button',
   component: ButtonComponent,
   tags: ['autodocs'],
   decorators: [
@@ -240,7 +241,8 @@ import { moduleMetadata } from '@storybook/angular';
 import { CardModule, ButtonModule } from '${lib}';
 
 const meta: Meta = {
-  title: 'Components/Card',
+  title: 'Generated/Card',
+  tags: ['autodocs'],
   decorators: [
     moduleMetadata({
       imports: [CardModule, ButtonModule],
@@ -272,8 +274,9 @@ import { applicationConfig } from '@storybook/angular';
 import { ButtonComponent } from 'your-library';
 
 const meta: Meta<ButtonComponent> = {
-  title: 'Components/Button',
+  title: 'Generated/Button',
   component: ButtonComponent,
+  tags: ['autodocs'],
   decorators: [
     applicationConfig({
       providers: [],
@@ -327,7 +330,8 @@ import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { InputModule } from '${lib}';
 
 const meta: Meta = {
-  title: 'Components/Input',
+  title: 'Generated/Input',
+  tags: ['autodocs'],
   decorators: [
     moduleMetadata({
       imports: [FormsModule, ReactiveFormsModule, InputModule],
@@ -391,7 +395,7 @@ import { applicationConfig } from '@storybook/angular';
 import { ${firstComponent.name}Component } from '${lib}';
 
 const meta: Meta<${firstComponent.name}Component> = {
-  title: 'Components/${firstComponent.name}',
+  title: 'Generated/${firstComponent.name}',
   component: ${firstComponent.name}Component,
   tags: ['autodocs'],
   decorators: [

@@ -24,6 +24,13 @@ export function validateStoryCode(code: string, fileName: string = 'story.tsx', 
   const framework = config?.componentFramework || config?.framework || 'react';
   const isJsxFramework = framework === 'react' || framework === 'vue';
 
+  // CRITICAL: Skip TypeScript AST validation for Svelte template files (.stories.svelte)
+  // These files use Svelte syntax (<script context="module">, <Story>, <Template>) which
+  // is not valid TypeScript and will fail TS parsing. Instead, do basic Svelte validation.
+  if (fileName.endsWith('.stories.svelte') || fileName.endsWith('.svelte')) {
+    return validateSvelteStory(code, config);
+  }
+
     try {
     // Create a TypeScript source file
     // Use appropriate script kind based on framework
@@ -105,7 +112,7 @@ export function validateStoryCode(code: string, fileName: string = 'story.tsx', 
       result.isValid = false;
 
       // Attempt to fix common issues
-      const fixedCode = attemptAutoFix(code, result.errors);
+      const fixedCode = attemptAutoFix(code, result.errors, config);
       if (fixedCode && fixedCode !== code) {
         result.fixedCode = fixedCode;
 
@@ -146,6 +153,22 @@ function performSemanticChecks(sourceFile: ts.SourceFile, config?: any): string[
       const moduleSpecifier = node.moduleSpecifier;
       if (ts.isStringLiteral(moduleSpecifier)) {
         const importPath = moduleSpecifier.text;
+
+        // CRITICAL: Check for incorrect import paths that contain the configured importPath but with extra segments
+        // This catches LLM errors like: vuetify/components/lib/components/VAlert instead of vuetify/components
+        if (config && config.importPath) {
+          const configuredPath = config.importPath;
+
+          // Check if LLM used a deep/incorrect path instead of the configured one
+          if (importPath !== configuredPath &&
+              (importPath.startsWith(configuredPath + '/') ||
+               importPath.includes('/' + configuredPath.split('/').pop() + '/'))) {
+            errors.push(
+              `Import path error: Using "${importPath}" but the configured import path is "${configuredPath}". ` +
+              `Change the import to: import { ComponentName } from '${configuredPath}';`
+            );
+          }
+        }
 
         // Check if this is the main component library import
         if (config && config.importPath && importPath === config.importPath) {
@@ -240,12 +263,17 @@ function performSemanticChecks(sourceFile: ts.SourceFile, config?: any): string[
 /**
  * Attempts to automatically fix common syntax errors
  */
-function attemptAutoFix(code: string, errors: string[]): string {
+function attemptAutoFix(code: string, errors: string[], config?: any): string {
   let fixedCode = code;
 
   // CRITICAL: Fix missing React import first (most important for JSX)
   if (errors.some(e => e.includes('Missing React import'))) {
     fixedCode = fixMissingReactImport(fixedCode);
+  }
+
+  // CRITICAL: Fix incorrect import paths
+  if (config?.importPath && errors.some(e => e.includes('Import path error'))) {
+    fixedCode = fixIncorrectImportPaths(fixedCode, config.importPath);
   }
 
   // First, check if the code appears to be truncated
@@ -436,6 +464,71 @@ function fixMissingReactImport(code: string): string {
 }
 
 /**
+ * Fixes incorrect import paths by replacing deep/wrong paths with the configured path
+ * Catches LLM errors like: vuetify/components/lib/components/VAlert -> vuetify/components
+ */
+function fixIncorrectImportPaths(code: string, correctImportPath: string): string {
+  let fixedCode = code;
+
+  // Match import statements and extract the path
+  const importRegex = /import\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"]/g;
+  let match;
+
+  while ((match = importRegex.exec(code)) !== null) {
+    const components = match[1];
+    const importPath = match[2];
+
+    // Check if this is a wrong variant of the configured import path
+    // e.g., vuetify/components/lib/components/VAlert should be vuetify/components
+    if (importPath !== correctImportPath &&
+        (importPath.startsWith(correctImportPath + '/') ||
+         importPath.includes('/' + correctImportPath.split('/').pop() + '/'))) {
+      // Replace the incorrect import with the correct one
+      const incorrectImport = match[0];
+      const correctedImport = `import {${components}} from '${correctImportPath}'`;
+      fixedCode = fixedCode.replace(incorrectImport, correctedImport);
+    }
+  }
+
+  // Also fix multiple import statements from wrong paths and consolidate them
+  // e.g., multiple lines like:
+  //   import { VAlert } from 'vuetify/components/lib/components/VAlert';
+  //   import { VBtn } from 'vuetify/components/lib/components/VBtn';
+  // should become:
+  //   import { VAlert, VBtn } from 'vuetify/components';
+
+  // Find all component imports from wrong paths
+  const wrongPathImports: string[] = [];
+  const wrongPathPattern = new RegExp(
+    `import\\s*\\{\\s*([A-Z][A-Za-z0-9]*)\\s*\\}\\s*from\\s*['"]${correctImportPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/[^'"]+['"]\\s*;?`,
+    'g'
+  );
+
+  let wrongMatch;
+  while ((wrongMatch = wrongPathPattern.exec(fixedCode)) !== null) {
+    wrongPathImports.push(wrongMatch[1]);
+    fixedCode = fixedCode.replace(wrongMatch[0], '');
+  }
+
+  // If we found wrong imports, add a consolidated correct import
+  if (wrongPathImports.length > 0) {
+    // Find where to insert (after the last import statement)
+    const lastImportMatch = fixedCode.match(/import[^;]+;/g);
+    if (lastImportMatch && lastImportMatch.length > 0) {
+      const lastImport = lastImportMatch[lastImportMatch.length - 1];
+      const insertPos = fixedCode.lastIndexOf(lastImport) + lastImport.length;
+      const consolidatedImport = `\nimport { ${wrongPathImports.join(', ')} } from '${correctImportPath}';`;
+      fixedCode = fixedCode.slice(0, insertPos) + consolidatedImport + fixedCode.slice(insertPos);
+    }
+  }
+
+  // Clean up any resulting double newlines
+  fixedCode = fixedCode.replace(/\n\n\n+/g, '\n\n');
+
+  return fixedCode;
+}
+
+/**
  * Removes React import for non-React frameworks (Vue, Angular, Svelte, Web Components)
  * The LLM sometimes incorrectly generates React imports for these frameworks
  */
@@ -580,7 +673,7 @@ function findInsertPosition(code: string): number {
 /**
  * Extracts and validates code blocks from AI responses
  */
-export function extractAndValidateCodeBlock(aiResponse: string, config?: any): ValidationResult {
+export function extractAndValidateCodeBlock(aiResponse: string, config?: any, fileName: string = 'story.tsx'): ValidationResult {
   // Try multiple extraction methods
   const extractionMethods = [
     // Standard code blocks
@@ -616,7 +709,7 @@ export function extractAndValidateCodeBlock(aiResponse: string, config?: any): V
   }
 
   // Validate the extracted code
-  return validateStoryCode(extractedCode, 'story.tsx', config);
+  return validateStoryCode(extractedCode, fileName, config);
 }
 
 /**
@@ -653,4 +746,75 @@ export default {
 export const Default: StoryObj = {
   args: {}
 };`;
+}
+
+/**
+ * Validates Svelte story files (.stories.svelte)
+ * These use addon-svelte-csf format with <Story> components, not TypeScript CSF
+ */
+function validateSvelteStory(code: string, config?: any): ValidationResult {
+  const result: ValidationResult = {
+    isValid: true,
+    errors: [],
+    warnings: []
+  };
+
+  // Check for required Svelte story structure
+  const requiredPatterns = [
+    { pattern: /<script\s+context=["']module["']>/i, name: 'script context="module"' },
+    { pattern: /export\s+const\s+meta\s*=/, name: 'export const meta' },
+    { pattern: /<Story\s+name=["'][^"']+["']/, name: '<Story name="..."> component' }
+  ];
+
+  for (const { pattern, name } of requiredPatterns) {
+    if (!pattern.test(code)) {
+      result.errors.push(`Missing required Svelte story element: ${name}`);
+      result.isValid = false;
+    }
+  }
+
+  // Check for common issues
+  // 1. Check for incorrect CSF 3.0 format (should be .stories.svelte format)
+  if (code.includes('export default meta') && code.includes('type Story = StoryObj')) {
+    result.errors.push('Using CSF 3.0 TypeScript format instead of .stories.svelte format. Use <Story> components.');
+    result.isValid = false;
+  }
+
+  // 2. Check for React imports (should not be present in Svelte)
+  if (/import\s+React\s+from\s+['"]react['"]/.test(code)) {
+    result.warnings.push('React import found in Svelte file - will be removed');
+    // Auto-fix: remove React import
+    result.fixedCode = code.replace(/import\s+React\s+from\s+['"]react['"]\s*;?\n?/g, '');
+  }
+
+  // 3. Check for addon-svelte-csf import
+  if (!code.includes('@storybook/addon-svelte-csf')) {
+    result.warnings.push('Missing @storybook/addon-svelte-csf import - Story and Template should be imported from there');
+  }
+
+  // 4. Validate title format
+  if (config?.storyPrefix) {
+    const titleMatch = code.match(/title:\s*['"]([^'"]+)['"]/);
+    if (titleMatch && !titleMatch[1].startsWith(config.storyPrefix)) {
+      result.warnings.push(`Title should start with "${config.storyPrefix}" prefix`);
+    }
+  }
+
+  // 5. Check for balanced script tags
+  const scriptOpenCount = (code.match(/<script/g) || []).length;
+  const scriptCloseCount = (code.match(/<\/script>/g) || []).length;
+  if (scriptOpenCount !== scriptCloseCount) {
+    result.errors.push('Unbalanced <script> tags');
+    result.isValid = false;
+  }
+
+  // 6. Check for balanced Story tags
+  const storyOpenCount = (code.match(/<Story/g) || []).length;
+  const storyCloseCount = (code.match(/<\/Story>/g) || []).length;
+  if (storyOpenCount !== storyCloseCount) {
+    result.errors.push('Unbalanced <Story> tags');
+    result.isValid = false;
+  }
+
+  return result;
 }

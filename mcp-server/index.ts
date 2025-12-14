@@ -259,18 +259,39 @@ app.post('/story-ui/stories', async (req, res) => {
 });
 
 // Delete story by ID (RESTful endpoint)
+// Supports both fileName format (Button-a1b2c3d4.stories.tsx) and legacy storyId format (story-a1b2c3d4)
 app.delete('/story-ui/stories/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const storiesPath = config.generatedStoriesPath;
 
-    const fileName = id.endsWith('.stories.tsx') ? id : `${id}.stories.tsx`;
+    // Try exact match first (fileName format)
+    // Handle both .tsx and .svelte extensions
+    let fileName = id;
+    if (!id.endsWith('.stories.tsx') && !id.endsWith('.stories.ts') && !id.endsWith('.stories.svelte')) {
+      fileName = `${id}.stories.tsx`;
+    }
     const filePath = path.join(storiesPath, fileName);
 
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
       console.log(`✅ Deleted story: ${filePath}`);
       return res.json({ success: true, message: 'Story deleted successfully' });
+    }
+
+    // Fallback: Search for file by hash (for legacy storyId format like "story-a1b2c3d4")
+    // This handles backward compatibility with existing chats
+    const hashMatch = id.match(/-([a-f0-9]{8})(?:\.stories\.[a-z]+)?$/);
+    if (hashMatch) {
+      const hash = hashMatch[1];
+      const files = fs.readdirSync(storiesPath);
+      const matchingFile = files.find(f => f.includes(`-${hash}.stories.`));
+      if (matchingFile) {
+        const matchedFilePath = path.join(storiesPath, matchingFile);
+        fs.unlinkSync(matchedFilePath);
+        console.log(`✅ Deleted story by hash match: ${matchedFilePath}`);
+        return res.json({ success: true, message: 'Story deleted successfully' });
+      }
     }
 
     return res.status(404).json({ success: false, error: 'Story not found' });

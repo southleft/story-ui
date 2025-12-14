@@ -614,7 +614,9 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       validationErrors = validateStory(aiText);
 
       // 2. TypeScript AST validation (validateStory.ts)
-      const astValidation = validateStoryCode(aiText, 'story.tsx', config);
+      // Use correct filename extension for framework-specific validation (e.g., .stories.svelte for Svelte)
+      const validationFileName = `story${frameworkAdapter?.defaultExtension || '.stories.tsx'}`;
+      const astValidation = validateStoryCode(aiText, validationFileName, config);
 
       // 3. Import validation (check against discovered components)
       const importValidation = await preValidateImports(aiText, config, discovery);
@@ -824,7 +826,8 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
 
     // FIX #5: Final validation after ALL post-processing
     // This catches any syntax errors introduced by post-processing (e.g., buggy regex replacements)
-    const finalValidation = validateStoryCode(fixedFileContents, 'story.tsx', config);
+    // Use correct filename for framework-specific validation (e.g., .stories.svelte for Svelte)
+    const finalValidation = validateStoryCode(fixedFileContents, finalFileName, config);
 
     // ALWAYS apply fixedCode if it exists - handles both:
     // 1. Syntax error fixes (where isValid = false)

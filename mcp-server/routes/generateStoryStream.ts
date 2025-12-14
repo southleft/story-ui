@@ -746,10 +746,12 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
       const patternErrors = validateStory(aiText);
 
       // 2. AST validation with auto-fix attempt
+      // Use correct filename extension for framework-specific validation (e.g., .stories.svelte for Svelte)
+      const validationFileName = `story${frameworkAdapter?.defaultExtension || '.stories.tsx'}`;
       let astResult: ValidationResult | null = null;
       let codeToValidate = aiText;
       try {
-        astResult = validateStoryCode(aiText, 'story.tsx', config);
+        astResult = validateStoryCode(aiText, validationFileName, config);
         if (astResult.fixedCode) {
           codeToValidate = astResult.fixedCode;
           aiText = codeToValidate;

@@ -1182,7 +1182,9 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
       saveChats(chats);
       dispatch({ type: 'SET_RECENT_CHATS', payload: chats });
     } else {
-      const chatId = completion.storyId || completion.fileName || Date.now().toString();
+      // FIX: Use fileName as chat ID (not storyId) so delete endpoint can find the actual file
+      // storyId is like "story-a1b2c3d4" but fileName is "Button-a1b2c3d4.stories.tsx"
+      const chatId = completion.fileName || completion.storyId || Date.now().toString();
       const chatTitle = completion.title || userInput;
       dispatch({ type: 'SET_ACTIVE_CHAT', payload: { id: chatId, title: chatTitle } });
       const newSession: ChatSession = {
