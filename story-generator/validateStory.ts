@@ -785,52 +785,119 @@ function validateSvelteStory(code: string, config?: any): ValidationResult {
     warnings: []
   };
 
-  // Check for required Svelte story structure
-  // Support both OLD format (addon-svelte-csf v4) and NEW format (addon-svelte-csf v5+)
+  // ============================================================================
+  // STRICT addon-svelte-csf v5+ VALIDATION
+  // Only the NEW format is accepted. Old CSF v4 format will trigger errors
+  // to ensure the self-healing loop can fix them.
+  // ============================================================================
+
+  // Detect format patterns
   const hasOldScriptModule = /<script\s+context=["']module["']>/i.test(code);
-  const hasNewScriptModule = /<script\s+module>/i.test(code);
+  const hasNewScriptModule = /<script\s+module\s*>/i.test(code);
   const hasOldMetaExport = /export\s+const\s+meta\s*=/.test(code);
-  const hasNewDefineMeta = /const\s*\{\s*Story\s*\}\s*=\s*defineMeta\s*\(/.test(code);
+  const hasExportDefaultMeta = /export\s+default\s+meta/.test(code);
+  // More flexible regex for defineMeta - handles multi-line and various spacing
+  const hasNewDefineMeta = /const\s*\{[^}]*Story[^}]*\}\s*=\s*defineMeta\s*\(/s.test(code);
+  const hasDefineMetaImport = /import\s*\{[^}]*defineMeta[^}]*\}\s*from\s*['"]@storybook\/addon-svelte-csf['"]/s.test(code);
   const hasStoryComponent = /<Story\s+name=["'][^"']+["']/.test(code);
 
-  // Validate script module block (either old or new format)
-  if (!hasOldScriptModule && !hasNewScriptModule) {
-    result.errors.push('Missing required Svelte story element: <script module> or <script context="module">');
+  // ============================================================================
+  // REJECT OLD FORMAT (CSF v4) - These MUST trigger errors for self-healing
+  // ============================================================================
+
+  if (hasOldScriptModule) {
+    result.errors.push('Using old syntax "<script context=\\"module\\">". Use "<script module>" instead for addon-svelte-csf v5+.');
     result.isValid = false;
   }
 
-  // Validate meta definition (either old export const meta or new defineMeta)
-  if (!hasOldMetaExport && !hasNewDefineMeta) {
-    result.errors.push('Missing required Svelte story element: defineMeta() or export const meta');
+  if (hasOldMetaExport) {
+    result.errors.push('Using old CSF syntax "export const meta = { ... }". Use "const { Story } = defineMeta({ ... })" instead for addon-svelte-csf v5+.');
     result.isValid = false;
   }
 
-  // Validate Story component
+  if (hasExportDefaultMeta) {
+    result.errors.push('Using old CSF syntax "export default meta". Use "const { Story } = defineMeta({ ... })" instead for addon-svelte-csf v5+.');
+    result.isValid = false;
+  }
+
+  // Check for TypeScript CSF 3.0 format (completely wrong for Svelte)
+  if (code.includes('type Story = StoryObj') || code.includes('const meta: Meta<')) {
+    result.errors.push('Using TypeScript CSF 3.0 format instead of Svelte .stories.svelte format. Use <Story> components with defineMeta().');
+    result.isValid = false;
+  }
+
+  // ============================================================================
+  // REQUIRE NEW FORMAT (CSF v5+) - These are mandatory
+  // ============================================================================
+
+  if (!hasNewScriptModule) {
+    result.errors.push('Missing required "<script module>" block. Svelte stories must start with <script module> (not <script context="module">).');
+    result.isValid = false;
+  }
+
+  if (!hasDefineMetaImport) {
+    result.errors.push('Missing required import: import { defineMeta } from "@storybook/addon-svelte-csf"');
+    result.isValid = false;
+  }
+
+  if (!hasNewDefineMeta) {
+    result.errors.push('Missing required defineMeta() call. Use: const { Story } = defineMeta({ title: "...", component: ... });');
+    result.isValid = false;
+  }
+
   if (!hasStoryComponent) {
-    result.errors.push('Missing required Svelte story element: <Story name="..."> component');
+    result.errors.push('Missing required <Story name="..."> component. Each story variant must be wrapped in <Story name="VariantName">.');
     result.isValid = false;
   }
 
-  // Check for common issues
-  // 1. Check for incorrect CSF 3.0 format (should be .stories.svelte format)
-  if (code.includes('export default meta') && code.includes('type Story = StoryObj')) {
-    result.errors.push('Using CSF 3.0 TypeScript format instead of .stories.svelte format. Use <Story> components.');
-    result.isValid = false;
-  }
+  // ============================================================================
+  // CHECK FOR REACT/JSX CONTAMINATION
+  // ============================================================================
 
-  // 2. Check for React imports (should not be present in Svelte)
   if (/import\s+React\s+from\s+['"]react['"]/.test(code)) {
-    result.warnings.push('React import found in Svelte file - will be removed');
-    // Auto-fix: remove React import
-    result.fixedCode = code.replace(/import\s+React\s+from\s+['"]react['"]\s*;?\n?/g, '');
+    result.errors.push('React import found in Svelte file. Remove: import React from "react"');
+    result.isValid = false;
   }
 
-  // 3. Check for addon-svelte-csf import
-  if (!code.includes('@storybook/addon-svelte-csf')) {
-    result.warnings.push('Missing @storybook/addon-svelte-csf import - Story and Template should be imported from there');
+  // Check for JSX-style attributes that should be Svelte syntax
+  if (/\sclassName\s*=/.test(code)) {
+    result.errors.push('Using JSX "className" attribute. Use "class" instead for Svelte.');
+    result.isValid = false;
   }
 
-  // 4. Validate title format
+  if (/\sonClick\s*=/.test(code)) {
+    result.errors.push('Using JSX "onClick" attribute. Use "on:click" instead for Svelte.');
+    result.isValid = false;
+  }
+
+  if (/\sonChange\s*=/.test(code)) {
+    result.errors.push('Using JSX "onChange" attribute. Use "on:change" instead for Svelte.');
+    result.isValid = false;
+  }
+
+  // ============================================================================
+  // IMPORT PATH VALIDATION (if config provided)
+  // ============================================================================
+
+  if (config?.importPath) {
+    const importMatches = code.matchAll(/import\s*\{[^}]+\}\s*from\s*['"]([^'"]+)['"]/g);
+    for (const match of importMatches) {
+      const importPath = match[1];
+      // Skip Storybook imports
+      if (importPath.includes('@storybook')) continue;
+      // Check for deep path imports (should use main import path)
+      if (importPath.startsWith(config.importPath + '/')) {
+        result.errors.push(`Using deep import path "${importPath}". Import directly from "${config.importPath}" instead.`);
+        result.isValid = false;
+      }
+    }
+  }
+
+  // ============================================================================
+  // STRUCTURAL VALIDATION
+  // ============================================================================
+
+  // Validate title format
   if (config?.storyPrefix) {
     const titleMatch = code.match(/title:\s*['"]([^'"]+)['"]/);
     if (titleMatch && !titleMatch[1].startsWith(config.storyPrefix)) {
@@ -838,19 +905,19 @@ function validateSvelteStory(code: string, config?: any): ValidationResult {
     }
   }
 
-  // 5. Check for balanced script tags
+  // Check for balanced script tags
   const scriptOpenCount = (code.match(/<script/g) || []).length;
   const scriptCloseCount = (code.match(/<\/script>/g) || []).length;
   if (scriptOpenCount !== scriptCloseCount) {
-    result.errors.push('Unbalanced <script> tags');
+    result.errors.push('Unbalanced <script> tags - missing closing </script>');
     result.isValid = false;
   }
 
-  // 6. Check for balanced Story tags
+  // Check for balanced Story tags
   const storyOpenCount = (code.match(/<Story/g) || []).length;
   const storyCloseCount = (code.match(/<\/Story>/g) || []).length;
   if (storyOpenCount !== storyCloseCount) {
-    result.errors.push('Unbalanced <Story> tags');
+    result.errors.push('Unbalanced <Story> tags - missing closing </Story>');
     result.isValid = false;
   }
 

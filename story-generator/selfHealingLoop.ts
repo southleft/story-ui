@@ -185,8 +185,76 @@ export function shouldContinueRetrying(
 }
 
 /**
+ * Get the appropriate code block language for a framework
+ */
+function getCodeBlockLanguage(framework: string): string {
+  switch (framework) {
+    case 'svelte':
+      return 'svelte';
+    case 'vue':
+      return 'vue';
+    default:
+      return 'tsx';
+  }
+}
+
+/**
+ * Get framework-specific correction instructions
+ */
+function getFrameworkSpecificInstructions(framework: string, importPath: string): string[] {
+  const instructions: string[] = [];
+
+  if (framework === 'svelte') {
+    instructions.push('');
+    instructions.push('### CRITICAL: Svelte Story Format Requirements');
+    instructions.push('You MUST use the addon-svelte-csf v5+ format. This is REQUIRED:');
+    instructions.push('');
+    instructions.push('1. Use `<script module>` (NOT `<script context="module">`!)');
+    instructions.push('2. Import defineMeta: `import { defineMeta } from "@storybook/addon-svelte-csf";`');
+    instructions.push(`3. Import components: \`import { ComponentName } from "${importPath}";\``);
+    instructions.push('4. Destructure Story from defineMeta: `const { Story } = defineMeta({ title: "...", component: ... });`');
+    instructions.push('5. Use `<Story name="StoryName">` components (NOT `export const StoryName`)');
+    instructions.push('6. Close the script tag properly: `</script>`');
+    instructions.push('');
+    instructions.push('**FORBIDDEN in Svelte stories:**');
+    instructions.push('- `export const meta = { ... }` (old CSF format)');
+    instructions.push('- `export default meta` (old CSF format)');
+    instructions.push('- `<script context="module">` (old syntax)');
+    instructions.push('- TypeScript CSF 3.0 format (`const meta: Meta<typeof Component>`)');
+    instructions.push('- React imports (`import React from "react"`)');
+    instructions.push('- JSX syntax (`className`, `onClick`)');
+    instructions.push('');
+    instructions.push('**Correct Svelte story structure:**');
+    instructions.push('```svelte');
+    instructions.push('<script module>');
+    instructions.push('  import { defineMeta } from "@storybook/addon-svelte-csf";');
+    instructions.push(`  import { Button } from "${importPath}";`);
+    instructions.push('');
+    instructions.push('  const { Story } = defineMeta({');
+    instructions.push('    title: "Generated/Button",');
+    instructions.push('    component: Button,');
+    instructions.push('  });');
+    instructions.push('</script>');
+    instructions.push('');
+    instructions.push('<Story name="Default">');
+    instructions.push('  <Button>Click Me</Button>');
+    instructions.push('</Story>');
+    instructions.push('```');
+    instructions.push('');
+  } else if (framework === 'vue') {
+    instructions.push('');
+    instructions.push('### Vue Story Format Requirements');
+    instructions.push('Use Vue 3 composition API with `<script setup>` or standard Vue story format.');
+    instructions.push('');
+  }
+
+  return instructions;
+}
+
+/**
  * Build the self-healing prompt to send to the LLM
  * Design-system agnostic - uses discovered components
+ * Framework-aware - provides specific instructions for Svelte, Vue, etc.
  */
 export function buildSelfHealingPrompt(
   originalCode: string,
@@ -195,6 +263,7 @@ export function buildSelfHealingPrompt(
   options: SelfHealingOptions
 ): string {
   const sections: string[] = [];
+  const codeBlockLang = getCodeBlockLanguage(options.framework);
 
   sections.push(
     `## CODE CORRECTION REQUIRED (Attempt ${attempt} of ${options.maxAttempts})`
@@ -205,10 +274,21 @@ export function buildSelfHealingPrompt(
   );
   sections.push('');
 
+  // Framework-specific instructions FIRST (most important for Svelte)
+  const frameworkInstructions = getFrameworkSpecificInstructions(options.framework, options.importPath);
+  if (frameworkInstructions.length > 0) {
+    sections.push(...frameworkInstructions);
+  }
+
   // Syntax errors section
   if (errors.syntaxErrors.length > 0) {
-    sections.push('### TypeScript Syntax Errors');
-    sections.push('These prevent the code from compiling:');
+    if (options.framework === 'svelte') {
+      sections.push('### Svelte Syntax Errors');
+      sections.push('These indicate invalid Svelte story structure:');
+    } else {
+      sections.push('### TypeScript Syntax Errors');
+      sections.push('These prevent the code from compiling:');
+    }
     errors.syntaxErrors.forEach((e) => sections.push(`- ${e}`));
     sections.push('');
   }
@@ -244,9 +324,9 @@ export function buildSelfHealingPrompt(
     }
   }
 
-  // Original code section
+  // Original code section - use correct language
   sections.push('### Original Code (with errors)');
-  sections.push('```tsx');
+  sections.push(`\`\`\`${codeBlockLang}`);
   sections.push(originalCode);
   sections.push('```');
   sections.push('');
@@ -256,11 +336,21 @@ export function buildSelfHealingPrompt(
   sections.push('1. Fix ALL errors listed above');
   sections.push('2. Keep the same component structure and layout');
   sections.push('3. Do NOT add new features - only fix the errors');
-  sections.push('4. Ensure all JSX elements are properly opened and closed');
-  sections.push(
-    `5. Only import components that exist in "${options.importPath}"`
-  );
-  sections.push('6. Return the COMPLETE corrected code in a ```tsx code block');
+
+  if (options.framework === 'svelte') {
+    sections.push('4. Use proper Svelte syntax (class=, on:click=, etc.)');
+    sections.push(
+      `5. Only import components that exist in "${options.importPath}" (no deep paths)`
+    );
+    sections.push(`6. Return the COMPLETE corrected code in a \`\`\`svelte code block`);
+  } else {
+    sections.push('4. Ensure all JSX elements are properly opened and closed');
+    sections.push(
+      `5. Only import components that exist in "${options.importPath}"`
+    );
+    sections.push(`6. Return the COMPLETE corrected code in a \`\`\`${codeBlockLang} code block`);
+  }
+
   sections.push(
     '7. Do NOT include any explanation - just the corrected code block'
   );
