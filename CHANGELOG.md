@@ -1,3 +1,10 @@
+# [4.3.0](https://github.com/southleft/story-ui/compare/v4.2.0...v4.3.0) (2025-12-15)
+
+
+### Features
+
+* **mcp:** add story management endpoints and production readiness fixes ([215e97c](https://github.com/southleft/story-ui/commit/215e97cf69faec0715096ae49453258afd4a88f3))
+
 # [4.2.0](https://github.com/southleft/story-ui/compare/v4.1.1...v4.2.0) (2025-12-15)
 
 
