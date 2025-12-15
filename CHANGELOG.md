@@ -1,3 +1,15 @@
+# [4.2.0](https://github.com/southleft/story-ui/compare/v4.1.1...v4.2.0) (2025-12-15)
+
+
+### Bug Fixes
+
+* **deps:** resolve merge conflicts and update LLM providers ([52ee58e](https://github.com/southleft/story-ui/commit/52ee58e37d5243faa0b13a2e322834713a9abde5))
+
+
+### Features
+
+* **ui:** add delete orphan stories functionality ([7b1cb51](https://github.com/southleft/story-ui/commit/7b1cb5137790f2111d16c3e890f6eeee48bf966d))
+
 ## [4.1.1](https://github.com/southleft/story-ui/compare/v4.1.0...v4.1.1) (2025-12-14)
 
 
