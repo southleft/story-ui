@@ -10,7 +10,7 @@ Story UI revolutionizes component documentation by automatically generating Stor
 ## Why Story UI?
 
 - **Framework Agnostic**: Works with React, Vue, Angular, Svelte, and Web Components
-- **Multi-Provider AI**: Choose between Claude (Anthropic), GPT-4o (OpenAI), or Gemini (Google)
+- **Multi-Provider AI**: Choose between Claude, OpenAI, or Google Gemini - always using the latest models
 - **Design System Aware**: Learns your component library and generates appropriate code
 - **Production Ready**: Deploy as a standalone web app with full MCP integration
 - **Zero Lock-in**: Use any component library - Mantine, Vuetify, Angular Material, Shoelace, or your own
@@ -68,8 +68,8 @@ Story UI will guide you through:
 | Provider | Models | Best For |
 |----------|--------|----------|
 | **Claude** (Anthropic) | claude-opus-4-5, claude-sonnet-4-5, claude-haiku-4-5 | Complex reasoning, code quality |
-| **GPT** (OpenAI) | gpt-4o, gpt-4o-mini, o1 | Versatility, speed |
-| **Gemini** (Google) | gemini-2.0-flash, gemini-1.5-pro | Fast generation, cost efficiency |
+| **GPT** (OpenAI) | gpt-5.2, gpt-5.1, gpt-4o, gpt-4o-mini | Versatility, latest capabilities |
+| **Gemini** (Google) | gemini-2.5-pro, gemini-2.5-flash, gemini-2.0-flash | Fast generation, cost efficiency |
 
 ### Production Deployment
 - **Railway**: Node.js backend with file-based story persistence
@@ -121,7 +121,7 @@ The interactive installer will ask:
    ```
    ? Which AI provider do you prefer?
      > Claude (Anthropic) - Recommended
-       OpenAI (GPT-4o)
+       OpenAI
        Google Gemini
 
    ? Enter your API key:
@@ -262,10 +262,17 @@ The easiest way to connect is via Claude Desktop's built-in connector UI:
 2. Go to **Settings** → **Connectors**
 3. Click **"Add custom connector"**
 4. Enter:
-   - **Name**: `Story UI` (or any name you prefer)
-   - **URL**: `https://story-ui-demo.up.railway.app/mcp-remote/mcp` (production)
+   - **Name**: `Story UI React` (or any descriptive name)
+   - **URL**: Your deployed Railway URL + `/mcp-remote/mcp`
+     - Example: `https://your-app-name.up.railway.app/mcp-remote/mcp`
 5. Click **Add**
 6. **Restart Claude Desktop**
+
+> **Note**: The URL will be your own Railway deployment URL. See [Production Deployment](#production-deployment) to set up your instance.
+
+**Multiple Projects**: If you have multiple Storybook projects, add a separate connector for each:
+- `Story UI React` → `https://my-react-app.up.railway.app/mcp-remote/mcp`
+- `Story UI Vue` → `https://my-vue-app.up.railway.app/mcp-remote/mcp`
 
 Once connected, you'll have access to all Story UI tools directly in your Claude conversations:
 - `generate-story` - Generate Storybook stories from natural language
@@ -280,38 +287,52 @@ Once connected, you'll have access to all Story UI tools directly in your Claude
 Connect via Claude Code's built-in MCP support:
 
 ```bash
-# Add remote HTTP MCP server (production)
-claude mcp add --transport http story-ui https://story-ui-demo.up.railway.app/mcp-remote/mcp
+# Add your production Railway deployment
+claude mcp add --transport http story-ui-react https://your-react-app.up.railway.app/mcp-remote/mcp
 
-# Or for local development
-claude mcp add --transport http story-ui-local http://localhost:4005/mcp-remote/mcp
+# Add another project (if needed)
+claude mcp add --transport http story-ui-vue https://your-vue-app.up.railway.app/mcp-remote/mcp
+
+# For local development (default port is 4001)
+claude mcp add --transport http story-ui-local http://localhost:4001/mcp-remote/mcp
 ```
 
 ### Manual Configuration (Advanced)
 
-For advanced users who prefer manual configuration, add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+For running multiple local Story UI instances with different ports, configure your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
 
 ```json
 {
   "mcpServers": {
-    "story-ui": {
+    "story-ui-react": {
       "command": "npx",
-      "args": ["@tpitre/story-ui", "mcp"],
-      "env": {
-        "ANTHROPIC_API_KEY": "your-api-key"
-      }
+      "args": ["@tpitre/story-ui", "start", "--port", "4001"]
+    },
+    "story-ui-vue": {
+      "command": "npx",
+      "args": ["@tpitre/story-ui", "start", "--port", "4002"]
+    },
+    "story-ui-angular": {
+      "command": "npx",
+      "args": ["@tpitre/story-ui", "start", "--port", "4003"]
     }
   }
 }
 ```
 
+> **Note**: When using Claude Desktop, API keys are managed through your Anthropic account - no need to configure them in the MCP server.
+
 ### Starting the Local MCP Server
 
 ```bash
+# Start with default port (4001)
 npx story-ui start
+
+# Or specify a custom port
+npx story-ui start --port 4002
 ```
 
-This starts the Story UI HTTP server with MCP endpoint at `http://localhost:4005/mcp-remote/mcp`.
+This starts the Story UI HTTP server with MCP endpoint at `http://localhost:<port>/mcp-remote/mcp`.
 
 ### Available MCP Commands
 
@@ -325,13 +346,13 @@ Once connected, you can use these commands in Claude Desktop:
 
 ## Production Deployment
 
-Story UI can be deployed as a standalone web application accessible from anywhere.
+Story UI can be deployed as a standalone web application accessible from anywhere. We recommend Railway for its ease of use, but any Node.js hosting platform will work.
 
 ### Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Railway Deployment                        │
+│                    Your Deployment (e.g., Railway)           │
 │  ┌─────────────────────────────────────────────────────────┐│
 │  │              Express MCP Server (Node.js)                ││
 │  │  - Serves Storybook with Story UI addon                  ││
@@ -342,9 +363,9 @@ Story UI can be deployed as a standalone web application accessible from anywher
 └──────────────────────────────────────────────────────────────┘
 ```
 
-### Deploy to Railway
+### Deploy to Railway (Recommended)
 
-Railway provides a straightforward deployment experience with file-based story persistence.
+Railway provides a straightforward deployment experience with automatic HTTPS and file-based story persistence.
 
 **Quick Start:**
 
@@ -353,22 +374,26 @@ Railway provides a straightforward deployment experience with file-based story p
 npm install -g @railway/cli
 railway login
 
-# Initialize and deploy
+# Initialize and deploy from your Storybook project
 railway init
 railway up
 ```
 
 **Environment Variables (set in Railway Dashboard):**
 - `ANTHROPIC_API_KEY` - Required for Claude models
-- `OPENAI_API_KEY` - Optional for OpenAI models
-- `GEMINI_API_KEY` - Optional for Gemini models
+- `OPENAI_API_KEY` - Optional, for OpenAI models
+- `GEMINI_API_KEY` - Optional, for Gemini models
 
-**Connect MCP Clients:**
+**After Deployment:**
+
+Your Railway app will have a URL like `https://your-app-name.up.railway.app`. Use this URL to connect MCP clients:
 
 ```bash
-# Add your Railway deployment as an MCP server
-claude mcp add --transport http story-ui https://your-app.up.railway.app/mcp-remote/mcp
+# In Claude Code
+claude mcp add --transport http story-ui https://your-app-name.up.railway.app/mcp-remote/mcp
 ```
+
+Or add it to Claude Desktop via **Settings** → **Connectors** → **Add custom connector**.
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions and troubleshooting.
 
@@ -423,17 +448,14 @@ For simpler setups, use `story-ui-considerations.md`:
 ## CLI Reference
 
 ```bash
-# Initialize Story UI
+# Initialize Story UI in your project
 npx story-ui init
 
-# Start the development server
+# Start the MCP server (default port: 4001)
 npx story-ui start
-npx story-ui start --port 4005
+npx story-ui start --port 4002  # Custom port
 
-# Deploy to production
-npx story-ui deploy
-
-# Run MCP server
+# Run MCP STDIO server (for Claude Desktop local integration)
 npx story-ui mcp
 ```
 
