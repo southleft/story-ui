@@ -455,10 +455,10 @@ npm run storybook
 - `gpt-4o-mini` - Economical
 
 ### Gemini
-- `gemini-2.5-pro` - Most capable (default)
+- `gemini-3-pro-preview` - Most capable (recommended)
+- `gemini-2.5-pro` - Previous generation flagship
 - `gemini-2.5-flash` - Fast, efficient
-- `gemini-2.0-flash` - Recommended for speed
-- `gemini-1.5-pro` - Large context (2M tokens)
+- `gemini-2.0-flash` - Free tier option
 
 ---
 

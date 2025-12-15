@@ -69,7 +69,7 @@ Story UI will guide you through:
 |----------|--------|----------|
 | **Claude** (Anthropic) | claude-opus-4-5-20251101, claude-sonnet-4-5-20250929, claude-haiku-4-5-20251001, claude-sonnet-4-20250514 | Complex reasoning, code quality |
 | **GPT** (OpenAI) | gpt-5.2, gpt-5.1, gpt-4o, gpt-4o-mini | Versatility, latest capabilities |
-| **Gemini** (Google) | gemini-2.5-pro, gemini-2.5-flash, gemini-2.0-flash, gemini-1.5-pro | Fast generation, cost efficiency |
+| **Gemini** (Google) | gemini-3-pro-preview, gemini-2.5-pro, gemini-2.5-flash, gemini-2.0-flash | Advanced reasoning, fast generation |
 
 ### Production Deployment
 - **Railway**: Node.js backend with file-based story persistence
