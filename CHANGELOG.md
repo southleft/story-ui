@@ -1,3 +1,10 @@
+# [4.4.0](https://github.com/southleft/story-ui/compare/v4.3.0...v4.4.0) (2025-12-15)
+
+
+### Features
+
+* **ui:** add polling to detect MCP-generated stories and auto-refresh ([de6b1a1](https://github.com/southleft/story-ui/commit/de6b1a1e1b2a6f72b00f99f46e169f33089f393a))
+
 # [4.3.0](https://github.com/southleft/story-ui/compare/v4.2.0...v4.3.0) (2025-12-15)
 
 
