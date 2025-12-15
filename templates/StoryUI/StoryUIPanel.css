@@ -1467,3 +1467,59 @@
 .sui-hidden {
   display: none;
 }
+
+/* ============================================
+   Orphan Stories Footer
+   ============================================ */
+.sui-orphan-footer {
+  flex-shrink: 0;
+  padding-top: var(--space-2);
+  border-top: 1px solid hsl(var(--border));
+  margin-top: auto;
+}
+
+.sui-orphan-delete-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  font-size: 0.75rem;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+}
+
+.sui-orphan-delete-btn:hover:not(:disabled) {
+  background: hsl(var(--destructive) / 0.1);
+  color: hsl(var(--destructive));
+}
+
+.sui-orphan-delete-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.sui-orphan-delete-btn svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.sui-orphan-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid hsl(var(--muted-foreground) / 0.3);
+  border-top-color: hsl(var(--muted-foreground));
+  border-radius: 50%;
+  animation: sui-spin 0.6s linear infinite;
+}
+
+@keyframes sui-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

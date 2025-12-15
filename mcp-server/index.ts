@@ -476,6 +476,147 @@ app.delete('/story-ui/stories', async (req, res) => {
   }
 });
 
+// Orphan stories management - find and delete stories without associated chats
+// POST to get list of orphans, DELETE to remove them
+app.post('/story-ui/orphan-stories', async (req, res) => {
+  try {
+    const { chatFileNames } = req.body;
+
+    if (!chatFileNames || !Array.isArray(chatFileNames)) {
+      return res.status(400).json({ error: 'chatFileNames array is required' });
+    }
+
+    const storiesPath = config.generatedStoriesPath;
+
+    if (!fs.existsSync(storiesPath)) {
+      return res.json({ orphans: [], count: 0 });
+    }
+
+    const files = fs.readdirSync(storiesPath);
+    const storyFiles = files.filter(file =>
+      file.endsWith('.stories.tsx') ||
+      file.endsWith('.stories.ts') ||
+      file.endsWith('.stories.svelte')
+    );
+
+    // Find orphans: stories that don't match any chat fileName
+    const orphans = storyFiles.filter(storyFile => {
+      // Extract the base name without extension for comparison
+      const storyBase = storyFile
+        .replace('.stories.tsx', '')
+        .replace('.stories.ts', '')
+        .replace('.stories.svelte', '');
+
+      // Check if any chat fileName matches this story
+      return !chatFileNames.some(chatFileName => {
+        if (!chatFileName) return false;
+        const chatBase = chatFileName
+          .replace('.stories.tsx', '')
+          .replace('.stories.ts', '')
+          .replace('.stories.svelte', '');
+        return storyBase === chatBase || storyFile === chatFileName;
+      });
+    });
+
+    // Get details for each orphan
+    const orphanDetails = orphans.map(fileName => {
+      const filePath = path.join(storiesPath, fileName);
+      const content = fs.readFileSync(filePath, 'utf-8');
+      const stats = fs.statSync(filePath);
+
+      // Extract title from story file
+      const titleMatch = content.match(/title:\s*['"]([^'"]+)['"]/);
+      let title = titleMatch ? titleMatch[1].replace('Generated/', '') : fileName.replace(/\.stories\.[a-z]+$/, '');
+      // Remove hash suffix from display title
+      title = title.replace(/\s*\([a-f0-9]{8}\)$/i, '');
+
+      return {
+        fileName,
+        title,
+        lastUpdated: stats.mtime.getTime()
+      };
+    });
+
+    console.log(`📋 Found ${orphans.length} orphan stories out of ${storyFiles.length} total`);
+
+    return res.json({
+      orphans: orphanDetails,
+      count: orphans.length,
+      totalStories: storyFiles.length
+    });
+  } catch (error) {
+    console.error('Error finding orphan stories:', error);
+    return res.status(500).json({ error: 'Failed to find orphan stories' });
+  }
+});
+
+app.delete('/story-ui/orphan-stories', async (req, res) => {
+  try {
+    const { chatFileNames } = req.body;
+
+    if (!chatFileNames || !Array.isArray(chatFileNames)) {
+      return res.status(400).json({ error: 'chatFileNames array is required' });
+    }
+
+    const storiesPath = config.generatedStoriesPath;
+
+    if (!fs.existsSync(storiesPath)) {
+      return res.json({ deleted: [], count: 0 });
+    }
+
+    const files = fs.readdirSync(storiesPath);
+    const storyFiles = files.filter(file =>
+      file.endsWith('.stories.tsx') ||
+      file.endsWith('.stories.ts') ||
+      file.endsWith('.stories.svelte')
+    );
+
+    // Find orphans: stories that don't match any chat fileName
+    const orphans = storyFiles.filter(storyFile => {
+      const storyBase = storyFile
+        .replace('.stories.tsx', '')
+        .replace('.stories.ts', '')
+        .replace('.stories.svelte', '');
+
+      return !chatFileNames.some(chatFileName => {
+        if (!chatFileName) return false;
+        const chatBase = chatFileName
+          .replace('.stories.tsx', '')
+          .replace('.stories.ts', '')
+          .replace('.stories.svelte', '');
+        return storyBase === chatBase || storyFile === chatFileName;
+      });
+    });
+
+    // Delete orphans
+    const deleted: string[] = [];
+    const errors: string[] = [];
+
+    for (const fileName of orphans) {
+      try {
+        const filePath = path.join(storiesPath, fileName);
+        fs.unlinkSync(filePath);
+        deleted.push(fileName);
+        console.log(`🗑️ Deleted orphan story: ${fileName}`);
+      } catch (err) {
+        errors.push(fileName);
+        console.error(`❌ Error deleting orphan ${fileName}:`, err);
+      }
+    }
+
+    console.log(`✅ Deleted ${deleted.length} orphan stories`);
+
+    return res.json({
+      deleted,
+      count: deleted.length,
+      errors: errors.length > 0 ? errors : undefined
+    });
+  } catch (error) {
+    console.error('Error deleting orphan stories:', error);
+    return res.status(500).json({ error: 'Failed to delete orphan stories' });
+  }
+});
+
 // MCP Remote HTTP transport routes (for Claude Desktop remote connections)
 // Provides Streamable HTTP and legacy SSE endpoints for remote MCP access
 app.use('/mcp-remote', mcpRemoteRouter);

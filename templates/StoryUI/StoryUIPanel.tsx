@@ -336,6 +336,7 @@ const MCP_API = `${API_BASE}/mcp/generate-story`;
 const MCP_STREAM_API = `${API_BASE}/mcp/generate-story-stream`;
 const PROVIDERS_API = `${API_BASE}/mcp/providers`;
 const STORIES_API = `${API_BASE}/story-ui/stories`;
+const ORPHAN_STORIES_API = `${API_BASE}/story-ui/orphan-stories`;
 const CONSIDERATIONS_API = `${API_BASE}/mcp/considerations`;
 
 function isEdgeMode(): boolean {
@@ -791,6 +792,8 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   const [contextMenuId, setContextMenuId] = useState<string | null>(null);
   const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [orphanCount, setOrphanCount] = useState<number>(0);
+  const [isDeletingOrphans, setIsDeletingOrphans] = useState<boolean>(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1492,6 +1495,62 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     }
   };
 
+  // Check for orphan stories (stories without associated chats)
+  const checkOrphanStories = useCallback(async () => {
+    if (!state.connectionStatus.connected) return;
+    try {
+      const chatFileNames = state.recentChats.map(chat => chat.fileName);
+      const response = await fetch(ORPHAN_STORIES_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chatFileNames }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setOrphanCount(data.count || 0);
+      }
+    } catch (error) {
+      console.error('Failed to check orphan stories:', error);
+    }
+  }, [state.connectionStatus.connected, state.recentChats]);
+
+  // Delete all orphan stories
+  const handleDeleteOrphans = async () => {
+    if (orphanCount === 0) return;
+    if (!confirm(`Delete ${orphanCount} orphan ${orphanCount === 1 ? 'story' : 'stories'}? These are generated story files without associated chats.`)) {
+      return;
+    }
+    setIsDeletingOrphans(true);
+    try {
+      const chatFileNames = state.recentChats.map(chat => chat.fileName);
+      const response = await fetch(ORPHAN_STORIES_API, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chatFileNames }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setOrphanCount(0);
+        if (data.count > 0) {
+          // Show success message briefly
+          alert(`Deleted ${data.count} orphan ${data.count === 1 ? 'story' : 'stories'}.`);
+        }
+      } else {
+        alert('Failed to delete orphan stories. Please try again.');
+      }
+    } catch (error) {
+      console.error('Failed to delete orphan stories:', error);
+      alert('Failed to delete orphan stories. Please try again.');
+    } finally {
+      setIsDeletingOrphans(false);
+    }
+  };
+
+  // Check for orphans when chats change or connection is established
+  useEffect(() => {
+    checkOrphanStories();
+  }, [checkOrphanStories]);
+
   const handleStartRename = (chatId: string, currentTitle: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     setContextMenuId(null);
@@ -1676,6 +1735,30 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                 </div>
               ))}
             </div>
+
+            {/* Orphan Stories Footer */}
+            {orphanCount > 0 && (
+              <div className="sui-orphan-footer">
+                <button
+                  className="sui-orphan-delete-btn"
+                  onClick={handleDeleteOrphans}
+                  disabled={isDeletingOrphans}
+                  title={`${orphanCount} story ${orphanCount === 1 ? 'file has' : 'files have'} no associated chat`}
+                >
+                  {isDeletingOrphans ? (
+                    <>
+                      <span className="sui-orphan-spinner" />
+                      <span>Deleting...</span>
+                    </>
+                  ) : (
+                    <>
+                      {Icons.trash}
+                      <span>{orphanCount} orphan {orphanCount === 1 ? 'story' : 'stories'}</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
 
           </div>
         )}
