@@ -315,7 +315,8 @@ app.delete('/mcp/stories/:storyId', async (req, res) => {
   }
 });
 
-// File-based story routes - stories are generated as .stories.tsx files
+// File-based story routes - stories are generated as framework-specific files
+// (.stories.tsx for React, .stories.ts for Vue/Angular, .stories.svelte for Svelte, .stories.js for Web Components)
 // Storybook discovers these automatically via its native file system watching
 
 // Proxy routes for frontend compatibility (maps /story-ui/ to /mcp/)

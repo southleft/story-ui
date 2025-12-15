@@ -43,6 +43,30 @@ const HTTP_BASE_URL = process.env.STORY_UI_HTTP_BASE_URL || `http://localhost:${
 // Initialize configuration
 const config = loadUserConfig();
 
+// Framework-agnostic story file extensions
+const STORY_EXTENSIONS = ['.stories.tsx', '.stories.ts', '.stories.svelte', '.stories.js'];
+
+// Helper function to check if a file is a story file
+function isStoryFile(filename: string): boolean {
+  return STORY_EXTENSIONS.some(ext => filename.endsWith(ext));
+}
+
+// Helper function to remove any story extension from a filename
+function removeStoryExtension(filename: string): string {
+  for (const ext of STORY_EXTENSIONS) {
+    if (filename.endsWith(ext)) {
+      return filename.slice(0, -ext.length);
+    }
+  }
+  return filename;
+}
+
+// Helper function to extract hash from story filename (e.g., "Button-a1b2c3d4.stories.tsx" -> "a1b2c3d4")
+function getHashFromFilename(filename: string): string | null {
+  const match = filename.match(/-([a-f0-9]{8})\.stories\./);
+  return match ? match[1] : null;
+}
+
 
 // Create MCP server instance
 const server = new Server(
@@ -265,13 +289,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           if (config.generatedStoriesPath && fs.existsSync(config.generatedStoriesPath)) {
             const files = fs.readdirSync(config.generatedStoriesPath);
             files
-              .filter((file: string) => file.endsWith('.stories.tsx'))
+              .filter((file: string) => isStoryFile(file))
               .forEach((file: string) => {
-                const hash = file.match(/-([a-f0-9]{8})\.stories\.tsx$/)?.[1] || '';
-                const storyId = hash ? `story-${hash}` : file.replace('.stories.tsx', '');
+                const hash = getHashFromFilename(file) || '';
+                const storyId = hash ? `story-${hash}` : removeStoryExtension(file);
 
                 // Try to read title from file
-                let title = file.replace('.stories.tsx', '').replace(/-/g, ' ');
+                let title = removeStoryExtension(file).replace(/-/g, ' ');
                 try {
                   const filePath = path.join(config.generatedStoriesPath, file);
                   const content = fs.readFileSync(filePath, 'utf-8');
@@ -374,10 +398,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const hashMatch = storyId.match(/^story-([a-f0-9]{8})$/);
             const hash = hashMatch ? hashMatch[1] : null;
             
-            // Find matching file
+            // Find matching file (framework-agnostic)
             const matchingFile = files.find(file => {
-              if (hash && file.includes(`-${hash}.stories.tsx`)) return true;
-              if (file === `${storyId}.stories.tsx`) return true;
+              if (!isStoryFile(file)) return false;
+              if (hash && file.includes(`-${hash}.stories.`)) return true;
+              if (removeStoryExtension(file) === storyId) return true;
               if (file === storyId) return true;
               return false;
             });
@@ -462,7 +487,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           if (!storyId) {
             if (config.generatedStoriesPath && fs.existsSync(config.generatedStoriesPath)) {
               const files = fs.readdirSync(config.generatedStoriesPath)
-                .filter((file: string) => file.endsWith('.stories.tsx'))
+                .filter((file: string) => isStoryFile(file))
                 .map((file: string) => {
                   const filePath = path.join(config.generatedStoriesPath, file);
                   const stats = fs.statSync(filePath);
@@ -473,8 +498,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               if (files.length > 0) {
                 // Use the most recently modified story
                 const mostRecent = files[0].file;
-                const hashMatch = mostRecent.match(/-([a-f0-9]{8})\.stories\.tsx$/);
-                storyId = hashMatch ? `story-${hashMatch[1]}` : mostRecent.replace('.stories.tsx', '');
+                const hash = getHashFromFilename(mostRecent);
+                storyId = hash ? `story-${hash}` : removeStoryExtension(mostRecent);
                 console.error(`[MCP] Using most recent story: ${mostRecent} (${storyId})`);
               }
             }
@@ -502,10 +527,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const hashMatch = storyId.match(/^story-([a-f0-9]{8})$/);
             const hash = hashMatch ? hashMatch[1] : null;
             
-            // Find matching file
+            // Find matching file (framework-agnostic)
             const matchingFile = files.find(file => {
-              if (hash && file.includes(`-${hash}.stories.tsx`)) return true;
-              if (file === `${storyId}.stories.tsx`) return true;
+              if (!isStoryFile(file)) return false;
+              if (hash && file.includes(`-${hash}.stories.`)) return true;
+              if (removeStoryExtension(file) === storyId) return true;
               return false;
             });
             

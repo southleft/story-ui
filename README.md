@@ -67,9 +67,9 @@ Story UI will guide you through:
 
 | Provider | Models | Best For |
 |----------|--------|----------|
-| **Claude** (Anthropic) | claude-opus-4-5, claude-sonnet-4-5, claude-haiku-4-5 | Complex reasoning, code quality |
+| **Claude** (Anthropic) | claude-opus-4-5-20251101, claude-sonnet-4-5-20250929, claude-haiku-4-5-20251001, claude-sonnet-4-20250514 | Complex reasoning, code quality |
 | **GPT** (OpenAI) | gpt-5.2, gpt-5.1, gpt-4o, gpt-4o-mini | Versatility, latest capabilities |
-| **Gemini** (Google) | gemini-2.5-pro, gemini-2.5-flash, gemini-2.0-flash | Fast generation, cost efficiency |
+| **Gemini** (Google) | gemini-2.5-pro, gemini-2.5-flash, gemini-2.0-flash, gemini-1.5-pro | Fast generation, cost efficiency |
 
 ### Production Deployment
 - **Railway**: Node.js backend with file-based story persistence
@@ -467,17 +467,20 @@ npx story-ui mcp
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| `POST` | `/story-ui/generate` | Generate story (specify provider in body) |
+| `POST` | `/story-ui/generate-stream` | Generate story with streaming |
 | `GET` | `/story-ui/providers` | List available LLM providers and models |
-| `POST` | `/story-ui/claude` | Generate with Claude |
-| `POST` | `/story-ui/openai` | Generate with OpenAI |
-| `POST` | `/story-ui/gemini` | Generate with Gemini |
+| `GET` | `/story-ui/components` | List discovered components |
 | `GET` | `/story-ui/considerations` | Get design system context |
+| `GET` | `/mcp/stories` | List generated stories |
+| `DELETE` | `/mcp/stories/:storyId` | Delete a story |
 
 ### Request Format
 
 ```typescript
 {
   prompt: string;           // User's request
+  provider?: string;        // LLM provider: 'claude' | 'openai' | 'gemini'
   model?: string;           // Specific model to use
   previousCode?: string;    // For iterations
   history?: Message[];      // Conversation history

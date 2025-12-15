@@ -1,7 +1,7 @@
 # Story UI - AI Assistant Project Guide
 
-> **Last Updated**: December 2025
-> **Current Version**: 4.1.2
+> **Last Updated**: December 14, 2025
+> **Current Version**: 4.4.1
 > **Production URL**: https://app-production-16de.up.railway.app (Vue/Vuetify example)
 > **Repository**: https://github.com/southleft/story-ui
 
@@ -443,17 +443,21 @@ npm run storybook
 ## LLM Provider Models
 
 ### Claude (Anthropic)
-- `claude-opus-4-5-20251101` - Most capable
-- `claude-sonnet-4-5-20250929` - Recommended default
+- `claude-opus-4-5-20251101` - Most capable (default)
+- `claude-sonnet-4-5-20250929` - Recommended balance
 - `claude-haiku-4-5-20251001` - Fast, economical
+- `claude-sonnet-4-20250514` - Previous generation
 
 ### OpenAI
-- `gpt-4o` - Fast multimodal, recommended
+- `gpt-5.2` - Most capable (default)
+- `gpt-5.1` - Previous generation
+- `gpt-4o` - Fast multimodal
 - `gpt-4o-mini` - Economical
-- `o1` - Advanced reasoning
 
 ### Gemini
-- `gemini-2.0-flash` - Recommended default
+- `gemini-2.5-pro` - Most capable (default)
+- `gemini-2.5-flash` - Fast, efficient
+- `gemini-2.0-flash` - Recommended for speed
 - `gemini-1.5-pro` - Large context (2M tokens)
 
 ---

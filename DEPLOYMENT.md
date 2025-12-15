@@ -2,7 +2,7 @@
 
 This guide explains how to deploy Story UI to production so non-developers can access it via a public URL.
 
-> **Last Updated**: December 1, 2025
+> **Last Updated**: December 14, 2025
 
 ---
 
