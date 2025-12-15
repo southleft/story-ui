@@ -27,6 +27,7 @@ import path from 'path';
 import fetch from 'node-fetch';
 import { loadUserConfig } from '../../story-generator/configLoader.js';
 import { EnhancedComponentDiscovery } from '../../story-generator/enhancedComponentDiscovery.js';
+import { getAdapterRegistry } from '../../story-generator/framework-adapters/index.js';
 
 // Get package version
 const packageJsonPath = path.resolve(process.cwd(), 'package.json');
@@ -44,6 +45,69 @@ const HTTP_BASE_URL = `http://localhost:${HTTP_PORT}`;
 
 // Load configuration
 const config = loadUserConfig();
+
+// Get all supported story file extensions based on framework adapters
+// This ensures MCP remote works with all frameworks (React, Vue, Angular, Svelte, Web Components)
+const STORY_EXTENSIONS = ['.stories.tsx', '.stories.ts', '.stories.svelte', '.stories.js'];
+
+/**
+ * Check if a file is a story file (supports all framework extensions)
+ */
+function isStoryFile(filename: string): boolean {
+  return STORY_EXTENSIONS.some(ext => filename.endsWith(ext));
+}
+
+/**
+ * Get the story ID from a filename (works with all extensions)
+ */
+function getStoryIdFromFile(filename: string): string {
+  // Extract hash from filename like "Button-a1b2c3d4.stories.tsx" or "Card-12345678.stories.svelte"
+  const hashMatch = filename.match(/-([a-f0-9]{8})\.stories\.(tsx?|svelte|js)$/);
+  if (hashMatch) {
+    return `story-${hashMatch[1]}`;
+  }
+  // Fall back to filename without extension
+  for (const ext of STORY_EXTENSIONS) {
+    if (filename.endsWith(ext)) {
+      return filename.replace(ext, '');
+    }
+  }
+  return filename;
+}
+
+/**
+ * Get the base name from a filename (without extension)
+ */
+function getBaseName(filename: string): string {
+  for (const ext of STORY_EXTENSIONS) {
+    if (filename.endsWith(ext)) {
+      return filename.replace(ext, '');
+    }
+  }
+  return filename;
+}
+
+/**
+ * Check if a file matches a story ID (supports all extensions)
+ */
+function fileMatchesStoryId(filename: string, storyId: string): boolean {
+  // Extract hash from storyId like "story-a1b2c3d4"
+  const hashMatch = storyId.match(/^story-([a-f0-9]{8})$/);
+  const hash = hashMatch ? hashMatch[1] : null;
+
+  if (hash) {
+    // Check if filename contains the hash
+    return filename.includes(`-${hash}.stories.`);
+  }
+
+  // Check if filename matches storyId with any extension
+  if (filename === storyId) return true;
+  for (const ext of STORY_EXTENSIONS) {
+    if (filename === `${storyId}${ext}`) return true;
+  }
+
+  return false;
+}
 
 export const router = Router();
 
@@ -235,12 +299,11 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
       if (config.generatedStoriesPath && fs.existsSync(config.generatedStoriesPath)) {
         const files = fs.readdirSync(config.generatedStoriesPath);
         fileStories = files
-          .filter(file => file.endsWith('.stories.tsx'))
+          .filter(file => isStoryFile(file))
           .map(file => {
-            const hash = file.match(/-([a-f0-9]{8})\.stories\.tsx$/)?.[1] || '';
-            const storyId = hash ? `story-${hash}` : file.replace('.stories.tsx', '');
+            const storyId = getStoryIdFromFile(file);
 
-            let title = file.replace('.stories.tsx', '').replace(/-/g, ' ');
+            let title = getBaseName(file).replace(/-/g, ' ');
             try {
               const filePath = path.join(config.generatedStoriesPath, file);
               const content = fs.readFileSync(filePath, 'utf-8');
@@ -278,15 +341,8 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
 
       if (config.generatedStoriesPath && fs.existsSync(config.generatedStoriesPath)) {
         const files = fs.readdirSync(config.generatedStoriesPath);
-        const hashMatch = storyId.match(/^story-([a-f0-9]{8})$/);
-        const hash = hashMatch ? hashMatch[1] : null;
 
-        const matchingFile = files.find(file => {
-          if (hash && file.includes(`-${hash}.stories.tsx`)) return true;
-          if (file === `${storyId}.stories.tsx`) return true;
-          if (file === storyId) return true;
-          return false;
-        });
+        const matchingFile = files.find(file => fileMatchesStoryId(file, storyId));
 
         if (matchingFile) {
           const filePath = path.join(config.generatedStoriesPath, matchingFile);
@@ -311,15 +367,8 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
 
       if (config.generatedStoriesPath && fs.existsSync(config.generatedStoriesPath)) {
         const files = fs.readdirSync(config.generatedStoriesPath);
-        const hashMatch = storyId.match(/^story-([a-f0-9]{8})$/);
-        const hash = hashMatch ? hashMatch[1] : null;
 
-        const matchingFile = files.find(file => {
-          if (hash && file.includes(`-${hash}.stories.tsx`)) return true;
-          if (file === `${storyId}.stories.tsx`) return true;
-          if (file === storyId) return true;
-          return false;
-        });
+        const matchingFile = files.find(file => fileMatchesStoryId(file, storyId));
 
         if (matchingFile) {
           const filePath = path.join(config.generatedStoriesPath, matchingFile);
@@ -374,7 +423,7 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
       // Find the story to update if no ID provided
       if (!storyId && config.generatedStoriesPath && fs.existsSync(config.generatedStoriesPath)) {
         const files = fs.readdirSync(config.generatedStoriesPath)
-          .filter(f => f.endsWith('.stories.tsx'))
+          .filter(f => isStoryFile(f))
           .sort((a, b) => {
             const statA = fs.statSync(path.join(config.generatedStoriesPath, a));
             const statB = fs.statSync(path.join(config.generatedStoriesPath, b));
@@ -382,8 +431,7 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
           });
 
         if (files.length > 0) {
-          const hash = files[0].match(/-([a-f0-9]{8})\.stories\.tsx$/)?.[1];
-          storyId = hash ? `story-${hash}` : files[0].replace('.stories.tsx', '');
+          storyId = getStoryIdFromFile(files[0]);
         }
       }
 
@@ -403,13 +451,8 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
 
       if (config.generatedStoriesPath && fs.existsSync(config.generatedStoriesPath)) {
         const files = fs.readdirSync(config.generatedStoriesPath);
-        const hashMatch = storyId.match(/^story-([a-f0-9]{8})$/);
-        const hash = hashMatch ? hashMatch[1] : null;
 
-        const matchingFile = files.find(file => {
-          if (hash && file.includes(`-${hash}.stories.tsx`)) return true;
-          return false;
-        });
+        const matchingFile = files.find(file => fileMatchesStoryId(file, storyId!));
 
         if (matchingFile) {
           const filePath = path.join(config.generatedStoriesPath, matchingFile);

@@ -40,6 +40,29 @@ import {
   postProcessStoryForFramework,
 } from './routes/frameworks.js';
 import mcpRemoteRouter from './routes/mcpRemote.js';
+import { getAdapterRegistry } from '../story-generator/framework-adapters/index.js';
+
+// Supported story file extensions for all frameworks
+const STORY_EXTENSIONS = ['.stories.tsx', '.stories.ts', '.stories.svelte', '.stories.js'];
+
+/**
+ * Check if a file is a story file (supports all framework extensions)
+ */
+function isStoryFile(filename: string): boolean {
+  return STORY_EXTENSIONS.some(ext => filename.endsWith(ext));
+}
+
+/**
+ * Remove story extension from filename to get base name
+ */
+function removeStoryExtension(filename: string): string {
+  for (const ext of STORY_EXTENSIONS) {
+    if (filename.endsWith(ext)) {
+      return filename.replace(ext, '');
+    }
+  }
+  return filename;
+}
 
 const app = express();
 
@@ -119,7 +142,7 @@ app.get('/mcp/stories', async (req, res) => {
 
     const files = fs.readdirSync(storiesPath);
     const stories = files
-      .filter(file => file.endsWith('.stories.tsx') || file.endsWith('.stories.ts') || file.endsWith('.stories.svelte'))
+      .filter(file => isStoryFile(file))
       .map(file => {
         const filePath = path.join(storiesPath, file);
         const stats = fs.statSync(filePath);
@@ -127,13 +150,13 @@ app.get('/mcp/stories', async (req, res) => {
 
         // Extract title from story file
         const titleMatch = content.match(/title:\s*['"]([^'"]+)['"]/);
-        let title = titleMatch ? titleMatch[1].replace('Generated/', '') : file.replace(/\.stories\.(tsx|ts|svelte)$/, '');
+        let title = titleMatch ? titleMatch[1].replace('Generated/', '') : removeStoryExtension(file);
         // Remove hash suffix from display title
         title = title.replace(/\s*\([a-f0-9]{8}\)$/i, '');
 
         return {
-          id: file.replace(/\.stories\.(tsx|ts|svelte)$/, ''),
-          storyId: file.replace(/\.stories\.(tsx|ts|svelte)$/, ''),
+          id: removeStoryExtension(file),
+          storyId: removeStoryExtension(file),
           fileName: file,
           title,
           lastUpdated: stats.mtime.getTime(),
@@ -381,7 +404,7 @@ app.get('/story-ui/stories', async (req, res) => {
 
     const files = fs.readdirSync(storiesPath);
     const stories = files
-      .filter(file => file.endsWith('.stories.tsx'))
+      .filter(file => isStoryFile(file))
       .map(file => {
         const filePath = path.join(storiesPath, file);
         const stats = fs.statSync(filePath);
@@ -389,12 +412,12 @@ app.get('/story-ui/stories', async (req, res) => {
 
         // Extract title from story file
         const titleMatch = content.match(/title:\s*['"]([^'"]+)['"]/);
-        let title = titleMatch ? titleMatch[1].replace('Generated/', '') : file.replace('.stories.tsx', '');
+        let title = titleMatch ? titleMatch[1].replace('Generated/', '') : removeStoryExtension(file);
         // Remove hash suffix like " (a1b2c3d4)" from display title - hash is for Storybook uniqueness only
         title = title.replace(/\s*\([a-f0-9]{8}\)$/i, '');
 
         return {
-          id: file.replace('.stories.tsx', ''),
+          id: removeStoryExtension(file),
           fileName: file,
           title,
           lastUpdated: stats.mtime.getTime(),
@@ -427,7 +450,13 @@ app.post('/story-ui/stories', async (req, res) => {
       fs.mkdirSync(storiesPath, { recursive: true });
     }
 
-    const fileName = `${id}.stories.tsx`;
+    // Get the correct file extension from the framework adapter
+    const registry = getAdapterRegistry();
+    const frameworkType = (config.componentFramework || 'react') as import('../story-generator/framework-adapters/types.js').FrameworkType;
+    const adapter = registry.getAdapter(frameworkType);
+    const extension = adapter?.defaultExtension || '.stories.tsx';
+
+    const fileName = `${id}${extension}`;
     const filePath = path.join(storiesPath, fileName);
 
     fs.writeFileSync(filePath, code, 'utf-8');
@@ -453,10 +482,15 @@ app.delete('/story-ui/stories/:id', async (req, res) => {
     const storiesPath = config.generatedStoriesPath;
 
     // Try exact match first (fileName format)
-    // Handle both .tsx and .svelte extensions
+    // Handle all story file extensions
     let fileName = id;
-    if (!id.endsWith('.stories.tsx') && !id.endsWith('.stories.ts') && !id.endsWith('.stories.svelte')) {
-      fileName = `${id}.stories.tsx`;
+    if (!isStoryFile(id)) {
+      // Get the correct file extension from the framework adapter
+      const registry = getAdapterRegistry();
+      const frameworkType = (config.componentFramework || 'react') as import('../story-generator/framework-adapters/types.js').FrameworkType;
+      const adapter = registry.getAdapter(frameworkType);
+      const extension = adapter?.defaultExtension || '.stories.tsx';
+      fileName = `${id}${extension}`;
     }
     const filePath = path.join(storiesPath, fileName);
 
@@ -506,7 +540,7 @@ app.post('/story-ui/delete', async (req, res) => {
     if (fs.existsSync(storiesPath)) {
       const files = fs.readdirSync(storiesPath);
       const matchingFile = files.find(file =>
-        file.includes(id) || file.replace('.stories.tsx', '') === id
+        file.includes(id) || removeStoryExtension(file) === id
       );
 
       if (matchingFile) {
@@ -547,9 +581,16 @@ app.post('/story-ui/stories/delete-bulk', async (req, res) => {
     const notFound: string[] = [];
     const errors: string[] = [];
 
+    // Get the correct file extension from the framework adapter
+    const registry = getAdapterRegistry();
+    const frameworkType = (config.componentFramework || 'react') as import('../story-generator/framework-adapters/types.js').FrameworkType;
+    const adapter = registry.getAdapter(frameworkType);
+    const extension = adapter?.defaultExtension || '.stories.tsx';
+
     for (const id of ids) {
       try {
-        const fileName = id.endsWith('.stories.tsx') ? id : `${id}.stories.tsx`;
+        // Check if id already has a story extension
+        const fileName = isStoryFile(id) ? id : `${id}${extension}`;
         const filePath = path.join(storiesPath, fileName);
 
         if (fs.existsSync(filePath)) {
@@ -557,7 +598,16 @@ app.post('/story-ui/stories/delete-bulk', async (req, res) => {
           deleted.push(id);
           console.log(`✅ Deleted: ${fileName}`);
         } else {
-          notFound.push(id);
+          // Try to find a matching file with any story extension
+          const files = fs.readdirSync(storiesPath);
+          const matchingFile = files.find(f => isStoryFile(f) && (f === id || removeStoryExtension(f) === id));
+          if (matchingFile) {
+            fs.unlinkSync(path.join(storiesPath, matchingFile));
+            deleted.push(id);
+            console.log(`✅ Deleted: ${matchingFile}`);
+          } else {
+            notFound.push(id);
+          }
         }
       } catch (err) {
         errors.push(id);
@@ -632,12 +682,8 @@ app.delete('/story-ui/stories', async (req, res) => {
     }
 
     const files = fs.readdirSync(storiesPath);
-    // Support all story file extensions: .tsx, .ts, .svelte
-    const storyFiles = files.filter(file =>
-      file.endsWith('.stories.tsx') ||
-      file.endsWith('.stories.ts') ||
-      file.endsWith('.stories.svelte')
-    );
+    // Support all story file extensions
+    const storyFiles = files.filter(file => isStoryFile(file));
     let deleted = 0;
 
     for (const file of storyFiles) {
@@ -678,27 +724,17 @@ app.post('/story-ui/orphan-stories', async (req, res) => {
     }
 
     const files = fs.readdirSync(storiesPath);
-    const storyFiles = files.filter(file =>
-      file.endsWith('.stories.tsx') ||
-      file.endsWith('.stories.ts') ||
-      file.endsWith('.stories.svelte')
-    );
+    const storyFiles = files.filter(file => isStoryFile(file));
 
     // Find orphans: stories that don't match any chat fileName
     const orphans = storyFiles.filter(storyFile => {
       // Extract the base name without extension for comparison
-      const storyBase = storyFile
-        .replace('.stories.tsx', '')
-        .replace('.stories.ts', '')
-        .replace('.stories.svelte', '');
+      const storyBase = removeStoryExtension(storyFile);
 
       // Check if any chat fileName matches this story
       return !chatFileNames.some(chatFileName => {
         if (!chatFileName) return false;
-        const chatBase = chatFileName
-          .replace('.stories.tsx', '')
-          .replace('.stories.ts', '')
-          .replace('.stories.svelte', '');
+        const chatBase = removeStoryExtension(chatFileName);
         return storyBase === chatBase || storyFile === chatFileName;
       });
     });
@@ -750,25 +786,15 @@ app.delete('/story-ui/orphan-stories', async (req, res) => {
     }
 
     const files = fs.readdirSync(storiesPath);
-    const storyFiles = files.filter(file =>
-      file.endsWith('.stories.tsx') ||
-      file.endsWith('.stories.ts') ||
-      file.endsWith('.stories.svelte')
-    );
+    const storyFiles = files.filter(file => isStoryFile(file));
 
     // Find orphans: stories that don't match any chat fileName
     const orphans = storyFiles.filter(storyFile => {
-      const storyBase = storyFile
-        .replace('.stories.tsx', '')
-        .replace('.stories.ts', '')
-        .replace('.stories.svelte', '');
+      const storyBase = removeStoryExtension(storyFile);
 
       return !chatFileNames.some(chatFileName => {
         if (!chatFileName) return false;
-        const chatBase = chatFileName
-          .replace('.stories.tsx', '')
-          .replace('.stories.ts', '')
-          .replace('.stories.svelte', '');
+        const chatBase = removeStoryExtension(chatFileName);
         return storyBase === chatBase || storyFile === chatFileName;
       });
     });
