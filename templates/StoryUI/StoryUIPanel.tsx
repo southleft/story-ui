@@ -800,12 +800,86 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   const abortControllerRef = useRef<AbortController | null>(null);
   const hasShownRefreshHint = useRef(false);
 
+  // Track stories for MCP external generation detection
+  // Used to detect when stories are created via MCP remote (Claude Desktop)
+  // and trigger automatic refresh since MCP has no browser context
+  const panelGeneratedStoryIds = useRef<Set<string>>(new Set());
+  const knownStoryIds = useRef<Set<string>>(new Set());
+  const isPollingInitialized = useRef(false);
+
   // Set port override if provided
   useEffect(() => {
     if (mcpPort && typeof window !== 'undefined') {
       (window as any).STORY_UI_MCP_PORT = String(mcpPort);
     }
   }, [mcpPort]);
+
+  // Poll for MCP-generated stories (stories created externally via Claude Desktop/Code)
+  // This solves the Vite HMR issue where stories generated via MCP remote don't trigger
+  // a browser refresh because MCP has no browser context to call window.location.reload()
+  useEffect(() => {
+    const POLL_INTERVAL_MS = 5000; // Check every 5 seconds
+
+    const pollForExternalStories = async () => {
+      try {
+        const baseUrl = getApiBaseUrl();
+        const response = await fetch(`${baseUrl}/story-ui/stories`);
+        if (!response.ok) return;
+
+        const data = await response.json();
+        const currentStoryIds = new Set<string>(data.stories?.map((s: { id: string }) => s.id) || []);
+
+        // On first poll, just record what's already there
+        if (!isPollingInitialized.current) {
+          knownStoryIds.current = currentStoryIds;
+          isPollingInitialized.current = true;
+          console.log('[Story UI] MCP story polling initialized with', currentStoryIds.size, 'stories');
+          return;
+        }
+
+        // Check for new stories not created by this panel session
+        for (const storyId of currentStoryIds) {
+          if (!knownStoryIds.current.has(storyId) && !panelGeneratedStoryIds.current.has(storyId)) {
+            // New story detected that wasn't created by this panel - must be from MCP remote
+            console.log('[Story UI] Detected externally generated story:', storyId);
+            console.log('[Story UI] Triggering refresh to register new story in Vite import map...');
+
+            // Update known stories before refresh
+            knownStoryIds.current = currentStoryIds;
+
+            // Trigger refresh with a short delay
+            setTimeout(() => {
+              try {
+                if (window.top && window.top !== window) {
+                  window.top.location.reload();
+                } else if (window.parent && window.parent !== window) {
+                  window.parent.location.reload();
+                } else {
+                  window.location.reload();
+                }
+              } catch (error) {
+                console.warn('[Story UI] Could not auto-refresh for MCP-generated story');
+              }
+            }, 1000);
+            return; // Only trigger one refresh
+          }
+        }
+
+        // Update known stories
+        knownStoryIds.current = currentStoryIds;
+      } catch (error) {
+        // Silently ignore polling errors - server may be unavailable temporarily
+      }
+    };
+
+    // Start polling
+    const intervalId = setInterval(pollForExternalStories, POLL_INTERVAL_MS);
+
+    // Initial poll
+    pollForExternalStories();
+
+    return () => clearInterval(intervalId);
+  }, []);
 
   // Detect Storybook theme
   useEffect(() => {
@@ -1218,6 +1292,14 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
       title: completion.title,
       action: completion.summary?.action,
     });
+
+    // Track this story as panel-generated to prevent false MCP detection
+    // The story ID is the fileName without .stories.tsx extension
+    if (completion.success && completion.fileName) {
+      const storyId = completion.fileName.replace('.stories.tsx', '');
+      panelGeneratedStoryIds.current.add(storyId);
+      console.log('[Story UI] Tracking panel-generated story:', storyId);
+    }
 
     const isUpdate = completion.summary.action === 'updated';
     const responseMessage = buildConversationalResponse(completion, isUpdate);
