@@ -10,7 +10,7 @@ Story UI revolutionizes component documentation by automatically generating Stor
 ## Why Story UI?
 
 - **Framework Agnostic**: Works with React, Vue, Angular, Svelte, and Web Components
-- **Multi-Provider AI**: Choose between Claude (Anthropic), GPT-5 (OpenAI), or Gemini (Google)
+- **Multi-Provider AI**: Choose between Claude (Anthropic), GPT-4o (OpenAI), or Gemini (Google)
 - **Design System Aware**: Learns your component library and generates appropriate code
 - **Production Ready**: Deploy as a standalone web app with full MCP integration
 - **Zero Lock-in**: Use any component library - Mantine, Vuetify, Angular Material, Shoelace, or your own
@@ -47,6 +47,12 @@ Story UI will guide you through:
 - **TypeScript Support**: Full type-aware story generation
 - **Vision Support**: Attach screenshots for visual component requests
 
+### Story Management
+- **Edit Existing Stories**: Modify any generated story through conversation
+- **Delete Stories**: Remove stories directly from the Story UI panel
+- **Orphan Detection**: Find and clean up stories without associated chat history
+- **Full MCP Integration**: Manage stories via Claude Desktop or any MCP-compatible client
+
 ### Multi-Framework Support
 
 | Framework | Design Systems | Status |
@@ -54,16 +60,16 @@ Story UI will guide you through:
 | React | Mantine, Chakra UI, Material UI, Custom | Fully Supported |
 | Vue | Vuetify, Custom | Fully Supported |
 | Angular | Angular Material, Custom | Fully Supported |
-| Svelte | Skeleton UI, Custom | Fully Supported |
+| Svelte | Flowbite-Svelte, Custom | Fully Supported |
 | Web Components | Shoelace, Custom | Fully Supported |
 
 ### Multi-Provider LLM Support
 
 | Provider | Models | Best For |
 |----------|--------|----------|
-| **Claude** (Anthropic) | Opus 4.5, Sonnet 4.5, Haiku 4.5 | Complex reasoning, code quality |
-| **GPT** (OpenAI) | GPT-5.1, GPT-5.1 Thinking, GPT-4o, GPT-4o Mini | Versatility, speed |
-| **Gemini** (Google) | Gemini 3 Pro, Gemini 2.0 Flash, Gemini 1.5 Pro | Fast generation, cost efficiency |
+| **Claude** (Anthropic) | claude-opus-4-5, claude-sonnet-4-5, claude-haiku-4-5 | Complex reasoning, code quality |
+| **GPT** (OpenAI) | gpt-4o, gpt-4o-mini, o1 | Versatility, speed |
+| **Gemini** (Google) | gemini-2.0-flash, gemini-1.5-pro | Fast generation, cost efficiency |
 
 ### Production Deployment
 - **Railway**: Node.js backend with file-based story persistence
@@ -115,7 +121,7 @@ The interactive installer will ask:
    ```
    ? Which AI provider do you prefer?
      > Claude (Anthropic) - Recommended
-       OpenAI (GPT-5)
+       OpenAI (GPT-4o)
        Google Gemini
 
    ? Enter your API key:
@@ -319,7 +325,7 @@ Once connected, you can use these commands in Claude Desktop:
 
 ## Production Deployment
 
-Story UI v3 can be deployed as a standalone web application accessible from anywhere.
+Story UI can be deployed as a standalone web application accessible from anywhere.
 
 ### Architecture
 
@@ -461,7 +467,7 @@ npx story-ui mcp
 
 ## Upgrading from v2
 
-Story UI v3 is backwards compatible with v2 configurations. However, to take advantage of new features:
+Story UI v4 is backwards compatible with previous configurations. However, to take advantage of new features:
 
 1. **Multi-Provider Support**: Add `llmProvider` to your config
 2. **Framework Detection**: Add `framework` to your config for non-React projects

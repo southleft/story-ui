@@ -1,7 +1,7 @@
 # Story UI - AI Assistant Project Guide
 
-> **Last Updated**: December 14, 2025
-> **Current Version**: 3.10.8
+> **Last Updated**: December 2025
+> **Current Version**: 4.1.2
 > **Production URL**: https://app-production-16de.up.railway.app (Vue/Vuetify example)
 > **Repository**: https://github.com/southleft/story-ui
 
@@ -63,7 +63,7 @@ PORT=4101 node /path/to/story-ui/dist/mcp-server/index.js
 
 ## Test Storybook Environments
 
-Development and testing uses five framework-specific Storybook instances located at `/Users/tjpitre/Sites/test-storybooks/`:
+Development and testing uses five framework-specific Storybook instances (create these in a sibling directory to story-ui):
 
 | Directory | Framework | Design System | Storybook Port | MCP Port |
 |-----------|-----------|---------------|----------------|----------|
@@ -77,10 +77,10 @@ Development and testing uses five framework-specific Storybook instances located
 
 ```bash
 # Example: React Mantine
-cd /Users/tjpitre/Sites/test-storybooks/react-mantine
+cd ../test-storybooks/react-mantine
 
 # Terminal 1: Start MCP server
-PORT=4101 node /Users/tjpitre/Sites/story-ui/dist/mcp-server/index.js
+PORT=4101 node ../story-ui/dist/mcp-server/index.js
 
 # Terminal 2: Start Storybook
 npm run storybook -- --port 6101

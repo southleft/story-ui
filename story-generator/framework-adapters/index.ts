@@ -193,7 +193,7 @@ class AdapterRegistry {
     return {
       systemPrompt: adapter.generateSystemPrompt(config, options),
       componentReference: adapter.generateComponentReference(components, config),
-      layoutInstructions: '', // TODO: Implement layout instructions
+      layoutInstructions: '',
       examples: adapter.generateExamples(config),
       sampleStory: adapter.generateSampleStory(config, components),
       framework: this.detectedFramework || {

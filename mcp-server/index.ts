@@ -107,6 +107,191 @@ app.get('/mcp/frameworks/:type', getFrameworkDetails);
 app.post('/mcp/frameworks/validate', validateStoryForFramework);
 app.post('/mcp/frameworks/post-process', postProcessStoryForFramework);
 
+// MCP story management routes - for Claude Desktop and other MCP clients
+// List all stories
+app.get('/mcp/stories', async (req, res) => {
+  try {
+    const storiesPath = config.generatedStoriesPath;
+
+    if (!fs.existsSync(storiesPath)) {
+      return res.json({ stories: [] });
+    }
+
+    const files = fs.readdirSync(storiesPath);
+    const stories = files
+      .filter(file => file.endsWith('.stories.tsx') || file.endsWith('.stories.ts') || file.endsWith('.stories.svelte'))
+      .map(file => {
+        const filePath = path.join(storiesPath, file);
+        const stats = fs.statSync(filePath);
+        const content = fs.readFileSync(filePath, 'utf-8');
+
+        // Extract title from story file
+        const titleMatch = content.match(/title:\s*['"]([^'"]+)['"]/);
+        let title = titleMatch ? titleMatch[1].replace('Generated/', '') : file.replace(/\.stories\.(tsx|ts|svelte)$/, '');
+        // Remove hash suffix from display title
+        title = title.replace(/\s*\([a-f0-9]{8}\)$/i, '');
+
+        return {
+          id: file.replace(/\.stories\.(tsx|ts|svelte)$/, ''),
+          storyId: file.replace(/\.stories\.(tsx|ts|svelte)$/, ''),
+          fileName: file,
+          title,
+          lastUpdated: stats.mtime.getTime(),
+          createdAt: stats.birthtime.getTime(),
+          content
+        };
+      })
+      .sort((a, b) => b.lastUpdated - a.lastUpdated);
+
+    return res.json({ stories });
+  } catch (error) {
+    console.error('Error listing stories:', error);
+    return res.status(500).json({ error: 'Failed to list stories' });
+  }
+});
+
+// Get a specific story by ID
+app.get('/mcp/stories/:storyId', async (req, res) => {
+  try {
+    const { storyId } = req.params;
+    const storiesPath = config.generatedStoriesPath;
+
+    if (!fs.existsSync(storiesPath)) {
+      return res.status(404).json({ error: 'Stories directory not found' });
+    }
+
+    const files = fs.readdirSync(storiesPath);
+
+    // Extract hash from story ID if in legacy format (story-a1b2c3d4)
+    const hashMatch = storyId.match(/^story-([a-f0-9]{8})$/);
+    const hash = hashMatch ? hashMatch[1] : null;
+
+    // Find matching file
+    const matchingFile = files.find(file => {
+      // Match by hash suffix
+      if (hash && file.includes(`-${hash}.stories.`)) return true;
+      // Match by exact ID
+      if (file.startsWith(`${storyId}.stories.`)) return true;
+      // Match by fileName
+      if (file === storyId) return true;
+      // Match by ID without extension
+      if (file.replace(/\.stories\.(tsx|ts|svelte)$/, '') === storyId) return true;
+      return false;
+    });
+
+    if (!matchingFile) {
+      return res.status(404).json({ error: `Story with ID ${storyId} not found` });
+    }
+
+    const filePath = path.join(storiesPath, matchingFile);
+    const stats = fs.statSync(filePath);
+    const content = fs.readFileSync(filePath, 'utf-8');
+
+    // Extract title from story file
+    const titleMatch = content.match(/title:\s*['"]([^'"]+)['"]/);
+    let title = titleMatch ? titleMatch[1].replace('Generated/', '') : matchingFile.replace(/\.stories\.(tsx|ts|svelte)$/, '');
+    title = title.replace(/\s*\([a-f0-9]{8}\)$/i, '');
+
+    return res.json({
+      id: matchingFile.replace(/\.stories\.(tsx|ts|svelte)$/, ''),
+      storyId: matchingFile.replace(/\.stories\.(tsx|ts|svelte)$/, ''),
+      fileName: matchingFile,
+      title,
+      lastUpdated: stats.mtime.getTime(),
+      createdAt: stats.birthtime.getTime(),
+      timestamp: stats.mtime.getTime(),
+      content,
+      story: content
+    });
+  } catch (error) {
+    console.error('Error getting story:', error);
+    return res.status(500).json({ error: 'Failed to get story' });
+  }
+});
+
+// Get story content (raw code)
+app.get('/mcp/stories/:storyId/content', async (req, res) => {
+  try {
+    const { storyId } = req.params;
+    const storiesPath = config.generatedStoriesPath;
+
+    if (!fs.existsSync(storiesPath)) {
+      return res.status(404).send('Stories directory not found');
+    }
+
+    const files = fs.readdirSync(storiesPath);
+
+    // Extract hash from story ID if in legacy format
+    const hashMatch = storyId.match(/^story-([a-f0-9]{8})$/);
+    const hash = hashMatch ? hashMatch[1] : null;
+
+    // Find matching file
+    const matchingFile = files.find(file => {
+      if (hash && file.includes(`-${hash}.stories.`)) return true;
+      if (file.startsWith(`${storyId}.stories.`)) return true;
+      if (file === storyId) return true;
+      if (file.replace(/\.stories\.(tsx|ts|svelte)$/, '') === storyId) return true;
+      return false;
+    });
+
+    if (!matchingFile) {
+      return res.status(404).send(`Story with ID ${storyId} not found`);
+    }
+
+    const filePath = path.join(storiesPath, matchingFile);
+    const content = fs.readFileSync(filePath, 'utf-8');
+
+    res.type('text/plain').send(content);
+  } catch (error) {
+    console.error('Error getting story content:', error);
+    return res.status(500).send('Failed to get story content');
+  }
+});
+
+// Delete a story by ID
+app.delete('/mcp/stories/:storyId', async (req, res) => {
+  try {
+    const { storyId } = req.params;
+    const storiesPath = config.generatedStoriesPath;
+
+    if (!fs.existsSync(storiesPath)) {
+      return res.status(404).json({ error: 'Stories directory not found' });
+    }
+
+    const files = fs.readdirSync(storiesPath);
+
+    // Extract hash from story ID if in legacy format
+    const hashMatch = storyId.match(/^story-([a-f0-9]{8})$/);
+    const hash = hashMatch ? hashMatch[1] : null;
+
+    // Find matching file
+    const matchingFile = files.find(file => {
+      if (hash && file.includes(`-${hash}.stories.`)) return true;
+      if (file.startsWith(`${storyId}.stories.`)) return true;
+      if (file === storyId) return true;
+      if (file.replace(/\.stories\.(tsx|ts|svelte)$/, '') === storyId) return true;
+      return false;
+    });
+
+    if (!matchingFile) {
+      return res.status(404).json({ error: `Story with ID ${storyId} not found` });
+    }
+
+    const filePath = path.join(storiesPath, matchingFile);
+    fs.unlinkSync(filePath);
+    console.log(`🗑️ Deleted story via MCP endpoint: ${matchingFile}`);
+
+    return res.json({
+      success: true,
+      deleted: matchingFile,
+      message: `Story "${matchingFile}" has been deleted successfully.`
+    });
+  } catch (error) {
+    console.error('Error deleting story:', error);
+    return res.status(500).json({ error: 'Failed to delete story' });
+  }
+});
+
 // File-based story routes - stories are generated as .stories.tsx files
 // Storybook discovers these automatically via its native file system watching
 

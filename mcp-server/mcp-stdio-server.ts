@@ -37,7 +37,8 @@ process.env.STORY_UI_MCP_MODE = 'true';
 
 // Get HTTP server port from environment variables (check multiple possible names)
 const HTTP_PORT = process.env.VITE_STORY_UI_PORT || process.env.STORY_UI_HTTP_PORT || process.env.PORT || '4001';
-const HTTP_BASE_URL = `http://localhost:${HTTP_PORT}`;
+// Allow configurable base URL for Railway/cloud deployments, fallback to localhost for local dev
+const HTTP_BASE_URL = process.env.STORY_UI_HTTP_BASE_URL || `http://localhost:${HTTP_PORT}`;
 
 // Initialize configuration
 const config = loadUserConfig();
@@ -205,9 +206,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         const result = await response.json();
-        
-        // Debug log to see what we're getting
-        console.error('Story generation result:', JSON.stringify(result, null, 2));
 
         return {
           content: [{
@@ -585,9 +583,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
 
           const result = await response.json();
-
-          // Debug log to see what we're getting
-          console.error('Story update result:', JSON.stringify(result, null, 2));
 
           return {
             content: [{
