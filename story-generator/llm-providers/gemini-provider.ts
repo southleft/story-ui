@@ -19,53 +19,36 @@ import {
 import { BaseLLMProvider } from './base-provider.js';
 import { logger } from '../logger.js';
 
-// Gemini model definitions - Updated November 2025
-// Reference: https://ai.google.dev/gemini-api/docs/gemini-3
+// Gemini model definitions - Updated December 2025
+// Top 4 models only - Reference: https://ai.google.dev/gemini-api/docs/models
 const GEMINI_MODELS: ModelInfo[] = [
-  // Gemini 3 Series - Latest (November 2025)
   {
-    id: 'gemini-3-pro',
-    name: 'Gemini 3 Pro',
+    id: 'gemini-2.5-pro',
+    name: 'Gemini 2.5 Pro',
     provider: 'gemini',
-    contextWindow: 1000000, // 1M tokens input
-    maxOutputTokens: 64000,
-    supportsVision: true,
-    supportsDocuments: true,
-    supportsFunctionCalling: true,
-    supportsStreaming: true,
-    supportsReasoning: true, // Native reasoning with thinking_level parameter
-    inputPricePer1kTokens: 0.002, // $2/million for <=200k context
-    outputPricePer1kTokens: 0.012, // $12/million output
-    description: 'Most intelligent Gemini model. PhD-level reasoning, 1501 Elo on LMArena.',
-  },
-  {
-    id: 'gemini-3-pro-preview',
-    name: 'Gemini 3 Pro (Preview)',
-    provider: 'gemini',
-    contextWindow: 1000000,
-    maxOutputTokens: 64000,
+    contextWindow: 1048576,
+    maxOutputTokens: 65536,
     supportsVision: true,
     supportsDocuments: true,
     supportsFunctionCalling: true,
     supportsStreaming: true,
     supportsReasoning: true,
-    inputPricePer1kTokens: 0.002,
-    outputPricePer1kTokens: 0.012,
-    description: 'Preview version of Gemini 3 Pro with latest experimental features.',
+    inputPricePer1kTokens: 0.00125,
+    outputPricePer1kTokens: 0.01,
   },
-  // Gemini 2.0 Series
   {
-    id: 'gemini-2.0-flash-exp',
-    name: 'Gemini 2.0 Flash Experimental',
+    id: 'gemini-2.5-flash',
+    name: 'Gemini 2.5 Flash',
     provider: 'gemini',
     contextWindow: 1048576,
-    maxOutputTokens: 8192,
+    maxOutputTokens: 65536,
     supportsVision: true,
     supportsDocuments: true,
     supportsFunctionCalling: true,
     supportsStreaming: true,
-    inputPricePer1kTokens: 0.00,
-    outputPricePer1kTokens: 0.00,
+    supportsReasoning: true,
+    inputPricePer1kTokens: 0.00015,
+    outputPricePer1kTokens: 0.0006,
   },
   {
     id: 'gemini-2.0-flash',
@@ -80,7 +63,6 @@ const GEMINI_MODELS: ModelInfo[] = [
     inputPricePer1kTokens: 0.00,
     outputPricePer1kTokens: 0.00,
   },
-  // Gemini 1.5 Series (Legacy)
   {
     id: 'gemini-1.5-pro',
     name: 'Gemini 1.5 Pro',
@@ -94,36 +76,10 @@ const GEMINI_MODELS: ModelInfo[] = [
     inputPricePer1kTokens: 0.00125,
     outputPricePer1kTokens: 0.005,
   },
-  {
-    id: 'gemini-1.5-flash',
-    name: 'Gemini 1.5 Flash',
-    provider: 'gemini',
-    contextWindow: 1048576,
-    maxOutputTokens: 8192,
-    supportsVision: true,
-    supportsDocuments: true,
-    supportsFunctionCalling: true,
-    supportsStreaming: true,
-    inputPricePer1kTokens: 0.000075,
-    outputPricePer1kTokens: 0.0003,
-  },
-  {
-    id: 'gemini-1.5-flash-8b',
-    name: 'Gemini 1.5 Flash 8B',
-    provider: 'gemini',
-    contextWindow: 1048576,
-    maxOutputTokens: 8192,
-    supportsVision: true,
-    supportsDocuments: true,
-    supportsFunctionCalling: true,
-    supportsStreaming: true,
-    inputPricePer1kTokens: 0.0000375,
-    outputPricePer1kTokens: 0.00015,
-  },
 ];
 
-// Default model
-const DEFAULT_MODEL = 'gemini-2.0-flash';
+// Default model - Gemini 2.5 Pro (recommended)
+const DEFAULT_MODEL = 'gemini-2.5-pro';
 
 // API configuration
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';

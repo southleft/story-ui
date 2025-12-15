@@ -19,10 +19,23 @@ import {
 import { BaseLLMProvider } from './base-provider.js';
 import { logger } from '../logger.js';
 
-// OpenAI model definitions - Updated November 2025
-// Reference: https://openai.com/index/introducing-gpt-5/
+// OpenAI model definitions - Updated December 2025
+// Reference: https://platform.openai.com/docs/guides/latest-model
 const OPENAI_MODELS: ModelInfo[] = [
-  // GPT-5.1 Series - Latest (November 2025)
+  {
+    id: 'gpt-5.2',
+    name: 'GPT-5.2',
+    provider: 'openai',
+    contextWindow: 256000,
+    maxOutputTokens: 32768,
+    supportsVision: true,
+    supportsDocuments: true,
+    supportsFunctionCalling: true,
+    supportsStreaming: true,
+    supportsReasoning: true,
+    inputPricePer1kTokens: 0.005,
+    outputPricePer1kTokens: 0.015,
+  },
   {
     id: 'gpt-5.1',
     name: 'GPT-5.1',
@@ -33,58 +46,10 @@ const OPENAI_MODELS: ModelInfo[] = [
     supportsDocuments: true,
     supportsFunctionCalling: true,
     supportsStreaming: true,
-    supportsReasoning: true, // Adaptive reasoning with reasoning_effort parameter
-    inputPricePer1kTokens: 0.005,
-    outputPricePer1kTokens: 0.015,
-    description: 'Latest GPT-5 series. 76.3% on SWE-bench. Adaptive reasoning capability.',
-  },
-  {
-    id: 'gpt-5.1-chat-latest',
-    name: 'GPT-5.1 Instant',
-    provider: 'openai',
-    contextWindow: 256000,
-    maxOutputTokens: 32768,
-    supportsVision: true,
-    supportsDocuments: true,
-    supportsFunctionCalling: true,
-    supportsStreaming: true,
-    supportsReasoning: true,
-    inputPricePer1kTokens: 0.003,
-    outputPricePer1kTokens: 0.012,
-    description: 'More conversational GPT-5.1 with improved instruction following.',
-  },
-  {
-    id: 'gpt-5.1-thinking',
-    name: 'GPT-5.1 Thinking',
-    provider: 'openai',
-    contextWindow: 256000,
-    maxOutputTokens: 65536,
-    supportsVision: true,
-    supportsDocuments: true,
-    supportsFunctionCalling: true,
-    supportsStreaming: true,
-    supportsReasoning: true,
-    inputPricePer1kTokens: 0.008,
-    outputPricePer1kTokens: 0.024,
-    description: 'Extended thinking mode for complex reasoning tasks.',
-  },
-  // GPT-5 Original (August 2025)
-  {
-    id: 'gpt-5',
-    name: 'GPT-5',
-    provider: 'openai',
-    contextWindow: 200000,
-    maxOutputTokens: 32768,
-    supportsVision: true,
-    supportsDocuments: true,
-    supportsFunctionCalling: true,
-    supportsStreaming: true,
     supportsReasoning: true,
     inputPricePer1kTokens: 0.005,
     outputPricePer1kTokens: 0.015,
-    description: 'Multimodal foundation model combining reasoning and general capabilities.',
   },
-  // GPT-4o Series
   {
     id: 'gpt-4o',
     name: 'GPT-4o',
@@ -111,64 +76,10 @@ const OPENAI_MODELS: ModelInfo[] = [
     inputPricePer1kTokens: 0.00015,
     outputPricePer1kTokens: 0.0006,
   },
-  // o1 Reasoning Series
-  {
-    id: 'o1',
-    name: 'o1 (Reasoning)',
-    provider: 'openai',
-    contextWindow: 200000,
-    maxOutputTokens: 100000,
-    supportsVision: true,
-    supportsDocuments: false,
-    supportsFunctionCalling: true,
-    supportsStreaming: true,
-    inputPricePer1kTokens: 0.015,
-    outputPricePer1kTokens: 0.06,
-  },
-  {
-    id: 'o1-mini',
-    name: 'o1 Mini (Reasoning)',
-    provider: 'openai',
-    contextWindow: 128000,
-    maxOutputTokens: 65536,
-    supportsVision: false,
-    supportsDocuments: false,
-    supportsFunctionCalling: true,
-    supportsStreaming: true,
-    inputPricePer1kTokens: 0.003,
-    outputPricePer1kTokens: 0.012,
-  },
-  // Legacy GPT-4 Series
-  {
-    id: 'gpt-4-turbo',
-    name: 'GPT-4 Turbo',
-    provider: 'openai',
-    contextWindow: 128000,
-    maxOutputTokens: 4096,
-    supportsVision: true,
-    supportsDocuments: false,
-    supportsFunctionCalling: true,
-    supportsStreaming: true,
-    inputPricePer1kTokens: 0.01,
-    outputPricePer1kTokens: 0.03,
-  },
-  {
-    id: 'gpt-3.5-turbo',
-    name: 'GPT-3.5 Turbo (Legacy)',
-    provider: 'openai',
-    contextWindow: 16385,
-    maxOutputTokens: 4096,
-    supportsVision: false,
-    supportsDocuments: false,
-    supportsFunctionCalling: true,
-    supportsStreaming: true,
-    inputPricePer1kTokens: 0.0005,
-    outputPricePer1kTokens: 0.0015,
-  },
 ];
 
 // Default model - Updated to latest GPT-5.1 (December 2025)
-const DEFAULT_MODEL = 'gpt-5.1';
+const DEFAULT_MODEL = 'gpt-5.2';
 
 // API configuration
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
@@ -234,14 +145,22 @@ export class OpenAIProvider extends BaseLLMProvider {
     const model = options?.model || this.config.model;
     const openaiMessages = this.convertMessages(messages, options?.systemPrompt);
 
+    // Determine which token parameter to use based on model
+    // Newer models (o1, gpt-5, gpt-5.1) require max_completion_tokens instead of max_tokens
+    const maxTokens = options?.maxTokens || this.getSelectedModel()?.maxOutputTokens || 4096;
+    const useMaxCompletionTokens = model.startsWith('o1') || model.startsWith('gpt-5');
+
     const requestBody: Record<string, unknown> = {
       model,
       messages: openaiMessages,
-      max_tokens: options?.maxTokens || this.getSelectedModel()?.maxOutputTokens || 4096,
+      ...(useMaxCompletionTokens
+        ? { max_completion_tokens: maxTokens }
+        : { max_tokens: maxTokens }),
     };
 
     // Add optional parameters
-    if (options?.temperature !== undefined) {
+    // Note: temperature is not supported for o1 and some gpt-5 models
+    if (options?.temperature !== undefined && !model.startsWith('o1')) {
       requestBody.temperature = options.temperature;
     }
     if (options?.topP !== undefined) {
@@ -297,14 +216,22 @@ export class OpenAIProvider extends BaseLLMProvider {
     const model = options?.model || this.config.model;
     const openaiMessages = this.convertMessages(messages, options?.systemPrompt);
 
+    // Determine which token parameter to use based on model
+    // Newer models (o1, gpt-5, gpt-5.1) require max_completion_tokens instead of max_tokens
+    const maxTokens = options?.maxTokens || this.getSelectedModel()?.maxOutputTokens || 4096;
+    const useMaxCompletionTokens = model.startsWith('o1') || model.startsWith('gpt-5');
+
     const requestBody: Record<string, unknown> = {
       model,
       messages: openaiMessages,
-      max_tokens: options?.maxTokens || this.getSelectedModel()?.maxOutputTokens || 4096,
+      ...(useMaxCompletionTokens
+        ? { max_completion_tokens: maxTokens }
+        : { max_tokens: maxTokens }),
       stream: true,
     };
 
-    if (options?.temperature !== undefined) {
+    // Note: temperature is not supported for o1 and some gpt-5 models
+    if (options?.temperature !== undefined && !model.startsWith('o1')) {
       requestBody.temperature = options.temperature;
     }
 

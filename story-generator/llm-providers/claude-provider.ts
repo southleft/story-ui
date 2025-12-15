@@ -19,10 +19,9 @@ import {
 import { BaseLLMProvider } from './base-provider.js';
 import { logger } from '../logger.js';
 
-// Claude model definitions - Updated November 2025
-// Based on Anthropic API documentation via Context7
+// Claude model definitions - Updated December 2025
+// Top 4 models only - Reference: Anthropic API documentation
 const CLAUDE_MODELS: ModelInfo[] = [
-  // Latest Claude 4.x models (Recommended)
   {
     id: 'claude-opus-4-5-20251101',
     name: 'Claude Opus 4.5',
@@ -62,7 +61,6 @@ const CLAUDE_MODELS: ModelInfo[] = [
     inputPricePer1kTokens: 0.0008,
     outputPricePer1kTokens: 0.004,
   },
-  // Claude 4.0 models
   {
     id: 'claude-sonnet-4-20250514',
     name: 'Claude Sonnet 4',
@@ -76,63 +74,10 @@ const CLAUDE_MODELS: ModelInfo[] = [
     inputPricePer1kTokens: 0.003,
     outputPricePer1kTokens: 0.015,
   },
-  {
-    id: 'claude-opus-4-20250514',
-    name: 'Claude Opus 4',
-    provider: 'claude',
-    contextWindow: 200000,
-    maxOutputTokens: 32000,
-    supportsVision: true,
-    supportsDocuments: true,
-    supportsFunctionCalling: true,
-    supportsStreaming: true,
-    inputPricePer1kTokens: 0.015,
-    outputPricePer1kTokens: 0.075,
-  },
-  // Legacy models (deprecated - use newer versions)
-  {
-    id: 'claude-3-7-sonnet-20250219',
-    name: 'Claude 3.7 Sonnet (Legacy)',
-    provider: 'claude',
-    contextWindow: 200000,
-    maxOutputTokens: 16000,
-    supportsVision: true,
-    supportsDocuments: true,
-    supportsFunctionCalling: true,
-    supportsStreaming: true,
-    inputPricePer1kTokens: 0.003,
-    outputPricePer1kTokens: 0.015,
-  },
-  {
-    id: 'claude-3-5-sonnet-20241022',
-    name: 'Claude 3.5 Sonnet (Deprecated)',
-    provider: 'claude',
-    contextWindow: 200000,
-    maxOutputTokens: 8192,
-    supportsVision: true,
-    supportsDocuments: true,
-    supportsFunctionCalling: true,
-    supportsStreaming: true,
-    inputPricePer1kTokens: 0.003,
-    outputPricePer1kTokens: 0.015,
-  },
-  {
-    id: 'claude-3-5-haiku-20241022',
-    name: 'Claude 3.5 Haiku (Deprecated)',
-    provider: 'claude',
-    contextWindow: 200000,
-    maxOutputTokens: 8192,
-    supportsVision: true,
-    supportsDocuments: false,
-    supportsFunctionCalling: true,
-    supportsStreaming: true,
-    inputPricePer1kTokens: 0.0008,
-    outputPricePer1kTokens: 0.004,
-  },
 ];
 
 // Default model - Claude Sonnet 4.5 (recommended for agents and coding)
-const DEFAULT_MODEL = 'claude-sonnet-4-5-20250929';
+const DEFAULT_MODEL = 'claude-opus-4-5-20251101';
 
 // API configuration
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
