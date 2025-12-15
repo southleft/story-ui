@@ -20,8 +20,22 @@ import { BaseLLMProvider } from './base-provider.js';
 import { logger } from '../logger.js';
 
 // Gemini model definitions - Updated December 2025
-// Top 4 models only - Reference: https://ai.google.dev/gemini-api/docs/models
+// Top 5 models - Reference: https://ai.google.dev/gemini-api/docs/models
 const GEMINI_MODELS: ModelInfo[] = [
+  {
+    id: 'gemini-3-pro-preview',
+    name: 'Gemini 3 Pro Preview',
+    provider: 'gemini',
+    contextWindow: 1048576,
+    maxOutputTokens: 65536,
+    supportsVision: true,
+    supportsDocuments: true,
+    supportsFunctionCalling: true,
+    supportsStreaming: true,
+    supportsReasoning: true,
+    inputPricePer1kTokens: 0.002,
+    outputPricePer1kTokens: 0.012,
+  },
   {
     id: 'gemini-2.5-pro',
     name: 'Gemini 2.5 Pro',
@@ -78,8 +92,8 @@ const GEMINI_MODELS: ModelInfo[] = [
   },
 ];
 
-// Default model - Gemini 2.5 Pro (recommended)
-const DEFAULT_MODEL = 'gemini-2.5-pro';
+// Default model - Gemini 3 Pro Preview (most capable)
+const DEFAULT_MODEL = 'gemini-3-pro-preview';
 
 // API configuration
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
