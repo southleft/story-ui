@@ -1,3 +1,10 @@
+# [4.5.0](https://github.com/southleft/story-ui/compare/v4.4.1...v4.5.0) (2025-12-15)
+
+
+### Features
+
+* **generator:** add Gemini 3 Pro Preview model ([d5eaf5a](https://github.com/southleft/story-ui/commit/d5eaf5a3deda345191feaf5fefb1da6026217984))
+
 # [4.4.0](https://github.com/southleft/story-ui/compare/v4.3.0...v4.4.0) (2025-12-15)
 
 
