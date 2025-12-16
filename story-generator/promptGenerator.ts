@@ -649,17 +649,48 @@ export async function buildClaudePrompt(
     });
   }
 
-  // CRITICAL: Prohibit icon imports - they cause validation failures
-  promptParts.push(
-    '',
-    '🔴 CRITICAL: DO NOT IMPORT ICONS 🔴',
-    '- Do NOT import from @tabler/icons-react or any icon library',
-    '- Do NOT use Icon components (IconPlus, IconCheck, IconSearch, etc.)',
-    '- Use Text or Unicode symbols instead of icons (e.g., "+" instead of IconPlus)',
-    '- Use Badge, Button labels, or Text for visual elements instead of icons',
-    '- Icons are NOT in the available components list and WILL cause import errors',
-    ''
+  // Smart icon handling - allow design system icons, prohibit external libraries
+  const iconComponents = components.filter(c =>
+    c.name && typeof c.name === 'string' &&
+    (c.name.toLowerCase().includes('icon') || c.name === 'Icon' || c.name === 'v-icon' || c.name === 'mat-icon' || c.name === 'sl-icon')
   );
+
+  if (iconComponents.length > 0) {
+    // Design system has icon support - allow those, prohibit external libraries
+    const allowedIconNames = iconComponents.map(c => c.name).join(', ');
+    promptParts.push(
+      '',
+      '🔶 ICON USAGE RULES 🔶',
+      `Your design system includes icon components: ${allowedIconNames}`,
+      '✅ You MAY use these icon components from the Available components list',
+      '🚫 Do NOT import from external icon libraries:',
+      '   - @tabler/icons-react, @tabler/icons',
+      '   - react-icons, lucide-react, @heroicons/react',
+      '   - @fortawesome/react-fontawesome, @phosphor-icons/react',
+      '   - Any other external icon package',
+      'If you need icons beyond what the design system provides, use Unicode symbols (→ ✓ + ×) or text labels instead.',
+      ''
+    );
+  } else {
+    // No icon components discovered - prohibit all icon imports
+    promptParts.push(
+      '',
+      '🔴 ICON IMPORT RESTRICTION 🔴',
+      'This design system does not include icon components in the available components list.',
+      '🚫 Do NOT import from ANY icon library:',
+      '   - @tabler/icons-react, @tabler/icons',
+      '   - react-icons, lucide-react, @heroicons/react',
+      '   - @fortawesome/react-fontawesome, @phosphor-icons/react',
+      '   - @mui/icons-material, @chakra-ui/icons',
+      '   - Any other icon package',
+      '✅ Instead, use:',
+      '   - Unicode symbols: → ✓ ✗ + − × ÷ • ★ ♦ ▶ ◀ ▲ ▼',
+      '   - Text labels: "Add", "Remove", "Edit", "Delete"',
+      '   - Badge or Button components with text content',
+      'Icons are NOT in the available components list and WILL cause import errors.',
+      ''
+    );
+  }
 
   // Reinforce NO children in args rule
   promptParts.push(
@@ -852,6 +883,49 @@ export async function buildFrameworkAwarePrompt(
         promptParts.push(`- ${example}`);
       });
     });
+  }
+
+  // Smart icon handling - allow design system icons, prohibit external libraries
+  const iconComponents = components.filter(c =>
+    c.name && typeof c.name === 'string' &&
+    (c.name.toLowerCase().includes('icon') || c.name === 'Icon' || c.name === 'v-icon' || c.name === 'mat-icon' || c.name === 'sl-icon')
+  );
+
+  if (iconComponents.length > 0) {
+    // Design system has icon support - allow those, prohibit external libraries
+    const allowedIconNames = iconComponents.map(c => c.name).join(', ');
+    promptParts.push(
+      '',
+      '🔶 ICON USAGE RULES 🔶',
+      `Your design system includes icon components: ${allowedIconNames}`,
+      '✅ You MAY use these icon components from the Available components list',
+      '🚫 Do NOT import from external icon libraries:',
+      '   - @tabler/icons-react, @tabler/icons',
+      '   - react-icons, lucide-react, @heroicons/react',
+      '   - @fortawesome/react-fontawesome, @phosphor-icons/react',
+      '   - Any other external icon package',
+      'If you need icons beyond what the design system provides, use Unicode symbols (→ ✓ + ×) or text labels instead.',
+      ''
+    );
+  } else {
+    // No icon components discovered - prohibit all icon imports
+    promptParts.push(
+      '',
+      '🔴 ICON IMPORT RESTRICTION 🔴',
+      'This design system does not include icon components in the available components list.',
+      '🚫 Do NOT import from ANY icon library:',
+      '   - @tabler/icons-react, @tabler/icons',
+      '   - react-icons, lucide-react, @heroicons/react',
+      '   - @fortawesome/react-fontawesome, @phosphor-icons/react',
+      '   - @mui/icons-material, @chakra-ui/icons',
+      '   - Any other icon package',
+      '✅ Instead, use:',
+      '   - Unicode symbols: → ✓ ✗ + − × ÷ • ★ ♦ ▶ ◀ ▲ ▼',
+      '   - Text labels: "Add", "Remove", "Edit", "Delete"',
+      '   - Badge or Button components with text content',
+      'Icons are NOT in the available components list and WILL cause import errors.',
+      ''
+    );
   }
 
   // Add framework-specific rules
