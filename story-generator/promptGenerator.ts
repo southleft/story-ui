@@ -649,7 +649,17 @@ export async function buildClaudePrompt(
     });
   }
 
-  // Icons and other specific imports should be handled through additionalImports or considerations
+  // CRITICAL: Prohibit icon imports - they cause validation failures
+  promptParts.push(
+    '',
+    '🔴 CRITICAL: DO NOT IMPORT ICONS 🔴',
+    '- Do NOT import from @tabler/icons-react or any icon library',
+    '- Do NOT use Icon components (IconPlus, IconCheck, IconSearch, etc.)',
+    '- Use Text or Unicode symbols instead of icons (e.g., "+" instead of IconPlus)',
+    '- Use Badge, Button labels, or Text for visual elements instead of icons',
+    '- Icons are NOT in the available components list and WILL cause import errors',
+    ''
+  );
 
   // Reinforce NO children in args rule
   promptParts.push(
