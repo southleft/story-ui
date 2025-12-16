@@ -168,18 +168,20 @@
 }
 
 /* ============================================
-   Base Reset
+   Base Reset & CSS Isolation
    ============================================ */
-.sui-root,
-.sui-root *,
-.sui-root *::before,
-.sui-root *::after {
+
+/* Isolate StoryUI from Storybook's theme CSS variables */
+.sui-root {
+  /* Reset inherited properties to prevent Storybook theme bleeding */
+  all: revert;
+
+  /* Re-apply necessary layout */
   box-sizing: border-box;
   margin: 0;
   padding: 0;
-}
 
-.sui-root {
+  /* Typography */
   font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.5;
@@ -187,9 +189,28 @@
   background-color: hsl(var(--background));
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+
+  /* Layout */
   height: 100%;
   width: 100%;
   display: flex;
+
+  /* Prevent inheriting Storybook's color scheme */
+  color-scheme: light;
+}
+
+.sui-root.dark {
+  color-scheme: dark;
+}
+
+.sui-root *,
+.sui-root *::before,
+.sui-root *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  /* Prevent Storybook CSS variable inheritance */
+  color: inherit;
 }
 
 /* ============================================
@@ -405,58 +426,100 @@
   opacity: 0.5;
 }
 
-/* Button Variants - Storybook-style */
+/* Button Variants - Storybook-style with explicit fallback colors */
 .sui-button-default {
-  background: hsl(var(--secondary));
-  color: hsl(var(--secondary-foreground));
-  border: 1px solid hsl(var(--border));
+  /* Explicit fallback colors to prevent Storybook bleeding */
+  background: #f4f4f5; /* hsl(240 4.8% 95.9%) */
+  color: #18181b; /* hsl(240 5.9% 10%) */
+  border: 1px solid #e4e4e7; /* hsl(240 5.9% 90%) */
   border-radius: var(--radius-md);
   height: 2rem;
   padding: 0 var(--space-3);
 }
 
 .sui-button-default:hover {
-  background: hsl(var(--accent));
-  border-color: hsl(var(--muted-foreground) / 0.3);
+  background: #e4e4e7;
+  border-color: #a1a1aa;
+}
+
+/* Dark mode button defaults */
+.sui-root.dark .sui-button-default {
+  background: #1e293b; /* hsl(217 33% 17%) */
+  color: #f8fafc; /* hsl(210 40% 98%) */
+  border-color: #334155; /* hsl(217 33% 22%) */
+}
+
+.sui-root.dark .sui-button-default:hover {
+  background: #334155;
+  border-color: #94a3b8;
 }
 
 .sui-button-secondary {
-  background: hsl(var(--secondary));
-  color: hsl(var(--secondary-foreground));
-  border: 1px solid hsl(var(--border));
+  background: #f4f4f5;
+  color: #18181b;
+  border: 1px solid #e4e4e7;
   border-radius: var(--radius-md);
   height: 2rem;
   padding: 0 var(--space-3);
 }
 
 .sui-button-secondary:hover {
-  background: hsl(var(--accent));
+  background: #e4e4e7;
+}
+
+.sui-root.dark .sui-button-secondary {
+  background: #1e293b;
+  color: #f8fafc;
+  border-color: #334155;
+}
+
+.sui-root.dark .sui-button-secondary:hover {
+  background: #334155;
 }
 
 .sui-button-ghost {
-  color: hsl(var(--foreground));
+  color: #0a0a0b;
   border-radius: var(--radius-md);
   height: 2rem;
   padding: 0 var(--space-3);
 }
 
 .sui-button-ghost:hover {
-  background: hsl(var(--accent));
-  color: hsl(var(--accent-foreground));
+  background: #f4f4f5;
+  color: #18181b;
+}
+
+.sui-root.dark .sui-button-ghost {
+  color: #f8fafc;
+}
+
+.sui-root.dark .sui-button-ghost:hover {
+  background: #1e293b;
+  color: #f8fafc;
 }
 
 .sui-button-outline {
-  border: 1px solid hsl(var(--border));
+  border: 1px solid #e4e4e7;
   background: transparent;
-  color: hsl(var(--foreground));
+  color: #0a0a0b;
   border-radius: var(--radius-md);
   height: 2rem;
   padding: 0 var(--space-3);
 }
 
 .sui-button-outline:hover {
-  background: hsl(var(--accent));
-  color: hsl(var(--accent-foreground));
+  background: #f4f4f5;
+  color: #18181b;
+}
+
+.sui-root.dark .sui-button-outline {
+  border-color: #334155;
+  color: #f8fafc;
+}
+
+.sui-root.dark .sui-button-outline:hover {
+  background: #1e293b;
+  color: #f8fafc;
 }
 
 .sui-button-destructive {
@@ -747,7 +810,8 @@
 .sui-welcome-greeting {
   font-size: 1.75rem;
   font-weight: 600;
-  color: hsl(var(--foreground));
+  /* Explicit fallback color to prevent Storybook bleeding */
+  color: #0a0a0b; /* hsl(240 10% 3.9%) */
   margin-bottom: var(--space-3);
   line-height: 1.3;
 }
@@ -760,14 +824,15 @@
 
 .sui-welcome-subtitle {
   font-size: 1rem;
-  color: hsl(var(--muted-foreground));
+  /* Explicit fallback color to prevent Storybook bleeding */
+  color: #71717a; /* hsl(240 3.8% 46.1%) */
   margin-bottom: var(--space-8);
   max-width: 400px;
 }
 
 /* Dark mode: make subtitle more visible */
 .sui-root.dark .sui-welcome-subtitle {
-  color: hsl(210 25% 80%);
+  color: #b8c4d4; /* hsl(210 25% 80%) */
 }
 
 .sui-welcome-chips {
@@ -786,24 +851,37 @@
   align-items: center;
   justify-content: center;
   padding: 0.5rem 1rem;
-  background: hsl(var(--secondary));
-  border: 1px solid hsl(var(--border));
+  /* Explicit fallback colors to prevent Storybook bleeding */
+  background: #f4f4f5; /* hsl(240 4.8% 95.9%) */
+  border: 1px solid #e4e4e7; /* hsl(240 5.9% 90%) */
   border-radius: var(--radius-full);
   font-size: 0.875rem;
   font-weight: 500;
   line-height: 1;
-  color: hsl(var(--foreground));
+  color: #0a0a0b; /* hsl(240 10% 3.9%) */
   cursor: pointer;
   transition: all var(--transition-fast);
 }
 
 .sui-chip:hover {
-  background: hsl(var(--accent));
-  border-color: hsl(var(--muted-foreground) / 0.3);
+  background: #e4e4e7; /* hsl(240 4.8% 95.9%) */
+  border-color: #a1a1aa; /* hsl(240 3.8% 46.1% / 0.3) */
 }
 
 .sui-chip:active {
   transform: scale(0.98);
+}
+
+/* Dark mode chips */
+.sui-root.dark .sui-chip {
+  background: #1e293b; /* hsl(217 33% 17%) */
+  border-color: #334155; /* hsl(217 33% 22%) */
+  color: #f8fafc; /* hsl(210 40% 98%) */
+}
+
+.sui-root.dark .sui-chip:hover {
+  background: #334155;
+  border-color: #94a3b8;
 }
 
 /* ============================================
