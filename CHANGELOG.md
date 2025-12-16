@@ -1,3 +1,10 @@
+## [4.5.1](https://github.com/southleft/story-ui/compare/v4.5.0...v4.5.1) (2025-12-16)
+
+
+### Bug Fixes
+
+* **generator:** prohibit icon imports to prevent Gemini validation failures ([b581bd5](https://github.com/southleft/story-ui/commit/b581bd50b498dd0444a090c632dd1c5a846ef0d8))
+
 # [4.5.0](https://github.com/southleft/story-ui/compare/v4.4.1...v4.5.0) (2025-12-15)
 
 
