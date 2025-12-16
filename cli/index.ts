@@ -72,6 +72,12 @@ program
 
     const env: NodeJS.ProcessEnv = { ...process.env, PORT: String(finalPort) };
 
+    // Set memory limit to prevent heap exhaustion during vision/image processing
+    // Default to 8GB for handling large images and self-healing retry loops
+    if (!env.NODE_OPTIONS?.includes('--max-old-space-size')) {
+      env.NODE_OPTIONS = `${env.NODE_OPTIONS || ''} --max-old-space-size=8192`.trim();
+    }
+
     if (options.config) {
       env.STORY_UI_CONFIG_PATH = options.config;
     }
