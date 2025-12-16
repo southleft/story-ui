@@ -10,6 +10,237 @@ import {
   FrameworkType,
   FrameworkAdapter,
 } from './framework-adapters/index.js';
+import * as fs from 'fs';
+import * as path from 'path';
+
+/**
+ * Icon package information for smart detection
+ */
+interface IconPackageInfo {
+  name: string;
+  importPath: string;
+  commonIcons: string[];
+  importStyle: 'named' | 'default';
+  description: string;
+}
+
+/**
+ * Known icon packages and their common icons
+ * Used for smart detection when icon packages are installed
+ */
+const KNOWN_ICON_PACKAGES: IconPackageInfo[] = [
+  {
+    name: '@tabler/icons-react',
+    importPath: '@tabler/icons-react',
+    commonIcons: [
+      'IconHome', 'IconSettings', 'IconUser', 'IconSearch', 'IconMenu2',
+      'IconBell', 'IconMail', 'IconCalendar', 'IconClock', 'IconStar',
+      'IconHeart', 'IconPlus', 'IconMinus', 'IconX', 'IconCheck',
+      'IconChevronRight', 'IconChevronLeft', 'IconChevronDown', 'IconChevronUp',
+      'IconArrowRight', 'IconArrowLeft', 'IconArrowUp', 'IconArrowDown',
+      'IconEdit', 'IconTrash', 'IconDownload', 'IconUpload', 'IconShare',
+      'IconFilter', 'IconSort', 'IconRefresh', 'IconEye', 'IconEyeOff',
+      'IconLock', 'IconUnlock', 'IconCopy', 'IconClipboard', 'IconFolder',
+      'IconFile', 'IconImage', 'IconVideo', 'IconMusic', 'IconLink',
+      'IconExternalLink', 'IconDots', 'IconDotsVertical', 'IconGripVertical',
+      'IconSun', 'IconMoon', 'IconCloud', 'IconBolt', 'IconDroplet',
+      'IconMapPin', 'IconPhone', 'IconMessage', 'IconSend', 'IconInbox',
+      'IconArchive', 'IconTag', 'IconBookmark', 'IconFlag', 'IconAward',
+      'IconTrendingUp', 'IconTrendingDown', 'IconActivity', 'IconPieChart',
+      'IconBarChart', 'IconLineChart', 'IconDatabase', 'IconServer', 'IconCode',
+      'IconTerminal', 'IconBrandGithub', 'IconBrandTwitter', 'IconBrandLinkedin',
+      'IconWorld', 'IconGlobe', 'IconWifi', 'IconBluetooth', 'IconCpu',
+      'IconDeviceDesktop', 'IconDeviceMobile', 'IconPrinter', 'IconCamera',
+      'IconMicrophone', 'IconVolume', 'IconPlayerPlay', 'IconPlayerPause',
+    ],
+    importStyle: 'named',
+    description: 'Tabler Icons - Free and open source icons (Mantine recommended)',
+  },
+  {
+    name: 'lucide-react',
+    importPath: 'lucide-react',
+    commonIcons: [
+      'Home', 'Settings', 'User', 'Search', 'Menu',
+      'Bell', 'Mail', 'Calendar', 'Clock', 'Star',
+      'Heart', 'Plus', 'Minus', 'X', 'Check',
+      'ChevronRight', 'ChevronLeft', 'ChevronDown', 'ChevronUp',
+      'ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown',
+      'Edit', 'Trash', 'Download', 'Upload', 'Share',
+      'Filter', 'RefreshCw', 'Eye', 'EyeOff',
+      'Lock', 'Unlock', 'Copy', 'Clipboard', 'Folder',
+      'File', 'Image', 'Video', 'Music', 'Link',
+      'ExternalLink', 'MoreHorizontal', 'MoreVertical', 'GripVertical',
+      'Sun', 'Moon', 'Cloud', 'Zap', 'Droplet',
+      'MapPin', 'Phone', 'MessageSquare', 'Send', 'Inbox',
+    ],
+    importStyle: 'named',
+    description: 'Lucide Icons - Beautiful & consistent icons',
+  },
+  {
+    name: '@heroicons/react',
+    importPath: '@heroicons/react/24/outline',
+    commonIcons: [
+      'HomeIcon', 'Cog6ToothIcon', 'UserIcon', 'MagnifyingGlassIcon', 'Bars3Icon',
+      'BellIcon', 'EnvelopeIcon', 'CalendarIcon', 'ClockIcon', 'StarIcon',
+      'HeartIcon', 'PlusIcon', 'MinusIcon', 'XMarkIcon', 'CheckIcon',
+      'ChevronRightIcon', 'ChevronLeftIcon', 'ChevronDownIcon', 'ChevronUpIcon',
+      'ArrowRightIcon', 'ArrowLeftIcon', 'ArrowUpIcon', 'ArrowDownIcon',
+      'PencilIcon', 'TrashIcon', 'ArrowDownTrayIcon', 'ArrowUpTrayIcon', 'ShareIcon',
+      'FunnelIcon', 'ArrowPathIcon', 'EyeIcon', 'EyeSlashIcon',
+      'LockClosedIcon', 'LockOpenIcon', 'ClipboardIcon', 'FolderIcon',
+      'DocumentIcon', 'PhotoIcon', 'VideoCameraIcon', 'MusicalNoteIcon', 'LinkIcon',
+    ],
+    importStyle: 'named',
+    description: 'Heroicons - Beautiful hand-crafted SVG icons by Tailwind',
+  },
+  {
+    name: 'react-icons',
+    importPath: 'react-icons/fi', // Feather icons subset - most common
+    commonIcons: [
+      'FiHome', 'FiSettings', 'FiUser', 'FiSearch', 'FiMenu',
+      'FiBell', 'FiMail', 'FiCalendar', 'FiClock', 'FiStar',
+      'FiHeart', 'FiPlus', 'FiMinus', 'FiX', 'FiCheck',
+      'FiChevronRight', 'FiChevronLeft', 'FiChevronDown', 'FiChevronUp',
+      'FiArrowRight', 'FiArrowLeft', 'FiArrowUp', 'FiArrowDown',
+      'FiEdit', 'FiTrash', 'FiDownload', 'FiUpload', 'FiShare',
+      'FiFilter', 'FiRefreshCw', 'FiEye', 'FiEyeOff',
+    ],
+    importStyle: 'named',
+    description: 'React Icons - Popular icon packs as React components',
+  },
+  {
+    name: '@phosphor-icons/react',
+    importPath: '@phosphor-icons/react',
+    commonIcons: [
+      'House', 'Gear', 'User', 'MagnifyingGlass', 'List',
+      'Bell', 'Envelope', 'Calendar', 'Clock', 'Star',
+      'Heart', 'Plus', 'Minus', 'X', 'Check',
+      'CaretRight', 'CaretLeft', 'CaretDown', 'CaretUp',
+      'ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown',
+      'PencilSimple', 'Trash', 'DownloadSimple', 'UploadSimple', 'ShareNetwork',
+      'Funnel', 'ArrowsClockwise', 'Eye', 'EyeSlash',
+    ],
+    importStyle: 'named',
+    description: 'Phosphor Icons - Flexible icon family',
+  },
+];
+
+/**
+ * Detects installed icon packages by checking package.json
+ * Returns the first detected icon package info, or null if none found
+ */
+function detectInstalledIconPackage(projectPath?: string): IconPackageInfo | null {
+  const cwd = projectPath || process.cwd();
+  const packageJsonPath = path.join(cwd, 'package.json');
+
+  try {
+    if (!fs.existsSync(packageJsonPath)) {
+      return null;
+    }
+
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+    const allDeps = {
+      ...packageJson.dependencies,
+      ...packageJson.devDependencies,
+    };
+
+    // Check each known icon package
+    for (const iconPackage of KNOWN_ICON_PACKAGES) {
+      if (allDeps[iconPackage.name]) {
+        return iconPackage;
+      }
+    }
+
+    return null;
+  } catch (error) {
+    // If we can't read package.json, assume no icon package
+    return null;
+  }
+}
+
+/**
+ * Generates icon usage instructions for the prompt
+ * Uses smart detection to enable real icons when a supported icon package is installed
+ */
+function generateIconInstructions(components: DiscoveredComponent[], projectPath?: string): string[] {
+  const instructions: string[] = [];
+
+  // First, check if an icon package is installed in the project
+  const installedIconPackage = detectInstalledIconPackage(projectPath);
+
+  if (installedIconPackage) {
+    // Icon package detected - enable icon usage with the installed package
+    const sampleIcons = installedIconPackage.commonIcons.slice(0, 20).join(', ');
+    instructions.push(
+      '',
+      '✅ ICON LIBRARY AVAILABLE ✅',
+      `You have ${installedIconPackage.name} installed in this project.`,
+      `${installedIconPackage.description}`,
+      '',
+      '📦 How to use icons:',
+      `   Import path: import { IconName } from '${installedIconPackage.importPath}';`,
+      `   Example icons: ${sampleIcons}`,
+      '',
+      '🎯 ICON BEST PRACTICES:',
+      '   - Use icons to enhance visual clarity and user experience',
+      '   - Common use cases: navigation, actions, status indicators, decorative elements',
+      '   - Icons should complement text, not replace it entirely for accessibility',
+      '   - Use consistent icon sizing (typically 16-24px for inline, 24-48px for prominent)',
+      '',
+      '⚠️ IMPORTANT:',
+      `   - ONLY import icons from '${installedIconPackage.importPath}'`,
+      '   - Do NOT import from other icon libraries not installed in the project',
+      '   - If you need an icon that may not exist, use a similar common icon from the list above',
+      ''
+    );
+    return instructions;
+  }
+
+  // No icon package installed - check if design system has icon components
+  const iconComponents = components.filter(c =>
+    c.name && typeof c.name === 'string' &&
+    (c.name.toLowerCase().includes('icon') || c.name === 'Icon' || c.name === 'v-icon' || c.name === 'mat-icon' || c.name === 'sl-icon')
+  );
+
+  if (iconComponents.length > 0) {
+    // Design system has icon support - allow those, prohibit external libraries
+    const allowedIconNames = iconComponents.map(c => c.name).join(', ');
+    instructions.push(
+      '',
+      '🔶 ICON USAGE RULES 🔶',
+      `Your design system includes icon components: ${allowedIconNames}`,
+      '✅ You MAY use these icon components from the Available components list',
+      '🚫 Do NOT import from external icon libraries:',
+      '   - @tabler/icons-react, @tabler/icons',
+      '   - react-icons, lucide-react, @heroicons/react',
+      '   - @fortawesome/react-fontawesome, @phosphor-icons/react',
+      '   - Any other external icon package',
+      'If you need icons beyond what the design system provides, use Unicode symbols (→ ✓ + ×) or text labels instead.',
+      ''
+    );
+  } else {
+    // No icon components discovered - prohibit all icon imports
+    instructions.push(
+      '',
+      '🔴 ICON IMPORT RESTRICTION 🔴',
+      'This design system does not include icon components in the available components list.',
+      '🚫 Do NOT import from ANY icon library:',
+      '   - @tabler/icons-react, @tabler/icons',
+      '   - react-icons, lucide-react, @heroicons/react',
+      '   - @fortawesome/react-fontawesome, @phosphor-icons/react',
+      '   - @mui/icons-material, @chakra-ui/icons',
+      '   - Any other icon package',
+      '✅ Instead, use:',
+      '   - Unicode symbols: → ✓ ✗ + − × ÷ • ★ ♦ ▶ ◀ ▲ ▼',
+      '   - Text labels: "Add", "Remove", "Edit", "Delete"',
+      '   - Badge or Button components with text content',
+      'Icons are NOT in the available components list and WILL cause import errors.',
+      ''
+    );
+  }
+
+  return instructions;
+}
 
 /**
  * Extended prompt interface that includes framework information
@@ -649,48 +880,9 @@ export async function buildClaudePrompt(
     });
   }
 
-  // Smart icon handling - allow design system icons, prohibit external libraries
-  const iconComponents = components.filter(c =>
-    c.name && typeof c.name === 'string' &&
-    (c.name.toLowerCase().includes('icon') || c.name === 'Icon' || c.name === 'v-icon' || c.name === 'mat-icon' || c.name === 'sl-icon')
-  );
-
-  if (iconComponents.length > 0) {
-    // Design system has icon support - allow those, prohibit external libraries
-    const allowedIconNames = iconComponents.map(c => c.name).join(', ');
-    promptParts.push(
-      '',
-      '🔶 ICON USAGE RULES 🔶',
-      `Your design system includes icon components: ${allowedIconNames}`,
-      '✅ You MAY use these icon components from the Available components list',
-      '🚫 Do NOT import from external icon libraries:',
-      '   - @tabler/icons-react, @tabler/icons',
-      '   - react-icons, lucide-react, @heroicons/react',
-      '   - @fortawesome/react-fontawesome, @phosphor-icons/react',
-      '   - Any other external icon package',
-      'If you need icons beyond what the design system provides, use Unicode symbols (→ ✓ + ×) or text labels instead.',
-      ''
-    );
-  } else {
-    // No icon components discovered - prohibit all icon imports
-    promptParts.push(
-      '',
-      '🔴 ICON IMPORT RESTRICTION 🔴',
-      'This design system does not include icon components in the available components list.',
-      '🚫 Do NOT import from ANY icon library:',
-      '   - @tabler/icons-react, @tabler/icons',
-      '   - react-icons, lucide-react, @heroicons/react',
-      '   - @fortawesome/react-fontawesome, @phosphor-icons/react',
-      '   - @mui/icons-material, @chakra-ui/icons',
-      '   - Any other icon package',
-      '✅ Instead, use:',
-      '   - Unicode symbols: → ✓ ✗ + − × ÷ • ★ ♦ ▶ ◀ ▲ ▼',
-      '   - Text labels: "Add", "Remove", "Edit", "Delete"',
-      '   - Badge or Button components with text content',
-      'Icons are NOT in the available components list and WILL cause import errors.',
-      ''
-    );
-  }
+  // Smart icon handling - detect installed icon packages or fall back to design system icons
+  const iconInstructions = generateIconInstructions(components);
+  promptParts.push(...iconInstructions);
 
   // Reinforce NO children in args rule
   promptParts.push(
@@ -885,48 +1077,9 @@ export async function buildFrameworkAwarePrompt(
     });
   }
 
-  // Smart icon handling - allow design system icons, prohibit external libraries
-  const iconComponents = components.filter(c =>
-    c.name && typeof c.name === 'string' &&
-    (c.name.toLowerCase().includes('icon') || c.name === 'Icon' || c.name === 'v-icon' || c.name === 'mat-icon' || c.name === 'sl-icon')
-  );
-
-  if (iconComponents.length > 0) {
-    // Design system has icon support - allow those, prohibit external libraries
-    const allowedIconNames = iconComponents.map(c => c.name).join(', ');
-    promptParts.push(
-      '',
-      '🔶 ICON USAGE RULES 🔶',
-      `Your design system includes icon components: ${allowedIconNames}`,
-      '✅ You MAY use these icon components from the Available components list',
-      '🚫 Do NOT import from external icon libraries:',
-      '   - @tabler/icons-react, @tabler/icons',
-      '   - react-icons, lucide-react, @heroicons/react',
-      '   - @fortawesome/react-fontawesome, @phosphor-icons/react',
-      '   - Any other external icon package',
-      'If you need icons beyond what the design system provides, use Unicode symbols (→ ✓ + ×) or text labels instead.',
-      ''
-    );
-  } else {
-    // No icon components discovered - prohibit all icon imports
-    promptParts.push(
-      '',
-      '🔴 ICON IMPORT RESTRICTION 🔴',
-      'This design system does not include icon components in the available components list.',
-      '🚫 Do NOT import from ANY icon library:',
-      '   - @tabler/icons-react, @tabler/icons',
-      '   - react-icons, lucide-react, @heroicons/react',
-      '   - @fortawesome/react-fontawesome, @phosphor-icons/react',
-      '   - @mui/icons-material, @chakra-ui/icons',
-      '   - Any other icon package',
-      '✅ Instead, use:',
-      '   - Unicode symbols: → ✓ ✗ + − × ÷ • ★ ♦ ▶ ◀ ▲ ▼',
-      '   - Text labels: "Add", "Remove", "Edit", "Delete"',
-      '   - Badge or Button components with text content',
-      'Icons are NOT in the available components list and WILL cause import errors.',
-      ''
-    );
-  }
+  // Smart icon handling - detect installed icon packages or fall back to design system icons
+  const iconInstructions2 = generateIconInstructions(components);
+  promptParts.push(...iconInstructions2);
 
   // Add framework-specific rules
   const frameworkType = generated.framework.componentFramework;
