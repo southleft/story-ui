@@ -1,3 +1,10 @@
+## [4.5.2](https://github.com/southleft/story-ui/compare/v4.5.1...v4.5.2) (2025-12-16)
+
+
+### Bug Fixes
+
+* **generator:** smart icon handling based on design system capabilities ([44a2419](https://github.com/southleft/story-ui/commit/44a2419700766b90dd9bd7e6107e0f43c56350d2))
+
 ## [4.5.1](https://github.com/southleft/story-ui/compare/v4.5.0...v4.5.1) (2025-12-16)
 
 
