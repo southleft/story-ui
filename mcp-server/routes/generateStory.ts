@@ -853,10 +853,24 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
 
     // Create title for the story (clean, without hash - hash goes in id for uniqueness)
     const prettyPrompt = escapeTitleForTS(aiTitle);
-    // Title is now clean without hash - uniqueness is ensured via Storybook's id parameter
-    const cleanTitle = prettyPrompt;
+
+    // For NEW stories, check if title already exists and add version if needed
+    // This prevents multiple stories from stacking under the same navigation group
+    // e.g., "Navigation Bar" → "Navigation Bar v2" → "Navigation Bar v3"
+    let cleanTitle: string;
+    if (isActualUpdate) {
+      // For updates, keep the original title (don't version)
+      cleanTitle = prettyPrompt;
+    } else {
+      // For new stories, check for duplicates and version if needed
+      cleanTitle = storyTracker.getNextVersionTitle(prettyPrompt);
+      if (cleanTitle !== prettyPrompt) {
+        logger.log(`📋 Title "${prettyPrompt}" already exists, using "${cleanTitle}" instead`);
+      }
+    }
+
     // Generate Storybook-compatible ID with hash for uniqueness (prevents duplicate story errors)
-    const storyIdSlug = `${prettyPrompt.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${hash}`;
+    const storyIdSlug = `${cleanTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${hash}`;
 
     // Fix title with storyPrefix - handle multiple story formats
     // Note: (?::\s*\w+(?:<[^>]+>)?)? handles TypeScript type annotations including generics
@@ -958,8 +972,9 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
     });
 
     // Register with story tracker
+    // Use cleanTitle (which may include version suffix) for proper deduplication tracking
     const mapping: StoryMapping = {
-      title: aiTitle,
+      title: cleanTitle,
       fileName: finalFileName,
       storyId,
       hash,
@@ -1032,7 +1047,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       fileName: finalFileName,
       storyId,
       outPath,
-      title: aiTitle,
+      title: cleanTitle,  // Use versioned title (e.g., "Navigation Bar v2")
       story: fileContents,
       storage: 'file-system',
       isUpdate: isActualUpdate,

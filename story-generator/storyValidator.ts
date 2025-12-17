@@ -17,14 +17,10 @@ export function validateStory(storyContent: string): ValidationError[] {
     { pattern: /from\s+['"]@storybook\/addon-actions['"]/i, message: 'Do not import from @storybook/addon-actions. Use argTypes with action property instead: argTypes: { onClick: { action: "clicked" } }' },
     // Catch Svelte slot property which doesn't work in modern Storybook
     { pattern: /slot:\s*['"][^'"]+['"]/i, message: 'The slot property in render functions does not work in Svelte Storybook. Use simple args-based stories instead.' },
-    // Catch abbreviated Material icon names that will render as text instead of icons
-    { pattern: /<mat-icon>\s*(fav|ho|de|se|sta|che|add|rem|edi|sav|can|men|clo|sea)\s*<\/mat-icon>/i, message: 'Material icon name appears to be abbreviated. Use full icon names: "favorite" (not "fav"), "home" (not "ho"), "delete" (not "de"), "settings" (not "se"), etc.' },
     // Catch Angular TS4111 patterns - "this.property" state management in render functions
     { pattern: /this\.\w+\s*=\s*\$?event\./i, message: 'Do not use "this.property = event.value" in Angular stories. This causes TS4111 errors. Use argTypes with action property for events and create separate stories for different states.' },
     { pattern: /this\.\w+\+\+/i, message: 'Do not use "this.property++" in Angular stories. This causes TS4111 errors. Use argTypes with action property for events instead of managing state.' },
     { pattern: /this\.\w+--/i, message: 'Do not use "this.property--" in Angular stories. This causes TS4111 errors. Use argTypes with action property for events instead of managing state.' },
-    // Catch flowbite-svelte deep path imports that break in production
-    { pattern: /from\s+['"]flowbite-svelte\/[^'"]+['"]/i, message: 'Do not use deep path imports for flowbite-svelte. Use named exports from root: import { Component } from "flowbite-svelte"' },
   ];
 
   lines.forEach((line, index) => {

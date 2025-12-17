@@ -443,6 +443,23 @@ ANY component not in that list DOES NOT EXIST and will cause import errors.
 Before importing any component, verify it exists in the Available components list.
 If a component is not listed, DO NOT use it - choose an alternative from the available list.
 
+🎨 CREATIVE APPROXIMATION - WHEN COMPONENTS DON'T EXIST 🎨
+If the user asks for a UI that requires components NOT in your available list (like Calendar, Chart, Map, etc.):
+**DO NOT fail or refuse** - instead, CREATIVELY APPROXIMATE the UI using available components!
+
+Common approximation strategies:
+• Calendar/DatePicker → Use Grid/SimpleGrid with Text for days, Badge for selected dates
+• Charts/Graphs → Use Progress bars, RingProgress, or Stack of colored Box components
+• Timeline → Use Stack with Card/Paper for each event, connecting lines with Divider
+• Carousel/Slider → Use Group with Image components and Button for navigation
+• Data Tables → Use Table components, or Stack of Card/Paper rows
+• Tree View → Use nested Stack/Accordion with List or NavLink components
+• Star Ratings → Use Group of ThemeIcon or inline SVG stars
+• Maps → Use Image with a static map placeholder
+
+The goal is VISUAL SIMILARITY, not exact functionality. Users are exploring design possibilities.
+They want to see what a UI COULD look like - be creative with basic layout components!
+
 🔴 IMPORT PATH RULE - MANDATORY 🔴
 ALWAYS use the EXACT import path shown in parentheses after each component name.
 For example: If the Available components list shows "Button (import from 'antd')",

@@ -881,101 +881,77 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     return () => clearInterval(intervalId);
   }, []);
 
-  // Detect Storybook theme
+  // Detect Storybook MANAGER theme (not preview background)
+  // This ensures Story UI follows Storybook's overall theme, not the story preview background toggle
   useEffect(() => {
-    const detectTheme = () => {
-      const body = document.body;
-      const html = document.documentElement;
+    const detectManagerTheme = () => {
+      let managerIsDark = false;
 
-      // Check URL parameters for Storybook background setting
-      const urlParams = new URLSearchParams(window.location.search);
-      const globals = urlParams.get('globals') || '';
-      const hasStorybookLightBg = globals.includes('backgrounds.value:light');
-      const hasStorybookDarkBg = globals.includes('backgrounds.value:dark') ||
-        globals.includes('backgrounds.value:%23') || // Hex colors starting with #
-        globals.includes('backgrounds.value:!hex');
-
-      // Check parent frame URL if we're in an iframe (Storybook 8+)
-      let parentHasDarkBg = false;
-      let parentHasLightBg = false;
-      let parentHasDarkClass = false;
+      // Strategy 1: Check parent frame for Storybook manager theme (Storybook 8+)
+      // The manager theme is set in .storybook/manager.tsx via addons.setConfig({ theme: themes.dark })
       try {
         if (window.parent !== window) {
-          const parentUrl = new URL(window.parent.location.href);
-          const parentGlobals = parentUrl.searchParams.get('globals') || '';
-          parentHasLightBg = parentGlobals.includes('backgrounds.value:light');
-          parentHasDarkBg = parentGlobals.includes('backgrounds.value:dark') ||
-            parentGlobals.includes('backgrounds.value:%23');
-          // Check parent document for Storybook dark theme classes
           const parentBody = window.parent.document.body;
           const parentHtml = window.parent.document.documentElement;
-          parentHasDarkClass = parentBody.classList.contains('sb-dark') ||
-            parentHtml.classList.contains('dark') ||
-            parentHtml.getAttribute('data-theme') === 'dark' ||
-            parentBody.getAttribute('data-theme') === 'dark';
-          // Check Storybook 8+ manager theme
-          const sbMainEl = window.parent.document.querySelector('.sb-main-padded, .sb-show-main');
-          if (sbMainEl) {
-            const sbBgColor = window.getComputedStyle(sbMainEl).backgroundColor;
-            const sbRgb = sbBgColor.match(/\d+/g);
-            if (sbRgb && sbRgb.length >= 3) {
-              const sbLuminance = (0.299 * parseInt(sbRgb[0]) + 0.587 * parseInt(sbRgb[1]) + 0.114 * parseInt(sbRgb[2])) / 255;
-              if (sbLuminance < 0.5) parentHasDarkClass = true;
+
+          // Check for Storybook's dark theme class (most reliable)
+          if (parentBody.classList.contains('sb-dark') ||
+              parentHtml.classList.contains('sb-dark') ||
+              parentHtml.getAttribute('data-theme') === 'dark' ||
+              parentBody.getAttribute('data-theme') === 'dark') {
+            managerIsDark = true;
+          }
+
+          // Check Storybook manager sidebar/header background color as fallback
+          // The manager UI elements use the theme colors, not the preview background
+          const managerEl = window.parent.document.querySelector('.sb-sidebar, [class*="sidebar"], .sb-bar');
+          if (managerEl && !managerIsDark) {
+            const bgColor = window.getComputedStyle(managerEl).backgroundColor;
+            const rgb = bgColor.match(/\d+/g);
+            if (rgb && rgb.length >= 3) {
+              const luminance = (0.299 * parseInt(rgb[0]) + 0.587 * parseInt(rgb[1]) + 0.114 * parseInt(rgb[2])) / 255;
+              managerIsDark = luminance < 0.5;
             }
           }
         }
       } catch {
-        // Cross-origin access not allowed, ignore
+        // Cross-origin access not allowed, fall back to system preference
       }
 
-      // Check the actual background color of the body
-      const bgColor = window.getComputedStyle(body).backgroundColor;
-      const rgb = bgColor.match(/\d+/g);
-      let isBackgroundDark = false;
-      if (rgb && rgb.length >= 3) {
-        const luminance = (0.299 * parseInt(rgb[0]) + 0.587 * parseInt(rgb[1]) + 0.114 * parseInt(rgb[2])) / 255;
-        isBackgroundDark = luminance < 0.5;
+      // Strategy 2: If not in iframe or can't detect, use system preference
+      if (!managerIsDark) {
+        const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        managerIsDark = systemPrefersDark;
       }
 
-      // Check system preference as fallback
-      const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-
-      // Explicit light mode takes precedence - if user selected "light" in Storybook, respect that
-      const hasExplicitLightMode = hasStorybookLightBg || parentHasLightBg;
-
-      // Explicit dark mode indicators
-      const hasExplicitDarkMode =
-        body.classList.contains('sb-dark') ||
-        html.classList.contains('dark') ||
-        html.getAttribute('data-theme') === 'dark' ||
-        body.getAttribute('data-theme') === 'dark' ||
-        hasStorybookDarkBg ||
-        parentHasDarkBg;
-
-      // Determine dark mode: explicit light mode forces light, otherwise check dark indicators
-      const isDark = hasExplicitLightMode
-        ? false
-        : (hasExplicitDarkMode || parentHasDarkClass || isBackgroundDark || systemPrefersDark);
-      dispatch({ type: 'SET_DARK_MODE', payload: isDark });
+      dispatch({ type: 'SET_DARK_MODE', payload: managerIsDark });
     };
-    detectTheme();
 
-    // Listen for URL changes (Storybook uses popstate for navigation)
-    window.addEventListener('popstate', detectTheme);
+    detectManagerTheme();
 
-    // Poll for changes since Storybook might change background without popstate
-    const intervalId = setInterval(detectTheme, 500);
+    // Poll for changes (manager theme changes are rare but possible)
+    const intervalId = setInterval(detectManagerTheme, 1000);
 
-    const observer = new MutationObserver(detectTheme);
-    observer.observe(document.body, { attributes: true, attributeFilter: ['class', 'data-theme', 'style'] });
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme', 'style'] });
+    // Listen for system preference changes
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    mediaQuery.addEventListener('change', detectTheme);
+    mediaQuery.addEventListener('change', detectManagerTheme);
+
+    // Observe parent document for theme changes if accessible
+    let parentObserver: MutationObserver | null = null;
+    try {
+      if (window.parent !== window) {
+        parentObserver = new MutationObserver(detectManagerTheme);
+        parentObserver.observe(window.parent.document.body, { attributes: true, attributeFilter: ['class', 'data-theme'] });
+        parentObserver.observe(window.parent.document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme'] });
+      }
+    } catch {
+      // Cross-origin, ignore
+    }
+
     return () => {
-      window.removeEventListener('popstate', detectTheme);
       clearInterval(intervalId);
-      observer.disconnect();
-      mediaQuery.removeEventListener('change', detectTheme);
+      mediaQuery.removeEventListener('change', detectManagerTheme);
+      parentObserver?.disconnect();
     };
   }, []);
 

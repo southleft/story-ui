@@ -199,4 +199,54 @@ export class StoryTracker {
 
     return removed;
   }
+
+  /**
+   * Get the next available version for a title
+   * If "Navigation Bar" exists, returns "Navigation Bar v2"
+   * If "Navigation Bar v2" exists, returns "Navigation Bar v3", etc.
+   *
+   * This is only used for NEW stories (not updates to existing stories)
+   */
+  getNextVersionTitle(baseTitle: string): string {
+    if (!baseTitle || typeof baseTitle !== 'string') {
+      return baseTitle;
+    }
+
+    const normalizedBase = baseTitle.toLowerCase().trim();
+
+    // Check if the exact title already exists
+    if (!this.mappings.has(normalizedBase)) {
+      return baseTitle; // No conflict, use as-is
+    }
+
+    // Find the highest existing version
+    let highestVersion = 1;
+
+    // Check for base title (v1 implicitly)
+    if (this.mappings.has(normalizedBase)) {
+      highestVersion = 1;
+    }
+
+    // Check for versioned titles (v2, v3, etc.)
+    for (const existingTitle of this.mappings.keys()) {
+      // Match patterns like "title v2", "title v3", etc.
+      const versionMatch = existingTitle.match(new RegExp(`^${this.escapeRegex(normalizedBase)}\\s+v(\\d+)$`, 'i'));
+      if (versionMatch) {
+        const version = parseInt(versionMatch[1], 10);
+        if (version > highestVersion) {
+          highestVersion = version;
+        }
+      }
+    }
+
+    // Return the next version
+    return `${baseTitle} v${highestVersion + 1}`;
+  }
+
+  /**
+   * Escape special regex characters in a string
+   */
+  private escapeRegex(str: string): string {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
 }

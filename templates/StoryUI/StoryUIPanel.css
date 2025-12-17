@@ -26,7 +26,7 @@
   --secondary: 240 4.8% 95.9%;
   --secondary-foreground: 240 5.9% 10%;
   --muted: 240 4.8% 95.9%;
-  --muted-foreground: 240 3.8% 46.1%;
+  --muted-foreground: 240 5% 35%; /* Darker for WCAG AA compliance - was 46.1% */
   --accent: 240 4.8% 95.9%;
   --accent-foreground: 240 5.9% 10%;
   --destructive: 0 84.2% 60.2%;
@@ -113,15 +113,15 @@
   --input: 217 33% 22%;
   --ring: 213 94% 68%;
 
-  /* User Bubble - Light bluish-gray tint (same in dark mode for chat consistency) */
-  --user-bubble-bg: 210 35% 95%;
-  --user-bubble-fg: 240 10% 3.9%;
-  --user-bubble-border: 210 25% 88%;
+  /* User Bubble - Dark bluish tint in dark mode */
+  --user-bubble-bg: 217 33% 22%;
+  --user-bubble-fg: 210 40% 98%;
+  --user-bubble-border: 217 33% 28%;
 
-  /* AI Bubble - Pure white (same in dark mode for chat consistency) */
-  --ai-bubble-bg: 0 0% 100%;
-  --ai-bubble-fg: 240 10% 3.9%;
-  --ai-bubble-border: 0 0% 90%;
+  /* AI Bubble - Dark zinc in dark mode */
+  --ai-bubble-bg: 240 4% 16%;
+  --ai-bubble-fg: 0 0% 98%;
+  --ai-bubble-border: 240 4% 26%;
 
   --success: 142 69% 58%;
   --warning: 48 96% 53%;
@@ -151,15 +151,15 @@
     --input: 217 33% 22%;
     --ring: 213 94% 68%;
 
-    /* User Bubble - Light bluish-gray tint (same in dark mode for chat consistency) */
-    --user-bubble-bg: 210 35% 95%;
-    --user-bubble-fg: 240 10% 3.9%;
-    --user-bubble-border: 210 25% 88%;
+    /* User Bubble - Dark bluish tint in dark mode */
+    --user-bubble-bg: 217 33% 22%;
+    --user-bubble-fg: 210 40% 98%;
+    --user-bubble-border: 217 33% 28%;
 
-    /* AI Bubble - Pure white (same in dark mode for chat consistency) */
-    --ai-bubble-bg: 0 0% 100%;
-    --ai-bubble-fg: 240 10% 3.9%;
-    --ai-bubble-border: 0 0% 90%;
+    /* AI Bubble - Dark zinc in dark mode */
+    --ai-bubble-bg: 240 4% 16%;
+    --ai-bubble-fg: 0 0% 98%;
+    --ai-bubble-border: 240 4% 26%;
 
     --success: 142 69% 58%;
     --warning: 48 96% 53%;
@@ -810,29 +810,29 @@
 .sui-welcome-greeting {
   font-size: 1.75rem;
   font-weight: 600;
-  /* Explicit fallback color to prevent Storybook bleeding */
-  color: #0a0a0b; /* hsl(240 10% 3.9%) */
+  /* Explicit high-contrast color - forces override of any inherited styles */
+  color: #18181b !important; /* hsl(240 6% 10%) - near black for maximum contrast */
   margin-bottom: var(--space-3);
   line-height: 1.3;
 }
 
 /* Dark mode: ensure greeting is clearly visible - WCAG AA compliant */
 .sui-root.dark .sui-welcome-greeting {
-  color: #ffffff;
+  color: #ffffff !important;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
 .sui-welcome-subtitle {
   font-size: 1rem;
-  /* Explicit fallback color to prevent Storybook bleeding */
-  color: #71717a; /* hsl(240 3.8% 46.1%) */
+  /* Explicit high-contrast color - WCAG AA compliant */
+  color: #52525b !important; /* hsl(240 5% 35%) - ~8:1 contrast on white */
   margin-bottom: var(--space-8);
   max-width: 400px;
 }
 
 /* Dark mode: make subtitle more visible */
 .sui-root.dark .sui-welcome-subtitle {
-  color: #b8c4d4; /* hsl(210 25% 80%) */
+  color: #cbd5e1 !important; /* hsl(213 27% 84%) - high contrast on dark bg */
 }
 
 .sui-welcome-chips {
@@ -851,14 +851,14 @@
   align-items: center;
   justify-content: center;
   padding: 0.5rem 1rem;
-  /* Explicit fallback colors to prevent Storybook bleeding */
-  background: #f4f4f5; /* hsl(240 4.8% 95.9%) */
-  border: 1px solid #e4e4e7; /* hsl(240 5.9% 90%) */
+  /* Explicit high-contrast colors - forces override of inherited styles */
+  background: #f4f4f5 !important; /* hsl(240 4.8% 95.9%) */
+  border: 1px solid #d4d4d8 !important; /* hsl(240 5% 84%) - slightly darker border */
   border-radius: var(--radius-full);
   font-size: 0.875rem;
   font-weight: 500;
   line-height: 1;
-  color: #0a0a0b; /* hsl(240 10% 3.9%) */
+  color: #18181b !important; /* hsl(240 6% 10%) - near black for high contrast */
   cursor: pointer;
   transition: all var(--transition-fast);
 }
@@ -874,9 +874,9 @@
 
 /* Dark mode chips */
 .sui-root.dark .sui-chip {
-  background: #1e293b; /* hsl(217 33% 17%) */
-  border-color: #334155; /* hsl(217 33% 22%) */
-  color: #f8fafc; /* hsl(210 40% 98%) */
+  background: #1e293b !important; /* hsl(217 33% 17%) */
+  border-color: #475569 !important; /* hsl(215 19% 35%) - more visible border */
+  color: #f8fafc !important; /* hsl(210 40% 98%) - near white */
 }
 
 .sui-root.dark .sui-chip:hover {
@@ -930,12 +930,32 @@
   border-bottom-right-radius: var(--radius-sm);
 }
 
-/* AI bubble - pure white */
+/* User bubble - dark mode: dark bluish tint with light text */
+.sui-root.dark .sui-message-user .sui-message-bubble {
+  background: #2d3748 !important; /* Dark bluish - hsl(217 33% 22%) */
+  color: #f7fafc !important; /* Near white - hsl(210 40% 98%) */
+  border: 1px solid #4a5568 !important; /* Dark border - hsl(217 33% 28%) */
+}
+
+/* AI bubble - pure white with explicit high-contrast colors */
 .sui-message-ai .sui-message-bubble {
-  background: hsl(var(--ai-bubble-bg));
-  color: hsl(var(--ai-bubble-fg));
-  border-color: hsl(var(--ai-bubble-border));
+  background: #ffffff !important; /* Pure white */
+  color: #18181b !important; /* Near black - high contrast */
+  border: 1px solid #e4e4e7 !important; /* Light gray border */
   border-bottom-left-radius: var(--radius-sm);
+}
+
+/* AI bubble - dark mode: dark background with light text */
+.sui-root.dark .sui-message-ai .sui-message-bubble {
+  background: #27272a !important; /* Dark zinc - hsl(240 4% 16%) */
+  color: #fafafa !important; /* Near white - hsl(0 0% 98%) */
+  border: 1px solid #3f3f46 !important; /* Dark border - hsl(240 4% 26%) */
+}
+
+/* AI bubble code in dark mode */
+.sui-root.dark .sui-message-ai .sui-message-bubble code {
+  background: rgba(63, 63, 70, 0.5) !important; /* Semi-transparent dark */
+  color: #e4e4e7 !important; /* Light gray text */
 }
 
 /*

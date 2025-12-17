@@ -411,7 +411,156 @@ function fixUnexpectedTokens(code: string): string {
     fixedCode = fixedCode.replace(fix.pattern, fix.replacement);
   }
 
+  // CRITICAL: Fix unescaped apostrophes in title strings
+  // LLMs often generate titles like: title: 'Women's Athletic' instead of 'Women\'s Athletic'
+  fixedCode = fixUnescapedApostrophesInTitles(fixedCode);
+
   return fixedCode;
+}
+
+/**
+ * Fixes unescaped apostrophes in title strings
+ * LLMs often generate: title: 'Women's Athletic Dashboard'
+ * Which should be: title: 'Women\'s Athletic Dashboard'
+ *
+ * Also handles cases where some apostrophes are escaped and others aren't:
+ * title: 'Women\'s Athletic Dashboard's Athletic Dashboard'
+ */
+function fixUnescapedApostrophesInTitles(code: string): string {
+  const lines = code.split('\n');
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Skip if no title property
+    if (!line.includes('title:')) continue;
+
+    // Find title: followed by a quote character
+    const titleStartMatch = line.match(/title:\s*(['"])/);
+    if (!titleStartMatch) continue;
+
+    const quoteChar = titleStartMatch[1];
+    const titleKeywordIndex = line.indexOf('title:');
+    const openQuoteIndex = line.indexOf(quoteChar, titleKeywordIndex);
+
+    // Find the closing quote by looking for quote followed by comma or brace at end of line
+    // The pattern is: quote + optional whitespace + (comma or brace) + optional whitespace + end
+    const endPattern = new RegExp(`${quoteChar === "'" ? "'" : '"'}\\s*[,}]\\s*$`);
+    const endMatch = line.match(endPattern);
+    if (!endMatch) continue;
+
+    const closeQuoteIndex = line.lastIndexOf(quoteChar);
+    if (closeQuoteIndex <= openQuoteIndex) continue;
+
+    // Extract content between opening and closing quotes
+    const content = line.substring(openQuoteIndex + 1, closeQuoteIndex);
+
+    // Process the content character by character to escape unescaped quotes
+    let fixedContent = '';
+    for (let j = 0; j < content.length; j++) {
+      const char = content[j];
+      const prevChar = j > 0 ? content[j - 1] : '';
+
+      if (char === quoteChar && prevChar !== '\\') {
+        // This is an unescaped quote inside the string - escape it
+        fixedContent += '\\' + char;
+      } else {
+        fixedContent += char;
+      }
+    }
+
+    // Only modify if we actually made changes
+    if (fixedContent !== content) {
+      const beforeQuote = line.substring(0, openQuoteIndex + 1);
+      const afterQuote = line.substring(closeQuoteIndex);
+      lines[i] = beforeQuote + fixedContent + afterQuote;
+    }
+  }
+
+  let fixedCode = lines.join('\n');
+
+  // Fix duplicated title segments (LLM sometimes repeats parts of the title)
+  // e.g., "Women's Athletic Dashboard's Athletic Dashboard" -> "Women's Athletic Dashboard"
+  fixedCode = fixDuplicatedTitleSegments(fixedCode);
+
+  return fixedCode;
+}
+
+/**
+ * Fixes duplicated segments in titles
+ * LLMs sometimes generate: "Women's Athletic Dashboard's Athletic Dashboard"
+ * Which should be: "Women's Athletic Dashboard"
+ */
+function fixDuplicatedTitleSegments(code: string): string {
+  const lines = code.split('\n');
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.includes('title:')) continue;
+
+    // Find title: followed by a quote
+    const titleMatch = line.match(/title:\s*(['"])/);
+    if (!titleMatch) continue;
+
+    const quoteChar = titleMatch[1];
+    const openQuoteIndex = line.indexOf(quoteChar, line.indexOf('title:'));
+    const closeQuoteIndex = line.lastIndexOf(quoteChar);
+
+    if (closeQuoteIndex <= openQuoteIndex) continue;
+
+    // Extract title content (handling escaped quotes)
+    const content = line.substring(openQuoteIndex + 1, closeQuoteIndex);
+
+    // Normalize escaped quotes for word processing
+    const normalizedContent = content.replace(/\\'/g, "'");
+
+    // Split into words
+    const words = normalizedContent.split(/\s+/);
+
+    // Look for repeated word sequences
+    let modified = false;
+    let newWords = [...words];
+
+    for (let windowSize = 2; windowSize <= Math.floor(words.length / 2); windowSize++) {
+      for (let j = 0; j <= newWords.length - windowSize * 2; j++) {
+        const segment1 = newWords.slice(j, j + windowSize).join(' ');
+        const segment2 = newWords.slice(j + windowSize, j + windowSize * 2).join(' ');
+
+        if (segment1 === segment2 && segment1.length > 3) {
+          newWords = [...newWords.slice(0, j + windowSize), ...newWords.slice(j + windowSize * 2)];
+          modified = true;
+          break;
+        }
+      }
+      if (modified) break;
+    }
+
+    // Also look for possessive duplications: "Dashboard's Athletic" ... "Dashboard"
+    // Pattern: something ending with 's + words + that same word
+    if (!modified) {
+      const possessivePattern = /^(.+?)(['\\]?s\s+)(.+?)\s+\1$/i;
+      const match = newWords.join(' ').match(possessivePattern);
+      if (match) {
+        newWords = (match[1] + match[2] + match[3]).split(/\s+/);
+        modified = true;
+      }
+    }
+
+    if (modified) {
+      // Re-escape apostrophes for the output
+      let newContent = newWords.join(' ');
+      if (quoteChar === "'") {
+        // Re-escape internal single quotes
+        newContent = newContent.replace(/(?<!\\)'/g, "\\'");
+      }
+
+      const beforeQuote = line.substring(0, openQuoteIndex + 1);
+      const afterQuote = line.substring(closeQuoteIndex);
+      lines[i] = beforeQuote + newContent + afterQuote;
+    }
+  }
+
+  return lines.join('\n');
 }
 
 /**

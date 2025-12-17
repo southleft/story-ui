@@ -26,7 +26,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npm run copy-templates",
+    "copy-templates": "node -e \"const fs=require('fs');const path=require('path');const src='templates/StoryUI';const dst='dist/templates/StoryUI';['.css','.mdx'].forEach(ext=>{fs.readdirSync(src).filter(f=>f.endsWith(ext)).forEach(f=>fs.copyFileSync(path.join(src,f),path.join(dst,f)))});console.log('Static template files copied to dist/')\"",
     "start": "yarn build && node dist/mcp-server/index.js",
     "mcp": "yarn build && node dist/mcp-server/mcp-stdio-server.js",
     "dev": "tsc --watch",

@@ -303,24 +303,56 @@ export function buildSelfHealingPrompt(
     sections.push('');
   }
 
-  // Import errors section
+  // Import errors section - with approximation guidance
   if (errors.importErrors.length > 0) {
-    sections.push('### Import Errors');
-    sections.push(
-      `These components do not exist in "${options.importPath}":`
-    );
+    sections.push('### Import Errors - MUST USE AVAILABLE COMPONENTS');
+    sections.push('');
+    sections.push('🚨 **CRITICAL: DO NOT try to import these components again - they DO NOT EXIST:**');
     errors.importErrors.forEach((e) => sections.push(`- ${e}`));
+    sections.push('');
+
+    sections.push('### HOW TO FIX: Approximate the UI with Available Components');
+    sections.push('');
+    sections.push('You MUST recreate the same visual appearance using ONLY the available components listed below.');
+    sections.push('Think creatively - almost any UI can be approximated with basic layout and display components.');
+    sections.push('');
+    sections.push('**Common approximation strategies:**');
+    sections.push('- **Calendar/DatePicker** → Use Grid/SimpleGrid with Text components to create a calendar-like grid layout');
+    sections.push('- **Chart/Graph** → Use Progress, RingProgress, or Stack with colored Box components');
+    sections.push('- **Timeline** → Use Stack/Timeline with Card or Paper components for each event');
+    sections.push('- **Carousel/Slider** → Use Grid or Group with Image and navigation Button components');
+    sections.push('- **DataTable** → Use Table components or Stack of Card/Paper rows');
+    sections.push('- **TreeView** → Use nested Stack/Accordion with NavLink or List components');
+    sections.push('- **Rating/Stars** → Use Group of ActionIcon or ThemeIcon components');
+    sections.push('- **Map** → Use Image with a placeholder map image and overlaid markers using Box');
+    sections.push('');
+    sections.push('**The goal is visual similarity, not exact functionality.**');
+    sections.push('Users want to see what a UI could look like - use basic components creatively!');
     sections.push('');
 
     // Show available components (design-system agnostic)
     if (options.availableComponents.length > 0) {
-      sections.push('**Available components include:**');
-      const displayComponents = options.availableComponents.slice(0, 20);
-      sections.push(displayComponents.join(', '));
-      if (options.availableComponents.length > 20) {
-        sections.push(
-          `... and ${options.availableComponents.length - 20} more`
-        );
+      sections.push('**Available components you MUST use instead:**');
+      // Group by likely use case for easier reference
+      const layoutComponents = options.availableComponents.filter(c =>
+        /^(Box|Stack|Group|Grid|SimpleGrid|Flex|Container|Center|Space|Paper|Card|Divider)$/i.test(c)
+      );
+      const displayComponents = options.availableComponents.filter(c =>
+        /^(Text|Title|Badge|Avatar|Image|ThemeIcon|ActionIcon|Button|Anchor)$/i.test(c)
+      );
+      const otherComponents = options.availableComponents.filter(c =>
+        !layoutComponents.includes(c) && !displayComponents.includes(c)
+      );
+
+      if (layoutComponents.length > 0) {
+        sections.push(`- **Layout:** ${layoutComponents.join(', ')}`);
+      }
+      if (displayComponents.length > 0) {
+        sections.push(`- **Display:** ${displayComponents.join(', ')}`);
+      }
+      if (otherComponents.length > 0) {
+        const displayOthers = otherComponents.slice(0, 30);
+        sections.push(`- **Other:** ${displayOthers.join(', ')}${otherComponents.length > 30 ? ` ... and ${otherComponents.length - 30} more` : ''}`);
       }
       sections.push('');
     }
@@ -338,22 +370,25 @@ export function buildSelfHealingPrompt(
   sections.push('1. Fix ALL errors listed above');
   sections.push('2. Keep the same component structure and layout');
   sections.push('3. Do NOT add new features - only fix the errors');
+  sections.push('4. **CRITICAL: Escape apostrophes in title strings** - Use `\\\'` not `\'`');
+  sections.push('   Example: `title: \'Women\\\'s Athletic Dashboard\'` NOT `title: \'Women\'s Athletic Dashboard\'`');
+  sections.push('5. Do NOT duplicate title segments - "Dashboard Dashboard" is WRONG');
 
   if (options.framework === 'svelte') {
-    sections.push('4. Use proper Svelte 5 syntax (class=, onclick=, NOT on:click=)');
-    sections.push('5. NEVER nest a component inside itself: <Comp><Comp>X</Comp></Comp> is WRONG! Use <Comp>X</Comp>');
+    sections.push('6. Use proper Svelte 5 syntax (class=, onclick=, NOT on:click=)');
+    sections.push('7. NEVER nest a component inside itself: <Comp><Comp>X</Comp></Comp> is WRONG! Use <Comp>X</Comp>');
     sections.push(
-      `6. Only import from ROOT: import { Comp } from "${options.importPath}" - NEVER use deep paths like "${options.importPath}/dist/..." or "${options.importPath}/components/..."`
+      `8. Only import from ROOT: import { Comp } from "${options.importPath}" - NEVER use deep paths like "${options.importPath}/dist/..." or "${options.importPath}/components/..."`
     );
-    sections.push(`7. Return the COMPLETE corrected code in a \`\`\`svelte code block`);
-    sections.push('8. Do NOT include any explanation - just the corrected code block');
+    sections.push(`9. Return the COMPLETE corrected code in a \`\`\`svelte code block`);
+    sections.push('10. Do NOT include any explanation - just the corrected code block');
   } else {
-    sections.push('4. Ensure all JSX elements are properly opened and closed');
+    sections.push('6. Ensure all JSX elements are properly opened and closed');
     sections.push(
-      `5. Only import components that exist in "${options.importPath}"`
+      `7. Only import components that exist in "${options.importPath}"`
     );
-    sections.push(`6. Return the COMPLETE corrected code in a \`\`\`${codeBlockLang} code block`);
-    sections.push('7. Do NOT include any explanation - just the corrected code block');
+    sections.push(`8. Return the COMPLETE corrected code in a \`\`\`${codeBlockLang} code block`);
+    sections.push('9. Do NOT include any explanation - just the corrected code block');
   }
 
   return sections.join('\n');
