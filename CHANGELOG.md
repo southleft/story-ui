@@ -1,3 +1,17 @@
+# [4.6.0](https://github.com/southleft/story-ui/compare/v4.5.2...v4.6.0) (2025-12-17)
+
+
+### Bug Fixes
+
+* **cli:** prevent memory exhaustion during vision processing ([aa5ef6c](https://github.com/southleft/story-ui/commit/aa5ef6cf4e7945f34004bd3ed2a95fdb0128ae89))
+* **ui:** isolate StoryUI panel CSS from Storybook dark theme ([849f1e7](https://github.com/southleft/story-ui/commit/849f1e74326d6469d61253c033ba0fedd1b8ca9a))
+
+
+### Features
+
+* **generator:** add smart icon package detection for real icons ([546be1e](https://github.com/southleft/story-ui/commit/546be1e78b41142985c0a41f654c0f5c71ae4d8b))
+* **generator:** improve self-healing with TypeScript validation and title versioning ([fb19790](https://github.com/southleft/story-ui/commit/fb197902a4a05ce37ea209706c75555bd4d73325))
+
 ## [4.5.2](https://github.com/southleft/story-ui/compare/v4.5.1...v4.5.2) (2025-12-16)
 
 
