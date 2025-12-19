@@ -1,3 +1,10 @@
+## [4.6.1](https://github.com/southleft/story-ui/compare/v4.6.0...v4.6.1) (2025-12-19)
+
+
+### Bug Fixes
+
+* **deps:** resolve critical and high severity vulnerabilities ([6c21c00](https://github.com/southleft/story-ui/commit/6c21c007b8669440e94f4530e92aff69e1124572))
+
 # [4.6.0](https://github.com/southleft/story-ui/compare/v4.5.2...v4.6.0) (2025-12-17)
 
 
