@@ -1,3 +1,10 @@
+## [4.6.2](https://github.com/southleft/story-ui/compare/v4.6.1...v4.6.2) (2026-01-05)
+
+
+### Bug Fixes
+
+* **generator:** auto-detect icon packages and skip per-icon validation ([0d4c9ed](https://github.com/southleft/story-ui/commit/0d4c9ed210db5720a346956ccad436dd687e1a25))
+
 ## [4.6.1](https://github.com/southleft/story-ui/compare/v4.6.0...v4.6.1) (2025-12-19)
 
 
