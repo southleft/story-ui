@@ -41,6 +41,7 @@ import { detectFramework } from './framework-detector.js';
 import { StoryUIConfig } from '../../story-ui.config.js';
 import { DiscoveredComponent } from '../componentDiscovery.js';
 import { logger } from '../logger.js';
+import { generateLayoutInstructions } from '../promptGenerator.js';
 
 /**
  * Framework Adapter Registry
@@ -190,10 +191,14 @@ class AdapterRegistry {
 
     logger.debug('Generating prompt with adapter', { adapter: adapter.type });
 
+    // Generate layout instructions including mandatory spacing rules
+    const layoutInstructionsArray = generateLayoutInstructions(config);
+    const layoutInstructionsString = layoutInstructionsArray.join('\n');
+
     return {
       systemPrompt: adapter.generateSystemPrompt(config, options),
       componentReference: adapter.generateComponentReference(components, config),
-      layoutInstructions: '',
+      layoutInstructions: layoutInstructionsString,
       examples: adapter.generateExamples(config),
       sampleStory: adapter.generateSampleStory(config, components),
       framework: this.detectedFramework || {

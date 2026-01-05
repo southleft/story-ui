@@ -585,14 +585,49 @@ function formatComponentReference(component: DiscoveredComponent, config: StoryU
 }
 
 /**
- * Generates layout-specific instructions
+ * Generates layout-specific instructions including MANDATORY vertical spacing rules
+ * @param config - The StoryUI configuration object
+ * @returns Array of layout instruction strings to be included in the prompt
  */
-function generateLayoutInstructions(config: StoryUIConfig): string[] {
+export function generateLayoutInstructions(config: StoryUIConfig): string[] {
   const instructions: string[] = [];
   const layoutRules = config.layoutRules;
 
+  // MANDATORY VERTICAL SPACING RULES - These are non-negotiable for professional UI quality
+  instructions.push('MANDATORY VERTICAL SPACING RULES (NON-NEGOTIABLE):');
+  instructions.push('');
+  instructions.push('** CRITICAL: Every component MUST have proper vertical spacing. Components without spacing look broken and unprofessional. **');
+  instructions.push('');
+  instructions.push('1. FORM FIELDS: Always wrap form fields in a container with vertical spacing:');
+  instructions.push('   - Use flexbox column with gap: <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>');
+  instructions.push('   - Or use your design system\'s spacing tokens if available');
+  instructions.push('   - MINIMUM 16px gap between form fields, 24px for complex forms');
+  instructions.push('');
+  instructions.push('2. BUTTON SPACING: Buttons MUST have margin-top from content above:');
+  instructions.push('   - Submit/action buttons: 24px margin-top from form fields');
+  instructions.push('   - Button groups: wrap in <div style={{ marginTop: "24px" }}>');
+  instructions.push('');
+  instructions.push('3. SECTION SPACING: Logical sections need clear visual separation:');
+  instructions.push('   - Between major sections: 32-48px');
+  instructions.push('   - Between related content groups: 24px');
+  instructions.push('   - Use dividers or significant whitespace between unrelated content');
+  instructions.push('');
+  instructions.push('4. HEADING SPACING: Headings need asymmetric spacing:');
+  instructions.push('   - More space ABOVE headings (24-32px) than below (8-16px)');
+  instructions.push('   - This creates visual hierarchy and groups content with its heading');
+  instructions.push('');
+  instructions.push('5. CARD/CONTAINER PADDING: Internal padding is mandatory:');
+  instructions.push('   - Minimum 16px padding on all sides');
+  instructions.push('   - Preferred 24px for cards with multiple elements');
+  instructions.push('   - Use design system spacing tokens when available');
+  instructions.push('');
+  instructions.push('6. WRAPPER PATTERN (REQUIRED): The story render function MUST return a wrapper div with padding:');
+  instructions.push('   - render: () => <div style={{ padding: "24px" }}>...content...</div>');
+  instructions.push('   - This ensures content has breathing room within the Storybook canvas');
+  instructions.push('');
+
   if (layoutRules.multiColumnWrapper && layoutRules.columnComponent) {
-    instructions.push('CRITICAL LAYOUT RULES:');
+    instructions.push('MULTI-COLUMN LAYOUT RULES:');
     instructions.push(`- For ANY multi-column layout (2, 3, or more columns), use ${layoutRules.multiColumnWrapper} components`);
     instructions.push(`- Each column must be wrapped in its own ${layoutRules.columnComponent} element`);
     instructions.push(`- Structure: <${layoutRules.multiColumnWrapper}><${layoutRules.columnComponent}>column 1</${layoutRules.columnComponent}><${layoutRules.columnComponent}>column 2</${layoutRules.columnComponent}></${layoutRules.multiColumnWrapper}>`);
@@ -600,6 +635,7 @@ function generateLayoutInstructions(config: StoryUIConfig): string[] {
     instructions.push(`- NEVER use CSS properties as props (like display="grid" or gridTemplateColumns) - these are not valid props`);
     instructions.push(`- For grid-like layouts, use Flex with wrap prop and appropriate gap, NOT CSS Grid`);
     instructions.push(`- The ${layoutRules.multiColumnWrapper} should be the main component in your story for multi-column layouts`);
+    instructions.push('');
   }
 
   if (layoutRules.prohibitedElements && layoutRules.prohibitedElements.length > 0) {
@@ -607,9 +643,11 @@ function generateLayoutInstructions(config: StoryUIConfig): string[] {
   }
 
   // Generic layout instructions for all design systems
+  instructions.push('GENERAL LAYOUT BEST PRACTICES:');
   instructions.push(`- Use semantic heading components from your design system instead of raw <h1>-<h6> tags`);
-  instructions.push(`- Use the design system's layout components and spacing tokens instead of inline styles`);
+  instructions.push(`- Use the design system's layout components and spacing tokens instead of inline styles when available`);
   instructions.push(`- Prefer design system components over plain HTML elements for consistent styling`);
+  instructions.push(`- ALWAYS test mentally: "Does this component have enough visual breathing room?" If not, add spacing.`);
 
   return instructions;
 }
