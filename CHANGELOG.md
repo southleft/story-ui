@@ -1,3 +1,10 @@
+## [4.6.3](https://github.com/southleft/story-ui/compare/v4.6.2...v4.6.3) (2026-01-05)
+
+
+### Bug Fixes
+
+* **generator:** improve vertical spacing and dark mode styling ([7529a68](https://github.com/southleft/story-ui/commit/7529a68d373f9c0be7f14e792975e0bd7b1b2089))
+
 ## [4.6.2](https://github.com/southleft/story-ui/compare/v4.6.1...v4.6.2) (2026-01-05)
 
 
