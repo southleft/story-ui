@@ -35,6 +35,18 @@ export interface AdditionalImport {
   components: string[];
 }
 
+// Icon imports configuration (auto-detected or manual)
+export interface IconImportsConfig {
+  /** Package name for icon imports (e.g., '@tabler/icons-react', 'lucide-react') */
+  package: string;
+  /** Import path pattern (e.g., '@tabler/icons-react' or 'lucide-react') */
+  importPath: string;
+  /** Common icons that are known to exist (for validation fallback) */
+  commonIcons?: string[];
+  /** Whether to allow any icon from this package (skip individual validation) */
+  allowAllIcons?: boolean;
+}
+
 
 
 // Design system guidelines configuration
@@ -89,6 +101,8 @@ export interface StoryUIConfig {
   considerationsPath?: string;
   storybookFramework?: string; // e.g., '@storybook/react-vite', '@storybook/react-webpack5', '@storybook/nextjs'
   designSystemGuidelines?: DesignSystemGuidelines;
+  /** Icon imports configuration (auto-detected from package.json or manually configured) */
+  iconImports?: IconImportsConfig;
 }
 
 // Default generic configuration

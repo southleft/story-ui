@@ -399,27 +399,33 @@ async function preValidateImports(code: string, config: any, discovery: Enhanced
 
     // Extract icon imports (keep existing icon validation)
   if (config.iconImports?.package) {
-    const allowedIcons = new Set<string>(config.iconImports?.commonIcons || []);
     const iconImports = extractImportsFromCode(code, config.iconImports.package);
 
-    for (const iconName of iconImports) {
-      if (isBlacklistedIcon(iconName, allowedIcons)) {
-        const correction = ICON_CORRECTIONS[iconName];
-        if (correction) {
-          errors.push(`Invalid icon: "${iconName}" does not exist. Did you mean "${correction}"?`);
-        } else {
-          errors.push(`Invalid icon: "${iconName}" is not in the list of available icons.`);
-        }
-      } else if (!allowedIcons.has(iconName)) {
-        // Try to find a similar icon
-        const similarIcon = findSimilarIcon(iconName, allowedIcons);
-        if (similarIcon) {
-          errors.push(`Invalid icon: "${iconName}" does not exist. Did you mean "${similarIcon}"?`);
-        } else {
-          errors.push(`Invalid icon: "${iconName}" is not in the list of available icons.`);
+    // If allowAllIcons is true, skip per-icon validation (trust the icon package)
+    // This is used when we auto-detect a known icon package but don't have a full manifest
+    if (!config.iconImports.allowAllIcons) {
+      const allowedIcons = new Set<string>(config.iconImports?.commonIcons || []);
+
+      for (const iconName of iconImports) {
+        if (isBlacklistedIcon(iconName, allowedIcons)) {
+          const correction = ICON_CORRECTIONS[iconName];
+          if (correction) {
+            errors.push(`Invalid icon: "${iconName}" does not exist. Did you mean "${correction}"?`);
+          } else {
+            errors.push(`Invalid icon: "${iconName}" is not in the list of available icons.`);
+          }
+        } else if (!allowedIcons.has(iconName)) {
+          // Try to find a similar icon
+          const similarIcon = findSimilarIcon(iconName, allowedIcons);
+          if (similarIcon) {
+            errors.push(`Invalid icon: "${iconName}" does not exist. Did you mean "${similarIcon}"?`);
+          } else {
+            errors.push(`Invalid icon: "${iconName}" is not in the list of available icons.`);
+          }
         }
       }
     }
+    // When allowAllIcons is true, we trust that the LLM will use valid icons from the package
   }
 
   return {

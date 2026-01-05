@@ -1,7 +1,84 @@
 import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
-import { StoryUIConfig, DEFAULT_CONFIG, createStoryUIConfig } from '../story-ui.config.js';
+import { StoryUIConfig, DEFAULT_CONFIG, createStoryUIConfig, IconImportsConfig } from '../story-ui.config.js';
+
+/**
+ * Known icon packages for auto-detection
+ * When a project has one of these packages installed, we automatically
+ * configure icon imports to allow them in validation
+ */
+interface KnownIconPackage {
+  name: string;
+  importPath: string;
+  commonIcons: string[];
+}
+
+const KNOWN_ICON_PACKAGES: KnownIconPackage[] = [
+  {
+    name: '@tabler/icons-react',
+    importPath: '@tabler/icons-react',
+    commonIcons: [
+      'IconHome', 'IconSettings', 'IconUser', 'IconSearch', 'IconMenu2',
+      'IconBell', 'IconMail', 'IconCalendar', 'IconClock', 'IconStar',
+      'IconHeart', 'IconPlus', 'IconMinus', 'IconX', 'IconCheck',
+      'IconChevronRight', 'IconChevronLeft', 'IconChevronDown', 'IconChevronUp',
+      'IconArrowRight', 'IconArrowLeft', 'IconArrowUp', 'IconArrowDown',
+      'IconEdit', 'IconTrash', 'IconDownload', 'IconUpload', 'IconShare',
+      'IconFilter', 'IconSort', 'IconRefresh', 'IconEye', 'IconEyeOff',
+      'IconLock', 'IconUnlock', 'IconCopy', 'IconClipboard', 'IconFolder',
+      'IconFile', 'IconImage', 'IconVideo', 'IconMusic', 'IconLink',
+      'IconExternalLink', 'IconDots', 'IconDotsVertical', 'IconGripVertical',
+      'IconTrendingUp', 'IconTrendingDown', 'IconActivity', 'IconPieChart',
+      'IconDatabase', 'IconServer', 'IconCode', 'IconTerminal',
+    ],
+  },
+  {
+    name: 'lucide-react',
+    importPath: 'lucide-react',
+    commonIcons: [
+      'Home', 'Settings', 'User', 'Search', 'Menu',
+      'Bell', 'Mail', 'Calendar', 'Clock', 'Star',
+      'Heart', 'Plus', 'Minus', 'X', 'Check',
+      'ChevronRight', 'ChevronLeft', 'ChevronDown', 'ChevronUp',
+      'ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown',
+      'Edit', 'Trash', 'Download', 'Upload', 'Share',
+      'Filter', 'RefreshCw', 'Eye', 'EyeOff',
+      'Lock', 'Unlock', 'Copy', 'Clipboard', 'Folder',
+    ],
+  },
+  {
+    name: '@heroicons/react',
+    importPath: '@heroicons/react/24/outline',
+    commonIcons: [
+      'HomeIcon', 'Cog6ToothIcon', 'UserIcon', 'MagnifyingGlassIcon', 'Bars3Icon',
+      'BellIcon', 'EnvelopeIcon', 'CalendarIcon', 'ClockIcon', 'StarIcon',
+      'HeartIcon', 'PlusIcon', 'MinusIcon', 'XMarkIcon', 'CheckIcon',
+      'ChevronRightIcon', 'ChevronLeftIcon', 'ChevronDownIcon', 'ChevronUpIcon',
+      'ArrowRightIcon', 'ArrowLeftIcon', 'ArrowUpIcon', 'ArrowDownIcon',
+    ],
+  },
+  {
+    name: 'react-icons',
+    importPath: 'react-icons/fa',
+    commonIcons: [
+      'FaHome', 'FaCog', 'FaUser', 'FaSearch', 'FaBars',
+      'FaBell', 'FaEnvelope', 'FaCalendar', 'FaClock', 'FaStar',
+      'FaHeart', 'FaPlus', 'FaMinus', 'FaTimes', 'FaCheck',
+      'FaChevronRight', 'FaChevronLeft', 'FaChevronDown', 'FaChevronUp',
+    ],
+  },
+  {
+    name: '@phosphor-icons/react',
+    importPath: '@phosphor-icons/react',
+    commonIcons: [
+      'House', 'Gear', 'User', 'MagnifyingGlass', 'List',
+      'Bell', 'Envelope', 'Calendar', 'Clock', 'Star',
+      'Heart', 'Plus', 'Minus', 'X', 'Check',
+      'CaretRight', 'CaretLeft', 'CaretDown', 'CaretUp',
+    ],
+  },
+];
 
 // Create require function for ESM compatibility
 const require = createRequire(import.meta.url);
@@ -91,6 +168,15 @@ export function loadUserConfig(): StoryUIConfig {
             } catch (error) {
               console.warn('Failed to detect Storybook framework:', error);
             }
+          }
+        }
+
+        // Auto-detect icon package if not already configured
+        // This is critical for allowing icon imports in generated stories
+        if (!config.iconImports) {
+          const detectedIconPackage = detectInstalledIconPackage();
+          if (detectedIconPackage) {
+            config.iconImports = detectedIconPackage;
           }
         }
 
@@ -683,4 +769,44 @@ function detectLayoutPatterns(layoutPatterns: string[], componentPrefix: string)
   }
 
   return rules;
+}
+
+/**
+ * Detects installed icon package from package.json dependencies
+ * Returns configuration for the first detected icon package
+ */
+export function detectInstalledIconPackage(projectPath?: string): IconImportsConfig | null {
+  const cwd = projectPath || process.cwd();
+  const packageJsonPath = path.join(cwd, 'package.json');
+
+  if (!fs.existsSync(packageJsonPath)) {
+    return null;
+  }
+
+  try {
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+    const allDeps = {
+      ...packageJson.dependencies,
+      ...packageJson.devDependencies,
+    };
+
+    // Check for known icon packages
+    for (const iconPackage of KNOWN_ICON_PACKAGES) {
+      if (allDeps[iconPackage.name]) {
+        console.log(`🎨 Detected icon package: ${iconPackage.name}`);
+        return {
+          package: iconPackage.name,
+          importPath: iconPackage.importPath,
+          commonIcons: iconPackage.commonIcons,
+          // Allow all icons from this package - don't require explicit validation
+          // This is crucial: icon libraries have thousands of icons, we can't list them all
+          allowAllIcons: true,
+        };
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to detect icon package:', error);
+  }
+
+  return null;
 }
