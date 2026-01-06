@@ -1,3 +1,10 @@
+# [4.7.0](https://github.com/southleft/story-ui/compare/v4.6.3...v4.7.0) (2026-01-06)
+
+
+### Features
+
+* **generator:** add framework-agnostic component extraction to adapters ([c15977a](https://github.com/southleft/story-ui/commit/c15977a2355171f9827b1f3466847c81597700e8))
+
 ## [4.6.3](https://github.com/southleft/story-ui/compare/v4.6.2...v4.6.3) (2026-01-05)
 
 
