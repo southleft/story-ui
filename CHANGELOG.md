@@ -1,3 +1,10 @@
+# [4.8.0](https://github.com/southleft/story-ui/compare/v4.7.1...v4.8.0) (2026-01-06)
+
+
+### Features
+
+* rich prop type extraction and design-system agnostic barrel imports ([c4861c0](https://github.com/southleft/story-ui/commit/c4861c0f8b17b1ec3444205f2f0349a44670423f))
+
 ## [4.7.1](https://github.com/southleft/story-ui/compare/v4.7.0...v4.7.1) (2026-01-06)
 
 
