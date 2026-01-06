@@ -894,8 +894,8 @@ if (storybookProxyEnabled) {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`MCP server running on port ${PORT}`);
-  console.log(`Stories will be generated to: ${config.generatedStoriesPath}`);
+  console.error(`MCP server running on port ${PORT}`);
+  console.error(`Stories will be generated to: ${config.generatedStoriesPath}`);
 }).on('error', (err: any) => {
   if (err.code === 'EADDRINUSE') {
     console.error(`\n❌ Port ${PORT} is already in use!`);

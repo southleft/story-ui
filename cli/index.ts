@@ -37,13 +37,17 @@ program
   .description('Start the Story UI server')
   .option('-p, --port <port>', 'Port to run the server on', '4001')
   .option('-c, --config <config>', 'Path to configuration file')
+  .option('--mcp', 'Also start MCP stdio server for Claude Desktop integration')
   .action(async (options) => {
-    console.log('🚀 Starting Story UI server...');
+    // Use stderr for all logging to avoid breaking MCP JSON-RPC protocol
+    // when Claude Desktop spawns this process
+    console.error('🚀 Starting Story UI server...');
 
     // Use absolute path to avoid dist/dist issue when package is linked
     const pkgRoot = path.resolve(__dirname, '..');
     const serverPath = path.join(pkgRoot, 'mcp-server/index.js');
-    console.log(`✅ Using MCP server at: ${serverPath}`);
+    const mcpStdioPath = path.join(pkgRoot, 'mcp-server/mcp-stdio-server.js');
+    console.error(`✅ Using HTTP server at: ${serverPath}`);
 
     // FIRST_EDIT: determine an available port
     const requestedPort = parseInt(options.port || '4001', 10);
@@ -67,7 +71,7 @@ program
     }
 
     if (finalPort !== requestedPort) {
-      console.log(`⚠️  Port ${requestedPort} is in use. Using ${finalPort} instead.`);
+      console.error(`⚠️  Port ${requestedPort} is in use. Using ${finalPort} instead.`);
     }
 
     const env: NodeJS.ProcessEnv = { ...process.env, PORT: String(finalPort) };
@@ -82,18 +86,61 @@ program
       env.STORY_UI_CONFIG_PATH = options.config;
     }
 
+    // Log the working directory for debugging
+    console.error(`📁 Working directory: ${process.cwd()}`);
+
+    // Redirect child stdout to stderr to avoid breaking MCP JSON-RPC protocol
+    // when Claude Desktop spawns this process. The HTTP server logs will still
+    // be visible but won't interfere with MCP communication.
     const server = spawn('node', [serverPath], {
-      stdio: 'inherit',
-      env
+      stdio: ['ignore', 'pipe', 'inherit'],
+      env,
+      cwd: process.cwd()  // Explicitly pass cwd to ensure config is found
     });
+
+    // Pipe child's stdout to stderr so logs are visible without breaking MCP
+    if (server.stdout) {
+      server.stdout.pipe(process.stderr);
+    }
 
     server.on('close', (code) => {
-      console.log(`Server exited with code ${code}`);
+      console.error(`HTTP server exited with code ${code}`);
     });
 
-    process.on('SIGINT', () => {
-      server.kill('SIGINT');
-    });
+    // If --mcp flag is set, also start the MCP stdio server for Claude Desktop
+    // This allows a single command to run both HTTP server and MCP protocol handler
+    if (options.mcp) {
+      console.error('📡 Starting MCP stdio server for Claude Desktop...');
+
+      // Wait a moment for HTTP server to start
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      const mcpEnv: NodeJS.ProcessEnv = {
+        ...process.env,
+        STORY_UI_HTTP_PORT: String(finalPort)
+      };
+
+      // Spawn MCP stdio server with stdin/stdout inherited for JSON-RPC communication
+      const mcpServer = spawn('node', [mcpStdioPath], {
+        stdio: 'inherit',
+        env: mcpEnv,
+        cwd: process.cwd()  // Explicitly pass cwd to ensure config is found
+      });
+
+      mcpServer.on('close', (code) => {
+        console.error(`MCP stdio server exited with code ${code}`);
+        server.kill('SIGTERM');
+      });
+
+      process.on('SIGINT', () => {
+        mcpServer.kill('SIGINT');
+        server.kill('SIGINT');
+      });
+    } else {
+      process.on('SIGINT', () => {
+        server.kill('SIGINT');
+      });
+    }
   });
 
 program

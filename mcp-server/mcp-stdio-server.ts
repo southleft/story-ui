@@ -17,7 +17,8 @@ import { fileURLToPath } from 'url';
 // Get package version dynamically
 const __filename_mcp = fileURLToPath(import.meta.url);
 const __dirname_mcp = path.dirname(__filename_mcp);
-const packageJsonPath = path.resolve(__dirname_mcp, '../package.json');
+// Go up two levels from dist/mcp-server/ to reach the project root
+const packageJsonPath = path.resolve(__dirname_mcp, '../../package.json');
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
 const PACKAGE_VERSION = packageJson.version;
 

@@ -1,7 +1,7 @@
 # Story UI - AI Assistant Project Guide
 
-> **Last Updated**: December 14, 2025
-> **Current Version**: 4.4.1
+> **Last Updated**: January 6, 2026
+> **Current Version**: 4.6.3
 > **Production URL**: https://app-production-16de.up.railway.app (Vue/Vuetify example)
 > **Repository**: https://github.com/southleft/story-ui
 
@@ -213,6 +213,10 @@ module.exports = {
   componentFramework: "react",
   storybookFramework: "@storybook/react-vite",
   llmProvider: "claude",
+  // Import style: 'barrel' (default) or 'individual'
+  // Use 'individual' for libraries without barrel exports (shadcn/ui, Radix Vue, Angular Material)
+  // Use 'barrel' for libraries with index.ts barrel exports (Mantine, Chakra, Vuetify)
+  importStyle: "barrel",
   layoutRules: {
     multiColumnWrapper: "SimpleGrid",
     columnComponent: "div",

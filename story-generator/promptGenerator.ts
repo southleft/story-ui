@@ -738,15 +738,79 @@ function generateExamples(config: StoryUIConfig): string[] {
 }
 
 /**
+ * Extracts the base component name from a compound component name.
+ * Used when generating individual file imports to group related components.
+ *
+ * Examples:
+ * - CardHeader -> Card (imports from card.tsx)
+ * - AlertDialogTrigger -> AlertDialog (imports from alert-dialog.tsx)
+ * - Button -> Button (imports from button.tsx)
+ *
+ * This pattern is common across multiple frameworks:
+ * - React: shadcn/ui, Radix UI compound components
+ * - Vue: Radix Vue, shadcn-vue compound components
+ * - Angular: Angular Material (mat-card-header -> mat-card)
+ * - Web Components: Shoelace (sl-card-header -> sl-card)
+ *
+ * Note: For frameworks that use slots instead of compound components
+ * (many Web Components, some Svelte), this function returns the name unchanged.
+ */
+function getBaseComponentName(componentName: string): string {
+  // Known suffixes that indicate sub-components (order matters - check longer ones first)
+  const suffixes = [
+    'Fallback', 'Image', 'Trigger', 'Content', 'Header', 'Footer', 'Title',
+    'Description', 'Action', 'Cancel', 'Close', 'Overlay', 'Portal',
+    'Item', 'Group', 'Label', 'Separator', 'Root', 'List', 'Link',
+    'Previous', 'Next', 'Ellipsis', 'Viewport', 'ScrollBar', 'Corner',
+    'Thumb', 'Track', 'Range', 'Indicator', 'Icon', 'Slot', 'Input',
+    'Handle', 'Panel', 'Primitive'
+  ];
+
+  for (const suffix of suffixes) {
+    if (componentName.endsWith(suffix) && componentName !== suffix) {
+      const base = componentName.slice(0, -suffix.length);
+      if (base.length > 0) {
+        return base;
+      }
+    }
+  }
+  return componentName;
+}
+
+/**
+ * Converts PascalCase to kebab-case for file names.
+ * Used when generating individual file imports.
+ *
+ * Examples:
+ * - AlertDialog -> alert-dialog
+ * - Button -> button
+ * - InputOTP -> input-otp
+ *
+ * This conversion works across frameworks since kebab-case file names are:
+ * - Required: Angular, Web Components
+ * - Common: Vue, React (for some libraries)
+ * - Accepted: Svelte (though PascalCase is more common)
+ */
+function toKebabCase(name: string): string {
+  return name
+    .replace(/([a-z])([A-Z])/g, '$1-$2')
+    .replace(/([A-Z])([A-Z][a-z])/g, '$1-$2')
+    .toLowerCase();
+}
+
+/**
  * Generates import statements, using individual import paths if available
  */
 function generateImportStatements(config: StoryUIConfig, components: DiscoveredComponent[], componentNames: string[]): string {
   const importMap = new Map<string, string[]>();
-  
+
+  // Check if individual file imports are configured (for libraries without barrel exports)
+  const useIndividualImports = config.importStyle === 'individual';
+
   for (const componentName of componentNames) {
     // Find the component in our discovered components to get its specific import path
     const component = components.find(c => c.name === componentName);
-    
+
     if (component && typeof component === 'object' && '__componentPath' in component) {
       // Use the discovered component's specific import path
       const importPath = component.__componentPath as string;
@@ -754,21 +818,33 @@ function generateImportStatements(config: StoryUIConfig, components: DiscoveredC
         importMap.set(importPath, []);
       }
       importMap.get(importPath)!.push(componentName);
+    } else if (useIndividualImports) {
+      // Generate individual file imports for libraries without barrel exports
+      // Group by base component: CardHeader, CardContent -> card.tsx
+      // This pattern works for React (shadcn/ui), Vue (PrimeVue), Angular (Material), Web Components (Shoelace)
+      const baseComponent = getBaseComponentName(componentName);
+      const fileName = toKebabCase(baseComponent);
+      const importPath = `${config.importPath}/${fileName}`;
+
+      if (!importMap.has(importPath)) {
+        importMap.set(importPath, []);
+      }
+      importMap.get(importPath)!.push(componentName);
     } else {
-      // Fallback to the main package import path
+      // Use barrel import (default) - import all from single entry point
       if (!importMap.has(config.importPath)) {
         importMap.set(config.importPath, []);
       }
       importMap.get(config.importPath)!.push(componentName);
     }
   }
-  
+
   // Generate import statements
   const importLines: string[] = [];
-  for (const [importPath, components] of importMap) {
-    importLines.push(`import { ${components.join(', ')} } from '${importPath}';`);
+  for (const [importPath, comps] of importMap) {
+    importLines.push(`import { ${comps.join(', ')} } from '${importPath}';`);
   }
-  
+
   return importLines.join('\n');
 }
 

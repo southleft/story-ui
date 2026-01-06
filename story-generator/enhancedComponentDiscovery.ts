@@ -751,7 +751,16 @@ export class EnhancedComponentDiscovery {
           continue;
         }
 
-        const props = this.extractPropsFromFile(content);
+        let props = this.extractPropsFromFile(content);
+
+        // Always check co-located story file for additional props (argTypes, args)
+        // Story files often define props that aren't in the component source (e.g., disabled, children)
+        const storyProps = this.extractPropsFromStoryFile(file);
+        for (const prop of storyProps) {
+          if (!props.includes(prop)) {
+            props.push(prop);
+          }
+        }
 
         this.discoveredComponents.set(componentName, {
           name: componentName,
@@ -879,6 +888,11 @@ export class EnhancedComponentDiscovery {
 
   /**
    * Extract props from file content
+   * Supports multiple patterns:
+   * - TypeScript interfaces (interface ButtonProps { variant: ... })
+   * - PropTypes (Component.propTypes = { variant: ... })
+   * - Function parameter destructuring ({ className, variant, ...props }: Props)
+   * - VariantProps from class-variance-authority
    */
   private extractPropsFromFile(content: string): string[] {
     const props: string[] = [];
@@ -900,6 +914,154 @@ export class EnhancedComponentDiscovery {
       const propMatches = propsContent.matchAll(/(\w+):/g);
       for (const match of propMatches) {
         props.push(match[1]);
+      }
+    }
+
+    // Extract from function parameter destructuring
+    // Matches patterns like:
+    //   function Component({ prop1, prop2, ...rest }: Props)
+    //   const Component = ({ prop1, prop2 }: Props) =>
+    //   export function Component({ prop1, prop2 }: React.ComponentProps<"div">)
+    const destructuringProps = this.extractDestructuredProps(content);
+    for (const prop of destructuringProps) {
+      if (!props.includes(prop)) {
+        props.push(prop);
+      }
+    }
+
+    // Extract from VariantProps (class-variance-authority pattern)
+    // Matches: VariantProps<typeof buttonVariants>
+    const variantPropsMatch = content.match(/VariantProps<typeof\s+(\w+)>/);
+    if (variantPropsMatch) {
+      const variantsName = variantPropsMatch[1];
+      // Look for the cva definition to extract variant names
+      const cvaMatch = content.match(new RegExp(`${variantsName}\\s*=\\s*cva\\([^,]+,\\s*{\\s*variants:\\s*{([^}]+(?:{[^}]*}[^}]*)*)}`));
+      if (cvaMatch) {
+        const variantsContent = cvaMatch[1];
+        // Extract variant property names (e.g., variant, size)
+        const variantMatches = variantsContent.matchAll(/^\s*(\w+)\s*:\s*{/gm);
+        for (const match of variantMatches) {
+          if (!props.includes(match[1])) {
+            props.push(match[1]);
+          }
+        }
+      }
+    }
+
+    return props;
+  }
+
+  /**
+   * Extract props from function parameter destructuring patterns
+   * Works with React, Vue <script setup>, and other frameworks
+   */
+  private extractDestructuredProps(content: string): string[] {
+    const props: string[] = [];
+
+    // Pattern 1: function Component({ prop1, prop2, ...rest }: Type)
+    // Pattern 2: const Component = ({ prop1, prop2 }: Type) =>
+    // Pattern 3: export function Component({ prop1, prop2 }: Type)
+    const functionPatterns = [
+      // function Name({ destructured }: Type)
+      /(?:export\s+)?(?:default\s+)?function\s+[A-Z]\w*\s*\(\s*\{\s*([^}]+)\s*\}\s*:/g,
+      // const Name = ({ destructured }: Type) =>
+      /(?:export\s+)?const\s+[A-Z]\w*\s*=\s*\(\s*\{\s*([^}]+)\s*\}\s*:/g,
+      // const Name: FC<Props> = ({ destructured }) =>
+      /(?:export\s+)?const\s+[A-Z]\w*\s*:\s*\w+(?:<[^>]+>)?\s*=\s*\(\s*\{\s*([^}]+)\s*\}\s*\)/g,
+    ];
+
+    for (const pattern of functionPatterns) {
+      let match;
+      while ((match = pattern.exec(content)) !== null) {
+        const destructuredContent = match[1];
+        // Extract individual prop names, ignoring spread operator (...rest)
+        const propMatches = destructuredContent.matchAll(/(?:^|,)\s*(?!\.\.\.)([\w]+)(?:\s*=\s*[^,}]+)?(?=\s*[,}]|$)/g);
+        for (const propMatch of propMatches) {
+          const propName = propMatch[1].trim();
+          // Skip common internal props and rest patterns
+          if (propName && !['ref', 'props', 'rest'].includes(propName) && !props.includes(propName)) {
+            props.push(propName);
+          }
+        }
+      }
+    }
+
+    return props;
+  }
+
+  /**
+   * Extract props from co-located story file (e.g., Button.stories.tsx)
+   * This is a fallback for components like shadcn/ui that don't use interface Props patterns
+   */
+  private extractPropsFromStoryFile(componentPath: string): string[] {
+    const props: string[] = [];
+
+    // Construct story file path: button.tsx -> button.stories.tsx
+    const dir = path.dirname(componentPath);
+    const ext = path.extname(componentPath);
+    const name = path.basename(componentPath, ext);
+
+    // Try different story file naming conventions
+    const storyPaths = [
+      path.join(dir, `${name}.stories.tsx`),
+      path.join(dir, `${name}.stories.ts`),
+      path.join(dir, `${name}.story.tsx`),
+      path.join(dir, `${name}.story.ts`),
+    ];
+
+    let storyContent = '';
+    for (const storyPath of storyPaths) {
+      if (fs.existsSync(storyPath)) {
+        try {
+          storyContent = fs.readFileSync(storyPath, 'utf-8');
+          break;
+        } catch {
+          continue;
+        }
+      }
+    }
+
+    if (!storyContent) {
+      return props;
+    }
+
+    // Extract from argTypes: { propName: { control: ..., options: ... } }
+    // Only match prop names followed by `: {` to avoid picking up nested properties like control, options
+    const argTypesMatch = storyContent.match(/argTypes\s*:\s*\{([^}]+(?:\{[^}]*\}[^}]*)*)\}/);
+    if (argTypesMatch) {
+      // Match prop names followed by `: {` which indicates argType config object
+      const propMatches = argTypesMatch[1].matchAll(/(\w+)\s*:\s*\{/g);
+      for (const match of propMatches) {
+        // Skip common argTypes meta-properties that shouldn't be props
+        const metaProps = ['control', 'options', 'description', 'table', 'type', 'defaultValue', 'if', 'mapping'];
+        if (!metaProps.includes(match[1]) && !props.includes(match[1])) {
+          props.push(match[1]);
+        }
+      }
+    }
+
+    // Extract from args: { propName: value }
+    const argsMatches = storyContent.matchAll(/args\s*:\s*\{([^}]+)\}/g);
+    for (const argsMatch of argsMatches) {
+      const argContent = argsMatch[1];
+      const propMatches = argContent.matchAll(/^\s*(\w+)\s*:/gm);
+      for (const match of propMatches) {
+        if (!props.includes(match[1])) {
+          props.push(match[1]);
+        }
+      }
+    }
+
+    // Extract from render function parameters if they use destructuring
+    // e.g., render: ({ variant, size }) => ...
+    const renderMatches = storyContent.matchAll(/render\s*:\s*\(\s*\{\s*([^}]+)\s*\}\s*\)/g);
+    for (const renderMatch of renderMatches) {
+      const paramContent = renderMatch[1];
+      const propMatches = paramContent.matchAll(/(\w+)(?:\s*,|\s*$)/g);
+      for (const match of propMatches) {
+        if (!props.includes(match[1])) {
+          props.push(match[1]);
+        }
       }
     }
 

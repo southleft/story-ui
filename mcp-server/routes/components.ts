@@ -75,20 +75,22 @@ export async function getProps(req: Request, res: Response) {
     const comp = cachedComponents.find(c => c.name === component);
 
     if (!comp) {
-      return res.json([]);
+      return res.json({});
     }
 
-    // Return props in a format compatible with existing UI
-    const props = comp.props.map((prop: string) => ({
-      name: prop,
-      type: 'string', // We'd need more sophisticated type detection
-      description: `${prop} property`,
-      required: false
-    }));
+    // Return props as an object keyed by prop name (for MCP handler compatibility)
+    const propsObject: Record<string, { type: string; description: string; required: boolean }> = {};
+    for (const prop of comp.props) {
+      propsObject[prop] = {
+        type: 'string', // We'd need more sophisticated type detection
+        description: `${prop} property`,
+        required: false
+      };
+    }
 
-    res.json(props);
+    res.json(propsObject);
   } catch (error) {
     console.error('Error getting component props:', error);
-    res.json([]);
+    res.json({});
   }
 }

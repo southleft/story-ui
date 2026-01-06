@@ -100,6 +100,22 @@ export interface StoryUIConfig {
   additionalImports?: AdditionalImport[];
   considerationsPath?: string;
   storybookFramework?: string; // e.g., '@storybook/react-vite', '@storybook/react-webpack5', '@storybook/nextjs'
+  /**
+   * Import style for generated stories:
+   * - 'barrel': Use barrel imports from a single entry point (e.g., `import { Button } from 'library'`)
+   * - 'individual': Use individual file imports (e.g., `import { Button } from 'library/button'`)
+   *
+   * Use 'individual' for libraries without barrel exports (index.ts), such as:
+   * - shadcn/ui, Radix Vue, PrimeVue (Vue)
+   * - Angular Material, PrimeNG (Angular)
+   * - Shoelace, Lion (Web Components)
+   *
+   * Use 'barrel' (default) for libraries with barrel exports, such as:
+   * - Chakra UI, Mantine, Ant Design (React)
+   * - Vuetify, Quasar (Vue)
+   * - Skeleton UI (Svelte)
+   */
+  importStyle?: 'barrel' | 'individual';
   designSystemGuidelines?: DesignSystemGuidelines;
   /** Icon imports configuration (auto-detected from package.json or manually configured) */
   iconImports?: IconImportsConfig;
