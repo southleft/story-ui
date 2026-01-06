@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { DiscoveredComponent } from './componentDiscovery.js';
+import { DiscoveredComponent, PropInfo } from './componentDiscovery.js';
 import { StoryUIConfig } from '../story-ui.config.js';
 import { DynamicPackageDiscovery } from './dynamicPackageDiscovery.js';
 import { logger } from './logger.js';
@@ -762,10 +762,14 @@ export class EnhancedComponentDiscovery {
           }
         }
 
+        // Extract rich prop type information from story file argTypes
+        const propTypes = this.extractRichPropsFromStoryFile(file);
+
         this.discoveredComponents.set(componentName, {
           name: componentName,
           filePath: file,
           props,
+          propTypes: propTypes.length > 0 ? propTypes : undefined,
           source,
           description: `${componentName} component`,
           category: this.categorizeComponent(componentName, content),
@@ -1066,6 +1070,338 @@ export class EnhancedComponentDiscovery {
     }
 
     return props;
+  }
+
+  /**
+   * Extract rich prop type information from story file argTypes
+   * Framework-agnostic: works with any Storybook project (React, Vue, Angular, Svelte, etc.)
+   */
+  private extractRichPropsFromStoryFile(componentPath: string): PropInfo[] {
+    const propTypes: PropInfo[] = [];
+
+    // Construct story file path: button.tsx -> button.stories.tsx
+    const dir = path.dirname(componentPath);
+    const ext = path.extname(componentPath);
+    const name = path.basename(componentPath, ext);
+
+    // Try different story file naming conventions
+    const storyPaths = [
+      path.join(dir, `${name}.stories.tsx`),
+      path.join(dir, `${name}.stories.ts`),
+      path.join(dir, `${name}.story.tsx`),
+      path.join(dir, `${name}.story.ts`),
+    ];
+
+    let storyContent = '';
+    for (const storyPath of storyPaths) {
+      if (fs.existsSync(storyPath)) {
+        try {
+          storyContent = fs.readFileSync(storyPath, 'utf-8');
+          break;
+        } catch {
+          continue;
+        }
+      }
+    }
+
+    if (!storyContent) {
+      return propTypes;
+    }
+
+    // Parse argTypes block using brace counting for reliable extraction
+    // This handles nested objects properly (e.g., control: { type: 'select' })
+    const argTypesContent = this.extractArgTypesBlock(storyContent);
+    if (argTypesContent) {
+      
+      // Match each prop definition: propName: { ... }
+      // This regex handles nested objects properly
+      const propPattern = /(\w+)\s*:\s*\{([^{}]*(?:\{[^{}]*\}[^{}]*)*)\}/g;
+      let propMatch;
+      
+      while ((propMatch = propPattern.exec(argTypesContent)) !== null) {
+        const propName = propMatch[1];
+        const propConfig = propMatch[2];
+        
+        // Skip meta-properties that aren't actual props
+        const metaProps = ['control', 'options', 'description', 'table', 'type', 'defaultValue', 'if', 'mapping'];
+        if (metaProps.includes(propName)) {
+          continue;
+        }
+
+        // Extract control type
+        let controlType = 'unknown';
+        const controlMatch = propConfig.match(/control\s*:\s*['"]?([\w-]+)['"]?/);
+        const controlObjMatch = propConfig.match(/control\s*:\s*\{\s*type\s*:\s*['"]?([\w-]+)['"]?/);
+        
+        if (controlObjMatch) {
+          controlType = controlObjMatch[1];
+        } else if (controlMatch) {
+          controlType = controlMatch[1];
+        }
+
+        // Map control types to our type system
+        const typeMapping: Record<string, PropInfo['type']> = {
+          'select': 'select',
+          'radio': 'radio',
+          'inline-radio': 'radio',
+          'boolean': 'boolean',
+          'number': 'number',
+          'range': 'number',
+          'text': 'string',
+          'color': 'string',
+          'date': 'string',
+          'object': 'object',
+          'array': 'array',
+          'file': 'object',
+        };
+        const type = typeMapping[controlType] || 'unknown';
+
+        // Extract options array
+        let options: string[] | undefined;
+        const optionsMatch = propConfig.match(/options\s*:\s*\[([\s\S]*?)\]/);
+        if (optionsMatch) {
+          // Parse the options array, handling both quoted and unquoted values
+          const optionsContent = optionsMatch[1];
+          options = optionsContent
+            .split(',')
+            .map(opt => opt.trim().replace(/^['"]|['"]$/g, ''))
+            .filter(opt => opt.length > 0);
+        }
+
+        // Extract description
+        let description: string | undefined;
+        const descMatch = propConfig.match(/description\s*:\s*['"`]([\s\S]*?)['"`]/);
+        if (descMatch) {
+          description = descMatch[1];
+        }
+
+        // Extract defaultValue
+        let defaultValue: unknown;
+        const defaultMatch = propConfig.match(/defaultValue\s*:\s*(['"][\s\S]*?['"]|[\w]+)/);
+        if (defaultMatch) {
+          const rawValue = defaultMatch[1].replace(/^['"]|['"]$/g, '');
+          if (rawValue === 'true') defaultValue = true;
+          else if (rawValue === 'false') defaultValue = false;
+          else if (!isNaN(Number(rawValue))) defaultValue = Number(rawValue);
+          else defaultValue = rawValue;
+        }
+
+        propTypes.push({
+          name: propName,
+          type,
+          options,
+          description,
+          defaultValue,
+          control: controlType,
+        });
+      }
+    }
+
+    // Also check for props in args that might not be in argTypes
+    // Use smarter type inference based on value and prop name patterns
+    const argsMatches = storyContent.matchAll(/args\s*:\s*\{([^}]+)\}/g);
+    for (const argsMatch of argsMatches) {
+      const argsContent = argsMatch[1];
+      // Match prop: value pairs
+      const propValueMatches = argsContent.matchAll(/(\w+)\s*:\s*([^,\n]+)/g);
+      for (const match of propValueMatches) {
+        const propName = match[1];
+        const rawValue = match[2].trim();
+
+        // Only add if not already in propTypes
+        if (!propTypes.find(p => p.name === propName)) {
+          // Infer type from value
+          let inferredType: PropInfo['type'] = 'unknown';
+          let description: string | undefined;
+
+          // Check value-based inference
+          if (rawValue === 'true' || rawValue === 'false') {
+            inferredType = 'boolean';
+          } else if (/^['"`]/.test(rawValue)) {
+            inferredType = 'string';
+          } else if (!isNaN(Number(rawValue)) && rawValue !== '') {
+            inferredType = 'number';
+          } else if (rawValue.startsWith('[')) {
+            inferredType = 'array';
+          } else if (rawValue.startsWith('{')) {
+            inferredType = 'object';
+          }
+
+          // Check name-based inference for common patterns
+          const booleanPatterns = ['disabled', 'checked', 'defaultChecked', 'open', 'defaultOpen',
+            'selected', 'expanded', 'collapsed', 'visible', 'hidden', 'loading', 'error',
+            'required', 'readonly', 'readOnly', 'active', 'pressed', 'indeterminate',
+            'asChild', 'modal', 'loop', 'autoFocus', 'closeOnEscape', 'closeOnOutsideClick'];
+          if (booleanPatterns.some(p => propName.toLowerCase().includes(p.toLowerCase()))) {
+            inferredType = 'boolean';
+            description = `Whether the component is ${propName.replace(/^(default|is|has)/, '').toLowerCase()}`;
+          }
+
+          // Name patterns for strings
+          const stringPatterns = ['placeholder', 'label', 'title', 'description', 'name', 'id',
+            'className', 'style', 'href', 'src', 'alt', 'value', 'defaultValue'];
+          if (stringPatterns.some(p => propName.toLowerCase() === p.toLowerCase())) {
+            if (inferredType === 'unknown') inferredType = 'string';
+          }
+
+          propTypes.push({
+            name: propName,
+            type: inferredType,
+            description,
+          });
+        }
+      }
+    }
+
+    // Phase 3: Scan story code for prop values to infer select types
+    // This catches variants used in JSX/render functions even without argTypes
+    this.inferSelectTypesFromStoryCode(storyContent, propTypes);
+
+    // Phase 4: Generate better descriptions for common props
+    this.enhancePropDescriptions(propTypes);
+
+    return propTypes;
+  }
+
+  /**
+   * Scan story code for prop usage patterns to infer select types
+   * Looks for patterns like: variant="destructive", size='lg', type={value}
+   */
+  private inferSelectTypesFromStoryCode(storyContent: string, propTypes: PropInfo[]): void {
+    // Common props that are typically selects with limited options
+    const selectCandidates = ['variant', 'size', 'type', 'color', 'align', 'position',
+      'orientation', 'side', 'status', 'state', 'mode', 'theme', 'intent', 'severity'];
+
+    for (const propName of selectCandidates) {
+      const existingProp = propTypes.find(p => p.name === propName);
+
+      // Skip if already typed as select with options
+      if (existingProp?.type === 'select' && existingProp.options?.length) {
+        continue;
+      }
+
+      // Find all values used for this prop in JSX and args
+      const values = new Set<string>();
+
+      // Pattern 1: JSX attribute - propName="value" or propName='value'
+      const jsxPattern = new RegExp(`${propName}=["']([^"']+)["']`, 'g');
+      let match;
+      while ((match = jsxPattern.exec(storyContent)) !== null) {
+        values.add(match[1]);
+      }
+
+      // Pattern 2: args object - propName: 'value' or propName: "value"
+      const argsPattern = new RegExp(`${propName}\\s*:\\s*["']([^"']+)["']`, 'g');
+      while ((match = argsPattern.exec(storyContent)) !== null) {
+        values.add(match[1]);
+      }
+
+      // If we found multiple unique values, it's definitely a select
+      if (values.size >= 2) {
+        const options = Array.from(values).sort();
+
+        if (existingProp) {
+          // Upgrade existing prop to select
+          existingProp.type = 'select';
+          existingProp.options = options;
+        } else {
+          // Add new prop as select
+          propTypes.push({
+            name: propName,
+            type: 'select',
+            options,
+          });
+        }
+      } else if (values.size === 1) {
+        // Single non-default value found - likely a select with default + this value
+        const foundValue = Array.from(values)[0];
+        if (foundValue !== 'default') {
+          const options = ['default', foundValue];
+          if (existingProp) {
+            // Upgrade existing prop to select
+            existingProp.type = 'select';
+            existingProp.options = options;
+          } else {
+            propTypes.push({
+              name: propName,
+              type: 'select',
+              options,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Generate better descriptions for common props when not provided
+   */
+  private enhancePropDescriptions(propTypes: PropInfo[]): void {
+    const descriptionTemplates: Record<string, string> = {
+      variant: 'Visual style variant of the component',
+      size: 'Size of the component',
+      disabled: 'Whether the component is disabled',
+      checked: 'Whether the component is checked',
+      defaultChecked: 'Default checked state',
+      open: 'Whether the component is open',
+      defaultOpen: 'Default open state',
+      selected: 'Whether the item is selected',
+      expanded: 'Whether the component is expanded',
+      loading: 'Whether the component is in loading state',
+      error: 'Whether the component is in error state',
+      required: 'Whether the field is required',
+      readOnly: 'Whether the component is read-only',
+      placeholder: 'Placeholder text when empty',
+      label: 'Label text for the component',
+      title: 'Title of the component',
+      description: 'Description text',
+      children: 'Content to render inside the component',
+      className: 'Additional CSS classes',
+      asChild: 'Render as child element for composition',
+      orientation: 'Layout orientation (horizontal/vertical)',
+      align: 'Content alignment',
+      side: 'Side where the component appears',
+      position: 'Position of the component',
+      type: 'Type of the component',
+      color: 'Color variant',
+      intent: 'Intent/purpose variant (info, success, warning, error)',
+      severity: 'Severity level',
+      status: 'Current status',
+      state: 'Current state',
+      mode: 'Operating mode',
+      theme: 'Theme variant',
+    };
+
+    for (const prop of propTypes) {
+      // Only enhance if description is missing or generic
+      if (!prop.description || prop.description.endsWith(' property')) {
+        const template = descriptionTemplates[prop.name];
+        if (template) {
+          prop.description = template;
+        }
+      }
+    }
+  }
+
+  /**
+   * Extract the content of the argTypes block using brace counting
+   * This handles nested objects more reliably than regex
+   */
+  private extractArgTypesBlock(content: string): string | null {
+    const startMatch = content.match(/argTypes\s*:\s*\{/);
+    if (!startMatch || startMatch.index === undefined) return null;
+
+    const startIndex = startMatch.index + startMatch[0].length;
+    let braceCount = 1;
+    let endIndex = startIndex;
+
+    for (let i = startIndex; i < content.length && braceCount > 0; i++) {
+      if (content[i] === '{') braceCount++;
+      if (content[i] === '}') braceCount--;
+      endIndex = i;
+    }
+
+    return content.substring(startIndex, endIndex);
   }
 
   /**

@@ -134,17 +134,57 @@ IMPORTANT: Without ChakraProvider, you will see "useContext returned undefined" 
 `;
     }
 
+    // Build import instructions based on importStyle
+    const importPath = config.importPath || 'your-library';
+    const useIndividualImports = config.importStyle === 'individual';
+
+    let importInstructions: string;
+    let additionalImportRules: string;
+
+    if (useIndividualImports) {
+      importInstructions = `MANDATORY IMPORTS - First lines of every story file:
+1. import React from 'react';
+2. import type { Meta, StoryObj } from '@storybook/react';
+3. import { ComponentName } from '${importPath}/component-name';  // INDIVIDUAL FILE IMPORTS REQUIRED
+
+🚫 INDIVIDUAL FILE IMPORTS REQUIRED 🚫
+This library does NOT have a barrel export. Each component MUST be imported from its own file:
+- import { Button } from '${importPath}/button';
+- import { Card, CardHeader, CardContent } from '${importPath}/card';
+- import { Dialog, DialogTrigger, DialogContent } from '${importPath}/dialog';
+
+WRONG - DO NOT USE (will cause "Failed to fetch dynamically imported module" error):
+- import { Button, Card, Dialog } from '${importPath}';  // ❌ NO BARREL EXPORT EXISTS
+
+File naming convention:
+- Components are PascalCase: Button, AlertDialog, NavigationMenu
+- Files are kebab-case: button, alert-dialog, navigation-menu
+- Sub-components share files: CardHeader → card, DialogTrigger → dialog`;
+      additionalImportRules = `- 🚫 INDIVIDUAL IMPORTS REQUIRED: Each component from its own file
+- Sub-components share the same file (CardHeader, CardContent → '${importPath}/card')
+- File names use kebab-case (AlertDialog → alert-dialog)`;
+    } else {
+      importInstructions = `MANDATORY IMPORTS - First lines of every story file:
+1. import React from 'react';
+2. import type { Meta, StoryObj } from '@storybook/react';
+3. import { ComponentName } from '${importPath}';`;
+      additionalImportRules = '';
+    }
+
+    // Build the example import based on importStyle
+    const exampleImport = useIndividualImports
+      ? `import { Button } from '${importPath}/button';`
+      : `import { Button } from '${importPath}';`;
+
     return `You are an expert React developer creating Storybook stories using CSF 3.0 format.
 Use ONLY the React components from the ${componentSystemName} listed below.
 
-MANDATORY IMPORTS - First lines of every story file:
-1. import React from 'react';
-2. import type { Meta, StoryObj } from '@storybook/react';
-3. import { ComponentName } from '${config.importPath || 'your-library'}';
+${importInstructions}
 
 ${typescript ? 'Use TypeScript with proper type annotations.' : 'Use JavaScript.'}
 ${chakraInstructions}
 COMPONENT IMPORT RULES:
+${additionalImportRules}
 - ONLY import components listed in the "Available Components" section
 - Use the EXACT import path shown after each component name
 - Components not in the list DO NOT EXIST
@@ -163,7 +203,7 @@ Example structure:
 \`\`\`tsx
 import React from 'react';
 import type { Meta, StoryObj } from '@storybook/react';
-import { Button } from '${config.importPath || 'your-library'}';
+${exampleImport}
 
 const meta: Meta<typeof Button> = {
   title: 'Components/Button',
@@ -205,6 +245,20 @@ ${this.getCommonRules()}`;
 
   generateExamples(config: StoryUIConfig): string {
     const lib = config.importPath || 'your-library';
+    const useIndividualImports = config.importStyle === 'individual';
+
+    // Generate import statements based on importStyle
+    let singleComponentImport: string;
+    let multiComponentImport: string;
+
+    if (useIndividualImports) {
+      singleComponentImport = `import { Button } from '${lib}/button';`;
+      multiComponentImport = `import { Card } from '${lib}/card';
+import { Button } from '${lib}/button';`;
+    } else {
+      singleComponentImport = `import { Button } from '${lib}';`;
+      multiComponentImport = `import { Card, Button, Text } from '${lib}';`;
+    }
 
     return `
 ## Example Stories
@@ -213,7 +267,7 @@ ${this.getCommonRules()}`;
 \`\`\`tsx
 import React from 'react';
 import type { Meta, StoryObj } from '@storybook/react';
-import { Button } from '${lib}';
+${singleComponentImport}
 
 const meta: Meta<typeof Button> = {
   title: 'Components/Button',
@@ -244,7 +298,7 @@ export const Primary: Story = {
 \`\`\`tsx
 import React from 'react';
 import type { Meta, StoryObj } from '@storybook/react';
-import { Card, Button, Text } from '${lib}';
+${multiComponentImport}
 
 const meta: Meta = {
   title: 'Examples/Card Layout',
@@ -259,8 +313,8 @@ export const ProductCard: Story = {
   render: () => (
     <Card style={{ width: 300 }}>
       <img src="https://picsum.photos/300/200" alt="Product" />
-      <Text variant="heading">Product Name</Text>
-      <Text>$99.00</Text>
+      <div>Product Name</div>
+      <div>$99.00</div>
       <Button variant="primary">Add to Cart</Button>
     </Card>
   ),
@@ -274,6 +328,7 @@ export const ProductCard: Story = {
     components: DiscoveredComponent[]
   ): string {
     const lib = config.importPath || 'your-library';
+    const useIndividualImports = config.importStyle === 'individual';
     const firstComponent = components[0];
 
     if (!firstComponent) {
@@ -295,10 +350,19 @@ export const Default: Story = {
 `;
     }
 
+    // Convert PascalCase to kebab-case for individual imports
+    const kebabName = firstComponent.name
+      .replace(/([a-z])([A-Z])/g, '$1-$2')
+      .toLowerCase();
+
+    const importStatement = useIndividualImports
+      ? `import { ${firstComponent.name} } from '${lib}/${kebabName}';`
+      : `import { ${firstComponent.name} } from '${lib}';`;
+
     return `
 import React from 'react';
 import type { Meta, StoryObj } from '@storybook/react';
-import { ${firstComponent.name} } from '${lib}';
+${importStatement}
 
 const meta: Meta<typeof ${firstComponent.name}> = {
   title: 'Components/${firstComponent.name}',

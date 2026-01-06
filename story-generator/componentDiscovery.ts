@@ -2,10 +2,25 @@ import fs from 'fs';
 import path from 'path';
 import { ComponentConfig, StoryUIConfig } from '../story-ui.config.js';
 
+/**
+ * Rich prop type information extracted from argTypes
+ * Design-system and framework agnostic - works with any Storybook project
+ */
+export interface PropInfo {
+  name: string;
+  type: 'string' | 'boolean' | 'number' | 'select' | 'radio' | 'object' | 'array' | 'function' | 'unknown';
+  options?: string[];       // For select/radio types (e.g., variant options)
+  description?: string;     // From argTypes description
+  required?: boolean;       // From TypeScript types or explicit marking
+  defaultValue?: unknown;   // From argTypes defaultValue
+  control?: string;         // Original control type from argTypes
+}
+
 export interface DiscoveredComponent {
   name: string;
   filePath: string;
-  props: string[];
+  props: string[];                // Prop names (backward compatible)
+  propTypes?: PropInfo[];         // Rich type information (new)
   description: string;
   category: 'layout' | 'content' | 'form' | 'navigation' | 'feedback' | 'other';
   slots?: string[];

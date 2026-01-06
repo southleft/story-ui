@@ -468,9 +468,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           };
         }
 
-        const propsList = Object.entries(props).map(([name, info]: [string, any]) =>
-          `- ${name}: ${info.type} ${info.required ? '(required)' : '(optional)'}${info.description ? ` - ${info.description}` : ''}`
-        ).join('\n');
+        const propsList = Object.entries(props).map(([name, info]: [string, any]) => {
+          let line = `- ${name}: ${info.type}`;
+          // Show options for select/radio types
+          if (info.options && info.options.length > 0) {
+            const optionsStr = info.options.slice(0, 6).map((o: string) => `"${o}"`).join(' | ');
+            line += ` [${optionsStr}${info.options.length > 6 ? ' | ...' : ''}]`;
+          }
+          line += ` ${info.required ? '(required)' : '(optional)'}`;
+          if (info.description) {
+            line += ` - ${info.description}`;
+          }
+          return line;
+        }).join('\n');
 
         return {
           content: [{

@@ -106,8 +106,101 @@ export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
       return component.__componentPath;
     }
 
-    // Fall back to import path from config
-    return config.importPath || 'unknown';
+    const basePath = config.importPath || 'unknown';
+
+    // If using individual imports, convert component name to kebab-case file path
+    if (config.importStyle === 'individual') {
+      // Find the base component name (for sub-components like CardHeader, use Card)
+      const baseComponentName = this.getBaseComponentName(component.name);
+      const kebabName = this.toKebabCase(baseComponentName);
+      const result = `${basePath}/${kebabName}`;
+      console.log(`[DEBUG] getImportPath: ${component.name} -> ${result} (importStyle=${config.importStyle})`);
+      return result;
+    }
+
+    console.log(`[DEBUG] getImportPath: ${component.name} -> ${basePath} (importStyle=${config.importStyle})`);
+    // Fall back to import path from config (barrel import)
+    return basePath;
+  }
+
+  /**
+   * Convert PascalCase to kebab-case
+   */
+  protected toKebabCase(str: string): string {
+    return str.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
+  }
+
+  /**
+   * Get the base component name (for sub-components like CardHeader, returns 'Card')
+   */
+  protected getBaseComponentName(componentName: string): string {
+    // Common sub-component patterns in shadcn/ui and other design systems
+    const subComponentPatterns = [
+      // Card sub-components
+      /^(Card)(Header|Footer|Title|Action|Description|Content)$/,
+      // Dialog sub-components
+      /^(Dialog)(Close|Content|Description|Footer|Header|Overlay|Portal|Title|Trigger)$/,
+      // Alert Dialog sub-components
+      /^(AlertDialog)(Portal|Overlay|Trigger|Content|Header|Footer|Title|Description|Action|Cancel)$/,
+      // Dropdown Menu sub-components
+      /^(DropdownMenu)(Portal|Trigger|Content|Group|Label|Item|CheckboxItem|RadioGroup|RadioItem|Separator|Shortcut|Sub|SubTrigger|SubContent)$/,
+      // Context Menu sub-components
+      /^(ContextMenu)(Trigger|Content|Item|CheckboxItem|RadioItem|Label|Separator|Shortcut|Group|Portal|Sub|SubContent|SubTrigger|RadioGroup)$/,
+      // Navigation Menu sub-components
+      /^(NavigationMenu)(List|Item|Content|Trigger|Link|Indicator|Viewport)$/,
+      // Select sub-components
+      /^(Select)(Content|Group|Item|Label|ScrollDownButton|ScrollUpButton|Separator|Trigger|Value)$/,
+      // Menubar sub-components
+      /^(Menubar)(Portal|Menu|Trigger|Content|Group|Separator|Label|Item|Shortcut|CheckboxItem|RadioGroup|RadioItem|Sub|SubTrigger|SubContent)$/,
+      // Accordion sub-components
+      /^(Accordion)(Item|Trigger|Content)$/,
+      // Tabs sub-components
+      /^(Tabs)(List|Trigger|Content)$/,
+      // Sheet sub-components
+      /^(Sheet)(Trigger|Close|Content|Header|Footer|Title|Description)$/,
+      // Avatar sub-components
+      /^(Avatar)(Image|Fallback)$/,
+      // Breadcrumb sub-components
+      /^(Breadcrumb)(List|Item|Link|Page|Separator|Ellipsis)$/,
+      // Command sub-components
+      /^(Command)(Dialog|Input|List|Empty|Group|Item|Shortcut|Separator)$/,
+      // Hover Card sub-components
+      /^(HoverCard)(Trigger|Content)$/,
+      // Popover sub-components
+      /^(Popover)(Trigger|Content|Anchor)$/,
+      // Collapsible sub-components
+      /^(Collapsible)(Trigger|Content)$/,
+      // Drawer sub-components
+      /^(Drawer)(Portal|Overlay|Trigger|Close|Content|Header|Footer|Title|Description)$/,
+      // Radio Group sub-components
+      /^(RadioGroup)(Item)$/,
+      // Toggle Group sub-components
+      /^(ToggleGroup)(Item)$/,
+      // Tooltip sub-components
+      /^(Tooltip)(Trigger|Content|Provider)$/,
+      // Table sub-components
+      /^(Table)(Header|Body|Footer|Head|Row|Cell|Caption)$/,
+      // Input OTP sub-components
+      /^(InputOTP)(Group|Slot|Separator)$/,
+      // Resizable sub-components
+      /^(Resizable)(PanelGroup|Panel|Handle)$/,
+      // Scroll Area sub-components
+      /^(ScrollArea|ScrollBar)$/,
+      // Pagination sub-components
+      /^(Pagination)(Content|Link|Item|Previous|Next|Ellipsis)$/,
+      // Alert sub-components
+      /^(Alert)(Title|Description)$/,
+    ];
+
+    for (const pattern of subComponentPatterns) {
+      const match = componentName.match(pattern);
+      if (match) {
+        return match[1]; // Return the base component name
+      }
+    }
+
+    // No match found, return original name
+    return componentName;
   }
 
   /**

@@ -19,7 +19,7 @@ import { isBlacklistedComponent, isBlacklistedIcon, getBlacklistErrorMessage, IC
 import { StoryTracker, StoryMapping } from '../../story-generator/storyTracker.js';
 import { EnhancedComponentDiscovery } from '../../story-generator/enhancedComponentDiscovery.js';
 import { getDocumentation, isDeprecatedComponent, getComponentReplacement } from '../../story-generator/documentation-sources.js';
-import { postProcessStory } from '../../story-generator/postProcessStory.js';
+import { postProcessStory, fixBarrelImports } from '../../story-generator/postProcessStory.js';
 import { validateStory, ValidationError } from '../../story-generator/storyValidator.js';
 import { StoryHistoryManager } from '../../story-generator/storyHistory.js';
 import { logger } from '../../story-generator/logger.js';
@@ -945,6 +945,19 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
     if (finalValidation.fixedCode) {
       logger.log('✅ Applied validation fixes (React import removal or syntax fixes)');
       fixedFileContents = finalValidation.fixedCode;
+    }
+
+    // Fix barrel imports to individual file imports if configured
+    // This MUST be done after validation since validation can overwrite the code
+    // Pass discoveredComponents for design-system agnostic import resolution
+    if (config.importPath && config.importStyle === 'individual') {
+      fixedFileContents = fixBarrelImports(
+        fixedFileContents,
+        config.importPath,
+        config.importStyle,
+        config.componentsPath,
+        discoveredComponents
+      );
     }
 
     if (!finalValidation.isValid) {

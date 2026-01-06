@@ -1,5 +1,5 @@
 import { StoryUIConfig } from '../story-ui.config.js';
-import { DiscoveredComponent } from './componentDiscovery.js';
+import { DiscoveredComponent, PropInfo } from './componentDiscovery.js';
 import { EnhancedComponentDiscovery } from './enhancedComponentDiscovery.js';
 import { loadConsiderations, considerationsToPrompt } from './considerationsLoader.js';
 import { DocumentationLoader } from './documentationLoader.js';
@@ -268,6 +268,10 @@ export function generatePrompt(config: StoryUIConfig, components: DiscoveredComp
   const systemPrompt = generateSystemPrompt(config);
   const sampleStory = config.sampleStory || generateDefaultSampleStory(config, components);
 
+  // DEBUG: Log component reference to see import paths
+  console.log('[DEBUG] Import style:', config.importStyle);
+  console.log('[DEBUG] Sample component reference (first 500 chars):', componentReference.substring(0, 500));
+
   return {
     systemPrompt,
     componentReference,
@@ -413,6 +417,48 @@ import type { Meta, StoryObj } from '${storybookFramework}';
 import { ComponentName } from '[your-import-path]';`;
   }
 
+  // Determine import style - individual file imports vs barrel imports
+  const useIndividualImports = config.importStyle === 'individual';
+
+  // Generate appropriate import instruction based on importStyle
+  let importInstructionText: string;
+  let importExampleText: string;
+
+  if (useIndividualImports) {
+    // Individual file imports - each component from its own file
+    importInstructionText = `║  IMPORT STYLE: INDIVIDUAL FILE IMPORTS                             ║
+╠════════════════════════════════════════════════════════════════════╣
+║  Each component MUST be imported from its own file:                ║
+║  import { Button } from '${importPath}/button';${' '.repeat(Math.max(0, 20 - importPath.length))}║
+║  import { Card, CardHeader } from '${importPath}/card';${' '.repeat(Math.max(0, 11 - importPath.length))}║
+║  import { Input } from '${importPath}/input';${' '.repeat(Math.max(0, 21 - importPath.length))}║
+╠════════════════════════════════════════════════════════════════════╣
+║  🚫 DO NOT use barrel imports like:                                ║
+║  import { Button, Card } from '${importPath}';${' '.repeat(Math.max(0, 18 - importPath.length))}║`;
+    importExampleText = `
+🔴 CRITICAL: INDIVIDUAL FILE IMPORTS REQUIRED 🔴
+This library does NOT have a barrel export (no index.ts). Each component MUST be imported from its own file!
+
+CORRECT import pattern:
+import { Button } from '${importPath}/button';
+import { Card, CardHeader, CardContent } from '${importPath}/card';
+import { Dialog, DialogContent, DialogTrigger } from '${importPath}/dialog';
+import { Input } from '${importPath}/input';
+
+WRONG - DO NOT USE (will cause "Failed to fetch dynamically imported module" error):
+import { Button, Card, Input } from '${importPath}';
+
+File naming convention:
+- Component names are PascalCase: Button, AlertDialog, NavigationMenu
+- File names are kebab-case: button, alert-dialog, navigation-menu
+- Sub-components share the same file: CardHeader, CardContent → card`;
+  } else {
+    // Barrel imports - all components from single entry point (default)
+    importInstructionText = `║  ALL component imports MUST use:                                   ║
+║  import { ComponentName } from '${importPath}';${' '.repeat(Math.max(0, 32 - importPath.length))}║`;
+    importExampleText = '';
+  }
+
   return `
 ╔════════════════════════════════════════════════════════════════════╗
 ║                    🚨 MANDATORY LIBRARY CONSTRAINT 🚨                ║
@@ -421,8 +467,7 @@ import { ComponentName } from '[your-import-path]';`;
 ║  IMPORT PATH:      ${importPath.padEnd(46)}║
 ║  FRAMEWORK:        ${framework.padEnd(46)}║
 ╠════════════════════════════════════════════════════════════════════╣
-║  ALL component imports MUST use:                                   ║
-║  import { ComponentName } from '${importPath}';${' '.repeat(Math.max(0, 32 - importPath.length))}║
+${importInstructionText}
 ╠════════════════════════════════════════════════════════════════════╣
 ║  🚫 FORBIDDEN LIBRARIES - DO NOT USE:                              ║
 ║  - tamagui, @tamagui/core (NEVER USE)                              ║
@@ -430,7 +475,7 @@ import { ComponentName } from '[your-import-path]';`;
 ║  - @mui/material (unless configured)                               ║
 ║  - antd (unless configured)                                        ║
 ║  - Any library NOT matching: ${importPath.padEnd(36)}║
-╚════════════════════════════════════════════════════════════════════╝
+╚════════════════════════════════════════════════════════════════════╝${importExampleText}
 ${frameworkImportInstructions}
 
 🔴 CRITICAL RULE: NEVER use children in args for ANY component or layout. Always use render functions. 🔴
@@ -548,17 +593,112 @@ function generateComponentReference(components: DiscoveredComponent[], config: S
 }
 
 /**
+ * Convert PascalCase to kebab-case
+ */
+function toKebabCase(str: string): string {
+  return str.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
+}
+
+/**
+ * Get the base component name (for sub-components like CardHeader, returns 'Card')
+ */
+function getBaseComponentName(componentName: string): string {
+  // Common sub-component patterns in shadcn/ui and other design systems
+  const subComponentPatterns = [
+    /^(Card)(Header|Footer|Title|Action|Description|Content)$/,
+    /^(Dialog)(Close|Content|Description|Footer|Header|Overlay|Portal|Title|Trigger)$/,
+    /^(AlertDialog)(Portal|Overlay|Trigger|Content|Header|Footer|Title|Description|Action|Cancel)$/,
+    /^(DropdownMenu)(Portal|Trigger|Content|Group|Label|Item|CheckboxItem|RadioGroup|RadioItem|Separator|Shortcut|Sub|SubTrigger|SubContent)$/,
+    /^(ContextMenu)(Trigger|Content|Item|CheckboxItem|RadioItem|Label|Separator|Shortcut|Group|Portal|Sub|SubContent|SubTrigger|RadioGroup)$/,
+    /^(NavigationMenu)(List|Item|Content|Trigger|Link|Indicator|Viewport)$/,
+    /^(Select)(Content|Group|Item|Label|ScrollDownButton|ScrollUpButton|Separator|Trigger|Value)$/,
+    /^(Menubar)(Portal|Menu|Trigger|Content|Group|Separator|Label|Item|Shortcut|CheckboxItem|RadioGroup|RadioItem|Sub|SubTrigger|SubContent)$/,
+    /^(Accordion)(Item|Trigger|Content)$/,
+    /^(Tabs)(List|Trigger|Content)$/,
+    /^(Sheet)(Trigger|Close|Content|Header|Footer|Title|Description)$/,
+    /^(Avatar)(Image|Fallback)$/,
+    /^(Breadcrumb)(List|Item|Link|Page|Separator|Ellipsis)$/,
+    /^(Command)(Dialog|Input|List|Empty|Group|Item|Shortcut|Separator)$/,
+    /^(HoverCard)(Trigger|Content)$/,
+    /^(Popover)(Trigger|Content|Anchor)$/,
+    /^(Collapsible)(Trigger|Content)$/,
+    /^(Drawer)(Portal|Overlay|Trigger|Close|Content|Header|Footer|Title|Description)$/,
+    /^(RadioGroup)(Item)$/,
+    /^(ToggleGroup)(Item)$/,
+    /^(Tooltip)(Trigger|Content|Provider)$/,
+    /^(Table)(Header|Body|Footer|Head|Row|Cell|Caption)$/,
+    /^(InputOTP)(Group|Slot|Separator)$/,
+    /^(Resizable)(PanelGroup|Panel|Handle)$/,
+    /^(ScrollArea|ScrollBar)$/,
+    /^(Pagination)(Content|Link|Item|Previous|Next|Ellipsis)$/,
+    /^(Alert)(Title|Description)$/,
+  ];
+
+  for (const pattern of subComponentPatterns) {
+    const match = componentName.match(pattern);
+    if (match) {
+      return match[1];
+    }
+  }
+
+  return componentName;
+}
+
+/**
  * Formats a single component reference
  */
 function formatComponentReference(component: DiscoveredComponent, config: StoryUIConfig): string {
   let reference = `- ${component.name}`;
 
-  // Add import path information if available
+  // Add import path information
+  let importPath: string;
   if (component.__componentPath) {
-    reference += ` (import from '${component.__componentPath}')`;
+    importPath = component.__componentPath;
+  } else if (config.importStyle === 'individual') {
+    // Generate individual import path based on component name
+    const basePath = config.importPath || 'unknown';
+    const baseComponentName = getBaseComponentName(component.name);
+    const kebabName = toKebabCase(baseComponentName);
+    importPath = `${basePath}/${kebabName}`;
+  } else {
+    importPath = config.importPath || '';
   }
 
-  if (component.props && component.props.length > 0) {
+  if (importPath) {
+    reference += ` (import from '${importPath}')`;
+  }
+
+  // Use rich prop types if available, otherwise fall back to simple prop names
+  if (component.propTypes && component.propTypes.length > 0) {
+    reference += '\n    Props:';
+    for (const prop of component.propTypes) {
+      let propLine = `\n      - ${prop.name}`;
+      
+      // Add type information
+      if (prop.type !== 'unknown') {
+        propLine += `: ${prop.type}`;
+      }
+      
+      // Add options for select/radio types
+      if (prop.options && prop.options.length > 0) {
+        const optionsStr = prop.options.slice(0, 5).map(o => `"${o}"`).join(' | ');
+        propLine += ` [${optionsStr}${prop.options.length > 5 ? '...' : ''}]`;
+      }
+      
+      // Add description
+      if (prop.description) {
+        propLine += ` - ${prop.description}`;
+      }
+      
+      // Add default value
+      if (prop.defaultValue !== undefined) {
+        propLine += ` (default: ${JSON.stringify(prop.defaultValue)})`;
+      }
+      
+      reference += propLine;
+    }
+  } else if (component.props && component.props.length > 0) {
+    // Fall back to simple prop names
     reference += `: Props: ${component.props.join(', ')}`;
   }
 
@@ -735,67 +875,6 @@ function generateExamples(config: StoryUIConfig): string[] {
   }
 
   return examples;
-}
-
-/**
- * Extracts the base component name from a compound component name.
- * Used when generating individual file imports to group related components.
- *
- * Examples:
- * - CardHeader -> Card (imports from card.tsx)
- * - AlertDialogTrigger -> AlertDialog (imports from alert-dialog.tsx)
- * - Button -> Button (imports from button.tsx)
- *
- * This pattern is common across multiple frameworks:
- * - React: shadcn/ui, Radix UI compound components
- * - Vue: Radix Vue, shadcn-vue compound components
- * - Angular: Angular Material (mat-card-header -> mat-card)
- * - Web Components: Shoelace (sl-card-header -> sl-card)
- *
- * Note: For frameworks that use slots instead of compound components
- * (many Web Components, some Svelte), this function returns the name unchanged.
- */
-function getBaseComponentName(componentName: string): string {
-  // Known suffixes that indicate sub-components (order matters - check longer ones first)
-  const suffixes = [
-    'Fallback', 'Image', 'Trigger', 'Content', 'Header', 'Footer', 'Title',
-    'Description', 'Action', 'Cancel', 'Close', 'Overlay', 'Portal',
-    'Item', 'Group', 'Label', 'Separator', 'Root', 'List', 'Link',
-    'Previous', 'Next', 'Ellipsis', 'Viewport', 'ScrollBar', 'Corner',
-    'Thumb', 'Track', 'Range', 'Indicator', 'Icon', 'Slot', 'Input',
-    'Handle', 'Panel', 'Primitive'
-  ];
-
-  for (const suffix of suffixes) {
-    if (componentName.endsWith(suffix) && componentName !== suffix) {
-      const base = componentName.slice(0, -suffix.length);
-      if (base.length > 0) {
-        return base;
-      }
-    }
-  }
-  return componentName;
-}
-
-/**
- * Converts PascalCase to kebab-case for file names.
- * Used when generating individual file imports.
- *
- * Examples:
- * - AlertDialog -> alert-dialog
- * - Button -> button
- * - InputOTP -> input-otp
- *
- * This conversion works across frameworks since kebab-case file names are:
- * - Required: Angular, Web Components
- * - Common: Vue, React (for some libraries)
- * - Accepted: Svelte (though PascalCase is more common)
- */
-function toKebabCase(name: string): string {
-  return name
-    .replace(/([a-z])([A-Z])/g, '$1-$2')
-    .replace(/([A-Z])([A-Z][a-z])/g, '$1-$2')
-    .toLowerCase();
 }
 
 /**
@@ -1055,6 +1134,16 @@ export async function buildClaudePrompt(
 Follow the framework-specific import patterns shown above.`;
   }
 
+  // Add import style specific rules
+  const importStyleRules: string[] = [];
+  if (config.importStyle === 'individual') {
+    importStyleRules.push(
+      `- 🚫 INDIVIDUAL IMPORTS REQUIRED: Import each component from its own file (e.g., '${config.importPath}/button', NOT '${config.importPath}')`,
+      `- Sub-components share files: CardHeader, CardContent → '${config.importPath}/card'`,
+      '- File names use kebab-case: AlertDialog → alert-dialog, NavigationMenu → navigation-menu'
+    );
+  }
+
   promptParts.push(
     `Output a complete Storybook story file in TypeScript. Import components as shown in the sample template below. Use the following sample as a template. Respond ONLY with a single code block containing the full file, and nothing else.`,
     '',
@@ -1062,6 +1151,7 @@ Follow the framework-specific import patterns shown above.`;
     frameworkFirstLineRules,
     '',
     'OTHER CRITICAL RULES:',
+    ...importStyleRules,
     '- Story title MUST always start with "Generated/" (e.g., title: "Generated/Recipe Card")',
     '- Do NOT use prefixes like "Content/", "Components/", or any other section name',
     '- ONLY import components that are listed in the "Available components" section',
@@ -1221,12 +1311,23 @@ export async function buildFrameworkAwarePrompt(
     promptParts.push(...frameworkRules);
   }
 
+  // Add import style specific rules for framework-aware prompts
+  const importStyleRulesFramework: string[] = [];
+  if (config.importStyle === 'individual') {
+    importStyleRulesFramework.push(
+      `- 🚫 INDIVIDUAL IMPORTS REQUIRED: Import each component from its own file (e.g., '${config.importPath}/button', NOT '${config.importPath}')`,
+      `- Sub-components share files: CardHeader, CardContent → '${config.importPath}/card'`,
+      '- File names use kebab-case: AlertDialog → alert-dialog, NavigationMenu → navigation-menu'
+    );
+  }
+
   promptParts.push(
     '',
     `Output a complete Storybook story file in TypeScript. Import components as shown in the sample template below. Use the following sample as a template. Respond ONLY with a single code block containing the full file, and nothing else.`,
     '',
     '<rules>',
     'CRITICAL REMINDERS:',
+    ...importStyleRulesFramework,
     '- Story title MUST always start with "Generated/" (e.g., title: "Generated/Recipe Card")',
     '- ONLY import components that are listed in the "Available components" section',
     '- ALWAYS use the exact import path shown in parentheses after each component',
