@@ -1,3 +1,10 @@
+## [4.7.1](https://github.com/southleft/story-ui/compare/v4.7.0...v4.7.1) (2026-01-06)
+
+
+### Bug Fixes
+
+* **generator:** improve props extraction and response format ([939ebc5](https://github.com/southleft/story-ui/commit/939ebc52e10ccb28ec44aa4e272132062d5c7e0d))
+
 # [4.7.0](https://github.com/southleft/story-ui/compare/v4.6.3...v4.7.0) (2026-01-06)
 
 
