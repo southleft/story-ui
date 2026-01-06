@@ -5,6 +5,7 @@
  * Supports Composition API and Options API.
  */
 
+import * as path from 'path';
 import {
   FrameworkType,
   StoryFramework,
@@ -23,6 +24,83 @@ export class VueAdapter extends BaseFrameworkAdapter {
     'chromatic',
   ];
   readonly defaultExtension = '.stories.ts';
+
+  /**
+   * Get glob patterns for Vue component files
+   */
+  getComponentFilePatterns(): string[] {
+    return ['**/*.vue', '**/*.ts', '**/*.js'];
+  }
+
+  /**
+   * Extract component names from a Vue source file.
+   * Handles .vue SFCs and barrel files.
+   */
+  extractComponentNamesFromFile(filePath: string, content: string): string[] {
+    const names: Set<string> = new Set();
+
+    // For .vue files, derive name from filename or defineComponent name
+    if (filePath.endsWith('.vue')) {
+      // Try to extract name from defineComponent({ name: 'ComponentName' })
+      const defineComponentNameRegex = /defineComponent\s*\(\s*\{[^]*?name\s*:\s*['"`]([A-Z][a-zA-Z0-9]*)['"`]/;
+      const nameMatch = content.match(defineComponentNameRegex);
+      if (nameMatch) {
+        names.add(nameMatch[1]);
+      } else {
+        // Try Options API name property
+        const optionsNameRegex = /name\s*:\s*['"`]([A-Z][a-zA-Z0-9]*)['"`]/;
+        const optionsMatch = content.match(optionsNameRegex);
+        if (optionsMatch) {
+          names.add(optionsMatch[1]);
+        } else {
+          // Fallback to filename
+          const fileName = path.basename(filePath, '.vue');
+          // If already PascalCase, use as-is; otherwise convert kebab-case/snake_case
+          if (/^[A-Z][a-zA-Z0-9]*$/.test(fileName)) {
+            names.add(fileName);
+          } else {
+            // Convert kebab-case or snake_case to PascalCase
+            const pascalName = fileName
+              .split(/[-_]/)
+              .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+              .join('');
+            if (/^[A-Z]/.test(pascalName)) {
+              names.add(pascalName);
+            }
+          }
+        }
+      }
+      return Array.from(names);
+    }
+
+    // For .ts/.js barrel files, look for re-exports
+    // Pattern: export { default as ComponentName } from './Component.vue'
+    const barrelExportRegex = /export\s*\{\s*default\s+as\s+([A-Z][a-zA-Z0-9]*)\s*\}\s*from\s*['"`]([^'"`]+\.vue)['"`]/g;
+    let match;
+    while ((match = barrelExportRegex.exec(content)) !== null) {
+      names.add(match[1]);
+    }
+
+    // Pattern: export { ComponentName } from './path'
+    const namedExportRegex = /export\s*\{\s*([^}]+)\s*\}\s*from\s*['"`]([^'"`]+)['"`]/g;
+    while ((match = namedExportRegex.exec(content)) !== null) {
+      const exports = match[1].split(',');
+      for (const exp of exports) {
+        const namePart = exp.trim().split(/\s+as\s+/).pop()?.trim() || '';
+        if (/^[A-Z][A-Za-z0-9]*$/.test(namePart)) {
+          names.add(namePart);
+        }
+      }
+    }
+
+    // Pattern: export const ComponentName = ...
+    const constExportRegex = /export\s+const\s+([A-Z][A-Za-z0-9]*)\s*=/g;
+    while ((match = constExportRegex.exec(content)) !== null) {
+      names.add(match[1]);
+    }
+
+    return Array.from(names);
+  }
 
   generateSystemPrompt(
     config: StoryUIConfig,

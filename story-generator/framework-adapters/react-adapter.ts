@@ -5,6 +5,7 @@
  * Supports CSF 3.0 format with TypeScript.
  */
 
+import * as path from 'path';
 import {
   FrameworkType,
   StoryFramework,
@@ -23,6 +24,58 @@ export class ReactAdapter extends BaseFrameworkAdapter {
     'chromatic',
   ];
   readonly defaultExtension = '.stories.tsx';
+
+  /**
+   * Get glob patterns for React component files
+   */
+  getComponentFilePatterns(): string[] {
+    return ['**/*.tsx', '**/*.jsx', '**/*.ts', '**/*.js'];
+  }
+
+  /**
+   * Extract component names from a React source file.
+   * Handles both inline exports and grouped exports.
+   */
+  extractComponentNamesFromFile(filePath: string, content: string): string[] {
+    const names: Set<string> = new Set();
+
+    // 1. Check for inline exports: export function/const/class Name
+    const inlineExportRegex = /export\s+(default\s+)?(function|const|class)\s+([A-Z][A-Za-z0-9]*)/g;
+    let match;
+    while ((match = inlineExportRegex.exec(content)) !== null) {
+      names.add(match[3]);
+    }
+
+    // 2. Check for grouped exports: export { Name1, Name2 }
+    const groupedExportRegex = /export\s*\{\s*([^}]+)\s*\}/g;
+    while ((match = groupedExportRegex.exec(content)) !== null) {
+      const exports = match[1].split(',');
+      for (const exp of exports) {
+        // Handle "Name" or "Name as Alias" - we want the original name
+        const namePart = exp.trim().split(/\s+as\s+/)[0].trim();
+        // Only include PascalCase names (components start with uppercase)
+        if (/^[A-Z][A-Za-z0-9]*$/.test(namePart)) {
+          names.add(namePart);
+        }
+      }
+    }
+
+    // 3. Check for React.forwardRef patterns
+    const forwardRefRegex = /export\s+const\s+([A-Z][A-Za-z0-9]*)\s*=\s*(?:React\.)?forwardRef/g;
+    while ((match = forwardRefRegex.exec(content)) !== null) {
+      names.add(match[1]);
+    }
+
+    // 4. Fallback to filename if no exports found
+    if (names.size === 0) {
+      const fileName = path.basename(filePath, path.extname(filePath));
+      if (fileName !== 'index' && /^[A-Z]/.test(fileName)) {
+        names.add(fileName);
+      }
+    }
+
+    return Array.from(names);
+  }
 
   generateSystemPrompt(
     config: StoryUIConfig,

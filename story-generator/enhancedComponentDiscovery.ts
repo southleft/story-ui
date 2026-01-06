@@ -4,6 +4,13 @@ import { DiscoveredComponent } from './componentDiscovery.js';
 import { StoryUIConfig } from '../story-ui.config.js';
 import { DynamicPackageDiscovery } from './dynamicPackageDiscovery.js';
 import { logger } from './logger.js';
+import { BaseFrameworkAdapter } from './framework-adapters/base-adapter.js';
+import { ReactAdapter } from './framework-adapters/react-adapter.js';
+import { VueAdapter } from './framework-adapters/vue-adapter.js';
+import { AngularAdapter } from './framework-adapters/angular-adapter.js';
+import { SvelteAdapter } from './framework-adapters/svelte-adapter.js';
+import { WebComponentsAdapter } from './framework-adapters/web-components-adapter.js';
+import { FrameworkType } from './framework-adapters/types.js';
 
 export interface ComponentSource {
   type: 'npm' | 'local' | 'custom-elements' | 'typescript';
@@ -23,9 +30,32 @@ export class EnhancedComponentDiscovery {
   private config: StoryUIConfig;
   private discoveredComponents: Map<string, EnhancedComponent> = new Map();
   private validateAvailableComponents: Set<string> = new Set();
+  private frameworkAdapter: BaseFrameworkAdapter;
 
   constructor(config: StoryUIConfig) {
     this.config = config;
+    this.frameworkAdapter = this.createFrameworkAdapter();
+  }
+
+  /**
+   * Create the appropriate framework adapter based on config
+   */
+  private createFrameworkAdapter(): BaseFrameworkAdapter {
+    const framework = (this.config.componentFramework || 'react') as FrameworkType;
+    
+    switch (framework) {
+      case 'vue':
+        return new VueAdapter();
+      case 'angular':
+        return new AngularAdapter();
+      case 'svelte':
+        return new SvelteAdapter();
+      case 'web-components':
+        return new WebComponentsAdapter();
+      case 'react':
+      default:
+        return new ReactAdapter();
+    }
   }
 
   /**
@@ -695,7 +725,10 @@ export class EnhancedComponentDiscovery {
       return;
     }
 
-    const files = this.findComponentFiles(source.path, source.patterns || ['*.tsx', '*.jsx']);
+    // Use adapter's file patterns if source doesn't specify patterns
+    const defaultPatterns = this.frameworkAdapter.getComponentFilePatterns()
+      .map(p => p.replace('**/', '')); // Convert glob to simpler patterns
+    const files = this.findComponentFiles(source.path, source.patterns || defaultPatterns);
 
     for (const file of files) {
       // Skip story files, test files, and other non-component files
@@ -704,9 +737,15 @@ export class EnhancedComponentDiscovery {
       }
 
       const content = fs.readFileSync(file, 'utf-8');
-      const componentName = this.extractComponentName(file, content);
+      
+      // Use framework adapter for component extraction
+      const componentNames = this.frameworkAdapter.extractComponentNamesFromFile(file, content);
 
-      if (componentName && !this.discoveredComponents.has(componentName)) {
+      for (const componentName of componentNames) {
+        if (this.discoveredComponents.has(componentName)) {
+          continue;
+        }
+
         // Skip Story UI components and other internal components
         if (this.shouldSkipComponent(componentName, content)) {
           continue;
@@ -803,20 +842,39 @@ export class EnhancedComponentDiscovery {
   /**
    * Extract component name from file
    */
-  private extractComponentName(filePath: string, content: string): string | null {
-    // Try to extract from export statements
-    const exportMatch = content.match(/export\s+(default\s+)?(function|const|class)\s+([A-Z][A-Za-z0-9]*)/);
-    if (exportMatch) {
-      return exportMatch[3];
+  private extractComponentNames(filePath: string, content: string): string[] {
+    const names: Set<string> = new Set();
+
+    // 1. Check for inline exports: export function/const/class Name
+    const inlineExportRegex = /export\s+(default\s+)?(function|const|class)\s+([A-Z][A-Za-z0-9]*)/g;
+    let match;
+    while ((match = inlineExportRegex.exec(content)) !== null) {
+      names.add(match[3]);
     }
 
-    // Try to extract from file name
-    const fileName = path.basename(filePath, path.extname(filePath));
-    if (fileName !== 'index' && /^[A-Z]/.test(fileName)) {
-      return fileName;
+    // 2. Check for grouped exports: export { Name1, Name2 }
+    const groupedExportRegex = /export\s*\{\s*([^}]+)\s*\}/g;
+    while ((match = groupedExportRegex.exec(content)) !== null) {
+      const exports = match[1].split(',');
+      for (const exp of exports) {
+        // Handle "Name" or "Name as Alias" - we want the original name
+        const namePart = exp.trim().split(/\s+as\s+/)[0].trim();
+        // Only include PascalCase names (components start with uppercase)
+        if (/^[A-Z][A-Za-z0-9]*$/.test(namePart)) {
+          names.add(namePart);
+        }
+      }
     }
 
-    return null;
+    // 3. Fallback to filename if no exports found
+    if (names.size === 0) {
+      const fileName = path.basename(filePath, path.extname(filePath));
+      if (fileName !== 'index' && /^[A-Z]/.test(fileName)) {
+        names.add(fileName);
+      }
+    }
+
+    return Array.from(names);
   }
 
   /**

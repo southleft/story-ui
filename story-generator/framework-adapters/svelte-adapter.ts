@@ -5,6 +5,7 @@
  * Supports both Svelte 4 and Svelte 5 (runes).
  */
 
+import * as path from 'path';
 import {
   FrameworkType,
   StoryFramework,
@@ -22,6 +23,69 @@ export class SvelteAdapter extends BaseFrameworkAdapter {
     'chromatic',
   ];
   readonly defaultExtension = '.stories.svelte';
+
+  /**
+   * Get glob patterns for Svelte component files
+   */
+  getComponentFilePatterns(): string[] {
+    return ['**/*.svelte', '**/*.ts', '**/*.js'];
+  }
+
+  /**
+   * Extract component names from a Svelte source file.
+   * Handles .svelte files and barrel exports.
+   */
+  extractComponentNamesFromFile(filePath: string, content: string): string[] {
+    const names: Set<string> = new Set();
+
+    // For .svelte files, derive name from filename
+    if (filePath.endsWith('.svelte')) {
+      const fileName = path.basename(filePath, '.svelte');
+      // Skip SvelteKit special files
+      if (fileName.startsWith('+')) {
+        return [];
+      }
+      // If already PascalCase, use as-is; otherwise convert kebab-case/snake_case
+      if (/^[A-Z][a-zA-Z0-9]*$/.test(fileName)) {
+        names.add(fileName);
+      } else {
+        // Convert kebab-case or snake_case to PascalCase
+        const pascalName = fileName
+          .split(/[-_]/)
+          .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+          .join('');
+        if (/^[A-Z]/.test(pascalName)) {
+          names.add(pascalName);
+        }
+      }
+      return Array.from(names);
+    }
+
+    // For .ts/.js barrel files
+    // Pattern: export { default as ComponentName } from './Component.svelte'
+    const barrelExportRegex = /export\s*\{\s*default\s+as\s+([A-Z][a-zA-Z0-9]*)\s*\}\s*from\s*['"`]([^'"`]+\.svelte)['"`]/g;
+    let match;
+    while ((match = barrelExportRegex.exec(content)) !== null) {
+      names.add(match[1]);
+    }
+
+    // Pattern: export { ComponentName } from './path'
+    const namedExportRegex = /export\s*\{\s*([^}]+)\s*\}\s*from\s*['"`]([^'"`]+)['"`]/g;
+    while ((match = namedExportRegex.exec(content)) !== null) {
+      const exports = match[1].split(',');
+      for (const exp of exports) {
+        const namePart = exp.trim().split(/\s+as\s+/).pop()?.trim() || '';
+        if (/^[A-Z][A-Za-z0-9]*$/.test(namePart)) {
+          names.add(namePart);
+        }
+      }
+    }
+
+    // Pattern: export * from './Component.svelte'
+    // These need to be resolved at discovery level
+
+    return Array.from(names);
+  }
 
   generateSystemPrompt(
     config: StoryUIConfig,

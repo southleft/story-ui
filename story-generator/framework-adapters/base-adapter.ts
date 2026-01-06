@@ -26,6 +26,18 @@ export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
   abstract readonly defaultExtension: string;
 
   /**
+   * Get glob patterns for component files in this framework.
+   * Used by component discovery to find relevant files.
+   */
+  abstract getComponentFilePatterns(): string[];
+
+  /**
+   * Extract component names from a source file.
+   * Framework-specific implementation to detect component exports.
+   */
+  abstract extractComponentNamesFromFile(filePath: string, content: string): string[];
+
+  /**
    * Generate the system prompt for this framework
    */
   abstract generateSystemPrompt(

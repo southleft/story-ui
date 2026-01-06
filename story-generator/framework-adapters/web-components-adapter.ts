@@ -5,6 +5,7 @@
  * Supports standard Web Components and Lit framework.
  */
 
+import * as path from 'path';
 import {
   FrameworkType,
   StoryFramework,
@@ -22,6 +23,95 @@ export class WebComponentsAdapter extends BaseFrameworkAdapter {
     'chromatic',
   ];
   readonly defaultExtension = '.stories.ts';
+
+  /**
+   * Get glob patterns for Web Component files
+   */
+  getComponentFilePatterns(): string[] {
+    return ['**/*.ts', '**/*.js', '**/custom-elements.json'];
+  }
+
+  /**
+   * Extract component names from a Web Component source file.
+   * Handles vanilla customElements.define, Lit @customElement, and Stencil @Component.
+   */
+  extractComponentNamesFromFile(filePath: string, content: string): string[] {
+    const names: Set<string> = new Set();
+
+    // Check for Custom Elements Manifest (preferred)
+    if (filePath.endsWith('custom-elements.json')) {
+      try {
+        const manifest = JSON.parse(content);
+        if (manifest.modules) {
+          for (const module of manifest.modules) {
+            if (module.declarations) {
+              for (const declaration of module.declarations) {
+                if (declaration.customElement && declaration.tagName) {
+                  // Convert tag-name to PascalCase
+                  const pascalName = this.tagToPascalCase(declaration.tagName);
+                  names.add(pascalName);
+                }
+              }
+            }
+          }
+        }
+        return Array.from(names);
+      } catch {
+        // Invalid JSON, continue with regex patterns
+      }
+    }
+
+    // Pattern 1: Vanilla customElements.define('tag-name', ClassName) with named class
+    const vanillaDefineNamedRegex = /customElements\.define\(\s*['"]([a-z][\w-]*)['"],\s*([A-Z][A-Za-z0-9]*)\s*[),]/g;
+    let match;
+    while ((match = vanillaDefineNamedRegex.exec(content)) !== null) {
+      names.add(match[2]); // Use the class name
+    }
+
+    // Pattern 1b: Vanilla customElements.define('tag-name', class extends...) - inline class
+    // For inline classes, convert tag name to PascalCase
+    const vanillaDefineInlineRegex = /customElements\.define\(\s*['"]([a-z][\w-]*)['"],\s*class\s+extends/gi;
+    while ((match = vanillaDefineInlineRegex.exec(content)) !== null) {
+      const pascalName = this.tagToPascalCase(match[1]);
+      names.add(pascalName);
+    }
+
+    // Pattern 2: Lit @customElement('tag-name') decorator (handles multiline)
+    const litDecoratorRegex = /@customElement\(\s*['"]([a-z][\w-]*)['"][^)]*\)[\s\S]*?(?:export\s+)?class\s+([A-Z][A-Za-z0-9]*)/g;
+    while ((match = litDecoratorRegex.exec(content)) !== null) {
+      names.add(match[2]); // Use the class name
+    }
+
+    // Pattern 3: Stencil @Component({ tag: 'tag-name' }) decorator
+    const stencilRegex = /@Component\(\s*\{[^}]*tag:\s*['"]([a-z][\w-]*)['"][^}]*\}\s*\)\s*(?:export\s+)?class\s+(\w+)/gi;
+    while ((match = stencilRegex.exec(content)) !== null) {
+      names.add(match[2]); // Use the class name
+    }
+
+    // Pattern 4: Named exports from barrel files
+    const namedExportRegex = /export\s*\{\s*([^}]+)\s*\}\s*from\s*['"`]([^'"`]+)['"`]/g;
+    while ((match = namedExportRegex.exec(content)) !== null) {
+      const exports = match[1].split(',');
+      for (const exp of exports) {
+        const namePart = exp.trim().split(/\s+as\s+/).pop()?.trim() || '';
+        if (/^[A-Z][A-Za-z0-9]*$/.test(namePart)) {
+          names.add(namePart);
+        }
+      }
+    }
+
+    return Array.from(names);
+  }
+
+  /**
+   * Convert a kebab-case tag name to PascalCase
+   */
+  private tagToPascalCase(tagName: string): string {
+    return tagName
+      .split('-')
+      .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+      .join('');
+  }
 
   generateSystemPrompt(
     config: StoryUIConfig,

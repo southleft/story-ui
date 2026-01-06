@@ -5,6 +5,7 @@
  * Supports standalone components and module-based components.
  */
 
+import * as path from 'path';
 import {
   FrameworkType,
   StoryFramework,
@@ -22,6 +23,68 @@ export class AngularAdapter extends BaseFrameworkAdapter {
     'chromatic',
   ];
   readonly defaultExtension = '.stories.ts';
+
+  /**
+   * Get glob patterns for Angular component files
+   */
+  getComponentFilePatterns(): string[] {
+    return ['**/*.component.ts', '**/*.ts'];
+  }
+
+  /**
+   * Extract component names from an Angular source file.
+   * Handles @Component decorators and NgModule exports.
+   */
+  extractComponentNamesFromFile(filePath: string, content: string): string[] {
+    const names: Set<string> = new Set();
+
+    // Pattern 1: @Component decorator with class
+    // @Component({ selector: 'app-name' }) export class NameComponent
+    const componentRegex = /@Component\s*\(\s*\{[\s\S]*?\}\s*\)\s*export\s+class\s+(\w+)/g;
+    let match;
+    while ((match = componentRegex.exec(content)) !== null) {
+      names.add(match[1]);
+    }
+
+    // Pattern 2: NgModule exports array - for barrel files
+    const exportsArrayRegex = /exports\s*:\s*\[([\s\S]*?)\]/g;
+    while ((match = exportsArrayRegex.exec(content)) !== null) {
+      const exportsContent = match[1];
+      const componentNames = exportsContent
+        .split(',')
+        .map(item => item.trim())
+        .filter(item => item && !item.startsWith('//') && /^[A-Z]/.test(item));
+      componentNames.forEach(name => names.add(name));
+    }
+
+    // Pattern 3: Named exports from barrel files
+    // export { NameComponent } from './name.component'
+    const namedExportRegex = /export\s*\{\s*([^}]+)\s*\}\s*from\s*['"`]([^'"`]+)['"`]/g;
+    while ((match = namedExportRegex.exec(content)) !== null) {
+      const exports = match[1].split(',');
+      for (const exp of exports) {
+        const namePart = exp.trim().split(/\s+as\s+/).pop()?.trim() || '';
+        if (/^[A-Z][A-Za-z0-9]*(?:Component)?$/.test(namePart)) {
+          names.add(namePart);
+        }
+      }
+    }
+
+    // Pattern 4: export * from './path' - track for further resolution
+    // (handled at discovery level, not here)
+
+    // Filter out non-components (services, modules, etc.)
+    const filteredNames = Array.from(names).filter(name => {
+      // Keep if ends with Component or doesn't end with Service/Module/Directive/Pipe
+      return name.endsWith('Component') || 
+        (!name.endsWith('Service') && 
+         !name.endsWith('Module') && 
+         !name.endsWith('Directive') && 
+         !name.endsWith('Pipe'));
+    });
+
+    return filteredNames;
+  }
 
   generateSystemPrompt(
     config: StoryUIConfig,
