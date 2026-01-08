@@ -1,3 +1,10 @@
+## [4.8.1](https://github.com/southleft/story-ui/compare/v4.8.0...v4.8.1) (2026-01-08)
+
+
+### Bug Fixes
+
+* **generator:** improve slot handling and validation for Web Components ([5912420](https://github.com/southleft/story-ui/commit/5912420dab9455308a8e85ce26b6be7e777c3026))
+
 # [4.8.0](https://github.com/southleft/story-ui/compare/v4.7.1...v4.8.0) (2026-01-06)
 
 
