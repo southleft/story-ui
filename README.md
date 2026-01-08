@@ -154,6 +154,28 @@ export default {
 };
 ```
 
+### Advanced Configuration: Import Examples (Web Components / Custom Libraries)
+
+For component libraries with non-standard import paths (especially Web Components with local imports), use `importExamples` to teach the AI your import patterns:
+
+```javascript
+export default {
+  framework: 'web-components',
+  importPath: '../../../components',
+
+  // Teach the AI your library's import structure
+  importExamples: [
+    "import '../../../components/button/button'; // For <my-button>",
+    "import '../../../components/card/card'; // For <my-card>",
+    "import '../../../components/icon/icons/check'; // For <my-icon-check>",
+  ],
+
+  // ... other config
+};
+```
+
+The AI uses these examples to understand your component library's folder structure and generate correct imports.
+
 ---
 
 ## Usage
@@ -443,6 +465,30 @@ For simpler setups, use `story-ui-considerations.md`:
 - Use Card with shadow="sm" for content containers
 ```
 
+### Component-Specific Behaviors (Critical for Web Components)
+
+For libraries where components have specific requirements (like attributes needed for visibility), document these behaviors:
+
+```markdown
+# Component-Specific Behaviors
+
+## Alert Component (`<my-alert>`)
+**IMPORTANT**: The alert requires `is-active` attribute to be visible.
+
+<!-- WRONG - will not render -->
+<my-alert variant="success">Message</my-alert>
+
+<!-- CORRECT -->
+<my-alert variant="success" is-active>Message</my-alert>
+
+## Import Patterns
+Components are in individual folders:
+- import '../../../components/alert/alert';
+- import '../../../components/icon/icons/check';
+```
+
+The AI reads this file before every story generation, ensuring component-specific rules are followed.
+
 ---
 
 ## CLI Reference
@@ -457,7 +503,36 @@ npx story-ui start --port 4002  # Custom port
 
 # Run MCP STDIO server (for Claude Desktop local integration)
 npx story-ui mcp
+
+# Check installation status and version
+npx story-ui status
+
+# Update Story UI files to latest version
+npx story-ui update
 ```
+
+### Resetting / Uninstalling Story UI
+
+To completely remove Story UI from your project and start fresh:
+
+```bash
+# Remove Story UI configuration and panel files
+rm -f story-ui.config.js
+rm -f story-ui-considerations.md
+rm -rf story-ui-docs/
+rm -rf src/stories/StoryUI/
+rm -rf src/stories/generated/
+
+# Remove package.json script entries (manual)
+# Delete "story-ui" and "storybook-with-ui" from scripts
+
+# Optionally remove the package
+npm uninstall @tpitre/story-ui
+
+# Optionally clean .env (remove VITE_STORY_UI_PORT, API keys)
+```
+
+After removal, run `npx story-ui init` to start fresh with a clean installation.
 
 ---
 

@@ -675,7 +675,10 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       const astValidation = validateStoryCode(aiText, validationFileName, config);
 
       // 3. Import validation (check against discovered components)
-      const importValidation = await preValidateImports(aiText, config, discovery);
+      // Skip for web-components - they use custom element tags, not imported component classes
+      const importValidation = detectedFramework === 'web-components'
+        ? { isValid: true, errors: [] }
+        : await preValidateImports(aiText, config, discovery);
 
       // Aggregate all errors
       const aggregatedErrors = aggregateValidationErrors(

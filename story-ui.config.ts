@@ -119,6 +119,12 @@ export interface StoryUIConfig {
   designSystemGuidelines?: DesignSystemGuidelines;
   /** Icon imports configuration (auto-detected from package.json or manually configured) */
   iconImports?: IconImportsConfig;
+  /**
+   * Example import statements to guide the LLM on correct import patterns.
+   * Useful for Web Components or custom folder structures.
+   * Example: ["import '../../../components/alert/alert'; // For <al-alert> component"]
+   */
+  importExamples?: string[];
 }
 
 // Default generic configuration

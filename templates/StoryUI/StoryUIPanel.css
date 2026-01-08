@@ -993,6 +993,28 @@
   font-style: italic;
 }
 
+/* CRITICAL: Force text color on all child elements
+   Storybook's design system aggressively overrides paragraph colors.
+   These rules MUST use !important and high specificity to win. */
+
+/* Light mode: Ensure AI message text is dark on light background */
+.sui-message-ai .sui-message-bubble p,
+.sui-message-ai .sui-message-bubble strong,
+.sui-message-ai .sui-message-bubble em,
+.sui-message-ai .sui-message-bubble span,
+.sui-message-ai .sui-message-bubble li {
+  color: #18181b !important;
+}
+
+/* Dark mode: Ensure AI message text is light on dark background */
+.sui-root.dark .sui-message-ai .sui-message-bubble p,
+.sui-root.dark .sui-message-ai .sui-message-bubble strong,
+.sui-root.dark .sui-message-ai .sui-message-bubble em,
+.sui-root.dark .sui-message-ai .sui-message-bubble span,
+.sui-root.dark .sui-message-ai .sui-message-bubble li {
+  color: #fafafa !important;
+}
+
 /* Inline code styling */
 .sui-message-bubble code {
   font-family: var(--font-mono);

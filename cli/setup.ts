@@ -485,7 +485,7 @@ export async function setupCommand(options: SetupOptions = {}) {
     '@storybook/react', '@storybook/react-vite', '@storybook/react-webpack5', '@storybook/nextjs',
     '@storybook/angular', '@storybook/vue3', '@storybook/vue3-vite',
     '@storybook/svelte', '@storybook/svelte-vite',
-    '@storybook/web-components', '@storybook/web-components-vite'
+    '@storybook/web-components', '@storybook/web-components-vite', '@storybook/web-components-webpack5'
   ];
   const hasStorybook = storybookPackages.some(pkg => devDeps[pkg] || deps[pkg]) ||
                       fs.existsSync(path.join(process.cwd(), '.storybook'));
@@ -539,8 +539,12 @@ export async function setupCommand(options: SetupOptions = {}) {
     componentFramework = 'svelte';
     console.log(chalk.green('✅ Detected Svelte Storybook'));
   }
-  // Check for Web Components Storybook (vite variant first)
-  else if (devDeps['@storybook/web-components-vite'] || deps['@storybook/web-components-vite']) {
+  // Check for Web Components Storybook (webpack5 first, then vite, then generic)
+  else if (devDeps['@storybook/web-components-webpack5'] || deps['@storybook/web-components-webpack5']) {
+    storybookFramework = '@storybook/web-components-webpack5';
+    componentFramework = 'web-components';
+    console.log(chalk.green('✅ Detected Webpack 5-based Web Components Storybook'));
+  } else if (devDeps['@storybook/web-components-vite'] || deps['@storybook/web-components-vite']) {
     storybookFramework = '@storybook/web-components-vite';
     componentFramework = 'web-components';
     console.log(chalk.green('✅ Detected Vite-based Web Components Storybook'));
@@ -944,6 +948,16 @@ Material UI (MUI) is a React component library implementing Material Design.
   config.storybookFramework = storybookFramework; // e.g., @storybook/react-vite, @storybook/angular
   config.llmProvider = answers.llmProvider || 'claude'; // claude, openai, or gemini
 
+  // For web-components with local imports, add importExamples guidance
+  if (componentFramework === 'web-components' && config.importPath?.startsWith('.')) {
+    config.importExamples = [
+      `import '${config.importPath}/alert/alert'; // For <your-prefix-alert> component`,
+      `import '${config.importPath}/button/button'; // For <your-prefix-button> component`,
+      `// IMPORTANT: Update these examples to match your component library's folder structure`,
+      `// The AI uses these patterns to generate correct import statements`
+    ];
+  }
+
   // Add version tracking for update command
   config._storyUIVersion = getStoryUIVersion();
   config._lastUpdated = new Date().toISOString();
@@ -953,7 +967,15 @@ Material UI (MUI) is a React component library implementing Material Design.
   const configPath = path.join(process.cwd(), 'story-ui.config.js');
 
   fs.writeFileSync(configPath, configContent);
+  console.log(chalk.green('✅ Created story-ui.config.js'));
 
+  // For web-components, provide guidance about importExamples
+  if (componentFramework === 'web-components' && config.importPath?.startsWith('.')) {
+    console.log(chalk.yellow('\n⚠️  Web Components Setup - Important:'));
+    console.log(chalk.gray('   Update "importExamples" in story-ui.config.js to match your component library\'s structure.'));
+    console.log(chalk.gray('   This helps the AI generate correct import statements for your components.'));
+    console.log(chalk.gray('   Also update story-ui-considerations.md with component-specific behaviors.'));
+  }
 
   // Create generated stories directory
   const storiesDir = path.dirname(config.generatedStoriesPath);
@@ -1006,6 +1028,25 @@ Material UI (MUI) is a React component library implementing Material Design.
     let mainContent = fs.readFileSync(actualMainPath, 'utf-8');
     let configUpdated = false;
 
+    // Add Story UI path to stories array if not already present
+    const storyUIStoriesPath = `'../src/stories/**/*.@(mdx|stories.@(js|jsx|ts|tsx))'`;
+    if (!mainContent.includes('src/stories/**/*')) {
+      // Find the stories array and add our path
+      const storiesArrayPattern = /(stories\s*:\s*\[[\s\S]*?)(\],?)/;
+      const match = mainContent.match(storiesArrayPattern);
+      if (match) {
+        // Check if the array has content
+        const arrayContent = match[1];
+        // Add Story UI path at the end of the stories array
+        mainContent = mainContent.replace(
+          storiesArrayPattern,
+          `$1,\n    ${storyUIStoriesPath}\n  $2`
+        );
+        configUpdated = true;
+        console.log(chalk.green('✅ Added Story UI path to Storybook stories array'));
+      }
+    }
+
     // Check if StoryUI config already exists
     if (mainContent.includes('@tpitre/story-ui') || mainContent.includes('StoryUIPanel')) {
       console.log(chalk.blue('ℹ️  Storybook already configured for Story UI'));
@@ -1038,8 +1079,63 @@ Material UI (MUI) is a React component library implementing Material Design.
       } catch (error) {
         console.warn(chalk.yellow('⚠️  Could not install CSS loaders. You may need to run: npm install --save-dev style-loader css-loader'));
       }
+    } else if (storybookFramework === '@storybook/web-components-webpack5') {
+      // Web Components with Webpack5 - needs babel-loader for TSX
+      const hasBabelConfig = mainContent.includes('babel-loader') && mainContent.includes('StoryUI');
+
+      if (!hasBabelConfig) {
+        const babelLoaderRule = `
+    // Story UI: Add babel-loader for TSX/JSX support (React panel in Web Components project)
+    config.module?.rules?.push({
+      test: /stories\\/StoryUI\\/.*\\.tsx$/,
+      use: {
+        loader: 'babel-loader',
+        options: {
+          presets: [
+            ['@babel/preset-react', { runtime: 'automatic' }],
+            '@babel/preset-typescript'
+          ]
+        }
+      }
+    });`;
+
+        if (mainContent.includes('webpackFinal')) {
+          // webpackFinal exists - inject babel-loader rule before return statement
+          // Look for the return statement in webpackFinal and insert before it
+          const returnPattern = /(webpackFinal[\s\S]*?)(return\s+config\s*;)/;
+          if (mainContent.match(returnPattern)) {
+            mainContent = mainContent.replace(
+              returnPattern,
+              `$1${babelLoaderRule}\n\n    $2`
+            );
+            configUpdated = true;
+          }
+        } else {
+          // webpackFinal doesn't exist - add a complete block
+          const webpackConfig = `webpackFinal: async (config) => {${babelLoaderRule}
+    return config;
+  },`;
+          // Insert webpackFinal inside the config object, before the closing };
+          if (mainContent.match(/};\s*\n+\s*export\s+default/)) {
+            mainContent = mainContent.replace(
+              /(\n)(};\s*\n+\s*export\s+default)/,
+              `\n  ${webpackConfig}\n$2`
+            );
+            configUpdated = true;
+          }
+        }
+      }
+
+      // Install required loaders for Web Components Webpack5
+      console.log(chalk.blue('📦 Installing babel loaders for Web Components Webpack5...'));
+      try {
+        execSync('npm install --save-dev babel-loader @babel/preset-react @babel/preset-typescript @babel/core', { stdio: 'inherit' });
+        console.log(chalk.green('✅ Installed babel-loader and presets'));
+      } catch (error) {
+        console.warn(chalk.yellow('⚠️  Could not install babel loaders. You may need to run: npm install --save-dev babel-loader @babel/preset-react @babel/preset-typescript @babel/core'));
+      }
     } else {
-      // Vite-based frameworks (React, Vue, Svelte, Web Components)
+      // Vite-based frameworks (React, Vue, Svelte, Web Components with Vite)
       if (!mainContent.includes('viteFinal')) {
         const viteConfig = `viteFinal: async (config) => {
     // Story UI: Exclude from dependency optimization to handle CSS imports correctly

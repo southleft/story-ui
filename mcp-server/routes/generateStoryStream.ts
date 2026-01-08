@@ -770,7 +770,10 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
       }
 
       // 3. Import validation
-      const importValidation = await preValidateImports(codeToValidate, config, discovery);
+      // Skip for web-components - they use custom element tags, not imported component classes
+      const importValidation = detectedFramework === 'web-components'
+        ? { isValid: true, errors: [] }
+        : await preValidateImports(codeToValidate, config, discovery);
       const importErrors = importValidation.isValid ? [] : importValidation.errors;
 
       // Aggregate all errors

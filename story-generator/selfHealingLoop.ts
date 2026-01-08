@@ -382,6 +382,13 @@ export function buildSelfHealingPrompt(
     );
     sections.push(`9. Return the COMPLETE corrected code in a \`\`\`svelte code block`);
     sections.push('10. Do NOT include any explanation - just the corrected code block');
+  } else if (options.framework === 'web-components') {
+    // Web Components use side-effect imports and often require deep paths
+    sections.push('6. Use Lit html template literal for rendering');
+    sections.push('7. Web Component imports register custom elements as side-effects');
+    sections.push('8. Use correct import path for each component (deep paths are allowed for web components)');
+    sections.push(`9. Return the COMPLETE corrected code in a \`\`\`${codeBlockLang} code block`);
+    sections.push('10. Do NOT include any explanation - just the corrected code block');
   } else {
     sections.push('6. Ensure all JSX elements are properly opened and closed');
     sections.push(

@@ -156,7 +156,8 @@ function performSemanticChecks(sourceFile: ts.SourceFile, config?: any): string[
 
         // CRITICAL: Check for incorrect import paths that contain the configured importPath but with extra segments
         // This catches LLM errors like: vuetify/components/lib/components/VAlert instead of vuetify/components
-        if (config && config.importPath) {
+        // NOTE: Web Components often require deep imports to register custom elements, so we skip this check for them
+        if (config && config.importPath && config.componentFramework !== 'web-components') {
           const configuredPath = config.importPath;
 
           // Check if LLM used a deep/incorrect path instead of the configured one

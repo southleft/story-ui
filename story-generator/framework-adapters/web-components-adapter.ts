@@ -125,13 +125,41 @@ export class WebComponentsAdapter extends BaseFrameworkAdapter {
       ? `${config.componentPrefix.replace(/^[A-Z]+/, '')} design system`
       : 'component library';
 
+    // Detect if this is a local/relative import path
+    const isLocalImport = config.importPath?.startsWith('.') || config.importPath?.startsWith('/');
+    const importPath = config.importPath || 'your-library';
+
+    // Build import guidance based on config and import path type
+    let importGuidance: string;
+
+    if (config.importExamples && config.importExamples.length > 0) {
+      // Use user-provided examples from config (design-system agnostic)
+      importGuidance = `COMPONENT IMPORTS - Follow these examples EXACTLY:
+${config.importExamples.map(ex => `- ${ex}`).join('\n')}
+- Import ONLY the components you actually use in your story
+- Follow the exact pattern shown in the examples above`;
+    } else if (isLocalImport) {
+      // Generic guidance for local imports (no assumptions about folder structure)
+      importGuidance = `COMPONENT IMPORTS - Local Import Pattern:
+- Import pattern: import '${importPath}/{component-path}';
+- Check the component discovery list for the exact import path for each component
+- Import ONLY the components you actually use in your story
+- Web Components auto-register when their file is imported`;
+    } else {
+      // npm package imports
+      importGuidance = `COMPONENT IMPORTS:
+- Import the main library: import '${importPath}';
+- Or import specific components: import '${importPath}/button';`;
+    }
+
     return `You are an expert Web Components developer creating Storybook stories using CSF 3.0 format.
 Use ONLY the Web Components from the ${componentSystemName} listed below.
 
 MANDATORY IMPORTS - First lines of every story file:
 1. import { html } from 'lit';
 2. import type { Meta, StoryObj } from '@storybook/web-components';
-3. import '${config.importPath || 'your-library'}'; // Register custom elements
+
+${importGuidance}
 
 WEB COMPONENTS STORY FORMAT:
 - Use the html template literal from Lit for rendering
@@ -140,9 +168,8 @@ WEB COMPONENTS STORY FORMAT:
 - Events use @ prefix (e.g., @click)
 
 COMPONENT REGISTRATION:
-- Web Components must be registered before use
-- Import the component file to auto-register: import 'my-library/my-button';
-- Or import the class and define: customElements.define('my-button', MyButton);
+- Web Components auto-register when imported
+- Import each component file you need to use it in your story
 
 STORY STRUCTURE (CSF 3.0):
 - Meta object with title and optional component reference
@@ -159,7 +186,7 @@ Example structure:
 \`\`\`typescript
 import { html } from 'lit';
 import type { Meta, StoryObj } from '@storybook/web-components';
-import 'your-library/button';
+${isLocalImport ? `import '${importPath}/button/button'; // Import path for your component` : `import '${importPath}/button';`}
 
 const meta: Meta = {
   title: 'Components/Button',
