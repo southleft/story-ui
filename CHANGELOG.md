@@ -1,3 +1,10 @@
+## [4.9.1](https://github.com/southleft/story-ui/compare/v4.9.0...v4.9.1) (2026-01-11)
+
+
+### Bug Fixes
+
+* **generator:** resolve relative paths against config file directory ([e3ecc21](https://github.com/southleft/story-ui/commit/e3ecc213fabd1c7c4ea8778c552be06fd8894d61))
+
 # [4.9.0](https://github.com/southleft/story-ui/compare/v4.8.1...v4.9.0) (2026-01-11)
 
 
