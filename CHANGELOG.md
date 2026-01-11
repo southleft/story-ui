@@ -1,3 +1,10 @@
+## [4.9.2](https://github.com/southleft/story-ui/compare/v4.9.1...v4.9.2) (2026-01-11)
+
+
+### Bug Fixes
+
+* **cli:** remove StoryUI panel from gitignore patterns ([d2e1277](https://github.com/southleft/story-ui/commit/d2e1277e1667a25d20d38ece3708bf05f1ead7b4))
+
 ## [4.9.1](https://github.com/southleft/story-ui/compare/v4.9.0...v4.9.1) (2026-01-11)
 
 
