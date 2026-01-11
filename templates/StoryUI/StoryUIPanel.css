@@ -1047,7 +1047,7 @@
    ============================================ */
 .sui-input-form {
   display: flex;
-  align-items: center;
+  align-items: flex-end; /* Align buttons to bottom when textarea expands */
   gap: var(--space-2);
   background: hsl(var(--card));
   border: 1px solid hsl(var(--border));
@@ -1093,12 +1093,16 @@
   background: transparent;
   color: hsl(var(--foreground));
   font-size: 0.9375rem;
-  padding: 0 var(--space-3);
-  height: 40px;
+  font-family: inherit;
+  padding: 10px var(--space-3);
+  min-height: 40px;
+  max-height: 200px;
   min-width: 0;
   resize: none;
   outline: none;
-  /* Input type="text" auto-centers text vertically */
+  line-height: 1.5;
+  overflow-y: auto;
+  /* Auto-expands with content via JS, scrolls when max-height reached */
 }
 
 .sui-input-form-field::placeholder {

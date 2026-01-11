@@ -795,7 +795,25 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   const [orphanCount, setOrphanCount] = useState<number>(0);
   const [isDeletingOrphans, setIsDeletingOrphans] = useState<boolean>(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-resize textarea based on content
+  const adjustTextareaHeight = useCallback(() => {
+    const textarea = inputRef.current;
+    if (textarea) {
+      // Reset height to auto to get the correct scrollHeight
+      textarea.style.height = 'auto';
+      // Set height to scrollHeight, capped at max-height (200px)
+      const maxHeight = 200;
+      const newHeight = Math.min(textarea.scrollHeight, maxHeight);
+      textarea.style.height = `${newHeight}px`;
+    }
+  }, []);
+
+  // Adjust height when input changes
+  useEffect(() => {
+    adjustTextareaHeight();
+  }, [state.input, adjustTextareaHeight]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const hasShownRefreshHint = useRef(false);
@@ -1971,12 +1989,21 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
               <button type="button" className="sui-input-form-upload" onClick={() => fileInputRef.current?.click()} disabled={state.loading || state.attachedImages.length >= MAX_IMAGES} aria-label="Attach images">
                 {Icons.image}
               </button>
-              <input
+              <textarea
                 ref={inputRef}
-                type="text"
+                rows={1}
                 className="sui-input-form-field"
                 value={state.input}
                 onChange={e => dispatch({ type: 'SET_INPUT', payload: e.target.value })}
+                onKeyDown={e => {
+                  // Submit on Enter, newline on Shift+Enter
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    if (!state.loading && (state.input.trim() || state.attachedImages.length > 0)) {
+                      handleSend(e as unknown as React.FormEvent);
+                    }
+                  }
+                }}
                 onPaste={handlePaste}
                 placeholder={state.attachedImages.length > 0 ? 'Describe what to create from these images...' : 'Describe a UI component...'}
               />
