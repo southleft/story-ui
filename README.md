@@ -481,6 +481,21 @@ claude mcp add --transport http story-ui https://your-app-name.up.railway.app/mc
 
 Or add it to Claude Desktop via **Settings** → **Connectors** → **Add custom connector**.
 
+**Important for Storybook Live Mode Deployments:**
+
+If deploying Storybook with Story UI integrated (where users can generate stories in the deployed app), ensure the StoryUI panel files are committed to git:
+
+```bash
+# Check if StoryUI is incorrectly gitignored
+grep "StoryUI" .gitignore
+
+# If found, remove from .gitignore and commit the panel
+git add src/stories/StoryUI/
+git commit -m "Add StoryUI panel for production"
+```
+
+> **Note**: Story UI versions prior to 4.10.0 incorrectly added `src/stories/StoryUI/` to `.gitignore`. See [DEPLOYMENT.md](DEPLOYMENT.md#storybook-live-mode-deployment) for full instructions.
+
 See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions and troubleshooting.
 
 ---

@@ -1268,10 +1268,12 @@ VITE_STORY_UI_PORT=${answers.mcpPort || '4001'}
   const gitignorePath = path.join(process.cwd(), '.gitignore');
   if (fs.existsSync(gitignorePath)) {
     const gitignoreContent = fs.readFileSync(gitignorePath, 'utf-8');
+    // NOTE: Do NOT add StoryUI/ to gitignore - it must be committed for production deployments
+    // The StoryUI panel component needs to be deployed to Railway/production environments
     const patterns = [
       '.env',
       path.relative(process.cwd(), config.generatedStoriesPath),
-      `${path.relative(process.cwd(), storiesDir)}/StoryUI/`
+      '.story-ui-history/'
     ];
 
     let gitignoreUpdated = false;
