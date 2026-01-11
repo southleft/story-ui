@@ -29,6 +29,11 @@ import { processImageInputs, ImageInput } from '../../story-generator/imageProce
 import { VisionPromptType, buildVisionAwarePrompt } from '../../story-generator/visionPrompts.js';
 import { ImageContent } from '../../story-generator/llm-providers/types.js';
 import {
+  createStorybookMcpClient,
+  formatStorybookContext,
+  StorybookMcpContext,
+} from '../../story-generator/storybookMcpClient.js';
+import {
   ValidationErrors,
   SelfHealingOptions,
   aggregateValidationErrors,
@@ -86,6 +91,7 @@ async function buildClaudePromptWithContext(
     autoDetectFramework?: boolean;  // Deprecated - kept for compatibility but ignored
     visionMode?: VisionPromptType;
     designSystem?: string;
+    storybookContext?: StorybookMcpContext;  // Optional context from Storybook MCP
   }
 ) {
   const discovery = new EnhancedComponentDiscovery(config);
@@ -145,6 +151,17 @@ ${Object.entries(documentation.components || {}).map(([name, info]: [string, any
     prompt = prompt.replace('User request:', `${bundledEnhancement}
 
 User request:`);
+  }
+
+  // Inject Storybook MCP context if available
+  if (options?.storybookContext?.available) {
+    const storybookContextStr = formatStorybookContext(options.storybookContext);
+    if (storybookContextStr) {
+      logger.log('📚 Injecting Storybook MCP context into prompt');
+      prompt = prompt.replace('User request:', `${storybookContextStr}
+
+User request:`);
+    }
   }
 
   // If no conversation context, return the prompt as-is
@@ -579,6 +596,33 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
     const discoveredComponents = await discovery.discoverAll();
     const componentNames = discoveredComponents.map(c => c.name);
 
+    // Fetch Storybook MCP context if configured
+    let storybookContext: StorybookMcpContext | undefined;
+    if (config.storybookMcpUrl) {
+      logger.log(`🔗 Fetching context from Storybook MCP: ${config.storybookMcpUrl}`);
+      const storybookClient = createStorybookMcpClient(
+        config.storybookMcpUrl,
+        config.storybookMcpTimeout
+      );
+      if (storybookClient) {
+        storybookContext = await storybookClient.fetchContext(componentNames);
+        if (storybookContext.available) {
+          logger.log(`✅ Storybook MCP context fetched in ${storybookContext.fetchTimeMs}ms`);
+          if (storybookContext.componentDocs) {
+            logger.log(`   - Component docs: ${Object.keys(storybookContext.componentDocs).length} components`);
+          }
+          if (storybookContext.uiBuildingInstructions) {
+            logger.log(`   - UI building instructions: available`);
+          }
+          if (storybookContext.storyPatterns) {
+            logger.log(`   - Story patterns: ${storybookContext.storyPatterns.length} examples`);
+          }
+        } else {
+          logger.log(`⚠️ Storybook MCP not available: ${storybookContext.error}`);
+        }
+      }
+    }
+
     // EARLY FRAMEWORK DETECTION - detect once and use consistently throughout
     // Priority: request > config.componentFramework > config.framework > auto-detect
     // CRITICAL: Fail explicitly if no framework can be determined rather than silently defaulting to React
@@ -618,6 +662,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       autoDetectFramework: false,    // Already detected, don't re-detect
       visionMode: visionMode as VisionPromptType | undefined,
       designSystem: designSystem as string | undefined,
+      storybookContext,              // Optional context from Storybook MCP
     };
 
     // Get the framework adapter early for consistent use

@@ -48,6 +48,11 @@ import { processImageInputs, ImageInput } from '../../story-generator/imageProce
 import { VisionPromptType, buildVisionAwarePrompt } from '../../story-generator/visionPrompts.js';
 import { ImageContent } from '../../story-generator/llm-providers/types.js';
 import {
+  createStorybookMcpClient,
+  formatStorybookContext,
+  StorybookMcpContext,
+} from '../../story-generator/storybookMcpClient.js';
+import {
   StreamEvent,
   IntentPreview,
   ProgressUpdate,
@@ -617,6 +622,25 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
       { componentCount: components.length }
     );
 
+    // Fetch Storybook MCP context if configured
+    const componentNames = components.map((c: any) => c.name);
+    let storybookContext: StorybookMcpContext | undefined;
+    if (config.storybookMcpUrl) {
+      logger.log(`🔗 Fetching context from Storybook MCP: ${config.storybookMcpUrl}`);
+      const storybookClient = createStorybookMcpClient(
+        config.storybookMcpUrl,
+        config.storybookMcpTimeout
+      );
+      if (storybookClient) {
+        storybookContext = await storybookClient.fetchContext(componentNames);
+        if (storybookContext.available) {
+          logger.log(`✅ Storybook MCP context fetched in ${storybookContext.fetchTimeMs}ms`);
+        } else {
+          logger.log(`⚠️ Storybook MCP not available: ${storybookContext.error}`);
+        }
+      }
+    }
+
     // Set up environment
     const storyTracker = new StoryTracker(config);
     const historyManager = new StoryHistoryManager(process.cwd());
@@ -671,6 +695,7 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
       visionMode: visionMode as VisionPromptType | undefined,
       designSystem: designSystem as string | undefined,
       considerations: considerations as string | undefined,
+      storybookContext,              // Optional context from Storybook MCP
     };
 
     const initialPrompt = await buildClaudePromptWithContext(
@@ -1169,6 +1194,7 @@ async function buildClaudePromptWithContext(
     visionMode?: VisionPromptType;
     designSystem?: string;
     considerations?: string;
+    storybookContext?: StorybookMcpContext;  // Optional context from Storybook MCP
   }
 ) {
   const discovery = new EnhancedComponentDiscovery(config);
@@ -1213,6 +1239,15 @@ async function buildClaudePromptWithContext(
     }).filter(Boolean).join('\n')}`;
 
     prompt = prompt.replace('User request:', `${bundledEnhancement}\n\nUser request:`);
+  }
+
+  // Inject Storybook MCP context if available
+  if (options?.storybookContext?.available) {
+    const storybookContextStr = formatStorybookContext(options.storybookContext);
+    if (storybookContextStr) {
+      logger.log('📚 Injecting Storybook MCP context into prompt');
+      prompt = prompt.replace('User request:', `${storybookContextStr}\n\nUser request:`);
+    }
   }
 
   if (!conversation || conversation.length <= 1) {

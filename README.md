@@ -366,6 +366,70 @@ Once connected, you can use these commands in Claude Desktop:
 
 ---
 
+## Storybook MCP Integration
+
+Story UI can automatically connect to [Storybook MCP](https://github.com/storybookjs/addon-mcp) (`@storybook/addon-mcp`) to fetch component documentation, UI building guidelines, and existing story patterns. This enhances story generation quality by ensuring generated stories match your existing codebase patterns.
+
+### How It Works
+
+When Story UI detects a running Storybook instance with the MCP addon, it automatically fetches:
+
+- **Component Documentation**: Props, descriptions, and usage examples for all components
+- **UI Building Instructions**: Storybook-specific guidelines for writing stories
+- **Story Patterns**: Existing story examples to match code style and conventions
+
+### Configuration
+
+Add the Storybook MCP URL to your `story-ui.config.js`:
+
+```javascript
+export default {
+  // ... other config options
+
+  // Storybook MCP integration
+  storybookMcpUrl: 'http://localhost:6006',  // Your Storybook URL
+  storybookMcpTimeout: 5000,                  // Timeout in ms (default: 5000)
+};
+```
+
+### Requirements
+
+1. **Storybook 8.4+** with `@storybook/addon-mcp` installed
+2. **`experimentalComponentsManifest: true`** enabled in `.storybook/main.js`:
+
+```javascript
+// .storybook/main.js
+export default {
+  // ... other config
+  features: {
+    experimentalComponentsManifest: true,
+  },
+  addons: [
+    '@storybook/addon-mcp',
+    // ... other addons
+  ],
+};
+```
+
+### Automatic Context Fetching
+
+When both Story UI and Storybook are running, context is fetched automatically during story generation:
+
+```
+🔗 Fetching context from Storybook MCP: http://localhost:6006
+✅ Storybook MCP context fetched in 2226ms
+   - Component docs: 43 components
+   - UI building instructions: available
+   - Story patterns: 10 examples
+```
+
+This context is injected into the AI prompt, resulting in:
+- More accurate component prop usage
+- Consistent code style with existing stories
+- Proper import statements matching your project
+
+---
+
 ## Production Deployment
 
 Story UI can be deployed as a standalone web application accessible from anywhere. We recommend Railway for its ease of use, but any Node.js hosting platform will work.

@@ -103,8 +103,10 @@ export function loadUserConfig(): StoryUIConfig {
 
   const configPaths = [
     path.join(process.cwd(), 'story-ui.config.js'),
+    path.join(process.cwd(), 'story-ui.config.cjs'),
     path.join(process.cwd(), 'story-ui.config.ts'),
     path.join(process.cwd(), '.storybook', 'story-ui.config.js'),
+    path.join(process.cwd(), '.storybook', 'story-ui.config.cjs'),
     path.join(process.cwd(), '.storybook', 'story-ui.config.ts')
   ];
 

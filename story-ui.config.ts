@@ -125,6 +125,22 @@ export interface StoryUIConfig {
    * Example: ["import '../../../components/alert/alert'; // For <al-alert> component"]
    */
   importExamples?: string[];
+  /**
+   * Storybook MCP server URL for enhanced context during story generation.
+   * When configured, Story UI will fetch component documentation, design tokens,
+   * and existing story patterns from Storybook MCP to improve generation quality.
+   *
+   * Example: 'http://localhost:6006' (local Storybook) or 'https://storybook.example.com'
+   *
+   * If the Storybook instance has @storybook/addon-mcp enabled, Story UI will
+   * automatically use it to gather context about existing components and patterns.
+   */
+  storybookMcpUrl?: string;
+  /**
+   * Timeout in milliseconds for Storybook MCP requests.
+   * Default: 5000 (5 seconds)
+   */
+  storybookMcpTimeout?: number;
 }
 
 // Default generic configuration
