@@ -1,3 +1,10 @@
+# [4.10.0](https://github.com/southleft/story-ui/compare/v4.9.2...v4.10.0) (2026-01-11)
+
+
+### Features
+
+* **ui:** add auto-expanding textarea for multi-line prompts ([0a44b9f](https://github.com/southleft/story-ui/commit/0a44b9f891c4993de9f9d89bfa1c3146156f33b0))
+
 ## [4.9.2](https://github.com/southleft/story-ui/compare/v4.9.1...v4.9.2) (2026-01-11)
 
 
