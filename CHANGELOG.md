@@ -1,3 +1,10 @@
+# [4.9.0](https://github.com/southleft/story-ui/compare/v4.8.1...v4.9.0) (2026-01-11)
+
+
+### Features
+
+* add Storybook MCP integration for enhanced context fetching ([241e7c6](https://github.com/southleft/story-ui/commit/241e7c6aa43ec373750b1cae997077e5d3f31e9b))
+
 ## [4.8.1](https://github.com/southleft/story-ui/compare/v4.8.0...v4.8.1) (2026-01-08)
 
 
