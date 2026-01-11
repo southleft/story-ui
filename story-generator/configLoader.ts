@@ -89,6 +89,37 @@ let configLoadTime: number = 0;
 const CONFIG_CACHE_TTL = 30000; // 30 seconds
 
 /**
+ * Normalize relative paths in config to absolute paths based on config file location.
+ * This fixes the issue where paths like './src/components' fail when process.cwd()
+ * differs from the config file location (e.g., when running via MCP or symlinks).
+ */
+function normalizeConfigPaths(config: StoryUIConfig, configFileDir: string): StoryUIConfig {
+  const resolvePath = (p: string | undefined): string | undefined => {
+    if (!p) return p;
+    // If already absolute, return as-is
+    if (path.isAbsolute(p)) return p;
+    // Resolve relative path against config file directory
+    return path.resolve(configFileDir, p);
+  };
+
+  // Normalize all path-related config fields
+  if (config.generatedStoriesPath) {
+    config.generatedStoriesPath = resolvePath(config.generatedStoriesPath)!;
+  }
+  if (config.componentsPath) {
+    config.componentsPath = resolvePath(config.componentsPath);
+  }
+  if (config.componentsMetadataPath) {
+    config.componentsMetadataPath = resolvePath(config.componentsMetadataPath);
+  }
+  if (config.considerationsPath) {
+    config.considerationsPath = resolvePath(config.considerationsPath);
+  }
+
+  return config;
+}
+
+/**
  * Loads Story UI configuration from the user's project
  * Looks for story-ui.config.js in the current working directory
  * Uses caching to prevent excessive loading
@@ -157,7 +188,12 @@ export function loadUserConfig(): StoryUIConfig {
             throw requireError; // Re-throw if we can't parse it
           }
         }
-        const config = createStoryUIConfig(userConfig);
+        let config = createStoryUIConfig(userConfig);
+
+        // CRITICAL: Normalize relative paths to absolute paths based on config file location
+        // This ensures paths work regardless of process.cwd() (important for MCP servers and symlinks)
+        const configFileDir = path.dirname(configPath);
+        config = normalizeConfigPaths(config, configFileDir);
 
         // Detect Storybook framework if not already specified
         if (!config.storybookFramework) {

@@ -234,16 +234,24 @@ export class EnhancedComponentDiscovery {
 
     // Check for local component directories
     // 1. Manually configured componentsPath (highest priority)
-    if (this.config.componentsPath && fs.existsSync(this.config.componentsPath)) {
-      sources.push({
-        type: 'local',
-        path: this.config.componentsPath,
-        patterns: ['*.tsx', '*.jsx', '*.ts', '*.js']
-      });
+    if (this.config.componentsPath) {
+      const componentsPathExists = fs.existsSync(this.config.componentsPath);
+      if (componentsPathExists) {
+        logger.log(`✅ Found local components at: ${this.config.componentsPath}`);
+        sources.push({
+          type: 'local',
+          path: this.config.componentsPath,
+          patterns: ['*.tsx', '*.jsx', '*.ts', '*.js']
+        });
+      } else {
+        // Log warning for debugging - path was configured but doesn't exist
+        logger.log(`⚠️  Configured componentsPath does not exist: ${this.config.componentsPath}`);
+      }
     }
 
     // 2. Auto-discover common React component directories from project root
     const projectRoot = this.getProjectRoot();
+    logger.log(`📁 Project root detected: ${projectRoot}`);
     const commonComponentDirs = [
       'src/components',
       'src/ui',
@@ -722,8 +730,10 @@ export class EnhancedComponentDiscovery {
    */
   private async discoverFromLocalFiles(source: ComponentSource): Promise<void> {
     if (!fs.existsSync(source.path)) {
+      logger.log(`⚠️  Local source path does not exist (skipping): ${source.path}`);
       return;
     }
+    logger.log(`🔍 Scanning local components at: ${source.path}`);
 
     // Use adapter's file patterns if source doesn't specify patterns
     const defaultPatterns = this.frameworkAdapter.getComponentFilePatterns()
