@@ -158,6 +158,8 @@ interface PanelState {
   error: string | null;
   considerations: string;
   isDarkMode: boolean;
+  storybookMcpAvailable: boolean;
+  useStorybookMcp: boolean;
 }
 
 type PanelAction =
@@ -188,6 +190,8 @@ type PanelAction =
   | { type: 'SET_ERROR'; payload: string | null }
   | { type: 'SET_CONSIDERATIONS'; payload: string }
   | { type: 'SET_DARK_MODE'; payload: boolean }
+  | { type: 'SET_STORYBOOK_MCP_AVAILABLE'; payload: boolean }
+  | { type: 'SET_USE_STORYBOOK_MCP'; payload: boolean }
   | { type: 'NEW_CHAT' };
 
 const initialState: PanelState = {
@@ -212,6 +216,8 @@ const initialState: PanelState = {
   error: null,
   considerations: '',
   isDarkMode: false,
+  storybookMcpAvailable: false,
+  useStorybookMcp: true, // Default to enabled when available
 };
 
 function panelReducer(state: PanelState, action: PanelAction): PanelState {
@@ -280,6 +286,10 @@ function panelReducer(state: PanelState, action: PanelAction): PanelState {
       return { ...state, considerations: action.payload };
     case 'SET_DARK_MODE':
       return { ...state, isDarkMode: action.payload };
+    case 'SET_STORYBOOK_MCP_AVAILABLE':
+      return { ...state, storybookMcpAvailable: action.payload };
+    case 'SET_USE_STORYBOOK_MCP':
+      return { ...state, useStorybookMcp: action.payload };
     case 'NEW_CHAT':
       return { ...state, conversation: [], activeChatId: null, activeTitle: '' };
     default:
@@ -403,6 +413,84 @@ function saveProviderPrefs(provider: string, model: string): void {
   }
 }
 
+// Storage key for Storybook MCP preference
+const STORYBOOK_MCP_PREF_KEY = 'story-ui-use-storybook-mcp';
+
+/**
+ * Detect if Storybook MCP addon is available.
+ * Checks for the MCP endpoint that @storybook/addon-mcp exposes.
+ * The addon returns SSE (Server-Sent Events) responses, not JSON.
+ */
+async function detectStorybookMcp(): Promise<boolean> {
+  try {
+    // Try to detect Storybook MCP on the same origin (works when running in Storybook)
+    const storybookOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+    const mcpEndpoint = `${storybookOrigin}/mcp`;
+
+    const response = await fetch(mcpEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/list',
+        params: {}
+      })
+    });
+
+    if (!response.ok) return false;
+
+    // Storybook MCP addon returns SSE (Server-Sent Events) responses
+    // Check content-type or read a small portion to verify it's SSE format
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('text/event-stream')) {
+      console.log('[StoryUI] Storybook MCP addon detected (SSE endpoint)');
+      return true;
+    }
+
+    // Also check by reading a portion of the response
+    const text = await response.text();
+    if (text.startsWith('event:') || text.startsWith('data:')) {
+      console.log('[StoryUI] Storybook MCP addon detected (SSE response)');
+      return true;
+    }
+
+    // Try parsing as JSON as fallback (some implementations may return JSON)
+    try {
+      const data = JSON.parse(text);
+      if (data && data.result && Array.isArray(data.result.tools)) {
+        console.log('[StoryUI] Storybook MCP addon detected (JSON response)');
+        return true;
+      }
+    } catch {
+      // Not JSON, but might still be valid SSE that we missed
+    }
+
+    return false;
+  } catch (e) {
+    // Not available - this is normal if addon-mcp isn't installed
+    return false;
+  }
+}
+
+function loadStorybookMcpPref(): boolean {
+  try {
+    const stored = localStorage.getItem(STORYBOOK_MCP_PREF_KEY);
+    if (stored !== null) return JSON.parse(stored);
+  } catch (e) {
+    console.error('Failed to load Storybook MCP preference:', e);
+  }
+  return true; // Default to enabled
+}
+
+function saveStorybookMcpPref(enabled: boolean): void {
+  try {
+    localStorage.setItem(STORYBOOK_MCP_PREF_KEY, JSON.stringify(enabled));
+  } catch (e) {
+    console.error('Failed to save Storybook MCP preference:', e);
+  }
+}
+
 async function testMCPConnection(): Promise<{ connected: boolean; error?: string }> {
   try {
     const response = await fetch(PROVIDERS_API, { method: 'GET' });
@@ -471,12 +559,21 @@ function formatTime(timestamp: number): string {
 
 function getModelDisplayName(model: string): string {
   const displayNames: Record<string, string> = {
+    // Claude models
     'claude-opus-4-5-20251101': 'Claude Opus 4.5',
     'claude-sonnet-4-5-20250929': 'Claude Sonnet 4.5',
     'claude-haiku-4-5-20251001': 'Claude Haiku 4.5',
+    'claude-sonnet-4-20250514': 'Claude Sonnet 4',
+    // OpenAI models
+    'gpt-5.2': 'GPT-5.2',
+    'gpt-5.1': 'GPT-5.1',
     'gpt-4o': 'GPT-4o',
     'gpt-4o-mini': 'GPT-4o Mini',
     'o1': 'o1',
+    // Gemini models
+    'gemini-3-pro-preview': 'Gemini 3 Pro Preview',
+    'gemini-2.5-pro': 'Gemini 2.5 Pro',
+    'gemini-2.5-flash': 'Gemini 2.5 Flash',
     'gemini-2.0-flash': 'Gemini 2.0 Flash',
     'gemini-1.5-pro': 'Gemini 1.5 Pro',
   };
@@ -897,6 +994,22 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     pollForExternalStories();
 
     return () => clearInterval(intervalId);
+  }, []);
+
+  // Detect Storybook MCP addon availability
+  useEffect(() => {
+    const checkStorybookMcp = async () => {
+      const available = await detectStorybookMcp();
+      dispatch({ type: 'SET_STORYBOOK_MCP_AVAILABLE', payload: available });
+
+      // Load saved preference if MCP is available
+      if (available) {
+        const savedPref = loadStorybookMcpPref();
+        dispatch({ type: 'SET_USE_STORYBOOK_MCP', payload: savedPref });
+      }
+    };
+
+    checkStorybookMcp();
   }, []);
 
   // Detect Storybook MANAGER theme (not preview background)
@@ -1436,6 +1549,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           provider: state.selectedProvider || undefined,
           model: state.selectedModel || undefined,
           considerations: state.considerations || undefined,
+          useStorybookMcp: state.storybookMcpAvailable && state.useStorybookMcp,
         };
         console.log('[StoryUI DEBUG] Request body being sent:', {
           fileName: requestBody.fileName,
@@ -1519,6 +1633,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
               provider: state.selectedProvider || undefined,
               model: state.selectedModel || undefined,
               considerations: state.considerations || undefined,
+              useStorybookMcp: state.storybookMcpAvailable && state.useStorybookMcp,
             }),
           });
           const data = await res.json();
@@ -1907,6 +2022,27 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                   </select>
                 </div>
               </>
+            )}
+            {/* Storybook MCP Toggle - only shown when MCP addon is detected */}
+            {state.storybookMcpAvailable && (
+              <div className="sui-mcp-toggle" title="Use Storybook MCP context for enhanced component generation">
+                <label className="sui-toggle-label">
+                  <span className="sui-toggle-text">MCP Context</span>
+                  <div className="sui-toggle-switch">
+                    <input
+                      type="checkbox"
+                      checked={state.useStorybookMcp}
+                      onChange={e => {
+                        const enabled = e.target.checked;
+                        dispatch({ type: 'SET_USE_STORYBOOK_MCP', payload: enabled });
+                        saveStorybookMcpPref(enabled);
+                      }}
+                      aria-label="Use Storybook MCP context"
+                    />
+                    <span className="sui-toggle-slider" />
+                  </div>
+                </label>
+              </div>
             )}
           </div>
         </header>

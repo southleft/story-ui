@@ -640,6 +640,92 @@
 }
 
 /* ============================================
+   MCP Toggle Switch Component
+   ============================================ */
+.sui-mcp-toggle {
+  display: flex;
+  align-items: center;
+  margin-left: var(--space-3);
+  padding-left: var(--space-3);
+  border-left: 1px solid hsl(var(--border));
+}
+
+.sui-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  user-select: none;
+}
+
+.sui-toggle-text {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
+  white-space: nowrap;
+}
+
+.sui-toggle-switch {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.sui-toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.sui-toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-full);
+  transition: all var(--transition-fast);
+}
+
+.sui-toggle-slider::before {
+  position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
+  left: 2px;
+  bottom: 2px;
+  background-color: hsl(var(--background));
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-sm);
+  transition: all var(--transition-fast);
+}
+
+.sui-toggle-switch input:checked + .sui-toggle-slider {
+  background-color: hsl(var(--primary));
+  border-color: hsl(var(--primary));
+}
+
+.sui-toggle-switch input:checked + .sui-toggle-slider::before {
+  transform: translateX(16px);
+}
+
+.sui-toggle-switch input:focus + .sui-toggle-slider {
+  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.2);
+}
+
+.sui-toggle-label:hover .sui-toggle-slider {
+  background-color: hsl(var(--accent));
+}
+
+.sui-toggle-label:hover .sui-toggle-switch input:checked + .sui-toggle-slider {
+  background-color: hsl(var(--primary) / 0.9);
+}
+
+/* ============================================
    ShadCN-Style Badge Component
    ============================================ */
 .sui-badge {
