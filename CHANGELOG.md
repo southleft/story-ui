@@ -1,3 +1,10 @@
+# [4.11.0](https://github.com/southleft/story-ui/compare/v4.10.0...v4.11.0) (2026-01-12)
+
+
+### Features
+
+* add Storybook MCP context toggle to Story UI panel ([e4d0532](https://github.com/southleft/story-ui/commit/e4d053289c217a020a2478da876dba7e6d3fc825))
+
 # [4.10.0](https://github.com/southleft/story-ui/compare/v4.9.2...v4.10.0) (2026-01-11)
 
 
