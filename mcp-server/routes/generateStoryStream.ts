@@ -868,6 +868,7 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
 
     // If we still have import errors after all attempts, report them
     if (finalErrors.importErrors.length > 0) {
+      logger.log(`❌ Import validation failed. Invalid components: ${finalErrors.importErrors.join(', ')}`);
       stream.sendError({
         code: 'INVALID_IMPORTS',
         message: 'Generated code contains invalid imports',
@@ -1417,7 +1418,7 @@ function extractImportsFromCode(code: string, importPath: string): string[] {
   let match;
   while ((match = importRegex.exec(code)) !== null) {
     const importList = match[1];
-    const components = importList.split(',').map(comp => comp.trim());
+    const components = importList.split(',').map(comp => comp.trim()).filter(Boolean);
     imports.push(...components);
   }
 

@@ -378,7 +378,7 @@ function extractImportsFromCode(code: string, importPath: string): string[] {
   while ((match = importRegex.exec(code)) !== null) {
     const importList = match[1];
     // Split by comma and clean up each import
-    const components = importList.split(',').map(comp => comp.trim());
+    const components = importList.split(',').map(comp => comp.trim()).filter(Boolean);
     imports.push(...components);
   }
 

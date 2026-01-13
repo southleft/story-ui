@@ -186,7 +186,7 @@ export function extractImportsFromCode(code: string, importPath: string): string
   let match;
   while ((match = importRegex.exec(code)) !== null) {
     const importList = match[1];
-    const components = importList.split(',').map(comp => comp.trim());
+    const components = importList.split(',').map(comp => comp.trim()).filter(Boolean);
     imports.push(...components);
   }
 
