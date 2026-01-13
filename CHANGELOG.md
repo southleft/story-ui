@@ -1,3 +1,16 @@
+# [4.12.0](https://github.com/southleft/story-ui/compare/v4.11.0...v4.12.0) (2026-01-13)
+
+
+### Bug Fixes
+
+* filter empty strings from import extraction to handle trailing commas ([d9ed689](https://github.com/southleft/story-ui/commit/d9ed6892ff32b750d5646d16c01e7a16e325536c))
+* respect useStorybookMcp toggle in story generation ([ce71db3](https://github.com/southleft/story-ui/commit/ce71db3d944f8ad173c6de11c3f0db2af554c7eb))
+
+
+### Features
+
+* fetch component context from Storybook manifest endpoint ([d4695d8](https://github.com/southleft/story-ui/commit/d4695d8befa7eee9ab411ebee41f7390ea5d1ef2))
+
 # [4.11.0](https://github.com/southleft/story-ui/compare/v4.10.0...v4.11.0) (2026-01-12)
 
 
