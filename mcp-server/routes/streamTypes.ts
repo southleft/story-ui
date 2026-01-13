@@ -149,6 +149,7 @@ export interface StreamGenerateRequest {
   provider?: string;  // LLM provider (claude, openai, gemini)
   model?: string;     // Model ID
   considerations?: string;  // Design system considerations (passed from frontend for environment parity)
+  useStorybookMcp?: boolean;  // Whether to use Storybook MCP context for enhanced generation
 }
 
 // Helper to create SSE-formatted message

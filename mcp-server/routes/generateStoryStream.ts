@@ -497,7 +497,8 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
     designSystem,
     considerations,
     provider,            // LLM provider selected in UI (claude, openai, gemini)
-    model                // Model selected in UI
+    model,               // Model selected in UI
+    useStorybookMcp      // Whether to use Storybook MCP context
   } = req.body as StreamGenerateRequest;
 
   // DEBUG: Trace incoming fileName for iteration bug
@@ -622,10 +623,15 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
       { componentCount: components.length }
     );
 
-    // Fetch Storybook MCP context if configured
+    // Fetch Storybook MCP context if configured AND enabled via toggle
     const componentNames = components.map((c: any) => c.name);
     let storybookContext: StorybookMcpContext | undefined;
-    if (config.storybookMcpUrl) {
+
+    // Only fetch Storybook MCP context if:
+    // 1. storybookMcpUrl is configured in config
+    // 2. useStorybookMcp toggle is explicitly true (or undefined for backwards compatibility)
+    const shouldUseMcp = useStorybookMcp !== false; // Default to true if not specified
+    if (config.storybookMcpUrl && shouldUseMcp) {
       logger.log(`🔗 Fetching context from Storybook MCP: ${config.storybookMcpUrl}`);
       const storybookClient = createStorybookMcpClient(
         config.storybookMcpUrl,
@@ -639,6 +645,8 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
           logger.log(`⚠️ Storybook MCP not available: ${storybookContext.error}`);
         }
       }
+    } else if (config.storybookMcpUrl && !shouldUseMcp) {
+      logger.log(`⏭️ Storybook MCP context skipped (toggle disabled by user)`);
     }
 
     // Set up environment
