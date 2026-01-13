@@ -111,6 +111,55 @@ interface ComponentInfo {
 }
 
 /**
+ * Component manifest from Storybook's experimentalComponentsManifest feature
+ */
+interface ComponentManifest {
+  v: number;
+  components: Record<string, ManifestComponent>;
+}
+
+/**
+ * Component entry in the manifest
+ */
+interface ManifestComponent {
+  id: string;
+  name: string;
+  path?: string;
+  description?: string;
+  import?: string;
+  stories?: ManifestStory[];
+  reactDocgen?: {
+    description?: string;
+    props?: Record<string, ManifestProp>;
+  };
+}
+
+/**
+ * Story in the manifest
+ */
+interface ManifestStory {
+  name: string;
+  snippet?: string;
+  description?: string;
+}
+
+/**
+ * Prop in the manifest (from react-docgen)
+ */
+interface ManifestProp {
+  type?: {
+    name?: string;
+    raw?: string;
+    value?: unknown;
+  };
+  description?: string;
+  required?: boolean;
+  defaultValue?: {
+    value?: string;
+  };
+}
+
+/**
  * Storybook MCP Client for fetching context from Storybook instances
  */
 export class StorybookMcpClient {
@@ -214,9 +263,129 @@ export class StorybookMcpClient {
   }
 
   /**
-   * Fetch component documentation
+   * Fetch component documentation - tries manifest first, falls back to MCP tools
    */
   private async fetchComponentDocs(
+    componentNames?: string[]
+  ): Promise<Record<string, ComponentDocumentation> | undefined> {
+    try {
+      // First try to fetch from component manifest (Storybook's experimentalComponentsManifest)
+      const manifestDocs = await this.fetchFromManifest(componentNames);
+      if (manifestDocs && Object.keys(manifestDocs).length > 0) {
+        logger.log(`✅ Fetched ${Object.keys(manifestDocs).length} components from Storybook manifest`);
+        return manifestDocs;
+      }
+
+      // Fall back to MCP tools if manifest not available
+      logger.log('📡 Manifest not available, trying MCP tools...');
+      return await this.fetchFromMcpTools(componentNames);
+    } catch (error) {
+      logger.log(`⚠️ Failed to fetch component documentation: ${error}`);
+      return undefined;
+    }
+  }
+
+  /**
+   * Fetch component documentation from the manifest endpoint
+   */
+  private async fetchFromManifest(
+    componentNames?: string[]
+  ): Promise<Record<string, ComponentDocumentation> | undefined> {
+    try {
+      const response = await this.fetchWithTimeout(`${this.baseUrl}/manifests/components.json`, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        logger.log(`⚠️ Manifest not available (${response.status})`);
+        return undefined;
+      }
+
+      const manifest: ComponentManifest = await response.json();
+      if (!manifest.components || Object.keys(manifest.components).length === 0) {
+        return undefined;
+      }
+
+      const docs: Record<string, ComponentDocumentation> = {};
+      let componentEntries = Object.values(manifest.components);
+
+      // Filter to requested components if specified
+      if (componentNames && componentNames.length > 0) {
+        const lowerNames = componentNames.map((n) => n.toLowerCase());
+        const filtered = componentEntries.filter((c) =>
+          lowerNames.some(
+            (name) =>
+              c.name.toLowerCase().includes(name) ||
+              c.id.toLowerCase().includes(name)
+          )
+        );
+        if (filtered.length > 0) {
+          componentEntries = filtered;
+        } else {
+          // If no matches, use first 15 components
+          componentEntries = componentEntries.slice(0, 15);
+        }
+      } else {
+        // Limit to 15 components to avoid overwhelming context
+        componentEntries = componentEntries.slice(0, 15);
+      }
+
+      for (const comp of componentEntries) {
+        const doc: ComponentDocumentation = {
+          id: comp.id,
+          name: comp.name,
+          description: comp.description || comp.reactDocgen?.description,
+          examples: [],
+          props: {},
+        };
+
+        // Extract stories as examples
+        if (comp.stories && comp.stories.length > 0) {
+          for (const story of comp.stories) {
+            if (story.snippet) {
+              doc.examples!.push({
+                title: story.name,
+                code: story.snippet,
+                description: story.description,
+              });
+            }
+          }
+        }
+
+        // Extract props from react-docgen
+        if (comp.reactDocgen?.props) {
+          for (const [propName, prop] of Object.entries(comp.reactDocgen.props)) {
+            doc.props![propName] = {
+              type: prop.type?.name || prop.type?.raw,
+              description: prop.description,
+              required: prop.required,
+              defaultValue: prop.defaultValue?.value,
+            };
+          }
+        }
+
+        // Add import statement as summary if available
+        if (comp.import) {
+          doc.summary = `Import: ${comp.import}`;
+        }
+
+        docs[comp.name] = doc;
+      }
+
+      return docs;
+    } catch (error) {
+      logger.log(`⚠️ Error fetching manifest: ${error}`);
+      return undefined;
+    }
+  }
+
+  /**
+   * Fetch component documentation from MCP tools (fallback)
+   */
+  private async fetchFromMcpTools(
     componentNames?: string[]
   ): Promise<Record<string, ComponentDocumentation> | undefined> {
     try {
@@ -271,7 +440,7 @@ export class StorybookMcpClient {
       // Parse the detailed documentation
       return this.parseComponentDocs(docResult);
     } catch (error) {
-      logger.log(`⚠️ Failed to fetch component documentation: ${error}`);
+      logger.log(`⚠️ Failed to fetch from MCP tools: ${error}`);
       return undefined;
     }
   }
