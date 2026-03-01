@@ -2,6 +2,10 @@
  * Claude LLM Provider
  *
  * Implementation of the LLM provider interface for Anthropic's Claude models.
+ * Supports both the direct Anthropic API and AWS Bedrock as deployment targets.
+ *
+ * Bedrock mode is activated when `bedrockRegion` is set in the provider config.
+ * It requires `@aws-sdk/client-bedrock-runtime` to be installed (optional peer dep).
  */
 
 import {
@@ -21,6 +25,10 @@ import { logger } from '../logger.js';
 
 // Claude model definitions - Updated December 2025
 // Top 4 models only - Reference: Anthropic API documentation
+//
+// In Bedrock mode the model ID is derived automatically as `anthropic.{id}-v1:0`.
+// Override with AWS_BEDROCK_MODEL_ID env var for cross-region inference profiles,
+// provisioned throughput ARNs, or any other custom Bedrock model identifier.
 const CLAUDE_MODELS: ModelInfo[] = [
   {
     id: 'claude-opus-4-5-20251101',
@@ -76,7 +84,7 @@ const CLAUDE_MODELS: ModelInfo[] = [
   },
 ];
 
-// Default model - Claude Sonnet 4.5 (recommended for agents and coding)
+// Default model - Claude Opus 4.5 (recommended for agents and coding)
 const DEFAULT_MODEL = 'claude-opus-4-5-20251101';
 
 // API configuration
@@ -113,6 +121,50 @@ interface AnthropicResponse {
   };
 }
 
+// Lazily cached Bedrock client to avoid re-creating per request
+let bedrockClientCache: { client: any; region: string } | null = null;
+
+async function getBedrockClient(config: ProviderConfig): Promise<any> {
+  const region = config.bedrockRegion!;
+
+  if (bedrockClientCache && bedrockClientCache.region === region) {
+    return bedrockClientCache.client;
+  }
+
+  let BedrockRuntimeClient: any;
+  try {
+    const mod = await import('@aws-sdk/client-bedrock-runtime');
+    BedrockRuntimeClient = mod.BedrockRuntimeClient;
+  } catch {
+    throw new Error(
+      'AWS Bedrock support requires @aws-sdk/client-bedrock-runtime. ' +
+      'Install it with: npm install @aws-sdk/client-bedrock-runtime'
+    );
+  }
+
+  const clientConfig: Record<string, any> = { region };
+
+  if (config.bedrockAccessKeyId && config.bedrockSecretAccessKey) {
+    clientConfig.credentials = {
+      accessKeyId: config.bedrockAccessKeyId,
+      secretAccessKey: config.bedrockSecretAccessKey,
+      ...(config.bedrockSessionToken ? { sessionToken: config.bedrockSessionToken } : {}),
+    };
+  }
+
+  const client = new BedrockRuntimeClient(clientConfig);
+  bedrockClientCache = { client, region };
+  return client;
+}
+
+function resolveBedrockModelId(config: ProviderConfig, modelOverride?: string): string {
+  if (config.bedrockModelId) {
+    return config.bedrockModelId;
+  }
+  const anthropicModelId = modelOverride || config.model;
+  return `anthropic.${anthropicModelId}-v1:0`;
+}
+
 export class ClaudeProvider extends BaseLLMProvider {
   readonly name = 'Claude';
   readonly type: ProviderType = 'claude';
@@ -122,67 +174,31 @@ export class ClaudeProvider extends BaseLLMProvider {
     super(config);
     // Set the provider type after base constructor
     this.setProviderType();
-    // Set default model if not provided
     if (!this.config.model) {
       this.config.model = DEFAULT_MODEL;
     }
+  }
+
+  isBedrockMode(): boolean {
+    return this.config.transport === 'bedrock';
+  }
+
+  isConfigured(): boolean {
+    if (this.isBedrockMode()) {
+      return !!this.config.model;
+    }
+    return !!this.config.apiKey && !!this.config.model;
   }
 
   async chat(messages: ChatMessage[], options?: ChatOptions): Promise<ChatResponse> {
     this.validateMessages(messages);
     this.logRequest(messages, options);
 
-    const apiKey = this.config.apiKey;
-    if (!apiKey) {
-      throw new Error('Claude API key not configured');
-    }
-
     const model = options?.model || this.config.model;
-    const anthropicMessages = this.convertMessages(messages);
-    const systemPrompt = this.buildSystemPrompt(options);
-
-    const requestBody: Record<string, unknown> = {
-      model,
-      max_tokens: options?.maxTokens || this.getSelectedModel()?.maxOutputTokens || 4096,
-      messages: anthropicMessages,
-    };
-
-    // Add optional parameters
-    if (systemPrompt) {
-      requestBody.system = systemPrompt;
-    }
-    if (options?.temperature !== undefined) {
-      requestBody.temperature = options.temperature;
-    }
-    if (options?.topP !== undefined) {
-      requestBody.top_p = options.topP;
-    }
-    if (options?.topK !== undefined) {
-      requestBody.top_k = options.topK;
-    }
-    if (options?.stopSequences?.length) {
-      requestBody.stop_sequences = options.stopSequences;
-    }
+    const body = this.buildRequestBody(messages, options);
 
     try {
-      const response = await fetch(ANTHROPIC_API_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': ANTHROPIC_VERSION,
-        },
-        body: JSON.stringify(requestBody),
-        signal: AbortSignal.timeout(this.config.timeout || 120000),
-      });
-
-      if (!response.ok) {
-        const errorBody = await response.text();
-        logger.error('Claude API error response', { status: response.status, body: errorBody });
-        throw new Error(`Claude API error: ${response.status} - ${errorBody}`);
-      }
-
-      const data = (await response.json()) as AnthropicResponse;
+      const data = await this.sendRequest(body, model);
       const chatResponse = this.convertResponse(data);
       this.logResponse(chatResponse);
       return chatResponse;
@@ -201,86 +217,20 @@ export class ClaudeProvider extends BaseLLMProvider {
     this.validateMessages(messages);
     this.logRequest(messages, options);
 
-    const apiKey = this.config.apiKey;
-    if (!apiKey) {
-      yield { type: 'error', error: 'Claude API key not configured' };
-      return;
-    }
-
     const model = options?.model || this.config.model;
-    const anthropicMessages = this.convertMessages(messages);
-    const systemPrompt = this.buildSystemPrompt(options);
+    const body = this.buildRequestBody(messages, options);
 
-    const requestBody: Record<string, unknown> = {
-      model,
-      max_tokens: options?.maxTokens || this.getSelectedModel()?.maxOutputTokens || 4096,
-      messages: anthropicMessages,
-      stream: true,
-    };
-
-    if (systemPrompt) {
-      requestBody.system = systemPrompt;
-    }
-    if (options?.temperature !== undefined) {
-      requestBody.temperature = options.temperature;
-    }
+    let inputTokens = 0;
+    let outputTokens = 0;
 
     try {
-      const response = await fetch(ANTHROPIC_API_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': ANTHROPIC_VERSION,
-        },
-        body: JSON.stringify(requestBody),
-        signal: AbortSignal.timeout(this.config.timeout || 120000),
-      });
-
-      if (!response.ok) {
-        const errorBody = await response.text();
-        yield { type: 'error', error: `Claude API error: ${response.status} - ${errorBody}` };
-        return;
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) {
-        yield { type: 'error', error: 'No response body' };
-        return;
-      }
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let inputTokens = 0;
-      let outputTokens = 0;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-            if (data === '[DONE]') continue;
-
-            try {
-              const event = JSON.parse(data);
-
-              if (event.type === 'content_block_delta' && event.delta?.text) {
-                yield { type: 'text', content: event.delta.text };
-              } else if (event.type === 'message_start' && event.message?.usage) {
-                inputTokens = event.message.usage.input_tokens || 0;
-              } else if (event.type === 'message_delta' && event.usage) {
-                outputTokens = event.usage.output_tokens || 0;
-              }
-            } catch {
-              // Skip malformed JSON
-            }
-          }
+      for await (const event of this.sendStreamRequest(body, model)) {
+        if (event.type === 'content_block_delta' && event.delta?.text) {
+          yield { type: 'text', content: event.delta.text };
+        } else if (event.type === 'message_start' && event.message?.usage) {
+          inputTokens = event.message.usage.input_tokens || 0;
+        } else if (event.type === 'message_delta' && event.usage) {
+          outputTokens = event.usage.output_tokens || 0;
         }
       }
 
@@ -302,52 +252,183 @@ export class ClaudeProvider extends BaseLLMProvider {
 
   async validateApiKey(apiKey: string): Promise<ValidationResult> {
     try {
-      // Make a minimal API call to validate the key
-      const response = await fetch(ANTHROPIC_API_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': ANTHROPIC_VERSION,
-        },
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001', // Use latest Haiku for fast validation
-          max_tokens: 1,
-          messages: [{ role: 'user', content: 'Hi' }],
-        }),
-        signal: AbortSignal.timeout(10000),
-      });
+      const body = { max_tokens: 1, messages: [{ role: 'user', content: 'Hi' }] };
+      const model = this.isBedrockMode() ? this.config.model : 'claude-haiku-4-5-20251001';
+      await this.sendRequest(body, model);
+      return { valid: true, models: this.supportedModels };
+    } catch (error: any) {
+      const msg = error?.message || String(error);
 
-      if (response.ok) {
-        return {
-          valid: true,
-          models: this.supportedModels,
-        };
+      if (msg.includes('401') || msg.includes('Invalid API key')) {
+        return { valid: false, error: 'Invalid API key' };
       }
-
-      const errorBody = await response.text();
-
-      // Check for specific error types
-      if (response.status === 401) {
-        return {
-          valid: false,
-          error: 'Invalid API key',
-        };
+      if (msg.includes('UnrecognizedClient') || msg.includes('security token') || msg.includes('credentials')) {
+        return { valid: false, error: 'Invalid AWS credentials for Bedrock' };
       }
-
-      return {
-        valid: false,
-        error: `API validation failed: ${errorBody}`,
-      };
-    } catch (error) {
-      return {
-        valid: false,
-        error: error instanceof Error ? error.message : 'Validation failed',
-      };
+      if (msg.includes('AccessDeniedException')) {
+        return { valid: false, error: 'AWS credentials lack Bedrock InvokeModel permission' };
+      }
+      return { valid: false, error: `Validation failed: ${msg}` };
     }
   }
 
-  // Convert our message format to Anthropic format
+  // ---------------------------------------------------------------------------
+  // Request body
+  // ---------------------------------------------------------------------------
+
+  private buildRequestBody(
+    messages: ChatMessage[],
+    options?: ChatOptions,
+  ): Record<string, unknown> {
+    const anthropicMessages = this.convertMessages(messages);
+    const systemPrompt = this.buildSystemPrompt(options);
+
+    const body: Record<string, unknown> = {
+      max_tokens: options?.maxTokens || this.getSelectedModel()?.maxOutputTokens || 4096,
+      messages: anthropicMessages,
+    };
+
+    if (systemPrompt) body.system = systemPrompt;
+    if (options?.temperature !== undefined) body.temperature = options.temperature;
+    if (options?.topP !== undefined) body.top_p = options.topP;
+    if (options?.topK !== undefined) body.top_k = options.topK;
+    if (options?.stopSequences?.length) body.stop_sequences = options.stopSequences;
+
+    return body;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Transport — the only place Bedrock vs Direct API diverges
+  // ---------------------------------------------------------------------------
+
+  private async sendRequest(
+    body: Record<string, unknown>,
+    model: string,
+  ): Promise<AnthropicResponse> {
+    if (this.isBedrockMode()) {
+      const client = await getBedrockClient(this.config);
+      const modelId = resolveBedrockModelId(this.config, model);
+      logger.debug('Bedrock InvokeModel', { modelId, region: this.config.bedrockRegion });
+
+      const { InvokeModelCommand } = await import('@aws-sdk/client-bedrock-runtime');
+      const command = new InvokeModelCommand({
+        modelId,
+        contentType: 'application/json',
+        accept: 'application/json',
+        body: JSON.stringify({ ...body, anthropic_version: ANTHROPIC_VERSION }),
+      });
+
+      const response = await client.send(command);
+      return JSON.parse(new TextDecoder().decode(response.body)) as AnthropicResponse;
+    }
+
+    const apiKey = this.config.apiKey;
+    if (!apiKey) {
+      throw new Error('Claude API key not configured');
+    }
+
+    const response = await fetch(ANTHROPIC_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': ANTHROPIC_VERSION,
+      },
+      body: JSON.stringify({ ...body, model }),
+      signal: AbortSignal.timeout(this.config.timeout || 120000),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      logger.error('Claude API error response', { status: response.status, body: errorBody });
+      throw new Error(`Claude API error: ${response.status} - ${errorBody}`);
+    }
+
+    return (await response.json()) as AnthropicResponse;
+  }
+
+  private async *sendStreamRequest(
+    body: Record<string, unknown>,
+    model: string,
+  ): AsyncGenerator<any> {
+    if (this.isBedrockMode()) {
+      const client = await getBedrockClient(this.config);
+      const modelId = resolveBedrockModelId(this.config, model);
+      logger.debug('Bedrock InvokeModelWithResponseStream', { modelId, region: this.config.bedrockRegion });
+
+      const { InvokeModelWithResponseStreamCommand } = await import('@aws-sdk/client-bedrock-runtime');
+      const command = new InvokeModelWithResponseStreamCommand({
+        modelId,
+        contentType: 'application/json',
+        body: JSON.stringify({ ...body, anthropic_version: ANTHROPIC_VERSION }),
+      });
+
+      const response = await client.send(command);
+      if (response.body) {
+        for await (const event of response.body) {
+          if (event.chunk?.bytes) {
+            yield JSON.parse(new TextDecoder().decode(event.chunk.bytes));
+          }
+        }
+      }
+      return;
+    }
+
+    const apiKey = this.config.apiKey;
+    if (!apiKey) {
+      throw new Error('Claude API key not configured');
+    }
+
+    const response = await fetch(ANTHROPIC_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': ANTHROPIC_VERSION,
+      },
+      body: JSON.stringify({ ...body, model, stream: true }),
+      signal: AbortSignal.timeout(this.config.timeout || 120000),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`Claude API error: ${response.status} - ${errorBody}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('No response body');
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6);
+          if (data === '[DONE]') continue;
+          try {
+            yield JSON.parse(data);
+          } catch {
+            // Skip malformed JSON
+          }
+        }
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Message / response conversion
+  // ---------------------------------------------------------------------------
+
   private convertMessages(messages: ChatMessage[]): AnthropicMessage[] {
     return messages
       .filter(msg => msg.role !== 'system') // System messages handled separately
