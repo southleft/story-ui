@@ -64,19 +64,40 @@ function removeStoryExtension(filename: string): string {
   return filename;
 }
 
+/**
+ * Safely resolve a file path within a base directory.
+ * Prevents path traversal attacks by ensuring the resolved path
+ * stays within the allowed base directory.
+ * Returns null if the path escapes the base directory.
+ */
+function safePath(baseDir: string, fileName: string): string | null {
+  const resolvedBase = path.resolve(baseDir);
+  const resolvedPath = path.resolve(baseDir, fileName);
+  if (!resolvedPath.startsWith(resolvedBase + path.sep) && resolvedPath !== resolvedBase) {
+    return null;
+  }
+  return resolvedPath;
+}
+
 const app = express();
 
 // CORS configuration
-// - Allow all origins for /story-ui/* routes (public API for production Storybooks)
-// - Restrict to localhost + configured origins for other routes
+// - Allow localhost, Railway, Cloudflare Pages, and custom origins
+// - Deny unknown origins to prevent CSRF and unauthorized access
 const corsOptions = {
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-    // Allow requests with no origin (like mobile apps or curl)
+    // Allow requests with no origin (same-origin, mobile apps, curl, server-to-server)
     if (!origin) return callback(null, true);
 
     // Allow localhost on any port (development)
     const localhostPattern = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
     if (localhostPattern.test(origin)) {
+      return callback(null, true);
+    }
+
+    // Allow Railway deployment domains (*.up.railway.app)
+    const railwayPattern = /^https:\/\/[a-z0-9-]+\.up\.railway\.app$/;
+    if (railwayPattern.test(origin)) {
       return callback(null, true);
     }
 
@@ -86,15 +107,14 @@ const corsOptions = {
       return callback(null, true);
     }
 
-    // Allow custom origins from environment
-    const allowedOrigins = process.env.STORY_UI_ALLOWED_ORIGINS?.split(',') || [];
+    // Allow custom origins from environment (comma-separated)
+    const allowedOrigins = process.env.STORY_UI_ALLOWED_ORIGINS?.split(',').map(o => o.trim()) || [];
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
 
-    // For production, allow any origin to access /story-ui/* endpoints
-    // These are public read-only endpoints for accessing generated stories
-    callback(null, true);
+    // Deny unknown origins
+    callback(new Error(`Origin ${origin} not allowed by CORS`), false);
   },
   credentials: true,
 };
@@ -458,10 +478,13 @@ app.post('/story-ui/stories', async (req, res) => {
     const extension = adapter?.defaultExtension || '.stories.tsx';
 
     const fileName = `${id}${extension}`;
-    const filePath = path.join(storiesPath, fileName);
+    const filePath = safePath(storiesPath, fileName);
+    if (!filePath) {
+      return res.status(400).json({ error: 'Invalid file path' });
+    }
 
     fs.writeFileSync(filePath, code, 'utf-8');
-    console.log(`✅ Saved story: ${filePath}`);
+    console.log(`Saved story: ${filePath}`);
 
     return res.json({
       success: true,
@@ -493,7 +516,10 @@ app.delete('/story-ui/stories/:id', async (req, res) => {
       const extension = adapter?.defaultExtension || '.stories.tsx';
       fileName = `${id}${extension}`;
     }
-    const filePath = path.join(storiesPath, fileName);
+    const filePath = safePath(storiesPath, fileName);
+    if (!filePath) {
+      return res.status(400).json({ error: 'Invalid file path' });
+    }
 
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
@@ -592,7 +618,12 @@ app.post('/story-ui/stories/delete-bulk', async (req, res) => {
       try {
         // Check if id already has a story extension
         const fileName = isStoryFile(id) ? id : `${id}${extension}`;
-        const filePath = path.join(storiesPath, fileName);
+        const filePath = safePath(storiesPath, fileName);
+
+        if (!filePath) {
+          errors.push(id);
+          continue;
+        }
 
         if (fs.existsSync(filePath)) {
           fs.unlinkSync(filePath);
@@ -603,7 +634,9 @@ app.post('/story-ui/stories/delete-bulk', async (req, res) => {
           const files = fs.readdirSync(storiesPath);
           const matchingFile = files.find(f => isStoryFile(f) && (f === id || removeStoryExtension(f) === id));
           if (matchingFile) {
-            fs.unlinkSync(path.join(storiesPath, matchingFile));
+            const matchPath = safePath(storiesPath, matchingFile);
+            if (!matchPath) { errors.push(id); continue; }
+            fs.unlinkSync(matchPath);
             deleted.push(id);
             console.log(`✅ Deleted: ${matchingFile}`);
           } else {
@@ -651,7 +684,10 @@ app.delete('/story-ui/stories', async (req, res) => {
       }
 
       // Try exact match first
-      let filePath = path.join(storiesPath, fileName);
+      let filePath = safePath(storiesPath, fileName);
+      if (!filePath) {
+        return res.status(400).json({ success: false, error: 'Invalid file path' });
+      }
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
         console.log(`✅ Deleted story: ${filePath}`);
@@ -665,7 +701,10 @@ app.delete('/story-ui/stories', async (req, res) => {
         const files = fs.readdirSync(storiesPath);
         const matchingFile = files.find(f => f.includes(`-${hash}.stories.`));
         if (matchingFile) {
-          filePath = path.join(storiesPath, matchingFile);
+          filePath = safePath(storiesPath, matchingFile);
+          if (!filePath) {
+            return res.status(400).json({ success: false, error: 'Invalid file path' });
+          }
           fs.unlinkSync(filePath);
           console.log(`✅ Deleted story by hash match: ${filePath}`);
           return res.json({ success: true, message: 'Story deleted successfully' });
@@ -689,7 +728,9 @@ app.delete('/story-ui/stories', async (req, res) => {
 
     for (const file of storyFiles) {
       try {
-        fs.unlinkSync(path.join(storiesPath, file));
+        const fp = safePath(storiesPath, file);
+        if (!fp) continue;
+        fs.unlinkSync(fp);
         deleted++;
       } catch (err) {
         console.error(`Error deleting ${file}:`, err);
@@ -742,7 +783,8 @@ app.post('/story-ui/orphan-stories', async (req, res) => {
 
     // Get details for each orphan
     const orphanDetails = orphans.map(fileName => {
-      const filePath = path.join(storiesPath, fileName);
+      const filePath = safePath(storiesPath, fileName);
+      if (!filePath) return null;
       const content = fs.readFileSync(filePath, 'utf-8');
       const stats = fs.statSync(filePath);
 
@@ -757,13 +799,13 @@ app.post('/story-ui/orphan-stories', async (req, res) => {
         title,
         lastUpdated: stats.mtime.getTime()
       };
-    });
+    }).filter(Boolean);
 
-    console.log(`📋 Found ${orphans.length} orphan stories out of ${storyFiles.length} total`);
+    console.log(`📋 Found ${orphanDetails.length} orphan stories out of ${storyFiles.length} total`);
 
     return res.json({
       orphans: orphanDetails,
-      count: orphans.length,
+      count: orphanDetails.length,
       totalStories: storyFiles.length
     });
   } catch (error) {
@@ -806,7 +848,8 @@ app.delete('/story-ui/orphan-stories', async (req, res) => {
 
     for (const fileName of orphans) {
       try {
-        const filePath = path.join(storiesPath, fileName);
+        const filePath = safePath(storiesPath, fileName);
+        if (!filePath) { errors.push(fileName); continue; }
         fs.unlinkSync(filePath);
         deleted.push(fileName);
         console.log(`🗑️ Deleted orphan story: ${fileName}`);

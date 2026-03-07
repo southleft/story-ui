@@ -5,7 +5,6 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createStoryUIConfig } from '../story-ui.config.js';
 import { setupCommand, cleanupDefaultStorybookComponents } from './setup.js';
 import { deployCommand } from './deploy.js';
 import { updateCommand, statusCommand } from './update.js';
@@ -14,12 +13,16 @@ import net from 'net';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Read version from package.json
+const packageJsonPath = path.resolve(__dirname, '..', 'package.json');
+const packageVersion = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8')).version;
+
 const program = new Command();
 
 program
   .name('story-ui')
   .description('AI-powered Storybook story generator for React component libraries')
-  .version('1.0.0');
+  .version(packageVersion);
 
 program
   .command('init')
@@ -155,129 +158,6 @@ program
       console.log(`✅ Sample configuration generated: ${filename}`);
     }
   });
-
-async function autoDetectAndCreateConfig() {
-  const cwd = process.cwd();
-  const config: any = {
-    generatedStoriesPath: './src/stories/generated',
-    storyPrefix: 'Generated/',
-    defaultAuthor: 'Story UI AI',
-    componentPrefix: '',
-    layoutRules: {
-      multiColumnWrapper: 'div',
-      columnComponent: 'div',
-      layoutExamples: {
-        twoColumn: `<div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem'}}>
-  <div>Column 1 content</div>
-  <div>Column 2 content</div>
-</div>`
-      },
-      prohibitedElements: []
-    }
-  };
-
-  // Try to detect package.json
-  const packageJsonPath = path.join(cwd, 'package.json');
-  if (fs.existsSync(packageJsonPath)) {
-    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
-    config.importPath = packageJson.name || 'your-component-library';
-  }
-
-  // Try to detect components directory
-  const possibleComponentPaths = [
-    './src/components',
-    './lib/components',
-    './components',
-    './src'
-  ];
-
-  for (const possiblePath of possibleComponentPaths) {
-    if (fs.existsSync(path.join(cwd, possiblePath))) {
-      config.componentsPath = possiblePath;
-      break;
-    }
-  }
-
-  writeConfig(config, 'js');
-}
-
-async function createTemplateConfig(template: string) {
-  let config: any;
-
-  switch (template) {
-    case 'chakra-ui':
-      config = {
-        importPath: '@chakra-ui/react',
-        componentPrefix: '',
-        layoutRules: {
-          multiColumnWrapper: 'SimpleGrid',
-          columnComponent: 'Box',
-          layoutExamples: {
-            twoColumn: `<SimpleGrid columns={2} spacing={4}>
-  <Box><Card>Left content</Card></Box>
-  <Box><Card>Right content</Card></Box>
-</SimpleGrid>`
-          }
-        }
-      };
-      break;
-
-    case 'ant-design':
-      config = {
-        importPath: 'antd',
-        componentPrefix: '',
-        layoutRules: {
-          multiColumnWrapper: 'Row',
-          columnComponent: 'Col',
-          layoutExamples: {
-            twoColumn: `<Row gutter={16}>
-  <Col span={12}><Card>Left content</Card></Col>
-  <Col span={12}><Card>Right content</Card></Col>
-</Row>`
-          }
-        }
-      };
-      break;
-
-    default:
-      throw new Error(`Unknown template: ${template}`);
-  }
-
-  // Add common defaults
-  config = {
-    generatedStoriesPath: './src/stories/generated',
-    componentsPath: './src/components',
-    storyPrefix: 'Generated/',
-    defaultAuthor: 'Story UI AI',
-    ...config
-  };
-
-  writeConfig(config, 'js');
-}
-
-async function createBasicConfig() {
-  const config = {
-    generatedStoriesPath: './src/stories/generated',
-    componentsPath: './src/components',
-    storyPrefix: 'Generated/',
-    defaultAuthor: 'Story UI AI',
-    importPath: 'your-component-library',
-    componentPrefix: '',
-    layoutRules: {
-      multiColumnWrapper: 'div',
-      columnComponent: 'div',
-      layoutExamples: {
-        twoColumn: `<div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem'}}>
-  <div>Column 1 content</div>
-  <div>Column 2 content</div>
-</div>`
-      },
-      prohibitedElements: []
-    }
-  };
-
-  writeConfig(config, 'js');
-}
 
 function generateSampleConfig(filename: string, type: 'json' | 'js') {
   const config = {

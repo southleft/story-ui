@@ -1115,7 +1115,7 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       storyId,
       outPath,
       title: cleanTitle,  // Use versioned title (e.g., "Navigation Bar v2")
-      story: fileContents,
+      story: fixedFileContents,
       storage: 'file-system',
       isUpdate: isActualUpdate,
       validation: {

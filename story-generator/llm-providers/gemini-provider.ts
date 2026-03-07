@@ -328,7 +328,7 @@ export class GeminiProvider extends BaseLLMProvider {
   async validateApiKey(apiKey: string): Promise<ValidationResult> {
     try {
       // Make a minimal API call to validate the key
-      const url = `${this.getApiUrl('gemini-1.5-flash')}?key=${apiKey}`;
+      const url = `${this.getApiUrl('gemini-2.0-flash')}?key=${apiKey}`;
       const response = await fetch(url, {
         method: 'POST',
         headers: {

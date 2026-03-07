@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import vm from 'vm';
 import { createRequire } from 'module';
 import { StoryUIConfig, DEFAULT_CONFIG, createStoryUIConfig, IconImportsConfig } from '../story-ui.config.js';
 
@@ -177,9 +178,8 @@ export function loadUserConfig(): StoryUIConfig {
                 .replace(/\/\/[^\n]*/g, '') // Remove single-line comments
                 .replace(/,(\s*[}\]])/g, '$1'); // Remove trailing commas
 
-              // Use Function constructor (safer than eval, runs in isolated scope)
-              const configFn = new Function(`return ${configObj}`);
-              userConfig = configFn();
+              // Use vm.runInNewContext for sandboxed evaluation (no access to require, process, etc.)
+              userConfig = vm.runInNewContext(`(${configObj})`, Object.create(null), { timeout: 1000 });
             } catch (parseError) {
               console.warn(`Failed to parse config from ${configPath}:`, parseError);
               throw requireError; // Re-throw original error

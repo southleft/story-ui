@@ -341,13 +341,17 @@ function getApiBaseUrl(): string {
   return `http://localhost:${port}`;
 }
 
-const API_BASE = getApiBaseUrl();
-const MCP_API = `${API_BASE}/mcp/generate-story`;
-const MCP_STREAM_API = `${API_BASE}/mcp/generate-story-stream`;
-const PROVIDERS_API = `${API_BASE}/mcp/providers`;
-const STORIES_API = `${API_BASE}/story-ui/stories`;
-const ORPHAN_STORIES_API = `${API_BASE}/story-ui/orphan-stories`;
-const CONSIDERATIONS_API = `${API_BASE}/mcp/considerations`;
+let _apiBase: string | null = null;
+function getApiBase(): string {
+  if (!_apiBase) _apiBase = getApiBaseUrl();
+  return _apiBase;
+}
+const MCP_API = () => `${getApiBase()}/mcp/generate-story`;
+const MCP_STREAM_API = () => `${getApiBase()}/mcp/generate-story-stream`;
+const PROVIDERS_API = () => `${getApiBase()}/mcp/providers`;
+const STORIES_API = () => `${getApiBase()}/story-ui/stories`;
+const ORPHAN_STORIES_API = () => `${getApiBase()}/story-ui/orphan-stories`;
+const CONSIDERATIONS_API = () => `${getApiBase()}/mcp/considerations`;
 
 function isEdgeMode(): boolean {
   if (typeof window !== 'undefined') {
@@ -493,7 +497,7 @@ function saveStorybookMcpPref(enabled: boolean): void {
 
 async function testMCPConnection(): Promise<{ connected: boolean; error?: string }> {
   try {
-    const response = await fetch(PROVIDERS_API, { method: 'GET' });
+    const response = await fetch(PROVIDERS_API(), { method: 'GET' });
     if (response.ok) return { connected: true };
     return { connected: false, error: `Server returned ${response.status}` };
   } catch (e) {
@@ -509,7 +513,7 @@ async function syncWithActualStories(): Promise<ChatSession[]> {
 
 async function fetchOrphanStories(): Promise<OrphanStory[]> {
   try {
-    const response = await fetch(STORIES_API);
+    const response = await fetch(STORIES_API());
     if (!response.ok) return [];
     const data = await response.json();
     const serverStories = data.stories || [];
@@ -525,7 +529,7 @@ async function fetchOrphanStories(): Promise<OrphanStory[]> {
 
 async function deleteStoryAndChat(chatId: string): Promise<boolean> {
   try {
-    const response = await fetch(`${STORIES_API}/${chatId}`, { method: 'DELETE' });
+    const response = await fetch(`${STORIES_API()}/${chatId}`, { method: 'DELETE' });
     // Delete chat from localStorage if:
     // - Story was successfully deleted (200/204)
     // - Story doesn't exist (404) - orphan chat case
@@ -1108,7 +1112,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
       dispatch({ type: 'SET_CONNECTION_STATUS', payload: connectionTest });
       if (connectionTest.connected) {
         try {
-          const res = await fetch(PROVIDERS_API);
+          const res = await fetch(PROVIDERS_API());
           if (res.ok) {
             const data: ProvidersResponse = await res.json();
             const configuredProviders = data.providers.filter(p => p.configured);
@@ -1144,7 +1148,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           console.error('Failed to fetch providers:', e);
         }
         try {
-          const res = await fetch(CONSIDERATIONS_API);
+          const res = await fetch(CONSIDERATIONS_API());
           if (res.ok) {
             const data = await res.json();
             if (data.hasConsiderations && data.considerations) {
@@ -1391,21 +1395,11 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
 
   // Finalize streaming
   const finalizeStreamingConversation = useCallback((newConversation: Message[], completion: CompletionFeedback, userInput: string) => {
-    // DEBUG: Trace completion data
-    console.log('[StoryUI DEBUG] finalizeStreamingConversation completion:', {
-      success: completion.success,
-      storyId: completion.storyId,
-      fileName: completion.fileName,
-      title: completion.title,
-      action: completion.summary?.action,
-    });
-
     // Track this story as panel-generated to prevent false MCP detection
     // The story ID is the fileName without .stories.tsx extension
     if (completion.success && completion.fileName) {
       const storyId = completion.fileName.replace('.stories.tsx', '');
       panelGeneratedStoryIds.current.add(storyId);
-      console.log('[Story UI] Tracking panel-generated story:', storyId);
     }
 
     const isUpdate = completion.summary.action === 'updated';
@@ -1414,12 +1408,6 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     const updatedConversation = [...newConversation, aiMsg];
     dispatch({ type: 'SET_CONVERSATION', payload: updatedConversation });
     const isExistingSession = state.activeChatId && state.conversation.length > 0;
-    // DEBUG: Trace session detection
-    console.log('[StoryUI DEBUG] isExistingSession check:', {
-      activeChatId: state.activeChatId,
-      conversationLength: state.conversation.length,
-      isExistingSession,
-    });
 
     if (isExistingSession && state.activeChatId) {
       // Load existing session to preserve fileName if completion doesn't include it
@@ -1437,14 +1425,6 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
         conversation: updatedConversation,
         lastUpdated: Date.now(),
       };
-      // DEBUG: Trace what's being saved for UPDATE
-      console.log('[StoryUI DEBUG] Saving UPDATED session:', {
-        id: updatedSession.id,
-        title: updatedSession.title,
-        fileName: updatedSession.fileName,
-        completionFileName: completion.fileName,
-        existingFileName,
-      });
       if (chatIndex !== -1) chats[chatIndex] = updatedSession;
       saveChats(chats);
       dispatch({ type: 'SET_RECENT_CHATS', payload: chats });
@@ -1461,12 +1441,6 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
         conversation: updatedConversation,
         lastUpdated: Date.now(),
       };
-      // DEBUG: Trace what's being saved
-      console.log('[StoryUI DEBUG] Saving NEW session:', {
-        id: newSession.id,
-        title: newSession.title,
-        fileName: newSession.fileName,
-      });
       const chats = loadChats().filter(c => c.id !== chatId);
       chats.unshift(newSession);
       if (chats.length > MAX_RECENT_CHATS) chats.splice(MAX_RECENT_CHATS);
@@ -1514,15 +1488,6 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     const activeChat = freshChats.find(c => c.id === state.activeChatId);
     const activeFileName = activeChat?.fileName || undefined;
 
-    // DEBUG: Trace fileName lookup for iteration bug
-    console.log('[StoryUI DEBUG] handleSend fileName lookup:', {
-      activeChatId: state.activeChatId,
-      freshChatsCount: freshChats.length,
-      freshChatsIds: freshChats.map(c => c.id),
-      foundChat: activeChat ? { id: activeChat.id, fileName: activeChat.fileName } : null,
-      activeFileName,
-    });
-
     if (USE_STREAMING) {
       try {
         if (abortControllerRef.current) abortControllerRef.current.abort();
@@ -1536,12 +1501,6 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           isUpdate: state.activeChatId && state.conversation.length > 0,
           originalTitle: state.activeTitle || undefined,
           storyId: state.activeChatId || undefined,
-          _debug: {
-            activeChatId: state.activeChatId,
-            freshChatsCount: freshChats.length,
-            foundChatFileName: activeChat?.fileName,
-            activeFileName,
-          },
           images: hasImages
             ? imagesToSend.map(img => ({ type: 'base64' as const, data: img.base64, mediaType: img.file.type }))
             : undefined,
@@ -1551,13 +1510,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           considerations: state.considerations || undefined,
           useStorybookMcp: state.storybookMcpAvailable && state.useStorybookMcp,
         };
-        console.log('[StoryUI DEBUG] Request body being sent:', {
-          fileName: requestBody.fileName,
-          storyId: requestBody.storyId,
-          isUpdate: requestBody.isUpdate,
-          activeChatId: state.activeChatId,
-        });
-        const response = await fetch(MCP_STREAM_API, {
+        const response = await fetch(MCP_STREAM_API(), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(requestBody),
@@ -1620,7 +1573,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
         console.warn('Streaming failed, falling back to non-streaming:', err);
         dispatch({ type: 'SET_STREAMING_STATE', payload: null });
         try {
-          const res = await fetch(MCP_API, {
+          const res = await fetch(MCP_API(), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1642,6 +1595,23 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           const aiMsg: Message = { role: 'ai', content: responseMessage };
           const updatedConversation = [...newConversation, aiMsg];
           dispatch({ type: 'SET_CONVERSATION', payload: updatedConversation });
+
+          // Persist chat to localStorage (mirrors streaming path behavior)
+          const chatId = data.fileName || data.storyId || Date.now().toString();
+          const chatTitle = data.title || userInput;
+          dispatch({ type: 'SET_ACTIVE_CHAT', payload: { id: chatId, title: chatTitle } });
+          const newSession: ChatSession = {
+            id: chatId,
+            title: chatTitle,
+            fileName: data.fileName || '',
+            conversation: updatedConversation,
+            lastUpdated: Date.now(),
+          };
+          const chats = loadChats().filter(c => c.id !== chatId);
+          chats.unshift(newSession);
+          if (chats.length > MAX_RECENT_CHATS) chats.splice(MAX_RECENT_CHATS);
+          saveChats(chats);
+          dispatch({ type: 'SET_RECENT_CHATS', payload: chats });
         } catch (fallbackErr: unknown) {
           const errorMessage = fallbackErr instanceof Error ? fallbackErr.message : 'Unknown error';
           dispatch({ type: 'SET_ERROR', payload: errorMessage });
@@ -1691,7 +1661,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     if (!state.connectionStatus.connected) return;
     try {
       const chatFileNames = state.recentChats.map(chat => chat.fileName);
-      const response = await fetch(ORPHAN_STORIES_API, {
+      const response = await fetch(ORPHAN_STORIES_API(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chatFileNames }),
@@ -1714,7 +1684,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     setIsDeletingOrphans(true);
     try {
       const chatFileNames = state.recentChats.map(chat => chat.fileName);
-      const response = await fetch(ORPHAN_STORIES_API, {
+      const response = await fetch(ORPHAN_STORIES_API(), {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chatFileNames }),
@@ -1788,7 +1758,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     if (!confirm(`Delete ${count} selected ${count === 1 ? 'story' : 'stories'}?`)) return;
     dispatch({ type: 'SET_BULK_DELETING', payload: true });
     try {
-      const response = await fetch(`${STORIES_API}/delete-bulk`, {
+      const response = await fetch(`${STORIES_API()}/delete-bulk`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids: Array.from(state.selectedStoryIds) }),
@@ -1811,7 +1781,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     if (!confirm(`Delete ALL ${state.orphanStories.length} generated stories?`)) return;
     dispatch({ type: 'SET_BULK_DELETING', payload: true });
     try {
-      const response = await fetch(STORIES_API, { method: 'DELETE' });
+      const response = await fetch(STORIES_API(), { method: 'DELETE' });
       if (response.ok) {
         dispatch({ type: 'SET_ORPHAN_STORIES', payload: [] });
         dispatch({ type: 'SET_SELECTED_STORY_IDS', payload: new Set() });
@@ -1827,7 +1797,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
 
   const handleDeleteOrphan = async (storyId: string) => {
     try {
-      const response = await fetch(`${STORIES_API}/${storyId}`, { method: 'DELETE' });
+      const response = await fetch(`${STORIES_API()}/${storyId}`, { method: 'DELETE' });
       if (response.ok) {
         dispatch({ type: 'SET_ORPHAN_STORIES', payload: state.orphanStories.filter(s => s.id !== storyId) });
         const newSet = new Set(state.selectedStoryIds);
