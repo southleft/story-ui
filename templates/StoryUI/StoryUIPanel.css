@@ -1781,3 +1781,181 @@
     transform: rotate(360deg);
   }
 }
+
+/* ============================================
+   Voice Controls
+   ============================================ */
+
+.sui-voice-wrap {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+}
+
+.sui-voice-toggle {
+  all: revert;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full, 9999px);
+  border: 1px solid hsl(var(--border) / 0.5);
+  background: none;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  position: relative;
+  transition: all 0.2s ease;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.sui-voice-toggle:hover {
+  border-color: hsl(var(--primary));
+  color: hsl(var(--primary));
+  background: hsl(var(--primary) / 0.08);
+}
+
+.sui-voice-toggle--active {
+  background: hsl(var(--destructive, 0 84% 60%));
+  border-color: hsl(var(--destructive, 0 84% 60%));
+  color: white;
+}
+
+.sui-voice-toggle--active:hover {
+  background: hsl(var(--destructive, 0 84% 60%) / 0.9);
+  border-color: hsl(var(--destructive, 0 84% 60%) / 0.9);
+  color: white;
+}
+
+.sui-voice-toggle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.sui-voice-pulse {
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 2px solid hsl(var(--destructive, 0 84% 60%));
+  animation: sui-voice-pulse-ring 1.5s ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes sui-voice-pulse-ring {
+  0% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(1.4);
+    opacity: 0;
+  }
+}
+
+.sui-voice-status {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: hsl(var(--popover));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg, 8px);
+  padding: 8px 14px;
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: nowrap;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 4px 12px hsl(var(--foreground) / 0.08);
+  z-index: 50;
+  pointer-events: none;
+}
+
+.sui-voice-status-interim {
+  color: hsl(var(--muted-foreground));
+  font-style: italic;
+}
+
+.sui-voice-status-listening {
+  color: hsl(var(--muted-foreground));
+}
+
+.sui-voice-status-error {
+  color: hsl(var(--destructive, 0 84% 60%));
+}
+
+/* Privacy dialog */
+
+.sui-voice-privacy-overlay {
+  position: fixed;
+  inset: 0;
+  background: hsl(var(--foreground) / 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.sui-voice-privacy-dialog {
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg, 8px);
+  padding: 24px;
+  max-width: 380px;
+  width: 90%;
+  box-shadow: 0 8px 32px hsl(var(--foreground) / 0.15);
+}
+
+.sui-voice-privacy-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+  margin: 0 0 8px 0;
+}
+
+.sui-voice-privacy-text {
+  font-size: 13px;
+  line-height: 1.5;
+  color: hsl(var(--muted-foreground));
+  margin: 0 0 20px 0;
+}
+
+.sui-voice-privacy-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.sui-voice-privacy-cancel,
+.sui-voice-privacy-accept {
+  all: revert;
+  padding: 8px 16px;
+  border-radius: var(--radius-md, 6px);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
+}
+
+.sui-voice-privacy-cancel {
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+}
+
+.sui-voice-privacy-cancel:hover {
+  background: hsl(var(--muted) / 0.8);
+}
+
+.sui-voice-privacy-accept {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.sui-voice-privacy-accept:hover {
+  background: hsl(var(--primary) / 0.9);
+}
