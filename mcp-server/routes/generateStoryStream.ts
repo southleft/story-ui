@@ -498,8 +498,9 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
     considerations,
     provider,            // LLM provider selected in UI (claude, openai, gemini)
     model,               // Model selected in UI
-    useStorybookMcp      // Whether to use Storybook MCP context
-  } = req.body as StreamGenerateRequest;
+    useStorybookMcp,     // Whether to use Storybook MCP context
+    voiceMode            // Whether this request originated from voice input
+  } = req.body as StreamGenerateRequest & { voiceMode?: boolean };
 
   // DEBUG: Trace incoming fileName for iteration bug
   const _debug = req.body._debug;
@@ -706,9 +707,27 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
       storybookContext,              // Optional context from Storybook MCP
     };
 
-    const initialPrompt = await buildClaudePromptWithContext(
+    let initialPrompt = await buildClaudePromptWithContext(
       prompt, config, conversation, previousCode, components, frameworkOptions
     );
+
+    // Voice mode: add context for incremental voice-driven modifications
+    if (voiceMode && conversation && conversation.length > 0) {
+      const voiceContext = `
+VOICE MODE CONTEXT:
+The user is dictating UI changes by voice. They are building or modifying an interface incrementally through speech.
+
+CRITICAL VOICE MODE RULES:
+- When updating an existing story, modify ONLY what the user asked for and preserve everything else.
+- Respond to spatial/structural commands like "move X above Y", "put X next to Y", "swap X and Y".
+- Respond to property changes like "make the button red", "change the title to Welcome", "make it bigger".
+- Respond to additions like "add a sidebar", "put a search bar at the top", "add three cards below the header".
+- Respond to removals like "remove the footer", "delete the second card", "get rid of the image".
+- Keep all existing components, imports, and structure intact unless the user explicitly asks to change them.
+- Maintain the existing story title and metadata — only modify the rendered JSX/template.
+`;
+      initialPrompt = voiceContext + '\n\n' + initialPrompt;
+    }
 
     const messages: { role: 'user' | 'assistant', content: string }[] = [
       { role: 'user', content: initialPrompt }

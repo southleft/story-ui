@@ -8,6 +8,8 @@
 
 import React, { useState, useEffect, useRef, useCallback, useReducer } from 'react';
 import './StoryUIPanel.css';
+import { VoiceControls } from './voice/VoiceControls.js';
+import type { VoiceCommand } from './voice/types.js';
 
 // ============================================
 // Types & Interfaces
@@ -923,6 +925,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   // Used to detect when stories are created via MCP remote (Claude Desktop)
   // and trigger automatic refresh since MCP has no browser context
   const panelGeneratedStoryIds = useRef<Set<string>>(new Set());
+  const voiceModeActiveRef = useRef(false);
   const knownStoryIds = useRef<Set<string>>(new Set());
   const isPollingInitialized = useRef(false);
 
@@ -1509,6 +1512,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           model: state.selectedModel || undefined,
           considerations: state.considerations || undefined,
           useStorybookMcp: state.storybookMcpAvailable && state.useStorybookMcp,
+          voiceMode: voiceModeActiveRef.current || undefined,
         };
         const response = await fetch(MCP_STREAM_API(), {
           method: 'POST',
@@ -1633,6 +1637,40 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   };
 
   const handleNewChat = () => dispatch({ type: 'NEW_CHAT' });
+
+  // Voice input handlers
+  const handleVoiceTranscript = useCallback((text: string) => {
+    // Append transcript to current input (user may be speaking in segments)
+    dispatch({ type: 'SET_INPUT', payload: state.input ? `${state.input} ${text}` : text });
+  }, [state.input]);
+
+  const handleVoiceCommand = useCallback((command: VoiceCommand) => {
+    switch (command.type) {
+      case 'submit':
+        if (state.input.trim()) handleSend();
+        break;
+      case 'clear':
+      case 'new-chat':
+        dispatch({ type: 'NEW_CHAT' });
+        dispatch({ type: 'SET_INPUT', payload: '' });
+        break;
+      case 'stop':
+        // Voice toggle handles this via its own state
+        break;
+      case 'undo':
+        // TODO: Implement undo (revert to previous story version)
+        break;
+      case 'redo':
+        // TODO: Implement redo
+        break;
+    }
+  }, [state.input, handleSend]);
+
+  const handleVoiceSubmit = useCallback(() => {
+    if (state.input.trim() && !state.loading) {
+      handleSend();
+    }
+  }, [state.input, state.loading, handleSend]);
 
   const handleDeleteChat = async (chatId: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -2112,6 +2150,13 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                 }}
                 onPaste={handlePaste}
                 placeholder={state.attachedImages.length > 0 ? 'Describe what to create from these images...' : 'Describe a UI component...'}
+              />
+              <VoiceControls
+                onTranscript={handleVoiceTranscript}
+                onCommand={handleVoiceCommand}
+                onSubmit={handleVoiceSubmit}
+                onListeningChange={(listening) => { voiceModeActiveRef.current = listening; }}
+                disabled={state.loading}
               />
               <button type="submit" className="sui-input-form-send" disabled={state.loading || (!state.input.trim() && state.attachedImages.length === 0)} aria-label="Send">
                 {Icons.send}
