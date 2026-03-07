@@ -1,3 +1,10 @@
+## [4.12.1](https://github.com/southleft/story-ui/compare/v4.12.0...v4.12.1) (2026-03-07)
+
+
+### Bug Fixes
+
+* security hardening, chat sync bugs, and code cleanup ([141e31d](https://github.com/southleft/story-ui/commit/141e31d44e8ae424187ac450adf530fb4e07c680))
+
 # [4.12.0](https://github.com/southleft/story-ui/compare/v4.11.0...v4.12.0) (2026-01-13)
 
 
