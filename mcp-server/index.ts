@@ -41,6 +41,7 @@ import {
 } from './routes/frameworks.js';
 import mcpRemoteRouter from './routes/mcpRemote.js';
 import { voiceRenderStream } from './routes/voiceRender.js';
+import { convertToStory } from './routes/convertToStory.js';
 import { getAdapterRegistry } from '../story-generator/framework-adapters/index.js';
 
 // Supported story file extensions for all frameworks
@@ -131,6 +132,7 @@ app.post('/mcp/claude', claudeProxy);
 app.post('/mcp/generate-story', generateStoryFromPrompt);
 app.post('/mcp/generate-story-stream', generateStoryFromPromptStream);
 app.post('/mcp/voice-render', voiceRenderStream);
+app.post('/mcp/convert-to-story', convertToStory);
 
 // LLM Provider management routes
 app.get('/mcp/providers', getProviders);
@@ -345,6 +347,7 @@ app.delete('/mcp/stories/:storyId', async (req, res) => {
 app.post('/story-ui/generate', generateStoryFromPrompt);
 app.post('/story-ui/generate-stream', generateStoryFromPromptStream);
 app.post('/story-ui/voice-render', voiceRenderStream);
+app.post('/story-ui/convert-to-story', convertToStory);
 app.post('/story-ui/claude', claudeProxy);
 app.get('/story-ui/components', getComponents);
 app.get('/story-ui/props', getProps);
