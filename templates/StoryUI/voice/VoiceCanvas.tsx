@@ -463,9 +463,11 @@ export function VoiceCanvas({
       if (audioCheckRef.current) clearTimeout(audioCheckRef.current);
       audioCheckRef.current = setTimeout(async () => {
         if (!isListeningRef.current) return;
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          audioStreamRef.current = stream;
+
+        const measureAudio = async (constraints: MediaStreamConstraints): Promise<{ level: number; label: string }> => {
+          const stream = await navigator.mediaDevices.getUserMedia(constraints);
+          const track = stream.getAudioTracks()[0];
+          const label = track?.label || 'Unknown';
           const audioCtx = new AudioContext();
           const source = audioCtx.createMediaStreamSource(stream);
           const analyser = audioCtx.createAnalyser();
@@ -474,26 +476,55 @@ export function VoiceCanvas({
           const data = new Uint8Array(analyser.frequencyBinCount);
 
           let maxLevel = 0;
-          let samples = 0;
-          const check = setInterval(() => {
-            analyser.getByteFrequencyData(data);
-            const avg = data.reduce((a, b) => a + b, 0) / data.length;
-            if (avg > maxLevel) maxLevel = avg;
-            samples++;
-            if (samples >= 10) {
-              clearInterval(check);
-              stream.getTracks().forEach(t => t.stop());
-              audioStreamRef.current = null;
-              audioCtx.close();
-              if (maxLevel < 1 && isListeningRef.current) {
-                const track = stream.getAudioTracks()[0];
-                const device = track?.label || 'Unknown device';
+          await new Promise<void>(resolve => {
+            let samples = 0;
+            const interval = setInterval(() => {
+              analyser.getByteFrequencyData(data);
+              const avg = data.reduce((a, b) => a + b, 0) / data.length;
+              if (avg > maxLevel) maxLevel = avg;
+              if (++samples >= 10) { clearInterval(interval); resolve(); }
+            }, 100);
+          });
+
+          stream.getTracks().forEach(t => t.stop());
+          audioCtx.close();
+          return { level: maxLevel, label };
+        };
+
+        try {
+          // Test the default device
+          const defaultResult = await measureAudio({ audio: true });
+
+          if (defaultResult.level >= 1 || !isListeningRef.current) return;
+
+          // Default mic is silent — try to find a working physical mic
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const mics = devices.filter(d =>
+            d.kind === 'audioinput' &&
+            d.deviceId !== 'default' &&
+            !d.label.toLowerCase().includes('virtual')
+          );
+
+          let foundWorking = false;
+          for (const mic of mics) {
+            if (!isListeningRef.current) return;
+            try {
+              const result = await measureAudio({ audio: { deviceId: { exact: mic.deviceId } } });
+              if (result.level >= 1) {
+                foundWorking = true;
                 setStatusMessage(
-                  `No audio detected from "${device}" — check your mic in Chrome settings (chrome://settings/content/microphone)`
+                  `Your default mic "${defaultResult.label}" has no audio. Change your system default to "${result.label}" in System Settings > Sound > Input, then refresh.`
                 );
+                break;
               }
-            }
-          }, 100);
+            } catch { /* skip device */ }
+          }
+
+          if (!foundWorking && isListeningRef.current) {
+            setStatusMessage(
+              `No audio from "${defaultResult.label}" — change your default mic in System Settings > Sound > Input`
+            );
+          }
         } catch {
           // getUserMedia failed — onerror on recognition will handle it
         }
