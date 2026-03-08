@@ -81,6 +81,8 @@ export function VoiceCanvas({
   const isListeningRef = useRef(false);
   const autoSubmitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingTranscriptRef = useRef('');
+  const audioCheckRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
 
   // Keep refs in sync
   useEffect(() => { currentHtmlRef.current = currentHtml; }, [currentHtml]);
@@ -456,6 +458,46 @@ export function VoiceCanvas({
     try {
       recognition.start();
       setNoSpeechCount(0);
+
+      // Check audio levels after 3s — detect silent/wrong mic
+      if (audioCheckRef.current) clearTimeout(audioCheckRef.current);
+      audioCheckRef.current = setTimeout(async () => {
+        if (!isListeningRef.current) return;
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          audioStreamRef.current = stream;
+          const audioCtx = new AudioContext();
+          const source = audioCtx.createMediaStreamSource(stream);
+          const analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 256;
+          source.connect(analyser);
+          const data = new Uint8Array(analyser.frequencyBinCount);
+
+          let maxLevel = 0;
+          let samples = 0;
+          const check = setInterval(() => {
+            analyser.getByteFrequencyData(data);
+            const avg = data.reduce((a, b) => a + b, 0) / data.length;
+            if (avg > maxLevel) maxLevel = avg;
+            samples++;
+            if (samples >= 10) {
+              clearInterval(check);
+              stream.getTracks().forEach(t => t.stop());
+              audioStreamRef.current = null;
+              audioCtx.close();
+              if (maxLevel < 1 && isListeningRef.current) {
+                const track = stream.getAudioTracks()[0];
+                const device = track?.label || 'Unknown device';
+                setStatusMessage(
+                  `No audio detected from "${device}" — check your mic in Chrome settings (chrome://settings/content/microphone)`
+                );
+              }
+            }
+          }, 100);
+        } catch {
+          // getUserMedia failed — onerror on recognition will handle it
+        }
+      }, 3000);
     } catch (e) {
       setStatusMessage('Could not start voice input — use text input below');
       isListeningRef.current = false;
@@ -467,6 +509,8 @@ export function VoiceCanvas({
     isListeningRef.current = false;
     setIsListening(false);
     setInterimText('');
+    if (audioCheckRef.current) { clearTimeout(audioCheckRef.current); audioCheckRef.current = null; }
+    if (audioStreamRef.current) { audioStreamRef.current.getTracks().forEach(t => t.stop()); audioStreamRef.current = null; }
 
     // Submit any pending transcript immediately
     const pending = pendingTranscriptRef.current.trim();
@@ -512,9 +556,9 @@ export function VoiceCanvas({
         isListeningRef.current = false;
         recognitionRef.current.abort();
       }
-      if (autoSubmitRef.current) {
-        clearTimeout(autoSubmitRef.current);
-      }
+      if (autoSubmitRef.current) clearTimeout(autoSubmitRef.current);
+      if (audioCheckRef.current) clearTimeout(audioCheckRef.current);
+      if (audioStreamRef.current) audioStreamRef.current.getTracks().forEach(t => t.stop());
     };
   }, []);
 
@@ -575,10 +619,10 @@ export function VoiceCanvas({
               <span className="sui-canvas-status-interim">{pendingTranscript ? pendingTranscript + ' ' : ''}{interimText}</span>
             ) : pendingTranscript ? (
               <span className="sui-canvas-status-final">{pendingTranscript}</span>
-            ) : isListening ? (
-              <span className="sui-canvas-status-listening">Listening... describe a UI to create</span>
             ) : statusMessage ? (
               <span className="sui-canvas-status-info">{statusMessage}</span>
+            ) : isListening ? (
+              <span className="sui-canvas-status-listening">Listening... describe a UI to create</span>
             ) : (
               <span className="sui-canvas-status-hint">Click mic or type below</span>
             )}
