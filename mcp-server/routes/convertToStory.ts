@@ -43,6 +43,218 @@ interface HtmlAnalysis {
   colors: string[];
   spacing: string[];
   typography: string[];
+  tokenMappings: TokenMapping[];
+}
+
+interface TokenMapping {
+  cssValue: string;
+  tokenType: 'color' | 'spacing' | 'fontSize' | 'fontWeight' | 'radius' | 'shadow';
+  suggestedToken: string;
+  confidence: 'high' | 'medium' | 'low';
+}
+
+// --- Design system token mappings ---
+
+/** Common design system spacing scales (px → token name) */
+const SPACING_MAP: Record<number, string> = {
+  2: 'xxs', 4: 'xs', 8: 'sm', 12: 'md', 16: 'md', 20: 'lg', 24: 'lg',
+  32: 'xl', 40: 'xl', 48: '2xl', 64: '3xl', 80: '4xl', 96: '5xl',
+};
+
+/** Common font sizes (px → token name) */
+const FONT_SIZE_MAP: Record<number, string> = {
+  10: 'xs', 11: 'xs', 12: 'sm', 13: 'sm', 14: 'md', 15: 'md', 16: 'md',
+  18: 'lg', 20: 'xl', 24: '2xl', 28: '2xl', 30: '3xl', 32: '3xl',
+  36: '4xl', 40: '4xl', 48: '5xl',
+};
+
+/** Common border radii (px → token name) */
+const RADIUS_MAP: Record<number, string> = {
+  0: 'none', 2: 'xs', 4: 'sm', 6: 'md', 8: 'md', 10: 'lg', 12: 'lg',
+  16: 'xl', 20: 'xl', 24: '2xl', 9999: 'full',
+};
+
+/** Font weight names */
+const WEIGHT_MAP: Record<number, string> = {
+  100: 'thin', 200: 'extralight', 300: 'light', 400: 'normal',
+  500: 'medium', 600: 'semibold', 700: 'bold', 800: 'extrabold', 900: 'black',
+};
+
+/** Parse a hex color to RGB values */
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  const clean = hex.replace('#', '');
+  let r: number, g: number, b: number;
+  if (clean.length === 3) {
+    r = parseInt(clean[0] + clean[0], 16);
+    g = parseInt(clean[1] + clean[1], 16);
+    b = parseInt(clean[2] + clean[2], 16);
+  } else if (clean.length === 6) {
+    r = parseInt(clean.slice(0, 2), 16);
+    g = parseInt(clean.slice(2, 4), 16);
+    b = parseInt(clean.slice(4, 6), 16);
+  } else {
+    return null;
+  }
+  return { r, g, b };
+}
+
+/** Map a hex color to the nearest design system semantic color */
+function mapColorToToken(hex: string): { token: string; confidence: 'high' | 'medium' | 'low' } {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return { token: hex, confidence: 'low' };
+
+  const { r, g, b } = rgb;
+
+  // Detect common color categories
+  const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+  const saturation = Math.max(r, g, b) - Math.min(r, g, b);
+
+  // Near-white
+  if (brightness > 240 && saturation < 20) return { token: 'white', confidence: 'high' };
+  // Near-black
+  if (brightness < 30 && saturation < 20) return { token: 'dark.9', confidence: 'high' };
+
+  // Grays (low saturation)
+  if (saturation < 30) {
+    if (brightness > 200) return { token: 'gray.1', confidence: 'high' };
+    if (brightness > 160) return { token: 'gray.3', confidence: 'high' };
+    if (brightness > 120) return { token: 'gray.5', confidence: 'high' };
+    if (brightness > 80) return { token: 'gray.7', confidence: 'high' };
+    return { token: 'gray.9', confidence: 'high' };
+  }
+
+  // Blues (common for primary)
+  if (b > r && b > g && b > 120) {
+    if (b > 200 && r < 100) return { token: 'blue.5 (primary)', confidence: 'medium' };
+    if (b > 150) return { token: 'blue.7', confidence: 'medium' };
+    return { token: 'blue.9', confidence: 'medium' };
+  }
+
+  // Greens (common for success)
+  if (g > r && g > b && g > 120) {
+    return { token: 'green.6 (success)', confidence: 'medium' };
+  }
+
+  // Reds (common for error/danger)
+  if (r > g && r > b && r > 150) {
+    return { token: 'red.6 (error)', confidence: 'medium' };
+  }
+
+  // Yellows/oranges (common for warning)
+  if (r > 180 && g > 120 && b < 100) {
+    return { token: 'yellow.6 (warning)', confidence: 'medium' };
+  }
+
+  // Purple
+  if (r > 100 && b > 100 && g < 100) {
+    return { token: 'violet.6', confidence: 'medium' };
+  }
+
+  return { token: hex, confidence: 'low' };
+}
+
+/** Parse CSS value to pixel number */
+function parsePx(value: string): number | null {
+  const match = value.match(/(\d+(?:\.\d+)?)\s*px/);
+  return match ? parseFloat(match[1]) : null;
+}
+
+/** Map inline CSS values to design system tokens */
+function mapStylesToTokens(html: string): TokenMapping[] {
+  const $ = cheerio.load(html, { xml: false });
+  const mappings: TokenMapping[] = [];
+  const seen = new Set<string>();
+
+  $('[style]').each((_, el) => {
+    const style = $(el).attr('style') || '';
+
+    // Colors
+    const colorMatches = style.match(/#[0-9a-f]{3,8}/gi) || [];
+    for (const color of colorMatches) {
+      if (seen.has(`color:${color}`)) continue;
+      seen.add(`color:${color}`);
+      const mapped = mapColorToToken(color);
+      mappings.push({
+        cssValue: color,
+        tokenType: 'color',
+        suggestedToken: mapped.token,
+        confidence: mapped.confidence,
+      });
+    }
+
+    // Spacing (padding, margin, gap)
+    const spacingProps = style.match(/(?:padding|margin|gap)(?:-(?:top|right|bottom|left))?:\s*([^;]+)/gi) || [];
+    for (const prop of spacingProps) {
+      const px = parsePx(prop);
+      if (px !== null && !seen.has(`spacing:${px}`)) {
+        seen.add(`spacing:${px}`);
+        const nearest = Object.keys(SPACING_MAP).map(Number).sort((a, b) => Math.abs(a - px) - Math.abs(b - px))[0];
+        if (nearest !== undefined) {
+          mappings.push({
+            cssValue: `${px}px`,
+            tokenType: 'spacing',
+            suggestedToken: SPACING_MAP[nearest],
+            confidence: px === nearest ? 'high' : 'medium',
+          });
+        }
+      }
+    }
+
+    // Font sizes
+    const fontSizeMatch = style.match(/font-size:\s*([^;]+)/i);
+    if (fontSizeMatch) {
+      const px = parsePx(fontSizeMatch[1]);
+      if (px !== null && !seen.has(`fontSize:${px}`)) {
+        seen.add(`fontSize:${px}`);
+        const nearest = Object.keys(FONT_SIZE_MAP).map(Number).sort((a, b) => Math.abs(a - px) - Math.abs(b - px))[0];
+        if (nearest !== undefined) {
+          mappings.push({
+            cssValue: `${px}px`,
+            tokenType: 'fontSize',
+            suggestedToken: FONT_SIZE_MAP[nearest],
+            confidence: px === nearest ? 'high' : 'medium',
+          });
+        }
+      }
+    }
+
+    // Font weight
+    const weightMatch = style.match(/font-weight:\s*(\d+)/i);
+    if (weightMatch) {
+      const w = parseInt(weightMatch[1]);
+      if (!seen.has(`weight:${w}`)) {
+        seen.add(`weight:${w}`);
+        if (WEIGHT_MAP[w]) {
+          mappings.push({
+            cssValue: String(w),
+            tokenType: 'fontWeight',
+            suggestedToken: WEIGHT_MAP[w],
+            confidence: 'high',
+          });
+        }
+      }
+    }
+
+    // Border radius
+    const radiusMatch = style.match(/border-radius:\s*([^;]+)/i);
+    if (radiusMatch) {
+      const px = parsePx(radiusMatch[1]);
+      if (px !== null && !seen.has(`radius:${px}`)) {
+        seen.add(`radius:${px}`);
+        const nearest = Object.keys(RADIUS_MAP).map(Number).sort((a, b) => Math.abs(a - px) - Math.abs(b - px))[0];
+        if (nearest !== undefined) {
+          mappings.push({
+            cssValue: `${px}px`,
+            tokenType: 'radius',
+            suggestedToken: RADIUS_MAP[nearest],
+            confidence: px === nearest ? 'high' : 'medium',
+          });
+        }
+      }
+    }
+  });
+
+  return mappings;
 }
 
 /** Analyze the HTML structure to build conversion constraints */
@@ -90,6 +302,9 @@ function analyzeHtml(html: string): HtmlAnalysis {
     else if (style.includes('flex-direction: row') || style.includes('flex-direction:row')) layout = 'horizontal';
   });
 
+  // Map inline styles to design system tokens
+  const tokenMappings = mapStylesToTokens(html);
+
   return {
     sections,
     elements: Array.from(elements),
@@ -97,6 +312,7 @@ function analyzeHtml(html: string): HtmlAnalysis {
     colors: Array.from(colors).slice(0, 10),
     spacing: Array.from(spacing).slice(0, 10),
     typography: Array.from(typography).slice(0, 5),
+    tokenMappings,
   };
 }
 
@@ -136,6 +352,9 @@ STRUCTURAL ANALYSIS:
 TEXT CONTENT (must appear exactly as shown):
 ${sectionContents.length > 0 ? sectionContents.join('\n') : '  (extract all text from the HTML above)'}
 
+TOKEN MAPPING TABLE (use these exact mappings):
+${analysis.tokenMappings.length > 0 ? analysis.tokenMappings.map(m => `  ${m.cssValue} → ${m.suggestedToken} (${m.tokenType}, ${m.confidence} confidence)`).join('\n') : '  (no mappings — use design system defaults)'}
+
 CONVERSION RULES:
 1. PRESERVE EXACT TEXT — every heading, paragraph, label, and button text must match the source HTML character-for-character.
 2. PRESERVE LAYOUT STRUCTURE — if the source has 3 columns, the story must have 3 columns. If it has a header above content, keep that order.
@@ -147,8 +366,8 @@ CONVERSION RULES:
    - <p> → Text component
    - Cards, containers → Card/Paper component
    - Grid layouts → Grid/SimpleGrid component
-4. MAP COLORS TO THEME — instead of hardcoded hex values, use the design system's theme colors (primary, secondary, etc.)
-5. MAP SPACING TO SCALE — instead of pixel values, use the design system's spacing scale (sm, md, lg, xl)
+4. USE TOKEN MAPPINGS — apply the token mapping table above. For "high confidence" mappings, use the token directly. For "medium" or "low", use your best judgment to match the design system's palette.
+5. MAP SPACING TO SCALE — use the spacing tokens from the mapping table instead of pixel values.
 6. DO NOT ADD ELEMENTS — do not add content, sections, or UI elements that aren't in the source HTML.
 7. DO NOT REMOVE ELEMENTS — every visible element in the source must appear in the story.
 8. DO NOT CHANGE COPY — the text content is final. Do not rephrase, shorten, or "improve" any text.`;
