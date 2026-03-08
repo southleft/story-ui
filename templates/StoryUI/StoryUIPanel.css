@@ -1959,3 +1959,264 @@
 .sui-voice-privacy-accept:hover {
   background: hsl(var(--primary) / 0.9);
 }
+
+/* ============================================================
+   Voice Canvas Mode
+   ============================================================ */
+
+.sui-canvas-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: hsl(var(--background));
+  position: relative;
+}
+
+.sui-canvas-preview {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.sui-canvas-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: #0d1117;
+}
+
+.sui-canvas-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 40px;
+  text-align: center;
+  color: hsl(var(--muted-foreground));
+}
+
+.sui-canvas-empty-icon {
+  opacity: 0.3;
+  margin-bottom: 20px;
+}
+
+.sui-canvas-empty-title {
+  font-size: 24px;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+  margin: 0 0 8px;
+}
+
+.sui-canvas-empty-desc {
+  font-size: 15px;
+  margin: 0 0 16px;
+  max-width: 400px;
+}
+
+.sui-canvas-empty-hint {
+  font-size: 13px;
+  font-style: italic;
+  opacity: 0.6;
+  margin: 0;
+}
+
+/* Floating voice bar */
+.sui-canvas-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: hsl(var(--card));
+  border-top: 1px solid hsl(var(--border));
+  gap: 12px;
+  min-height: 56px;
+}
+
+.sui-canvas-bar--active {
+  border-top-color: hsl(var(--primary) / 0.5);
+  background: hsl(var(--card) / 0.95);
+}
+
+.sui-canvas-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.sui-canvas-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* Mic button */
+.sui-canvas-mic {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 2px solid hsl(var(--border));
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+.sui-canvas-mic:hover {
+  border-color: hsl(var(--primary));
+  color: hsl(var(--primary));
+}
+
+.sui-canvas-mic--active {
+  background: hsl(0 80% 50%);
+  border-color: hsl(0 80% 50%);
+  color: white;
+  animation: sui-canvas-mic-glow 2s ease-in-out infinite;
+}
+
+.sui-canvas-mic-pulse {
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 2px solid hsl(0 80% 50%);
+  animation: sui-voice-pulse-ring 1.5s ease-out infinite;
+}
+
+@keyframes sui-canvas-mic-glow {
+  0%, 100% { box-shadow: 0 0 0 0 hsl(0 80% 50% / 0.4); }
+  50% { box-shadow: 0 0 12px 4px hsl(0 80% 50% / 0.2); }
+}
+
+/* Transcript display */
+.sui-canvas-transcript {
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.sui-canvas-status-rendering {
+  color: hsl(var(--primary));
+  animation: sui-canvas-pulse-text 1s ease-in-out infinite;
+}
+
+@keyframes sui-canvas-pulse-text {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.sui-canvas-status-interim {
+  color: hsl(var(--foreground));
+  font-style: italic;
+}
+
+.sui-canvas-status-final {
+  color: hsl(var(--foreground));
+}
+
+.sui-canvas-status-listening {
+  color: hsl(0 80% 60%);
+  animation: sui-canvas-pulse-text 2s ease-in-out infinite;
+}
+
+.sui-canvas-status-info {
+  color: hsl(var(--muted-foreground));
+}
+
+.sui-canvas-status-hint {
+  color: hsl(var(--muted-foreground));
+  opacity: 0.6;
+}
+
+/* Action buttons */
+.sui-canvas-action {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius, 6px);
+  border: 1px solid hsl(var(--border));
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.sui-canvas-action:hover:not(:disabled) {
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+}
+
+.sui-canvas-action:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* Save button */
+.sui-canvas-save {
+  padding: 6px 14px;
+  border-radius: var(--radius, 6px);
+  border: none;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  white-space: nowrap;
+}
+
+.sui-canvas-save:hover {
+  background: hsl(var(--primary) / 0.9);
+}
+
+/* Metrics badge */
+.sui-canvas-metrics {
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Mode toggle */
+.sui-mode-toggle {
+  display: flex;
+  background: hsl(var(--muted));
+  border-radius: var(--radius, 6px);
+  padding: 2px;
+  gap: 2px;
+}
+
+.sui-mode-toggle-btn {
+  padding: 5px 12px;
+  border: none;
+  border-radius: calc(var(--radius, 6px) - 2px);
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.sui-mode-toggle-btn:hover {
+  color: hsl(var(--foreground));
+}
+
+.sui-mode-toggle-btn--active {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  box-shadow: 0 1px 2px hsl(0 0% 0% / 0.1);
+}

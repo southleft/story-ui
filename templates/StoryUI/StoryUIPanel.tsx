@@ -9,6 +9,7 @@
 import React, { useState, useEffect, useRef, useCallback, useReducer } from 'react';
 import './StoryUIPanel.css';
 import { VoiceControls } from './voice/VoiceControls.js';
+import { VoiceCanvas } from './voice/VoiceCanvas.js';
 import type { VoiceCommand } from './voice/types.js';
 
 // ============================================
@@ -892,6 +893,7 @@ interface StoryUIPanelProps {
 
 function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   const [state, dispatch] = useReducer(panelReducer, initialState);
+  const [panelMode, setPanelMode] = useState<'chat' | 'canvas'>('chat');
   const [contextMenuId, setContextMenuId] = useState<string | null>(null);
   const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -1990,6 +1992,18 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
               <span className="sui-badge-dot" />
               {state.connectionStatus.connected ? getConnectionDisplayText() : 'Disconnected'}
             </Badge>
+            <div className="sui-mode-toggle">
+              <button
+                type="button"
+                className={`sui-mode-toggle-btn ${panelMode === 'chat' ? 'sui-mode-toggle-btn--active' : ''}`}
+                onClick={() => setPanelMode('chat')}
+              >Chat</button>
+              <button
+                type="button"
+                className={`sui-mode-toggle-btn ${panelMode === 'canvas' ? 'sui-mode-toggle-btn--active' : ''}`}
+                onClick={() => setPanelMode('canvas')}
+              >Voice Canvas</button>
+            </div>
           </div>
           <div className="sui-header-right">
             {state.connectionStatus.connected && state.availableProviders.length > 0 && (
@@ -2055,6 +2069,20 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           </div>
         </header>
 
+        {panelMode === 'canvas' ? (
+          <VoiceCanvas
+            apiBase={getApiBase()}
+            provider={state.selectedProvider}
+            model={state.selectedModel}
+            onSaveAsStory={(html) => {
+              // Switch to chat mode and use the HTML as a reference for story generation
+              setPanelMode('chat');
+              dispatch({ type: 'SET_INPUT', payload: `Convert this HTML layout into a proper Storybook story using the design system components:\n\n${html}` });
+            }}
+            onError={(error) => dispatch({ type: 'SET_ERROR', payload: error })}
+          />
+        ) : (
+        <>
         {/* Chat area */}
         <section className="sui-chat-area" role="log" aria-live="polite">
           {state.error && <div className="sui-error" role="alert" style={{ margin: '24px' }}>{state.error}</div>}
@@ -2164,6 +2192,8 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
             </form>
           </div>
         </div>
+        </>
+        )}
       </main>
     </div>
   );
