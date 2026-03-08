@@ -67,6 +67,8 @@ export function VoiceCanvas({
   const [interimText, setInterimText] = useState('');
   const [pendingTranscript, setPendingTranscript] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
+  const [noSpeechCount, setNoSpeechCount] = useState(0);
+  const [manualPrompt, setManualPrompt] = useState('');
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const conversationRef = useRef<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
@@ -363,6 +365,7 @@ export function VoiceCanvas({
       }
 
       if (final) {
+        setNoSpeechCount(0);
         const accumulated = pendingTranscriptRef.current + (pendingTranscriptRef.current ? ' ' : '') + final;
         pendingTranscriptRef.current = accumulated;
         setPendingTranscript(accumulated);
@@ -414,11 +417,23 @@ export function VoiceCanvas({
     };
 
     recognition.onerror = (event: any) => {
-      if (event.error === 'no-speech' || event.error === 'aborted') return;
+      if (event.error === 'aborted') return;
+      if (event.error === 'no-speech') {
+        setNoSpeechCount(c => {
+          const count = c + 1;
+          if (count >= 2) {
+            setStatusMessage('No speech detected — try speaking louder or use the text input below');
+          }
+          return count;
+        });
+        return;
+      }
       if (event.error === 'not-allowed') {
-        setStatusMessage('Microphone access denied');
+        setStatusMessage('Microphone access denied — use the text input below');
         isListeningRef.current = false;
         setIsListening(false);
+      } else {
+        setStatusMessage(`Voice error: ${event.error}`);
       }
     };
 
@@ -438,7 +453,14 @@ export function VoiceCanvas({
     pendingTranscriptRef.current = '';
     setPendingTranscript('');
 
-    try { recognition.start(); } catch { /* ignore */ }
+    try {
+      recognition.start();
+      setNoSpeechCount(0);
+    } catch (e) {
+      setStatusMessage('Could not start voice input — use text input below');
+      isListeningRef.current = false;
+      setIsListening(false);
+    }
   }, [undo, redo, clear, onSaveAsStory, scheduleRender]);
 
   const stopListening = useCallback(() => {
@@ -472,6 +494,15 @@ export function VoiceCanvas({
       startListening();
     }
   }, [startListening, stopListening]);
+
+  // Manual text submission (fallback when voice doesn't work)
+  const handleManualSubmit = useCallback(() => {
+    const prompt = manualPrompt.trim();
+    if (!prompt) return;
+    setManualPrompt('');
+    if (abortRef.current) abortRef.current.abort();
+    renderFromPrompt(prompt);
+  }, [manualPrompt, renderFromPrompt]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -549,9 +580,32 @@ export function VoiceCanvas({
             ) : statusMessage ? (
               <span className="sui-canvas-status-info">{statusMessage}</span>
             ) : (
-              <span className="sui-canvas-status-hint">Click mic to start voice canvas</span>
+              <span className="sui-canvas-status-hint">Click mic or type below</span>
             )}
           </div>
+        </div>
+
+        {/* Text input fallback */}
+        <div className="sui-canvas-text-input">
+          <input
+            type="text"
+            className="sui-canvas-text-field"
+            placeholder="Or type a UI description..."
+            value={manualPrompt}
+            onChange={(e) => setManualPrompt(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleManualSubmit(); }}
+            disabled={isRendering}
+          />
+          {manualPrompt.trim() && (
+            <button
+              type="button"
+              className="sui-canvas-text-submit"
+              onClick={handleManualSubmit}
+              disabled={isRendering}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+          )}
         </div>
 
         <div className="sui-canvas-bar-right">

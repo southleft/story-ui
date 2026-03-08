@@ -2025,12 +2025,13 @@
 /* Floating voice bar */
 .sui-canvas-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   padding: 10px 16px;
   background: hsl(var(--card));
   border-top: 1px solid hsl(var(--border));
-  gap: 12px;
+  gap: 8px 12px;
   min-height: 56px;
 }
 
@@ -2052,6 +2053,66 @@
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+}
+
+/* Text input fallback */
+.sui-canvas-text-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  order: 3;
+}
+
+.sui-canvas-text-field {
+  flex: 1;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+  font-size: 13px;
+  font-family: var(--font-sans);
+  outline: none;
+  transition: border-color 0.2s ease;
+}
+
+.sui-canvas-text-field:focus {
+  border-color: hsl(var(--primary));
+}
+
+.sui-canvas-text-field::placeholder {
+  color: hsl(var(--muted-foreground));
+}
+
+.sui-canvas-text-field:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sui-canvas-text-submit {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: opacity 0.2s ease;
+}
+
+.sui-canvas-text-submit:hover {
+  opacity: 0.85;
+}
+
+.sui-canvas-text-submit:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* Mic button */
