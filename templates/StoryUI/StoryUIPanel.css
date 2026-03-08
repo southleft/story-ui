@@ -2242,6 +2242,16 @@
   background: hsl(var(--primary) / 0.9);
 }
 
+.sui-canvas-save--converting {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.sui-canvas-save:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* Metrics badge */
 .sui-canvas-metrics {
   font-size: 12px;

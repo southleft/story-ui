@@ -2074,10 +2074,17 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
             apiBase={getApiBase()}
             provider={state.selectedProvider}
             model={state.selectedModel}
-            onSaveAsStory={(html) => {
-              // Switch to chat mode and use the HTML as a reference for story generation
+            onStoryConverted={(story, title) => {
+              // Story was converted and saved via /mcp/convert-to-story
+              // Switch to chat mode to show result
               setPanelMode('chat');
-              dispatch({ type: 'SET_INPUT', payload: `Convert this HTML layout into a proper Storybook story using the design system components:\n\n${html}` });
+              dispatch({
+                type: 'ADD_MESSAGE',
+                payload: {
+                  role: 'ai' as const,
+                  content: `Voice canvas converted to Storybook story: **${title}**\n\nThe story has been saved and should appear in Storybook shortly.`,
+                },
+              });
             }}
             onError={(error) => dispatch({ type: 'SET_ERROR', payload: error })}
           />

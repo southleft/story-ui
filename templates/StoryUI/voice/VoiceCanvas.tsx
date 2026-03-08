@@ -6,6 +6,7 @@ interface VoiceCanvasProps {
   model?: string;
   designSystem?: string;
   onSaveAsStory?: (html: string) => void;
+  onStoryConverted?: (story: string, title: string) => void;
   onError?: (error: string) => void;
 }
 
@@ -14,6 +15,8 @@ interface RenderMetrics {
   model: string;
   provider: string;
 }
+
+type ConversionState = 'idle' | 'converting' | 'done' | 'error';
 
 // Base HTML shell for the canvas iframe
 const IFRAME_SHELL = `<!DOCTYPE html>
@@ -56,6 +59,7 @@ export function VoiceCanvas({
   model,
   designSystem,
   onSaveAsStory,
+  onStoryConverted,
   onError,
 }: VoiceCanvasProps) {
   const [currentHtml, setCurrentHtml] = useState('');
@@ -69,6 +73,8 @@ export function VoiceCanvas({
   const [statusMessage, setStatusMessage] = useState('');
   const [noSpeechCount, setNoSpeechCount] = useState(0);
   const [manualPrompt, setManualPrompt] = useState('');
+  const [conversionState, setConversionState] = useState<ConversionState>('idle');
+  const [conversionProgress, setConversionProgress] = useState('');
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const conversationRef = useRef<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
@@ -83,6 +89,7 @@ export function VoiceCanvas({
   const pendingTranscriptRef = useRef('');
   const audioCheckRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
+  const handleSaveRef = useRef<() => void>(() => {});
 
   // Keep refs in sync
   useEffect(() => { currentHtmlRef.current = currentHtml; }, [currentHtml]);
@@ -398,8 +405,8 @@ export function VoiceCanvas({
             return;
           }
           if (trimmed === 'save' || trimmed === 'save this') {
-            if (currentHtmlRef.current && onSaveAsStory) {
-              onSaveAsStory(currentHtmlRef.current);
+            if (currentHtmlRef.current) {
+              handleSaveRef.current();
             }
             pendingTranscriptRef.current = '';
             setPendingTranscript('');
@@ -534,7 +541,7 @@ export function VoiceCanvas({
       isListeningRef.current = false;
       setIsListening(false);
     }
-  }, [undo, redo, clear, onSaveAsStory, scheduleRender]);
+  }, [undo, redo, clear, scheduleRender]);
 
   const stopListening = useCallback(() => {
     isListeningRef.current = false;
@@ -578,6 +585,89 @@ export function VoiceCanvas({
     if (abortRef.current) abortRef.current.abort();
     renderFromPrompt(prompt);
   }, [manualPrompt, renderFromPrompt]);
+
+  // Convert voice canvas HTML to a proper Storybook story via dedicated endpoint
+  const handleSaveAsStory = useCallback(async () => {
+    const html = currentHtmlRef.current;
+    if (!html) return;
+
+    // If legacy callback only, use it
+    if (!onStoryConverted && onSaveAsStory) {
+      onSaveAsStory(html);
+      return;
+    }
+
+    setConversionState('converting');
+    setConversionProgress('Analyzing HTML structure...');
+
+    try {
+      const response = await fetch(`${apiBase}/mcp/convert-to-story`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          html,
+          designSystem,
+          provider,
+          model,
+        }),
+      });
+
+      if (!response.ok) throw new Error(`Server error: ${response.status}`);
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('No response stream');
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let storyCode = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const messages = buffer.split('\n\n');
+        buffer = messages.pop() || '';
+
+        for (const msg of messages) {
+          const lines = msg.split('\n');
+          let eventType = '';
+          let dataStr = '';
+          for (const line of lines) {
+            if (line.startsWith('event: ')) eventType = line.slice(7);
+            else if (line.startsWith('data: ')) dataStr = line.slice(6);
+          }
+          if (!dataStr) continue;
+          try {
+            const data = JSON.parse(dataStr);
+            if (eventType === 'status') {
+              setConversionProgress(data.message || 'Processing...');
+            } else if (eventType === 'story_chunk') {
+              storyCode += data.content;
+            } else if (eventType === 'complete') {
+              storyCode = data.story || storyCode;
+              setConversionState('done');
+              setConversionProgress(`Converted in ${(data.metrics?.timeMs / 1000).toFixed(1)}s`);
+              onStoryConverted?.(storyCode, data.title || 'Voice Generated');
+            } else if (eventType === 'error') {
+              throw new Error(data.message);
+            }
+          } catch (e) {
+            if (e instanceof SyntaxError) continue; // non-JSON
+            throw e;
+          }
+        }
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      setConversionState('error');
+      setConversionProgress(`Conversion failed: ${msg}`);
+      onError?.(msg);
+    }
+  }, [apiBase, designSystem, provider, model, onSaveAsStory, onStoryConverted, onError]);
+
+  // Keep save ref in sync
+  useEffect(() => { handleSaveRef.current = handleSaveAsStory; }, [handleSaveAsStory]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -644,7 +734,13 @@ export function VoiceCanvas({
           </button>
 
           <div className="sui-canvas-transcript">
-            {isRendering && !interimText ? (
+            {conversionState === 'converting' ? (
+              <span className="sui-canvas-status-rendering">{conversionProgress}</span>
+            ) : conversionState === 'done' ? (
+              <span className="sui-canvas-status-info">{conversionProgress}</span>
+            ) : conversionState === 'error' ? (
+              <span className="sui-canvas-status-info">{conversionProgress}</span>
+            ) : isRendering && !interimText ? (
               <span className="sui-canvas-status-rendering">Rendering UI...</span>
             ) : interimText ? (
               <span className="sui-canvas-status-interim">{pendingTranscript ? pendingTranscript + ' ' : ''}{interimText}</span>
@@ -712,14 +808,15 @@ export function VoiceCanvas({
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
               </button>
-              {onSaveAsStory && (
+              {(onSaveAsStory || onStoryConverted) && (
                 <button
                   type="button"
-                  className="sui-canvas-save"
-                  onClick={() => onSaveAsStory(currentHtml)}
+                  className={`sui-canvas-save ${conversionState === 'converting' ? 'sui-canvas-save--converting' : ''}`}
+                  onClick={handleSaveAsStory}
+                  disabled={conversionState === 'converting'}
                   title="Save as Storybook story"
                 >
-                  Save as Story
+                  {conversionState === 'converting' ? 'Converting...' : conversionState === 'done' ? 'Saved!' : 'Save as Story'}
                 </button>
               )}
             </>
