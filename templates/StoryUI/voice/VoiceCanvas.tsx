@@ -15,41 +15,8 @@ interface RenderMetrics {
   provider: string;
 }
 
-export function VoiceCanvas({
-  apiBase,
-  provider,
-  model,
-  designSystem,
-  onSaveAsStory,
-  onError,
-}: VoiceCanvasProps) {
-  const [currentHtml, setCurrentHtml] = useState('');
-  const [isRendering, setIsRendering] = useState(false);
-  const [streamingHtml, setStreamingHtml] = useState('');
-  const [metrics, setMetrics] = useState<RenderMetrics | null>(null);
-  const [history, setHistory] = useState<string[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
-  const [isListening, setIsListening] = useState(false);
-  const [interimText, setInterimText] = useState('');
-  const [statusMessage, setStatusMessage] = useState('');
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
-  const conversationRef = useRef<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
-  const autoSubmitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Voice input refs
-  const recognitionRef = useRef<any>(null);
-  const isListeningRef = useRef(false);
-  const finalTranscriptRef = useRef('');
-
-  // Update the iframe content
-  const updateIframe = useCallback((html: string) => {
-    if (!iframeRef.current) return;
-    const doc = iframeRef.current.contentDocument;
-    if (!doc) return;
-
-    doc.open();
-    doc.write(`<!DOCTYPE html>
+// Base HTML shell for the canvas iframe
+const IFRAME_SHELL = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -66,26 +33,125 @@ export function VoiceCanvas({
     min-height: 100vh;
   }
   img { max-width: 100%; height: auto; display: block; }
-  a { color: #58a6ff; }
+  a { color: #58a6ff; text-decoration: none; }
+  #canvas-root { min-height: 100%; }
+  .canvas-loading {
+    display: flex; align-items: center; gap: 8px;
+    color: #8b949e; font-size: 14px; padding: 16px 0;
+  }
+  .canvas-loading::before {
+    content: ''; width: 12px; height: 12px;
+    border: 2px solid #8b949e; border-top-color: transparent;
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
-<body>${html}</body>
-</html>`);
+<body><div id="canvas-root"></div></body>
+</html>`;
+
+export function VoiceCanvas({
+  apiBase,
+  provider,
+  model,
+  designSystem,
+  onSaveAsStory,
+  onError,
+}: VoiceCanvasProps) {
+  const [currentHtml, setCurrentHtml] = useState('');
+  const [isRendering, setIsRendering] = useState(false);
+  const [metrics, setMetrics] = useState<RenderMetrics | null>(null);
+  const [history, setHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [isListening, setIsListening] = useState(false);
+  const [interimText, setInterimText] = useState('');
+  const [pendingTranscript, setPendingTranscript] = useState('');
+  const [statusMessage, setStatusMessage] = useState('');
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const conversationRef = useRef<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
+  const currentHtmlRef = useRef('');
+  const historyRef = useRef<string[]>([]);
+  const historyIndexRef = useRef(-1);
+
+  // Voice input refs
+  const recognitionRef = useRef<any>(null);
+  const isListeningRef = useRef(false);
+  const autoSubmitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingTranscriptRef = useRef('');
+
+  // Keep refs in sync
+  useEffect(() => { currentHtmlRef.current = currentHtml; }, [currentHtml]);
+  useEffect(() => { historyRef.current = history; historyIndexRef.current = historyIndex; }, [history, historyIndex]);
+
+  // Initialize the iframe with the shell HTML
+  const initIframe = useCallback(() => {
+    if (!iframeRef.current) return;
+    const doc = iframeRef.current.contentDocument;
+    if (!doc) return;
+    doc.open();
+    doc.write(IFRAME_SHELL);
     doc.close();
   }, []);
 
+  // Update just the canvas root content (not the whole document)
+  const updateCanvasContent = useCallback((html: string) => {
+    if (!iframeRef.current) return;
+    const doc = iframeRef.current.contentDocument;
+    if (!doc) return;
+    const root = doc.getElementById('canvas-root');
+    if (root) {
+      root.innerHTML = html;
+    }
+  }, []);
+
+  // Show loading indicator in canvas
+  const showCanvasLoading = useCallback((message: string) => {
+    if (!iframeRef.current) return;
+    const doc = iframeRef.current.contentDocument;
+    if (!doc) return;
+    const root = doc.getElementById('canvas-root');
+    if (root) {
+      // Append loading indicator below existing content
+      let loader = doc.getElementById('canvas-loader');
+      if (!loader) {
+        loader = doc.createElement('div');
+        loader.id = 'canvas-loader';
+        loader.className = 'canvas-loading';
+        root.appendChild(loader);
+      }
+      loader.textContent = message;
+    }
+  }, []);
+
+  const removeCanvasLoading = useCallback(() => {
+    if (!iframeRef.current) return;
+    const doc = iframeRef.current.contentDocument;
+    if (!doc) return;
+    const loader = doc.getElementById('canvas-loader');
+    if (loader) loader.remove();
+  }, []);
+
+  // Init iframe on mount
+  useEffect(() => {
+    initIframe();
+  }, [initIframe]);
+
   // Stream HTML from the voice-render endpoint
   const renderFromPrompt = useCallback(async (prompt: string) => {
-    if (isRendering) {
-      abortRef.current?.abort();
+    // Abort any in-flight request
+    if (abortRef.current) {
+      abortRef.current.abort();
     }
 
     setIsRendering(true);
-    setStreamingHtml('');
-    setStatusMessage('AI is rendering...');
+    setStatusMessage('');
+    showCanvasLoading('Rendering...');
 
     const controller = new AbortController();
     abortRef.current = controller;
+
+    const htmlBefore = currentHtmlRef.current;
 
     try {
       const response = await fetch(`${apiBase}/mcp/voice-render`, {
@@ -93,7 +159,7 @@ export function VoiceCanvas({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt,
-          currentHtml: currentHtml || undefined,
+          currentHtml: htmlBefore || undefined,
           designSystem,
           conversation: conversationRef.current.length > 0 ? conversationRef.current : undefined,
           provider,
@@ -114,65 +180,75 @@ export function VoiceCanvas({
       let buffer = '';
       let accumulatedHtml = '';
 
+      removeCanvasLoading();
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
 
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            // Event type line — next data line has the payload
-            continue;
-          }
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
+        // Process complete SSE messages (separated by double newline)
+        const messages = buffer.split('\n\n');
+        buffer = messages.pop() || '';
 
-              if (data.content !== undefined) {
-                // html_chunk event
-                accumulatedHtml += data.content;
-                setStreamingHtml(accumulatedHtml);
-                updateIframe(accumulatedHtml);
-              } else if (data.html !== undefined) {
-                // complete event
-                accumulatedHtml = data.html;
-                setCurrentHtml(data.html);
-                setStreamingHtml('');
-                updateIframe(data.html);
+        for (const msg of messages) {
+          const lines = msg.split('\n');
+          let eventType = '';
+          let dataStr = '';
 
-                // Track in conversation
-                conversationRef.current.push(
-                  { role: 'user', content: prompt },
-                  { role: 'assistant', content: data.html }
-                );
-
-                // Track in undo history
-                setHistory(prev => {
-                  const newHistory = [...prev.slice(0, historyIndex + 1), data.html];
-                  setHistoryIndex(newHistory.length - 1);
-                  return newHistory;
-                });
-
-                if (data.metrics) {
-                  setMetrics(data.metrics);
-                  setStatusMessage(`Rendered in ${(data.metrics.timeMs / 1000).toFixed(1)}s`);
-                }
-              } else if (data.phase !== undefined) {
-                // status event
-                setStatusMessage(data.message || '');
-              } else if (data.message !== undefined && !data.content && !data.html) {
-                // error event
-                onError?.(data.message);
-                setStatusMessage(`Error: ${data.message}`);
-              }
-            } catch {
-              // Non-JSON line, skip
+          for (const line of lines) {
+            if (line.startsWith('event: ')) {
+              eventType = line.slice(7);
+            } else if (line.startsWith('data: ')) {
+              dataStr = line.slice(6);
             }
           }
+
+          if (!dataStr) continue;
+
+          try {
+            const data = JSON.parse(dataStr);
+
+            if (eventType === 'html_chunk' && data.content !== undefined) {
+              accumulatedHtml += data.content;
+              updateCanvasContent(accumulatedHtml);
+            } else if (eventType === 'complete' && data.html !== undefined) {
+              accumulatedHtml = data.html;
+              setCurrentHtml(data.html);
+              updateCanvasContent(data.html);
+
+              // Track in conversation
+              conversationRef.current.push(
+                { role: 'user', content: prompt },
+                { role: 'assistant', content: data.html }
+              );
+
+              // Track in undo history
+              setHistory(prev => {
+                const newHistory = [...prev.slice(0, historyIndexRef.current + 1), data.html];
+                setHistoryIndex(newHistory.length - 1);
+                return newHistory;
+              });
+
+              if (data.metrics) {
+                setMetrics(data.metrics);
+                setStatusMessage(`Rendered in ${(data.metrics.timeMs / 1000).toFixed(1)}s`);
+              }
+            } else if (eventType === 'error') {
+              onError?.(data.message);
+              setStatusMessage(`Error: ${data.message}`);
+            }
+          } catch {
+            // Non-JSON data, skip
+          }
         }
+      }
+
+      // If we got HTML but no complete event, still save it
+      if (accumulatedHtml && !currentHtmlRef.current) {
+        setCurrentHtml(accumulatedHtml);
+        updateCanvasContent(accumulatedHtml);
       }
     } catch (error) {
       if ((error as Error).name !== 'AbortError') {
@@ -182,48 +258,70 @@ export function VoiceCanvas({
       }
     } finally {
       setIsRendering(false);
+      removeCanvasLoading();
       abortRef.current = null;
     }
-  }, [apiBase, currentHtml, designSystem, provider, model, historyIndex, updateIframe, onError, isRendering]);
+  }, [apiBase, designSystem, provider, model, updateCanvasContent, showCanvasLoading, removeCanvasLoading, onError]);
 
   // Undo/Redo
   const undo = useCallback(() => {
-    if (historyIndex > 0) {
-      const newIndex = historyIndex - 1;
+    if (historyIndexRef.current > 0) {
+      const newIndex = historyIndexRef.current - 1;
       setHistoryIndex(newIndex);
-      const html = history[newIndex];
+      const html = historyRef.current[newIndex];
       setCurrentHtml(html);
-      updateIframe(html);
+      updateCanvasContent(html);
     }
-  }, [historyIndex, history, updateIframe]);
+  }, [updateCanvasContent]);
 
   const redo = useCallback(() => {
-    if (historyIndex < history.length - 1) {
-      const newIndex = historyIndex + 1;
+    if (historyIndexRef.current < historyRef.current.length - 1) {
+      const newIndex = historyIndexRef.current + 1;
       setHistoryIndex(newIndex);
-      const html = history[newIndex];
+      const html = historyRef.current[newIndex];
       setCurrentHtml(html);
-      updateIframe(html);
+      updateCanvasContent(html);
     }
-  }, [historyIndex, history, updateIframe]);
+  }, [updateCanvasContent]);
 
   // Clear canvas
   const clear = useCallback(() => {
     setCurrentHtml('');
-    setStreamingHtml('');
     setHistory([]);
     setHistoryIndex(-1);
     setMetrics(null);
     setStatusMessage('');
+    setPendingTranscript('');
+    pendingTranscriptRef.current = '';
     conversationRef.current = [];
-    if (iframeRef.current?.contentDocument) {
-      iframeRef.current.contentDocument.open();
-      iframeRef.current.contentDocument.write('');
-      iframeRef.current.contentDocument.close();
-    }
-  }, []);
+    updateCanvasContent('');
+  }, [updateCanvasContent]);
 
-  // Voice input setup
+  // ============================================================
+  // Voice input with "generate while speaking" behavior
+  // ============================================================
+  // Key insight: instead of waiting for the user to fully stop talking,
+  // we start generating after a short pause (800ms). If the user keeps
+  // talking, we ABORT the in-flight request and re-generate with the
+  // accumulated transcript. This creates the illusion of real-time
+  // generation that adapts as the user speaks.
+  // ============================================================
+
+  const scheduleRender = useCallback((transcript: string) => {
+    if (autoSubmitRef.current) {
+      clearTimeout(autoSubmitRef.current);
+    }
+
+    // Short delay — start generating quickly while user may still be talking
+    autoSubmitRef.current = setTimeout(() => {
+      const prompt = transcript.trim();
+      if (prompt) {
+        renderFromPrompt(prompt);
+      }
+      autoSubmitRef.current = null;
+    }, 800); // 800ms — fast enough to feel responsive, long enough to catch short pauses
+  }, [renderFromPrompt]);
+
   const startListening = useCallback(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) return;
@@ -252,6 +350,11 @@ export function VoiceCanvas({
 
       if (interim) {
         setInterimText(interim);
+        // User is still speaking — abort any in-flight generation
+        // so we can re-generate with the fuller transcript
+        if (abortRef.current && autoSubmitRef.current) {
+          // Don't abort if there's no pending auto-submit (means generation already committed)
+        }
         // Cancel pending auto-submit while still speaking
         if (autoSubmitRef.current) {
           clearTimeout(autoSubmitRef.current);
@@ -260,50 +363,53 @@ export function VoiceCanvas({
       }
 
       if (final) {
-        finalTranscriptRef.current += (finalTranscriptRef.current ? ' ' : '') + final;
+        const accumulated = pendingTranscriptRef.current + (pendingTranscriptRef.current ? ' ' : '') + final;
+        pendingTranscriptRef.current = accumulated;
+        setPendingTranscript(accumulated);
         setInterimText('');
 
-        // Check for voice commands
+        // Check for voice commands (short utterances only)
         const trimmed = final.trim().toLowerCase();
-        if (trimmed === 'undo' || trimmed === 'go back') {
-          undo();
-          finalTranscriptRef.current = '';
-          return;
-        }
-        if (trimmed === 'redo') {
-          redo();
-          finalTranscriptRef.current = '';
-          return;
-        }
-        if (trimmed === 'clear' || trimmed === 'start over') {
-          clear();
-          finalTranscriptRef.current = '';
-          return;
-        }
-        if (trimmed === 'stop' || trimmed === 'stop listening') {
-          stopListening();
-          return;
-        }
-        if (trimmed === 'save' || trimmed === 'save this') {
-          if (currentHtml && onSaveAsStory) {
-            onSaveAsStory(currentHtml);
+        const words = trimmed.split(/\s+/);
+        if (words.length <= 3) {
+          if (trimmed === 'undo' || trimmed === 'go back') {
+            undo();
+            pendingTranscriptRef.current = '';
+            setPendingTranscript('');
+            return;
           }
-          finalTranscriptRef.current = '';
-          return;
+          if (trimmed === 'redo') {
+            redo();
+            pendingTranscriptRef.current = '';
+            setPendingTranscript('');
+            return;
+          }
+          if (trimmed === 'clear' || trimmed === 'start over') {
+            clear();
+            return;
+          }
+          if (trimmed === 'stop' || trimmed === 'stop listening') {
+            stopListening();
+            return;
+          }
+          if (trimmed === 'save' || trimmed === 'save this') {
+            if (currentHtmlRef.current && onSaveAsStory) {
+              onSaveAsStory(currentHtmlRef.current);
+            }
+            pendingTranscriptRef.current = '';
+            setPendingTranscript('');
+            return;
+          }
         }
 
-        // Auto-submit after 2s pause
-        if (autoSubmitRef.current) {
-          clearTimeout(autoSubmitRef.current);
+        // Schedule generation — this is where the magic happens.
+        // We abort any in-flight request and start generating with the
+        // accumulated transcript. If the user keeps talking, this will
+        // be called again with a longer transcript.
+        if (abortRef.current) {
+          abortRef.current.abort();
         }
-        autoSubmitRef.current = setTimeout(() => {
-          const prompt = finalTranscriptRef.current.trim();
-          if (prompt) {
-            renderFromPrompt(prompt);
-            finalTranscriptRef.current = '';
-          }
-          autoSubmitRef.current = null;
-        }, 2000);
+        scheduleRender(accumulated);
       }
     };
 
@@ -317,7 +423,6 @@ export function VoiceCanvas({
     };
 
     recognition.onend = () => {
-      // Auto-restart if still supposed to be listening
       if (isListeningRef.current) {
         setTimeout(() => {
           if (isListeningRef.current && recognitionRef.current) {
@@ -330,26 +435,28 @@ export function VoiceCanvas({
     recognitionRef.current = recognition;
     isListeningRef.current = true;
     setIsListening(true);
-    finalTranscriptRef.current = '';
+    pendingTranscriptRef.current = '';
+    setPendingTranscript('');
 
     try { recognition.start(); } catch { /* ignore */ }
-  }, [undo, redo, clear, currentHtml, onSaveAsStory, renderFromPrompt]);
+  }, [undo, redo, clear, onSaveAsStory, scheduleRender]);
 
   const stopListening = useCallback(() => {
     isListeningRef.current = false;
     setIsListening(false);
     setInterimText('');
 
-    // Submit any pending transcript
-    const pending = finalTranscriptRef.current.trim();
+    // Submit any pending transcript immediately
+    const pending = pendingTranscriptRef.current.trim();
     if (pending) {
+      if (abortRef.current) abortRef.current.abort();
+      if (autoSubmitRef.current) {
+        clearTimeout(autoSubmitRef.current);
+        autoSubmitRef.current = null;
+      }
       renderFromPrompt(pending);
-      finalTranscriptRef.current = '';
-    }
-
-    if (autoSubmitRef.current) {
-      clearTimeout(autoSubmitRef.current);
-      autoSubmitRef.current = null;
+      pendingTranscriptRef.current = '';
+      setPendingTranscript('');
     }
 
     if (recognitionRef.current) {
@@ -380,7 +487,7 @@ export function VoiceCanvas({
     };
   }, []);
 
-  const hasContent = !!(currentHtml || streamingHtml);
+  const hasContent = !!currentHtml;
 
   return (
     <div className="sui-canvas-container">
@@ -431,14 +538,14 @@ export function VoiceCanvas({
           </button>
 
           <div className="sui-canvas-transcript">
-            {isRendering ? (
-              <span className="sui-canvas-status-rendering">Rendering...</span>
+            {isRendering && !interimText ? (
+              <span className="sui-canvas-status-rendering">Rendering UI...</span>
             ) : interimText ? (
-              <span className="sui-canvas-status-interim">{interimText}</span>
-            ) : finalTranscriptRef.current ? (
-              <span className="sui-canvas-status-final">{finalTranscriptRef.current}</span>
+              <span className="sui-canvas-status-interim">{pendingTranscript ? pendingTranscript + ' ' : ''}{interimText}</span>
+            ) : pendingTranscript ? (
+              <span className="sui-canvas-status-final">{pendingTranscript}</span>
             ) : isListening ? (
-              <span className="sui-canvas-status-listening">Listening... speak a UI description</span>
+              <span className="sui-canvas-status-listening">Listening... describe a UI to create</span>
             ) : statusMessage ? (
               <span className="sui-canvas-status-info">{statusMessage}</span>
             ) : (
