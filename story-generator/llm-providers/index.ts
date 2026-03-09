@@ -173,9 +173,25 @@ export function configureProvider(
 export function initializeFromEnv(): void {
   const registry = getProviderRegistry();
 
-  // Configure Claude if API key is present
+  // Configure Claude — supports direct Anthropic API or AWS Bedrock
   const claudeKey = process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY;
-  if (claudeKey) {
+  const bedrockRegion = process.env.AWS_BEDROCK_REGION;
+
+  if (bedrockRegion) {
+    registry.configureProvider('claude', {
+      transport: 'bedrock',
+      model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-5-20250929',
+      bedrockRegion,
+      bedrockModelId: process.env.AWS_BEDROCK_MODEL_ID || undefined,
+      bedrockAccessKeyId: process.env.AWS_BEDROCK_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID || undefined,
+      bedrockSecretAccessKey: process.env.AWS_BEDROCK_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY || undefined,
+      bedrockSessionToken: process.env.AWS_BEDROCK_SESSION_TOKEN || process.env.AWS_SESSION_TOKEN || undefined,
+      bedrockProfile: process.env.AWS_BEDROCK_PROFILE || process.env.AWS_PROFILE || undefined,
+      // Also pass the API key through in case the user has both configured
+      ...(claudeKey ? { apiKey: claudeKey } : {}),
+    });
+    logger.info('Claude provider configured for AWS Bedrock', { region: bedrockRegion });
+  } else if (claudeKey) {
     registry.configureProvider('claude', {
       apiKey: claudeKey,
       model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-5-20250929',

@@ -69,6 +69,17 @@ export interface ProviderConfig {
   organizationId?: string; // For OpenAI
   projectId?: string; // For GCP/Gemini
   timeout?: number; // Request timeout in ms
+
+  // Claude transport mode — 'direct' uses the Anthropic API, 'bedrock' uses AWS Bedrock
+  transport?: 'direct' | 'bedrock';
+
+  // AWS Bedrock configuration (only used when transport is 'bedrock')
+  bedrockRegion?: string; // e.g. 'us-east-1'
+  bedrockModelId?: string; // Override model ID (e.g. 'anthropic.claude-sonnet-4-5-20250929-v1:0')
+  bedrockAccessKeyId?: string; // Optional - falls back to AWS default credential chain
+  bedrockSecretAccessKey?: string;
+  bedrockSessionToken?: string;
+  bedrockProfile?: string; // AWS CLI named profile
 }
 
 // Chat request options

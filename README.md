@@ -68,6 +68,7 @@ Story UI will guide you through:
 | Provider | Models | Best For |
 |----------|--------|----------|
 | **Claude** (Anthropic) | claude-opus-4-5-20251101, claude-sonnet-4-5-20250929, claude-haiku-4-5-20251001, claude-sonnet-4-20250514 | Complex reasoning, code quality |
+| **Claude via AWS Bedrock** | Same Claude models via your AWS account | Enterprise deployments, VPC isolation, AWS billing |
 | **GPT** (OpenAI) | gpt-5.2, gpt-5.1, gpt-4o, gpt-4o-mini | Versatility, latest capabilities |
 | **Gemini** (Google) | gemini-3-pro-preview, gemini-2.5-pro, gemini-2.5-flash, gemini-2.0-flash | Advanced reasoning, fast generation |
 
@@ -466,7 +467,8 @@ railway up
 ```
 
 **Environment Variables (set in Railway Dashboard):**
-- `ANTHROPIC_API_KEY` - Required for Claude models
+- `ANTHROPIC_API_KEY` - Required for Claude models (direct API)
+- `AWS_BEDROCK_REGION` - Alternative: use Claude via AWS Bedrock (see [Using Claude via AWS Bedrock](#using-claude-via-aws-bedrock))
 - `OPENAI_API_KEY` - Optional, for OpenAI models
 - `GEMINI_API_KEY` - Optional, for Gemini models
 
@@ -497,6 +499,71 @@ git commit -m "Add StoryUI panel for production"
 > **Note**: Story UI versions prior to 4.10.0 incorrectly added `src/stories/StoryUI/` to `.gitignore`. See [DEPLOYMENT.md](DEPLOYMENT.md#storybook-live-mode-deployment) for full instructions.
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions and troubleshooting.
+
+---
+
+## Using Claude via AWS Bedrock
+
+If your organization uses AWS Bedrock to access Claude models (for VPC isolation, consolidated AWS billing, or enterprise compliance), Story UI supports it as an alternative to a direct Anthropic API key.
+
+### Prerequisites
+
+1. An AWS account with [Amazon Bedrock model access](https://docs.aws.amazon.com/bedrock/latest/userguide/model-access.html) enabled for the Anthropic Claude models you want to use.
+2. AWS credentials available via any standard mechanism (environment variables, IAM role, instance profile, `~/.aws/credentials`, SSO, etc.).
+3. The optional AWS SDK peer dependency:
+
+```bash
+npm install @aws-sdk/client-bedrock-runtime
+```
+
+### Configuration
+
+Set the following environment variables in your `.env` (or in your deployment environment):
+
+```bash
+# Required — activates Bedrock mode for the Claude provider
+AWS_BEDROCK_REGION=us-east-1
+
+# Optional — override the Bedrock model ID
+# If not set, Story UI maps the selected Claude model to its Bedrock equivalent automatically.
+# AWS_BEDROCK_MODEL_ID=anthropic.claude-sonnet-4-5-20250929-v1:0
+
+# Optional — explicit AWS credentials
+# If not set, the default AWS credential chain is used (recommended for EC2/ECS/Lambda).
+# AWS_ACCESS_KEY_ID=...
+# AWS_SECRET_ACCESS_KEY=...
+# AWS_SESSION_TOKEN=...
+# AWS_PROFILE=...
+```
+
+When `AWS_BEDROCK_REGION` is set, the Claude provider routes all requests through `BedrockRuntime.InvokeModel` (and `InvokeModelWithResponseStream` for streaming) instead of the Anthropic Messages API. No `ANTHROPIC_API_KEY` is required.
+
+### Bedrock Model ID Resolution
+
+Story UI automatically derives the Bedrock model ID from the Anthropic model ID using the pattern `anthropic.{model-id}-v1:0`. For example, `claude-sonnet-4-5-20250929` becomes `anthropic.claude-sonnet-4-5-20250929-v1:0`.
+
+If your account uses cross-region inference profiles, provisioned throughput ARNs, or any other custom identifier, set `AWS_BEDROCK_MODEL_ID` to the exact value and it will override the automatic derivation.
+
+### IAM Permissions
+
+The AWS credentials used must have at minimum:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": [
+    "bedrock:InvokeModel",
+    "bedrock:InvokeModelWithResponseStream"
+  ],
+  "Resource": "arn:aws:bedrock:*::foundation-model/anthropic.*"
+}
+```
+
+### Switching Between Direct API and Bedrock
+
+- **Direct Anthropic API**: Set `ANTHROPIC_API_KEY` (or `CLAUDE_API_KEY`), do not set `AWS_BEDROCK_REGION`.
+- **AWS Bedrock**: Set `AWS_BEDROCK_REGION`, no Anthropic API key needed.
+- **Both configured**: Bedrock takes precedence when `AWS_BEDROCK_REGION` is present.
 
 ---
 

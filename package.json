@@ -87,6 +87,7 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1000.0",
     "@commitlint/cli": "^19.6.1",
     "@commitlint/config-conventional": "^19.6.0",
     "@semantic-release/changelog": "^6.0.3",
@@ -111,6 +112,7 @@
     "ts-node": "^10.9.2"
   },
   "peerDependencies": {
+    "@aws-sdk/client-bedrock-runtime": ">=3.0.0",
     "@storybook/react": ">=6.0.0",
     "react": ">=16.8.0"
   },
@@ -120,6 +122,9 @@
     },
     "@storybook/react": {
       "optional": false
+    },
+    "@aws-sdk/client-bedrock-runtime": {
+      "optional": true
     }
   },
   "config": {
