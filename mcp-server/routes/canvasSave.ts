@@ -195,13 +195,29 @@ function jsxCodeToStory(jsxCode: string, title: string, importPath: string): str
 
 // ── Express handler ─────────────────────────────────────────
 
+/** Derive a readable title from the last voice/text prompt. */
+function titleFromPrompt(prompt: string): string {
+  // Strip filler words, take first ~6 meaningful words, title-case
+  const stop = new Set(['a', 'an', 'the', 'with', 'and', 'for', 'of', 'to', 'in', 'on', 'at', 'by']);
+  const words = prompt
+    .replace(/[^a-zA-Z0-9 ]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 0 && !stop.has(w.toLowerCase()))
+    .slice(0, 6)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+  return words.join(' ') || 'Voice Canvas';
+}
+
 export async function canvasSaveHandler(req: Request, res: Response) {
   try {
-    const { tree, jsxCode, title } = req.body;
+    const { tree, jsxCode, title: rawTitle, lastPrompt } = req.body;
 
-    if (!title || typeof title !== 'string') {
-      return res.status(400).json({ error: 'title is required' });
-    }
+    // Auto-generate title from last prompt if not provided
+    const title = (rawTitle && typeof rawTitle === 'string' && rawTitle.trim())
+      ? rawTitle.trim()
+      : (lastPrompt && typeof lastPrompt === 'string' && lastPrompt.trim())
+        ? titleFromPrompt(lastPrompt.trim())
+        : 'Voice Canvas';
 
     const config = loadUserConfig();
     const importPath = config.importPath || '@mantine/core';

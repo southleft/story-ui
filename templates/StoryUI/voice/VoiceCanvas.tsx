@@ -56,9 +56,8 @@ export function VoiceCanvas({
   const [statusText, setStatusText] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
 
-  // ── Save dialog ──────────────────────────────────────────────
-  const [showSaveDialog, setShowSaveDialog] = useState(false);
-  const [saveTitle, setSaveTitle] = useState('');
+  // ── Last prompt (used for auto-title on save) ─────────────────
+  const lastPromptRef = useRef('');
 
   // ── Voice input ──────────────────────────────────────────────
   const [isListening, setIsListening] = useState(false);
@@ -154,6 +153,7 @@ export function VoiceCanvas({
           setIframeKey(k => k + 1);
         }
 
+        lastPromptRef.current = transcript;
         conversationRef.current.push(
           { role: 'user', content: transcript },
           { role: 'assistant', content: '[Generated canvas component]' },
@@ -223,17 +223,20 @@ export function VoiceCanvas({
   }, []);
 
   // ── Save ───────────────────────────────────────────────────────
+  // No dialog — saves immediately using the last voice/text prompt as the title.
 
   const saveStory = useCallback(async () => {
-    const title = saveTitle.trim();
     const code = currentCodeRef.current;
-    if (!title || !code.trim()) return;
+    if (!code.trim()) return;
 
     try {
       const response = await fetch(`${apiBase}/mcp/canvas-save`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jsxCode: code, title }),
+        body: JSON.stringify({
+          jsxCode: code,
+          lastPrompt: lastPromptRef.current,
+        }),
       });
 
       if (!response.ok) {
@@ -242,18 +245,16 @@ export function VoiceCanvas({
       }
 
       const result = await response.json();
-      setShowSaveDialog(false);
-      setSaveTitle('');
       onSave?.(result);
-      // Clear the canvas after saving so the scratchpad is fresh and the
-      // saved story in the sidebar is clearly the permanent copy.
+      // Clear the canvas — saved story in sidebar is the permanent copy,
+      // canvas is now a fresh scratchpad.
       clear();
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       setErrorMessage(msg);
       onError?.(msg);
     }
-  }, [apiBase, saveTitle, onSave, onError, clear]);
+  }, [apiBase, onSave, onError, clear]);
 
   // ── Iframe load handler ────────────────────────────────────────
 
@@ -560,38 +561,6 @@ export function VoiceCanvas({
         </div>
       )}
 
-      {/* ── Save dialog ───────────────────────────────────────── */}
-      {showSaveDialog && (
-        <div className="sui-canvas-save-dialog">
-          <input
-            type="text"
-            className="sui-canvas-save-input"
-            placeholder="Story title (e.g. Pricing Card)"
-            value={saveTitle}
-            onChange={(e) => setSaveTitle(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') saveStory();
-              if (e.key === 'Escape') setShowSaveDialog(false);
-            }}
-            autoFocus
-          />
-          <button
-            type="button"
-            className="sui-canvas-save-btn"
-            onClick={saveStory}
-            disabled={!saveTitle.trim()}
-          >
-            Save
-          </button>
-          <button
-            type="button"
-            className="sui-canvas-action"
-            onClick={() => setShowSaveDialog(false)}
-          >
-            Cancel
-          </button>
-        </div>
-      )}
 
       {/* ── Floating voice bar ─────────────────────────────────── */}
       <div className={`sui-canvas-bar ${isListening ? 'sui-canvas-bar--active' : ''}`}>
@@ -678,8 +647,8 @@ export function VoiceCanvas({
             <button
               type="button"
               className="sui-canvas-action"
-              onClick={() => setShowSaveDialog(true)}
-              title="Save as .stories.tsx"
+              onClick={saveStory}
+              title="Save as story"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
