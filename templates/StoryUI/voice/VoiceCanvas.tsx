@@ -244,14 +244,16 @@ export function VoiceCanvas({
       const result = await response.json();
       setShowSaveDialog(false);
       setSaveTitle('');
-      setStatusText(`Saved as "${result.fileName}"`);
       onSave?.(result);
+      // Clear the canvas after saving so the scratchpad is fresh and the
+      // saved story in the sidebar is clearly the permanent copy.
+      clear();
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       setErrorMessage(msg);
       onError?.(msg);
     }
-  }, [apiBase, saveTitle, onSave, onError]);
+  }, [apiBase, saveTitle, onSave, onError, clear]);
 
   // ── Iframe load handler ────────────────────────────────────────
 
