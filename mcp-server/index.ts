@@ -40,8 +40,11 @@ import {
   postProcessStoryForFramework,
 } from './routes/frameworks.js';
 import mcpRemoteRouter from './routes/mcpRemote.js';
-import { voiceRenderStream } from './routes/voiceRender.js';
-import { convertToStory } from './routes/convertToStory.js';
+// Voice Canvas endpoints
+import { canvasIntentHandler, warmCanvasComponentCache } from './routes/canvasIntent.js';
+import { canvasSaveHandler } from './routes/canvasSave.js';
+import { canvasGenerateHandler } from './routes/canvasGenerate.js';
+import { canvasPreviewHandler } from './routes/canvasPreview.js';
 import { getAdapterRegistry } from '../story-generator/framework-adapters/index.js';
 
 // Supported story file extensions for all frameworks
@@ -131,8 +134,20 @@ app.get('/mcp/props', getProps);
 app.post('/mcp/claude', claudeProxy);
 app.post('/mcp/generate-story', generateStoryFromPrompt);
 app.post('/mcp/generate-story-stream', generateStoryFromPromptStream);
-app.post('/mcp/voice-render', voiceRenderStream);
-app.post('/mcp/convert-to-story', convertToStory);
+// Voice Canvas endpoints
+app.post('/mcp/canvas-generate', canvasGenerateHandler); // generate + write voice-canvas.stories.tsx
+app.post('/mcp/canvas-preview', canvasPreviewHandler);   // undo/redo: rewrite voice-canvas.stories.tsx
+app.post('/mcp/canvas-save', canvasSaveHandler);         // save canvas to named .stories.tsx
+app.post('/mcp/canvas-intent', canvasIntentHandler);     // legacy (kept for compatibility)
+// Expose design-system config for auto-registry loading
+app.get('/mcp/canvas-config', (_req, res) => {
+  res.json({
+    importPath: config.importPath || '',
+    importStyle: config.importStyle || 'barrel',
+    componentPrefix: config.componentPrefix || '',
+    componentFramework: config.componentFramework || 'react',
+  });
+});
 
 // LLM Provider management routes
 app.get('/mcp/providers', getProviders);
@@ -346,8 +361,7 @@ app.delete('/mcp/stories/:storyId', async (req, res) => {
 // Proxy routes for frontend compatibility (maps /story-ui/ to /mcp/)
 app.post('/story-ui/generate', generateStoryFromPrompt);
 app.post('/story-ui/generate-stream', generateStoryFromPromptStream);
-app.post('/story-ui/voice-render', voiceRenderStream);
-app.post('/story-ui/convert-to-story', convertToStory);
+// voice-render and convert-to-story aliases removed
 app.post('/story-ui/claude', claudeProxy);
 app.get('/story-ui/components', getComponents);
 app.get('/story-ui/props', getProps);
@@ -945,6 +959,8 @@ if (storybookProxyEnabled) {
 app.listen(PORT, () => {
   console.error(`MCP server running on port ${PORT}`);
   console.error(`Stories will be generated to: ${config.generatedStoriesPath}`);
+  // Pre-warm canvas component cache in background so first voice request is fast
+  warmCanvasComponentCache().catch(() => {});
 }).on('error', (err: any) => {
   if (err.code === 'EADDRINUSE') {
     console.error(`\n❌ Port ${PORT} is already in use!`);
