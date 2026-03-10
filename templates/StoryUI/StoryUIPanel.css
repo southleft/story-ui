@@ -1979,11 +1979,18 @@
   min-height: 0;
 }
 
+.sui-canvas-live-wrapper {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
 .sui-canvas-iframe {
   width: 100%;
   height: 100%;
   border: none;
-  background: #0d1117;
+  display: block;
+  background: transparent;
 }
 
 .sui-canvas-empty {
@@ -2252,12 +2259,223 @@
   cursor: not-allowed;
 }
 
+/* Generation progress */
+.sui-canvas-progress {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 40px;
+  height: 100%;
+  justify-content: center;
+}
+
+.sui-canvas-progress-spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid hsl(var(--border));
+  border-top-color: hsl(var(--primary));
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.sui-canvas-progress-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sui-canvas-progress-phase {
+  font-size: 15px;
+  font-weight: 500;
+  color: hsl(var(--foreground));
+}
+
+.sui-canvas-progress-detail {
+  font-size: 13px;
+  color: hsl(var(--muted-foreground));
+}
+
+/* Success state */
+.sui-canvas-success {
+  padding: 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sui-canvas-success-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: hsl(var(--foreground));
+}
+
+.sui-canvas-success-components {
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  padding-left: 28px;
+}
+
+/* Error state */
+.sui-canvas-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: hsl(0 80% 97%);
+  color: hsl(0 70% 45%);
+  font-size: 13px;
+  border-top: 1px solid hsl(0 80% 90%);
+}
+
+.sui-canvas-error-dismiss {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  color: inherit;
+  opacity: 0.6;
+  padding: 0 4px;
+}
+
+.sui-canvas-error-dismiss:hover {
+  opacity: 1;
+}
+
+/* Error output from react-live (syntax / runtime errors in generated code) */
+.sui-canvas-live-error {
+  margin: 0;
+  padding: 12px 16px;
+  background: hsl(0 80% 97%);
+  color: hsl(0 70% 45%);
+  font-size: 12px;
+  font-family: monospace;
+  border-top: 1px solid hsl(0 80% 90%);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Overlay shown while re-generating an existing component */
+.sui-canvas-regen-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: hsl(var(--background, 0 0% 100%) / 0.75);
+  font-size: 13px;
+  color: hsl(var(--muted-foreground, 0 0% 45%));
+  backdrop-filter: blur(2px);
+}
+
+/* Small spinner variant for the overlay */
+.sui-canvas-progress-spinner--sm {
+  width: 18px;
+  height: 18px;
+  border-width: 2px;
+  animation: sui-canvas-spin 0.8s linear infinite;
+}
+
+/* Live component preview area — sets a light base color to counter
+   Storybook's dark docs theme, then lets the design system's own
+   class-based styles take full control. No element-level overrides. */
+.sui-canvas-live {
+  flex: 1;
+  overflow: auto;
+  min-height: 200px;
+  animation: sui-canvas-appear 0.4s ease-out;
+  color: #1a1b1e;
+  background: #fff;
+  color-scheme: light;
+}
+
+@keyframes sui-canvas-appear {
+  from { opacity: 0; transform: scale(0.97) translateY(12px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* Status bar between preview and voice bar */
+.sui-canvas-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 16px;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+  border-top: 1px solid hsl(var(--border));
+  background: hsl(var(--muted) / 0.3);
+}
+
+.sui-canvas-explanation {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Save dialog */
+.sui-canvas-save-dialog {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-top: 1px solid hsl(var(--border));
+  background: hsl(var(--muted) / 0.5);
+}
+
+.sui-canvas-save-input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius, 6px);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-size: 13px;
+  outline: none;
+}
+
+.sui-canvas-save-input:focus {
+  border-color: hsl(var(--ring));
+  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.2);
+}
+
+.sui-canvas-save-btn {
+  padding: 6px 14px;
+  border: none;
+  border-radius: var(--radius, 6px);
+  background: hsl(var(--primary, 210 100% 50%));
+  color: hsl(var(--primary-foreground, 0 0% 100%));
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sui-canvas-save-btn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.sui-canvas-save-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* Metrics badge */
 .sui-canvas-metrics {
   font-size: 12px;
   color: hsl(var(--muted-foreground));
   opacity: 0.7;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* Mode toggle */

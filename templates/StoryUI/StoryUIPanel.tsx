@@ -894,6 +894,8 @@ interface StoryUIPanelProps {
 function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   const [state, dispatch] = useReducer(panelReducer, initialState);
   const [panelMode, setPanelMode] = useState<'chat' | 'canvas'>('chat');
+  const [canvasRegistry, setCanvasRegistry] = useState<Record<string, any>>({});
+  const [canvasProvider, setCanvasProvider] = useState<React.ComponentType<{ children: React.ReactNode }> | null>(null);
   const [contextMenuId, setContextMenuId] = useState<string | null>(null);
   const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -922,6 +924,37 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const hasShownRefreshHint = useRef(false);
+
+  // Load component registry for Voice Canvas from window globals.
+  // preview.tsx exposes:
+  //   window.__STORY_UI_DESIGN_SYSTEM__ = component modules (e.g. MantineCore)
+  //   window.__STORY_UI_CANVAS_PROVIDER__ = configured provider with theme
+  // This avoids ALL dynamic imports in the docs page, which crash Storybook.
+  useEffect(() => {
+    if (panelMode !== 'canvas' || Object.keys(canvasRegistry).length > 0) return;
+
+    const ds = (window as any).__STORY_UI_DESIGN_SYSTEM__;
+    if (ds && typeof ds === 'object') {
+      const reg: Record<string, any> = {};
+      for (const [key, value] of Object.entries(ds)) {
+        if (/^[A-Z]/.test(key) && (typeof value === 'function' || typeof value === 'object')) {
+          reg[key] = value;
+        }
+      }
+      if (Object.keys(reg).length > 0) {
+        console.log(`[VoiceCanvas] Loaded ${Object.keys(reg).length} components from design system`);
+        setCanvasRegistry(reg);
+      }
+    } else {
+      console.warn('[VoiceCanvas] No design system found on window.__STORY_UI_DESIGN_SYSTEM__');
+    }
+
+    // Use the pre-configured provider (with theme) from preview.tsx
+    const configuredProvider = (window as any).__STORY_UI_CANVAS_PROVIDER__;
+    if (configuredProvider) {
+      setCanvasProvider(() => configuredProvider);
+    }
+  }, [panelMode]);
 
   // Track stories for MCP external generation detection
   // Used to detect when stories are created via MCP remote (Claude Desktop)
@@ -1166,10 +1199,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
         const syncedChats = await syncWithActualStories();
         const sortedChats = syncedChats.sort((a, b) => b.lastUpdated - a.lastUpdated).slice(0, MAX_RECENT_CHATS);
         dispatch({ type: 'SET_RECENT_CHATS', payload: sortedChats });
-        if (sortedChats.length > 0) {
-          dispatch({ type: 'SET_CONVERSATION', payload: sortedChats[0].conversation });
-          dispatch({ type: 'SET_ACTIVE_CHAT', payload: { id: sortedChats[0].id, title: sortedChats[0].title } });
-        }
+        // Start with a fresh empty chat — user clicks a chat to resume it
       } else {
         const localChats = loadChats();
         dispatch({ type: 'SET_RECENT_CHATS', payload: localChats });
@@ -2074,19 +2104,27 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
             apiBase={getApiBase()}
             provider={state.selectedProvider}
             model={state.selectedModel}
-            onStoryConverted={(story, title) => {
-              // Story was converted and saved via /mcp/convert-to-story
-              // Switch to chat mode to show result
-              setPanelMode('chat');
-              dispatch({
-                type: 'ADD_MESSAGE',
-                payload: {
-                  role: 'ai' as const,
-                  content: `Voice canvas converted to Storybook story: **${title}**\n\nThe story has been saved and should appear in Storybook shortly.`,
-                },
-              });
+            onSave={(result: { fileName: string; code: string; title: string }) => {
+              // Track the saved story
+              const chatId = result.fileName.replace('.stories.tsx', '') || Date.now().toString();
+              const newSession = {
+                id: chatId,
+                title: result.title,
+                fileName: result.fileName,
+                conversation: [
+                  { role: 'user' as const, content: `[Voice Canvas] ${result.title}` },
+                  { role: 'ai' as const, content: `Saved as ${result.fileName}` },
+                ],
+                lastUpdated: Date.now(),
+              };
+              const chats = loadChats().filter((c: any) => c.id !== chatId);
+              chats.unshift(newSession);
+              if (chats.length > MAX_RECENT_CHATS) chats.splice(MAX_RECENT_CHATS);
+              saveChats(chats);
+              dispatch({ type: 'SET_RECENT_CHATS', payload: chats });
+              panelGeneratedStoryIds.current.add(chatId);
             }}
-            onError={(error) => dispatch({ type: 'SET_ERROR', payload: error })}
+            onError={(error: string) => dispatch({ type: 'SET_ERROR', payload: error })}
           />
         ) : (
         <>

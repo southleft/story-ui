@@ -1,345 +1,285 @@
+/**
+ * VoiceCanvas v5 — Storybook iframe + postMessage
+ *
+ * Architecture:
+ *   - LLM generates JSX code string
+ *   - Server writes a STATIC react-live story template ONCE on first use
+ *     (voice-canvas.stories.tsx never changes after creation — no HMR cascade)
+ *   - Preview renders in a Storybook iframe (full decorator chain = correct Mantine theme)
+ *   - Code updates on generate / undo / redo are delivered via:
+ *       1. localStorage (persists across iframe reloads)
+ *       2. window.postMessage (instant in-place update, no iframe reload needed)
+ *
+ * This means undo/redo has ZERO file I/O and ZERO HMR, so the outer
+ * StoryUIPanel is never accidentally reset.
+ */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
-interface VoiceCanvasProps {
+// ── Constants ─────────────────────────────────────────────────
+
+const STORY_ID = 'generated-voice-canvas--default';
+const LS_KEY = '__voice_canvas_code__';
+const IFRAME_ORIGIN = window.location.origin;
+
+// ── Types ─────────────────────────────────────────────────────
+
+export interface VoiceCanvasProps {
   apiBase: string;
   provider?: string;
+  /** LLM model — respects user's selection from the panel dropdown */
   model?: string;
-  designSystem?: string;
-  onSaveAsStory?: (html: string) => void;
-  onStoryConverted?: (story: string, title: string) => void;
+  /** Called when the user saves the canvas as a named .stories.tsx file */
+  onSave?: (result: { fileName: string; code: string; title: string }) => void;
   onError?: (error: string) => void;
 }
 
-interface RenderMetrics {
-  timeMs: number;
-  model: string;
-  provider: string;
-}
-
-type ConversionState = 'idle' | 'converting' | 'done' | 'error';
-
-// Base HTML shell for the canvas iframe
-const IFRAME_SHELL = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-  *, *::before, *::after { box-sizing: border-box; }
-  body {
-    margin: 0;
-    padding: 24px;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-    line-height: 1.6;
-    color: #c9d1d9;
-    background: #0d1117;
-    min-height: 100vh;
-  }
-  img { max-width: 100%; height: auto; display: block; }
-  a { color: #58a6ff; text-decoration: none; }
-  #canvas-root { min-height: 100%; }
-  .canvas-loading {
-    display: flex; align-items: center; gap: 8px;
-    color: #8b949e; font-size: 14px; padding: 16px 0;
-  }
-  .canvas-loading::before {
-    content: ''; width: 12px; height: 12px;
-    border: 2px solid #8b949e; border-top-color: transparent;
-    border-radius: 50%; animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-</style>
-</head>
-<body><div id="canvas-root"></div></body>
-</html>`;
+// ── Component ─────────────────────────────────────────────────
 
 export function VoiceCanvas({
   apiBase,
   provider,
   model,
-  designSystem,
-  onSaveAsStory,
-  onStoryConverted,
+  onSave,
   onError,
 }: VoiceCanvasProps) {
-  const [currentHtml, setCurrentHtml] = useState('');
-  const [isRendering, setIsRendering] = useState(false);
-  const [metrics, setMetrics] = useState<RenderMetrics | null>(null);
-  const [history, setHistory] = useState<string[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
+  // ── Code + history ───────────────────────────────────────────
+  const [currentCode, setCurrentCode] = useState('');
+  const [undoStack, setUndoStack] = useState<string[]>([]);
+  const [redoStack, setRedoStack] = useState<string[]>([]);
+
+  // ── Preview state ────────────────────────────────────────────
+  const [storyReady, setStoryReady] = useState(false);
+  const [iframeKey, setIframeKey] = useState(0);
+
+  // ── Generation state ─────────────────────────────────────────
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [statusText, setStatusText] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
+
+  // ── Save dialog ──────────────────────────────────────────────
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [saveTitle, setSaveTitle] = useState('');
+
+  // ── Voice input ──────────────────────────────────────────────
   const [isListening, setIsListening] = useState(false);
   const [interimText, setInterimText] = useState('');
   const [pendingTranscript, setPendingTranscript] = useState('');
-  const [statusMessage, setStatusMessage] = useState('');
-  const [noSpeechCount, setNoSpeechCount] = useState(0);
   const [manualPrompt, setManualPrompt] = useState('');
-  const [conversionState, setConversionState] = useState<ConversionState>('idle');
-  const [conversionProgress, setConversionProgress] = useState('');
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
-  const conversationRef = useRef<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
-  const currentHtmlRef = useRef('');
-  const historyRef = useRef<string[]>([]);
-  const historyIndexRef = useRef(-1);
 
-  // Voice input refs
+  // ── Refs ──────────────────────────────────────────────────────
+  const abortRef = useRef<AbortController | null>(null);
+  const conversationRef = useRef<Array<{ role: string; content: string }>>([]);
   const recognitionRef = useRef<any>(null);
   const isListeningRef = useRef(false);
   const autoSubmitRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingTranscriptRef = useRef('');
   const audioCheckRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
-  const handleSaveRef = useRef<() => void>(() => {});
+  const stopListeningRef = useRef<() => void>(() => {});
+  const currentCodeRef = useRef(currentCode);
+  currentCodeRef.current = currentCode;
+  // Ref to the preview iframe element
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  // True after the iframe fires its onLoad event
+  const iframeLoadedRef = useRef(false);
 
-  // Keep refs in sync
-  useEffect(() => { currentHtmlRef.current = currentHtml; }, [currentHtml]);
-  useEffect(() => { historyRef.current = history; historyIndexRef.current = historyIndex; }, [history, historyIndex]);
+  // ── Code → iframe bridge ─────────────────────────────────────
 
-  // Initialize the iframe with the shell HTML
-  const initIframe = useCallback(() => {
-    if (!iframeRef.current) return;
-    const doc = iframeRef.current.contentDocument;
-    if (!doc) return;
-    doc.open();
-    doc.write(IFRAME_SHELL);
-    doc.close();
-  }, []);
-
-  // Update just the canvas root content (not the whole document)
-  const updateCanvasContent = useCallback((html: string) => {
-    if (!iframeRef.current) return;
-    const doc = iframeRef.current.contentDocument;
-    if (!doc) return;
-    const root = doc.getElementById('canvas-root');
-    if (root) {
-      root.innerHTML = html;
+  /**
+   * Persist code and push it to the story preview iframe.
+   * Safe to call before the iframe is loaded — the code is stored in localStorage
+   * and the story reads it on mount.
+   */
+  const sendCodeToIframe = useCallback((code: string) => {
+    try { localStorage.setItem(LS_KEY, code); } catch {}
+    if (iframeRef.current?.contentWindow && iframeLoadedRef.current) {
+      iframeRef.current.contentWindow.postMessage(
+        { type: 'VOICE_CANVAS_UPDATE', code },
+        IFRAME_ORIGIN,
+      );
     }
   }, []);
 
-  // Show loading indicator in canvas
-  const showCanvasLoading = useCallback((message: string) => {
-    if (!iframeRef.current) return;
-    const doc = iframeRef.current.contentDocument;
-    if (!doc) return;
-    const root = doc.getElementById('canvas-root');
-    if (root) {
-      // Append loading indicator below existing content
-      let loader = doc.getElementById('canvas-loader');
-      if (!loader) {
-        loader = doc.createElement('div');
-        loader.id = 'canvas-loader';
-        loader.className = 'canvas-loading';
-        root.appendChild(loader);
-      }
-      loader.textContent = message;
-    }
-  }, []);
+  // ── Generate / Edit ───────────────────────────────────────────
 
-  const removeCanvasLoading = useCallback(() => {
-    if (!iframeRef.current) return;
-    const doc = iframeRef.current.contentDocument;
-    if (!doc) return;
-    const loader = doc.getElementById('canvas-loader');
-    if (loader) loader.remove();
-  }, []);
+  const sendCanvasRequest = useCallback(async (transcript: string) => {
+    if (abortRef.current) abortRef.current.abort();
 
-  // Init iframe on mount
-  useEffect(() => {
-    initIframe();
-  }, [initIframe]);
-
-  // Stream HTML from the voice-render endpoint
-  const renderFromPrompt = useCallback(async (prompt: string) => {
-    // Abort any in-flight request
-    if (abortRef.current) {
-      abortRef.current.abort();
-    }
-
-    setIsRendering(true);
-    setStatusMessage('');
-    showCanvasLoading('Rendering...');
+    setIsGenerating(true);
+    setStatusText('Thinking...');
+    setErrorMessage('');
 
     const controller = new AbortController();
     abortRef.current = controller;
 
-    const htmlBefore = currentHtmlRef.current;
-
     try {
-      const response = await fetch(`${apiBase}/mcp/voice-render`, {
+      const currentCode = currentCodeRef.current;
+      const isEdit = currentCode.trim().length > 0;
+
+      const response = await fetch(`${apiBase}/mcp/canvas-generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          prompt,
-          currentHtml: htmlBefore || undefined,
-          designSystem,
-          conversation: conversationRef.current.length > 0 ? conversationRef.current : undefined,
-          provider,
-          model,
-          useFastModel: true,
+          prompt: transcript,
+          canvasCode: isEdit ? currentCode : undefined,
+          provider: provider || 'claude',
+          model: model || undefined,
+          conversationHistory: conversationRef.current,
         }),
         signal: controller.signal,
       });
 
       if (!response.ok) {
-        throw new Error(`Server error: ${response.status}`);
+        const err = await response.text();
+        throw new Error(`Server error ${response.status}: ${err}`);
       }
 
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('No response stream');
+      setStatusText('Building...');
 
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let accumulatedHtml = '';
+      const data = await response.json();
+      const newCode: string = data.canvasCode ?? '';
 
-      removeCanvasLoading();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-
-        // Process complete SSE messages (separated by double newline)
-        const messages = buffer.split('\n\n');
-        buffer = messages.pop() || '';
-
-        for (const msg of messages) {
-          const lines = msg.split('\n');
-          let eventType = '';
-          let dataStr = '';
-
-          for (const line of lines) {
-            if (line.startsWith('event: ')) {
-              eventType = line.slice(7);
-            } else if (line.startsWith('data: ')) {
-              dataStr = line.slice(6);
-            }
-          }
-
-          if (!dataStr) continue;
-
-          try {
-            const data = JSON.parse(dataStr);
-
-            if (eventType === 'html_chunk' && data.content !== undefined) {
-              accumulatedHtml += data.content;
-              updateCanvasContent(accumulatedHtml);
-            } else if (eventType === 'complete' && data.html !== undefined) {
-              accumulatedHtml = data.html;
-              setCurrentHtml(data.html);
-              updateCanvasContent(data.html);
-
-              // Track in conversation
-              conversationRef.current.push(
-                { role: 'user', content: prompt },
-                { role: 'assistant', content: data.html }
-              );
-
-              // Track in undo history
-              setHistory(prev => {
-                const newHistory = [...prev.slice(0, historyIndexRef.current + 1), data.html];
-                setHistoryIndex(newHistory.length - 1);
-                return newHistory;
-              });
-
-              if (data.metrics) {
-                setMetrics(data.metrics);
-                setStatusMessage(`Rendered in ${(data.metrics.timeMs / 1000).toFixed(1)}s`);
-              }
-            } else if (eventType === 'error') {
-              onError?.(data.message);
-              setStatusMessage(`Error: ${data.message}`);
-            }
-          } catch {
-            // Non-JSON data, skip
-          }
+      if (newCode.trim()) {
+        if (currentCode.trim()) {
+          setUndoStack(prev => [...prev.slice(-19), currentCode]);
+          setRedoStack([]);
         }
+
+        setCurrentCode(newCode);
+        sendCodeToIframe(newCode);
+
+        // First generation — mount the iframe
+        if (!storyReady) {
+          setStoryReady(true);
+          setIframeKey(k => k + 1);
+        }
+
+        conversationRef.current.push(
+          { role: 'user', content: transcript },
+          { role: 'assistant', content: '[Generated canvas component]' },
+        );
+        if (conversationRef.current.length > 40) {
+          conversationRef.current = conversationRef.current.slice(-40);
+        }
+      } else {
+        setErrorMessage('No component was generated. Try a different prompt.');
       }
 
-      // If we got HTML but no complete event, still save it
-      if (accumulatedHtml && !currentHtmlRef.current) {
-        setCurrentHtml(accumulatedHtml);
-        updateCanvasContent(accumulatedHtml);
-      }
+      setStatusText('');
     } catch (error) {
-      if ((error as Error).name !== 'AbortError') {
-        const msg = error instanceof Error ? error.message : String(error);
-        onError?.(msg);
-        setStatusMessage(`Error: ${msg}`);
-      }
+      if ((error as Error).name === 'AbortError') return;
+      const msg = error instanceof Error ? error.message : String(error);
+      setErrorMessage(msg);
+      setStatusText('');
+      onError?.(msg);
     } finally {
-      setIsRendering(false);
-      removeCanvasLoading();
+      setIsGenerating(false);
       abortRef.current = null;
     }
-  }, [apiBase, designSystem, provider, model, updateCanvasContent, showCanvasLoading, removeCanvasLoading, onError]);
+  }, [apiBase, provider, model, storyReady, sendCodeToIframe, onError]);
 
-  // Undo/Redo
+  // ── Undo ──────────────────────────────────────────────────────
+  // No file I/O — just update code and postMessage to the already-loaded iframe
+
   const undo = useCallback(() => {
-    if (historyIndexRef.current > 0) {
-      const newIndex = historyIndexRef.current - 1;
-      setHistoryIndex(newIndex);
-      const html = historyRef.current[newIndex];
-      setCurrentHtml(html);
-      updateCanvasContent(html);
-    }
-  }, [updateCanvasContent]);
+    if (undoStack.length === 0) return;
+    const prev = undoStack[undoStack.length - 1];
+    setRedoStack(r => [...r, currentCodeRef.current]);
+    setUndoStack(u => u.slice(0, -1));
+    setCurrentCode(prev);
+    sendCodeToIframe(prev);
+  }, [undoStack, sendCodeToIframe]);
+
+  // ── Redo ──────────────────────────────────────────────────────
 
   const redo = useCallback(() => {
-    if (historyIndexRef.current < historyRef.current.length - 1) {
-      const newIndex = historyIndexRef.current + 1;
-      setHistoryIndex(newIndex);
-      const html = historyRef.current[newIndex];
-      setCurrentHtml(html);
-      updateCanvasContent(html);
-    }
-  }, [updateCanvasContent]);
+    if (redoStack.length === 0) return;
+    const next = redoStack[redoStack.length - 1];
+    setUndoStack(u => [...u, currentCodeRef.current]);
+    setRedoStack(r => r.slice(0, -1));
+    setCurrentCode(next);
+    sendCodeToIframe(next);
+  }, [redoStack, sendCodeToIframe]);
 
-  // Clear canvas
+  const canUndo = undoStack.length > 0;
+  const canRedo = redoStack.length > 0;
+
+  // ── Clear ─────────────────────────────────────────────────────
+
   const clear = useCallback(() => {
-    setCurrentHtml('');
-    setHistory([]);
-    setHistoryIndex(-1);
-    setMetrics(null);
-    setStatusMessage('');
+    const current = currentCodeRef.current;
+    if (current.trim()) {
+      setUndoStack(prev => [...prev.slice(-19), current]);
+      setRedoStack([]);
+    }
+    setCurrentCode('');
+    setStoryReady(false);
+    iframeLoadedRef.current = false;
+    conversationRef.current = [];
+    setErrorMessage('');
     setPendingTranscript('');
     pendingTranscriptRef.current = '';
-    conversationRef.current = [];
-    updateCanvasContent('');
-  }, [updateCanvasContent]);
+    try { localStorage.removeItem(LS_KEY); } catch {}
+  }, []);
 
-  // ============================================================
-  // Voice input with "generate while speaking" behavior
-  // ============================================================
-  // Key insight: instead of waiting for the user to fully stop talking,
-  // we start generating after a short pause (800ms). If the user keeps
-  // talking, we ABORT the in-flight request and re-generate with the
-  // accumulated transcript. This creates the illusion of real-time
-  // generation that adapts as the user speaks.
-  // ============================================================
+  // ── Save ───────────────────────────────────────────────────────
 
-  const scheduleRender = useCallback((transcript: string) => {
-    if (autoSubmitRef.current) {
-      clearTimeout(autoSubmitRef.current);
+  const saveStory = useCallback(async () => {
+    const title = saveTitle.trim();
+    const code = currentCodeRef.current;
+    if (!title || !code.trim()) return;
+
+    try {
+      const response = await fetch(`${apiBase}/mcp/canvas-save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsxCode: code, title }),
+      });
+
+      if (!response.ok) {
+        const err = await response.text();
+        throw new Error(`Save failed: ${err}`);
+      }
+
+      const result = await response.json();
+      setShowSaveDialog(false);
+      setSaveTitle('');
+      setStatusText(`Saved as "${result.fileName}"`);
+      onSave?.(result);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      setErrorMessage(msg);
+      onError?.(msg);
     }
+  }, [apiBase, saveTitle, onSave, onError]);
 
-    // Short delay — start generating quickly while user may still be talking
+  // ── Iframe load handler ────────────────────────────────────────
+
+  const handleIframeLoad = useCallback(() => {
+    iframeLoadedRef.current = true;
+    // Deliver any pending code the iframe missed before it was ready
+    const code = currentCodeRef.current;
+    if (code) sendCodeToIframe(code);
+  }, [sendCodeToIframe]);
+
+  // ── Voice: schedule auto-submit ────────────────────────────────
+
+  const scheduleIntent = useCallback((transcript: string) => {
+    if (autoSubmitRef.current) clearTimeout(autoSubmitRef.current);
     autoSubmitRef.current = setTimeout(() => {
       const prompt = transcript.trim();
-      if (prompt) {
-        renderFromPrompt(prompt);
-      }
+      if (prompt) sendCanvasRequest(prompt);
       autoSubmitRef.current = null;
-    }, 800); // 800ms — fast enough to feel responsive, long enough to catch short pauses
-  }, [renderFromPrompt]);
+    }, 1200);
+  }, [sendCanvasRequest]);
+
+  // ── Voice: start ───────────────────────────────────────────────
 
   const startListening = useCallback(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) return;
 
-    if (recognitionRef.current) {
-      recognitionRef.current.abort();
-    }
+    if (recognitionRef.current) recognitionRef.current.abort();
 
     const recognition = new SpeechRecognition();
     recognition.continuous = true;
@@ -351,22 +291,13 @@ export function VoiceCanvas({
       let final = '';
 
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          final += transcript;
-        } else {
-          interim += transcript;
-        }
+        const t = event.results[i][0].transcript;
+        if (event.results[i].isFinal) final += t;
+        else interim += t;
       }
 
       if (interim) {
         setInterimText(interim);
-        // User is still speaking — abort any in-flight generation
-        // so we can re-generate with the fuller transcript
-        if (abortRef.current && autoSubmitRef.current) {
-          // Don't abort if there's no pending auto-submit (means generation already committed)
-        }
-        // Cancel pending auto-submit while still speaking
         if (autoSubmitRef.current) {
           clearTimeout(autoSubmitRef.current);
           autoSubmitRef.current = null;
@@ -374,75 +305,39 @@ export function VoiceCanvas({
       }
 
       if (final) {
-        setNoSpeechCount(0);
-        const accumulated = pendingTranscriptRef.current + (pendingTranscriptRef.current ? ' ' : '') + final;
+        const accumulated = pendingTranscriptRef.current
+          + (pendingTranscriptRef.current ? ' ' : '') + final;
         pendingTranscriptRef.current = accumulated;
         setPendingTranscript(accumulated);
         setInterimText('');
 
-        // Check for voice commands (short utterances only)
         const trimmed = final.trim().toLowerCase();
-        const words = trimmed.split(/\s+/);
-        if (words.length <= 3) {
-          if (trimmed === 'undo' || trimmed === 'go back') {
-            undo();
-            pendingTranscriptRef.current = '';
-            setPendingTranscript('');
-            return;
+        if (trimmed.split(/\s+/).length <= 3) {
+          if (trimmed === 'clear' || trimmed === 'start over') {
+            clear(); pendingTranscriptRef.current = ''; setPendingTranscript(''); return;
+          }
+          if (trimmed === 'undo') {
+            undo(); pendingTranscriptRef.current = ''; setPendingTranscript(''); return;
           }
           if (trimmed === 'redo') {
-            redo();
-            pendingTranscriptRef.current = '';
-            setPendingTranscript('');
-            return;
-          }
-          if (trimmed === 'clear' || trimmed === 'start over') {
-            clear();
-            return;
+            redo(); pendingTranscriptRef.current = ''; setPendingTranscript(''); return;
           }
           if (trimmed === 'stop' || trimmed === 'stop listening') {
-            stopListening();
-            return;
-          }
-          if (trimmed === 'save' || trimmed === 'save this') {
-            if (currentHtmlRef.current) {
-              handleSaveRef.current();
-            }
-            pendingTranscriptRef.current = '';
-            setPendingTranscript('');
-            return;
+            stopListeningRef.current(); return;
           }
         }
 
-        // Schedule generation — this is where the magic happens.
-        // We abort any in-flight request and start generating with the
-        // accumulated transcript. If the user keeps talking, this will
-        // be called again with a longer transcript.
-        if (abortRef.current) {
-          abortRef.current.abort();
-        }
-        scheduleRender(accumulated);
+        if (abortRef.current) abortRef.current.abort();
+        scheduleIntent(accumulated);
       }
     };
 
     recognition.onerror = (event: any) => {
-      if (event.error === 'aborted') return;
-      if (event.error === 'no-speech') {
-        setNoSpeechCount(c => {
-          const count = c + 1;
-          if (count >= 2) {
-            setStatusMessage('No speech detected — try speaking louder or use the text input below');
-          }
-          return count;
-        });
-        return;
-      }
+      if (event.error === 'aborted' || event.error === 'no-speech') return;
       if (event.error === 'not-allowed') {
-        setStatusMessage('Microphone access denied — use the text input below');
+        setErrorMessage('Microphone access denied');
         isListeningRef.current = false;
         setIsListening(false);
-      } else {
-        setStatusMessage(`Voice error: ${event.error}`);
       }
     };
 
@@ -464,17 +359,13 @@ export function VoiceCanvas({
 
     try {
       recognition.start();
-      setNoSpeechCount(0);
 
-      // Check audio levels after 3s — detect silent/wrong mic
       if (audioCheckRef.current) clearTimeout(audioCheckRef.current);
       audioCheckRef.current = setTimeout(async () => {
         if (!isListeningRef.current) return;
-
-        const measureAudio = async (constraints: MediaStreamConstraints): Promise<{ level: number; label: string }> => {
-          const stream = await navigator.mediaDevices.getUserMedia(constraints);
-          const track = stream.getAudioTracks()[0];
-          const label = track?.label || 'Unknown';
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          audioStreamRef.current = stream;
           const audioCtx = new AudioContext();
           const source = audioCtx.createMediaStreamSource(stream);
           const analyser = audioCtx.createAnalyser();
@@ -485,63 +376,31 @@ export function VoiceCanvas({
           let maxLevel = 0;
           await new Promise<void>(resolve => {
             let samples = 0;
-            const interval = setInterval(() => {
+            const id = setInterval(() => {
               analyser.getByteFrequencyData(data);
               const avg = data.reduce((a, b) => a + b, 0) / data.length;
               if (avg > maxLevel) maxLevel = avg;
-              if (++samples >= 10) { clearInterval(interval); resolve(); }
+              if (++samples >= 10) { clearInterval(id); resolve(); }
             }, 100);
           });
 
           stream.getTracks().forEach(t => t.stop());
+          audioStreamRef.current = null;
           audioCtx.close();
-          return { level: maxLevel, label };
-        };
 
-        try {
-          // Test the default device
-          const defaultResult = await measureAudio({ audio: true });
-
-          if (defaultResult.level >= 1 || !isListeningRef.current) return;
-
-          // Default mic is silent — try to find a working physical mic
-          const devices = await navigator.mediaDevices.enumerateDevices();
-          const mics = devices.filter(d =>
-            d.kind === 'audioinput' &&
-            d.deviceId !== 'default' &&
-            !d.label.toLowerCase().includes('virtual')
-          );
-
-          let foundWorking = false;
-          for (const mic of mics) {
-            if (!isListeningRef.current) return;
-            try {
-              const result = await measureAudio({ audio: { deviceId: { exact: mic.deviceId } } });
-              if (result.level >= 1) {
-                foundWorking = true;
-                setStatusMessage(
-                  `Your default mic "${defaultResult.label}" has no audio. Change your system default to "${result.label}" in System Settings > Sound > Input, then refresh.`
-                );
-                break;
-              }
-            } catch { /* skip device */ }
+          if (maxLevel < 1 && isListeningRef.current) {
+            setErrorMessage('No audio detected — check your microphone');
           }
-
-          if (!foundWorking && isListeningRef.current) {
-            setStatusMessage(
-              `No audio from "${defaultResult.label}" — change your default mic in System Settings > Sound > Input`
-            );
-          }
-        } catch {
-          // getUserMedia failed — onerror on recognition will handle it
-        }
+        } catch { /* getUserMedia failed */ }
       }, 3000);
-    } catch (e) {
-      setStatusMessage('Could not start voice input — use text input below');
+    } catch {
+      setErrorMessage('Could not start voice input');
       isListeningRef.current = false;
       setIsListening(false);
     }
-  }, [undo, redo, clear, scheduleRender]);
+  }, [clear, undo, redo, scheduleIntent]);
+
+  // ── Voice: stop ────────────────────────────────────────────────
 
   const stopListening = useCallback(() => {
     isListeningRef.current = false;
@@ -550,15 +409,11 @@ export function VoiceCanvas({
     if (audioCheckRef.current) { clearTimeout(audioCheckRef.current); audioCheckRef.current = null; }
     if (audioStreamRef.current) { audioStreamRef.current.getTracks().forEach(t => t.stop()); audioStreamRef.current = null; }
 
-    // Submit any pending transcript immediately
     const pending = pendingTranscriptRef.current.trim();
     if (pending) {
       if (abortRef.current) abortRef.current.abort();
-      if (autoSubmitRef.current) {
-        clearTimeout(autoSubmitRef.current);
-        autoSubmitRef.current = null;
-      }
-      renderFromPrompt(pending);
+      if (autoSubmitRef.current) { clearTimeout(autoSubmitRef.current); autoSubmitRef.current = null; }
+      sendCanvasRequest(pending);
       pendingTranscriptRef.current = '';
       setPendingTranscript('');
     }
@@ -567,109 +422,45 @@ export function VoiceCanvas({
       recognitionRef.current.stop();
       recognitionRef.current = null;
     }
-  }, [renderFromPrompt]);
+  }, [sendCanvasRequest]);
+
+  stopListeningRef.current = stopListening;
 
   const toggleListening = useCallback(() => {
-    if (isListeningRef.current) {
-      stopListening();
-    } else {
-      startListening();
-    }
+    if (isListeningRef.current) stopListening();
+    else startListening();
   }, [startListening, stopListening]);
 
-  // Manual text submission (fallback when voice doesn't work)
+  // ── Text input submit ──────────────────────────────────────────
+
   const handleManualSubmit = useCallback(() => {
     const prompt = manualPrompt.trim();
     if (!prompt) return;
     setManualPrompt('');
     if (abortRef.current) abortRef.current.abort();
-    renderFromPrompt(prompt);
-  }, [manualPrompt, renderFromPrompt]);
+    sendCanvasRequest(prompt);
+  }, [manualPrompt, sendCanvasRequest]);
 
-  // Convert voice canvas HTML to a proper Storybook story via dedicated endpoint
-  const handleSaveAsStory = useCallback(async () => {
-    const html = currentHtmlRef.current;
-    if (!html) return;
+  // ── Keyboard shortcuts ─────────────────────────────────────────
 
-    // If legacy callback only, use it
-    if (!onStoryConverted && onSaveAsStory) {
-      onSaveAsStory(html);
-      return;
-    }
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
 
-    setConversionState('converting');
-    setConversionProgress('Analyzing HTML structure...');
-
-    try {
-      const response = await fetch(`${apiBase}/mcp/convert-to-story`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          html,
-          designSystem,
-          provider,
-          model,
-        }),
-      });
-
-      if (!response.ok) throw new Error(`Server error: ${response.status}`);
-
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('No response stream');
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let storyCode = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const messages = buffer.split('\n\n');
-        buffer = messages.pop() || '';
-
-        for (const msg of messages) {
-          const lines = msg.split('\n');
-          let eventType = '';
-          let dataStr = '';
-          for (const line of lines) {
-            if (line.startsWith('event: ')) eventType = line.slice(7);
-            else if (line.startsWith('data: ')) dataStr = line.slice(6);
-          }
-          if (!dataStr) continue;
-          try {
-            const data = JSON.parse(dataStr);
-            if (eventType === 'status') {
-              setConversionProgress(data.message || 'Processing...');
-            } else if (eventType === 'story_chunk') {
-              storyCode += data.content;
-            } else if (eventType === 'complete') {
-              storyCode = data.story || storyCode;
-              setConversionState('done');
-              setConversionProgress(`Converted in ${(data.metrics?.timeMs / 1000).toFixed(1)}s`);
-              onStoryConverted?.(storyCode, data.title || 'Voice Generated');
-            } else if (eventType === 'error') {
-              throw new Error(data.message);
-            }
-          } catch (e) {
-            if (e instanceof SyntaxError) continue; // non-JSON
-            throw e;
-          }
-        }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault(); undo();
       }
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      setConversionState('error');
-      setConversionProgress(`Conversion failed: ${msg}`);
-      onError?.(msg);
-    }
-  }, [apiBase, designSystem, provider, model, onSaveAsStory, onStoryConverted, onError]);
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+        e.preventDefault(); redo();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [undo, redo]);
 
-  // Keep save ref in sync
-  useEffect(() => { handleSaveRef.current = handleSaveAsStory; }, [handleSaveAsStory]);
+  // ── Cleanup ────────────────────────────────────────────────────
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
@@ -683,13 +474,19 @@ export function VoiceCanvas({
     };
   }, []);
 
-  const hasContent = !!currentHtml;
+  const hasContent = currentCode.trim().length > 0;
+  const iframeSrc = `/iframe.html?id=${STORY_ID}&viewMode=story&singleStory=true`;
+
+  // ── Render ─────────────────────────────────────────────────────
 
   return (
     <div className="sui-canvas-container">
-      {/* Canvas area */}
+
+      {/* ── Preview area ──────────────────────────────────────── */}
       <div className="sui-canvas-preview">
-        {!hasContent && !isRendering && (
+
+        {/* Empty state */}
+        {!storyReady && !isGenerating && (
           <div className="sui-canvas-empty">
             <div className="sui-canvas-empty-icon">
               <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -700,25 +497,105 @@ export function VoiceCanvas({
             </div>
             <h2 className="sui-canvas-empty-title">Voice Canvas</h2>
             <p className="sui-canvas-empty-desc">
-              Click the microphone and describe a UI to create it in real-time.
+              Speak or type to build interfaces live with your design system components.
             </p>
             <p className="sui-canvas-empty-hint">
-              Try: "Create a pricing card with three tiers"
+              Try: "Create a product card with an image, title, price, and buy button"
             </p>
           </div>
         )}
-        <iframe
-          ref={iframeRef}
-          className="sui-canvas-iframe"
-          title="Voice Canvas Preview"
-          sandbox="allow-same-origin"
-          style={{ display: hasContent || isRendering ? 'block' : 'none' }}
-        />
+
+        {/* First-generation spinner */}
+        {!storyReady && isGenerating && (
+          <div className="sui-canvas-progress">
+            <div className="sui-canvas-progress-spinner" />
+            <span className="sui-canvas-progress-text">{statusText || 'Building...'}</span>
+          </div>
+        )}
+
+        {/* Storybook iframe — renders with full Mantine decorator chain */}
+        {storyReady && (
+          <div className="sui-canvas-live-wrapper">
+            {/* Re-generation overlay */}
+            {isGenerating && (
+              <div className="sui-canvas-regen-overlay">
+                <div className="sui-canvas-progress-spinner sui-canvas-progress-spinner--sm" />
+                <span>{statusText || 'Regenerating...'}</span>
+              </div>
+            )}
+
+            <iframe
+              key={iframeKey}
+              ref={iframeRef}
+              src={iframeSrc}
+              title="Voice Canvas Preview"
+              className="sui-canvas-iframe"
+              onLoad={handleIframeLoad}
+            />
+          </div>
+        )}
+
+        {/* API / network errors */}
+        {!isGenerating && errorMessage && (
+          <div className="sui-canvas-error">
+            <span>{errorMessage}</span>
+            <button
+              type="button"
+              className="sui-canvas-error-dismiss"
+              onClick={() => setErrorMessage('')}
+              aria-label="Dismiss error"
+            >
+              ×
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Floating voice bar */}
+      {/* ── Status bar ────────────────────────────────────────── */}
+      {statusText && !isGenerating && (
+        <div className="sui-canvas-status-bar">
+          <span className="sui-canvas-explanation">{statusText}</span>
+        </div>
+      )}
+
+      {/* ── Save dialog ───────────────────────────────────────── */}
+      {showSaveDialog && (
+        <div className="sui-canvas-save-dialog">
+          <input
+            type="text"
+            className="sui-canvas-save-input"
+            placeholder="Story title (e.g. Pricing Card)"
+            value={saveTitle}
+            onChange={(e) => setSaveTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') saveStory();
+              if (e.key === 'Escape') setShowSaveDialog(false);
+            }}
+            autoFocus
+          />
+          <button
+            type="button"
+            className="sui-canvas-save-btn"
+            onClick={saveStory}
+            disabled={!saveTitle.trim()}
+          >
+            Save
+          </button>
+          <button
+            type="button"
+            className="sui-canvas-action"
+            onClick={() => setShowSaveDialog(false)}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {/* ── Floating voice bar ─────────────────────────────────── */}
       <div className={`sui-canvas-bar ${isListening ? 'sui-canvas-bar--active' : ''}`}>
         <div className="sui-canvas-bar-left">
+
+          {/* Mic button */}
           <button
             type="button"
             className={`sui-canvas-mic ${isListening ? 'sui-canvas-mic--active' : ''}`}
@@ -733,98 +610,95 @@ export function VoiceCanvas({
             {isListening && <span className="sui-canvas-mic-pulse" />}
           </button>
 
+          {/* Transcript display */}
           <div className="sui-canvas-transcript">
-            {conversionState === 'converting' ? (
-              <span className="sui-canvas-status-rendering">{conversionProgress}</span>
-            ) : conversionState === 'done' ? (
-              <span className="sui-canvas-status-info">{conversionProgress}</span>
-            ) : conversionState === 'error' ? (
-              <span className="sui-canvas-status-info">{conversionProgress}</span>
-            ) : isRendering && !interimText ? (
-              <span className="sui-canvas-status-rendering">Rendering UI...</span>
+            {isGenerating ? (
+              <span className="sui-canvas-status-rendering">{statusText || 'Building interface...'}</span>
             ) : interimText ? (
-              <span className="sui-canvas-status-interim">{pendingTranscript ? pendingTranscript + ' ' : ''}{interimText}</span>
+              <span className="sui-canvas-status-interim">
+                {pendingTranscript ? pendingTranscript + ' ' : ''}{interimText}
+              </span>
             ) : pendingTranscript ? (
               <span className="sui-canvas-status-final">{pendingTranscript}</span>
-            ) : statusMessage ? (
-              <span className="sui-canvas-status-info">{statusMessage}</span>
             ) : isListening ? (
-              <span className="sui-canvas-status-listening">Listening... describe a UI to create</span>
+              <span className="sui-canvas-status-listening">Listening... describe what you want to build</span>
             ) : (
               <span className="sui-canvas-status-hint">Click mic or type below</span>
             )}
           </div>
         </div>
 
-        {/* Text input fallback */}
+        {/* Text input */}
         <div className="sui-canvas-text-input">
           <input
             type="text"
             className="sui-canvas-text-field"
-            placeholder="Or type a UI description..."
+            placeholder="Or type: 'Add a button group with three actions'"
             value={manualPrompt}
             onChange={(e) => setManualPrompt(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') handleManualSubmit(); }}
-            disabled={isRendering}
+            disabled={isGenerating}
           />
           {manualPrompt.trim() && (
             <button
               type="button"
               className="sui-canvas-text-submit"
               onClick={handleManualSubmit}
-              disabled={isRendering}
+              disabled={isGenerating}
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="22" y1="2" x2="11" y2="13"/>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+              </svg>
             </button>
           )}
         </div>
 
+        {/* Action buttons */}
         <div className="sui-canvas-bar-right">
-          {hasContent && (
-            <>
-              <button
-                type="button"
-                className="sui-canvas-action"
-                onClick={undo}
-                disabled={historyIndex <= 0}
-                title="Undo"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
-              </button>
-              <button
-                type="button"
-                className="sui-canvas-action"
-                onClick={redo}
-                disabled={historyIndex >= history.length - 1}
-                title="Redo"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 14 20 9 15 4"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/></svg>
-              </button>
-              <button
-                type="button"
-                className="sui-canvas-action"
-                onClick={clear}
-                title="Clear canvas"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
-              </button>
-              {(onSaveAsStory || onStoryConverted) && (
-                <button
-                  type="button"
-                  className={`sui-canvas-save ${conversionState === 'converting' ? 'sui-canvas-save--converting' : ''}`}
-                  onClick={handleSaveAsStory}
-                  disabled={conversionState === 'converting'}
-                  title="Save as Storybook story"
-                >
-                  {conversionState === 'converting' ? 'Converting...' : conversionState === 'done' ? 'Saved!' : 'Save as Story'}
-                </button>
-              )}
-            </>
+          {canUndo && (
+            <button type="button" className="sui-canvas-action" onClick={undo} title="Undo (Cmd+Z)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="1 4 1 10 7 10"/>
+                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+              </svg>
+            </button>
           )}
-          {metrics && (
-            <span className="sui-canvas-metrics">
-              {(metrics.timeMs / 1000).toFixed(1)}s
-            </span>
+          {canRedo && (
+            <button type="button" className="sui-canvas-action" onClick={redo} title="Redo (Cmd+Shift+Z)">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="23 4 23 10 17 10"/>
+                <path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"/>
+              </svg>
+            </button>
+          )}
+          {hasContent && (
+            <button
+              type="button"
+              className="sui-canvas-action"
+              onClick={() => setShowSaveDialog(true)}
+              title="Save as .stories.tsx"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                <polyline points="17 21 17 13 7 13 7 21"/>
+                <polyline points="7 3 7 8 15 8"/>
+              </svg>
+            </button>
+          )}
+          {hasContent && (
+            <button
+              type="button"
+              className="sui-canvas-action"
+              onClick={clear}
+              title="Clear canvas"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 6h18"/>
+                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>
+                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+              </svg>
+            </button>
           )}
         </div>
       </div>

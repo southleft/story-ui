@@ -27,7 +27,7 @@
   ],
   "scripts": {
     "build": "tsc && npm run copy-templates",
-    "copy-templates": "node -e \"const fs=require('fs');const path=require('path');const src='templates/StoryUI';const dst='dist/templates/StoryUI';['.css','.mdx'].forEach(ext=>{fs.readdirSync(src).filter(f=>f.endsWith(ext)).forEach(f=>fs.copyFileSync(path.join(src,f),path.join(dst,f)))});console.log('Static template files copied to dist/')\"",
+    "copy-templates": "node -e \"const fs=require('fs');const path=require('path');const src='templates/StoryUI';const dst='dist/templates/StoryUI';['.css','.mdx','.tsx','.ts'].forEach(ext=>{fs.readdirSync(src).filter(f=>f.endsWith(ext)).forEach(f=>fs.copyFileSync(path.join(src,f),path.join(dst,f)))});const vsrc=path.join(src,'voice');const vdst=path.join(dst,'voice');if(fs.existsSync(vsrc)){fs.mkdirSync(vdst,{recursive:true});fs.readdirSync(vsrc).filter(f=>f.endsWith('.tsx')||f.endsWith('.ts')).forEach(f=>fs.copyFileSync(path.join(vsrc,f),path.join(vdst,f)));const csrc=path.join(vsrc,'canvas');const cdst=path.join(vdst,'canvas');if(fs.existsSync(csrc)){fs.mkdirSync(cdst,{recursive:true});fs.readdirSync(csrc).filter(f=>f.endsWith('.tsx')||f.endsWith('.ts')).forEach(f=>fs.copyFileSync(path.join(csrc,f),path.join(cdst,f)))}}console.log('Template files copied to dist/')\"",
     "start": "yarn build && node dist/mcp-server/index.js",
     "mcp": "yarn build && node dist/mcp-server/mcp-stdio-server.js",
     "dev": "tsc --watch",
@@ -84,6 +84,7 @@
     "http-proxy-middleware": "^3.0.0",
     "inquirer": "^9.2.0",
     "node-fetch": "^2.6.7",
+    "react-live": "^4.1.8",
     "typescript": "^5.8.3",
     "zod": "^3.22.4"
   },
