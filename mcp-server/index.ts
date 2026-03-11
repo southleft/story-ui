@@ -43,7 +43,7 @@ import mcpRemoteRouter from './routes/mcpRemote.js';
 // Voice Canvas endpoints
 import { canvasIntentHandler, warmCanvasComponentCache } from './routes/canvasIntent.js';
 import { canvasSaveHandler } from './routes/canvasSave.js';
-import { canvasGenerateHandler } from './routes/canvasGenerate.js';
+import { canvasGenerateHandler, ensureVoiceCanvasStory } from './routes/canvasGenerate.js';
 import { canvasPreviewHandler } from './routes/canvasPreview.js';
 import { getAdapterRegistry } from '../story-generator/framework-adapters/index.js';
 // Manifest — story ↔ chat source of truth
@@ -63,7 +63,8 @@ const STORY_EXTENSIONS = ['.stories.tsx', '.stories.ts', '.stories.svelte', '.st
  * Check if a file is a story file (supports all framework extensions)
  */
 function isStoryFile(filename: string): boolean {
-  return STORY_EXTENSIONS.some(ext => filename.endsWith(ext));
+  return STORY_EXTENSIONS.some(ext => filename.endsWith(ext))
+    && !filename.startsWith('voice-canvas'); // scratchpad — excluded from story lists
 }
 
 /**
@@ -1014,6 +1015,14 @@ app.listen(PORT, () => {
   console.error(`Stories will be generated to: ${config.generatedStoriesPath}`);
   // Pre-warm canvas component cache in background so first voice request is fast
   warmCanvasComponentCache().catch(() => {});
+  // Ensure voice-canvas scratchpad story file exists before client polling starts.
+  // If it's missing, the first canvas generate creates it, triggering a false-positive
+  // "externally generated story" detection which reloads the page and kills Voice Canvas.
+  try {
+    ensureVoiceCanvasStory(config.generatedStoriesPath || './src/stories/generated/');
+  } catch (err) {
+    console.error('[voice-canvas] Could not pre-create story template:', err);
+  }
   // Initialize manifest manager (loads file, migrates from StoryTracker, reconciles)
   setTimeout(() => {
     try {
