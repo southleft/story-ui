@@ -359,6 +359,8 @@ const MANIFEST_API = () => `${getApiBase()}/story-ui/manifest`;
 const MIGRATION_FLAG = 'story-ui-manifest-migrated-v1';
 // v2: also updates reconciled 'mcp-external' entries that have localStorage conversation data
 const MIGRATION_FLAG_V2 = 'story-ui-manifest-migrated-v2';
+// v3: seeds synthetic conversations for any manifest entry with metadata.prompt but no conversation
+const MIGRATION_FLAG_V3 = 'story-ui-manifest-migrated-v3';
 const CONSIDERATIONS_API = () => `${getApiBase()}/mcp/considerations`;
 
 function isEdgeMode(): boolean {
@@ -557,14 +559,27 @@ async function syncWithActualStories(): Promise<ChatSession[]> {
     // Map manifest entries to ChatSession format
     const sessions: ChatSession[] = Object.values(entries)
       .filter((e: any) => e.source !== 'voice-canvas') // scratchpad excluded from chat list
-      .map((e: any) => ({
-        id: e.id ?? e.fileName.replace(/\.stories\.[a-z]+$/, ''),
-        title: e.title,
-        fileName: e.fileName,
-        conversation: (e.conversation ?? []).map((m: any) => ({ role: m.role, content: m.content })),
-        lastUpdated: new Date(e.updatedAt ?? e.createdAt).getTime(),
-        source: e.source,
-      }))
+      .map((e: any) => {
+        const serverConv = (e.conversation ?? []).map((m: any) => ({ role: m.role as 'user' | 'ai', content: m.content }));
+        // If no conversation history but the original prompt is known, synthesize one so
+        // users can open the story and immediately continue iterating with full context.
+        const conversation: Message[] = serverConv.length > 0
+          ? serverConv
+          : e.metadata?.prompt
+            ? [
+                { role: 'user' as const, content: e.metadata.prompt },
+                { role: 'ai' as const, content: `Story generated: "${e.title}"` },
+              ]
+            : [];
+        return {
+          id: e.id ?? e.fileName.replace(/\.stories\.[a-z]+$/, ''),
+          title: e.title,
+          fileName: e.fileName,
+          conversation,
+          lastUpdated: new Date(e.updatedAt ?? e.createdAt).getTime(),
+          source: e.source,
+        };
+      })
       .sort((a, b) => b.lastUpdated - a.lastUpdated)
       .slice(0, MAX_RECENT_CHATS);
 
@@ -590,15 +605,9 @@ async function migrateLocalStorageToManifest(
 ): Promise<void> {
   try {
     const localChats = loadChats();
-    if (localChats.length === 0) {
-      localStorage.setItem(MIGRATION_FLAG, '1');
-      localStorage.setItem(MIGRATION_FLAG_V2, '1');
-      return;
-    }
-
     let migrated = 0;
 
-    // v1: add chats the server doesn't know about at all
+    // v1: add localStorage chats the server doesn't know about at all
     if (!localStorage.getItem(MIGRATION_FLAG)) {
       for (const chat of localChats) {
         if (!chat.fileName || chat.fileName in manifestEntries) continue;
@@ -637,6 +646,28 @@ async function migrateLocalStorageToManifest(
     }
 
     if (migrated > 0) console.log(`[story-ui] Migrated ${migrated} chats to manifest`);
+
+    // v3: seed synthetic conversations for any manifest entry with metadata.prompt but no conversation.
+    // Runs regardless of localStorage — covers MCP-external and voice-saved stories.
+    // This makes all generated stories openable and continuable from the chat UI.
+    if (!localStorage.getItem(MIGRATION_FLAG_V3)) {
+      const toSeed = Object.entries(manifestEntries).filter(([, e]) =>
+        (e.conversation?.length ?? 0) === 0 && e.metadata?.prompt
+      );
+      await Promise.all(toSeed.map(([fileName, e]) =>
+        fetch(`${MANIFEST_API()}/${encodeURIComponent(fileName)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            conversation: [
+              { role: 'user', content: e.metadata.prompt },
+              { role: 'ai', content: `Story generated: "${e.title}"` },
+            ],
+          }),
+        }).catch(() => {}),
+      ));
+      localStorage.setItem(MIGRATION_FLAG_V3, '1');
+    }
   } catch {
     // Non-fatal — migration will retry next session
   }
