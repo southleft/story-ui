@@ -152,7 +152,7 @@ export class ManifestManager {
 
   /**
    * Upsert a manifest entry. If the entry exists, merges the provided fields.
-   * Conversation is merged (appended unique) and truncated to MAX_CONVERSATION.
+   * Conversation: if data.conversation is provided it replaces existing; otherwise existing is kept.
    */
   upsert(
     fileName: string,
