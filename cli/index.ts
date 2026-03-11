@@ -13,9 +13,20 @@ import net from 'net';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Read version from package.json
-const packageJsonPath = path.resolve(__dirname, '..', 'package.json');
-const packageVersion = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8')).version;
+// Read version from package.json (try both src/cli and dist/cli paths)
+const packageJsonPaths = [
+  path.resolve(__dirname, '..', 'package.json'),      // From src/cli
+  path.resolve(__dirname, '..', '..', 'package.json'), // From dist/cli
+];
+let packageVersion = 'unknown';
+for (const p of packageJsonPaths) {
+  if (fs.existsSync(p)) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(p, 'utf-8'));
+      if (pkg.version) { packageVersion = pkg.version; break; }
+    } catch { /* skip */ }
+  }
+}
 
 const program = new Command();
 

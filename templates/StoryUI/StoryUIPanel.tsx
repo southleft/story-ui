@@ -354,6 +354,8 @@ const MCP_STREAM_API = () => `${getApiBase()}/mcp/generate-story-stream`;
 const PROVIDERS_API = () => `${getApiBase()}/mcp/providers`;
 const STORIES_API = () => `${getApiBase()}/story-ui/stories`;
 const ORPHAN_STORIES_API = () => `${getApiBase()}/story-ui/orphan-stories`;
+const MANIFEST_API = () => `${getApiBase()}/story-ui/manifest`;
+const MIGRATION_FLAG = 'story-ui-manifest-migrated-v1';
 const CONSIDERATIONS_API = () => `${getApiBase()}/mcp/considerations`;
 
 function isEdgeMode(): boolean {
@@ -510,23 +512,151 @@ async function testMCPConnection(): Promise<{ connected: boolean; error?: string
 
 // Simply load chats from localStorage - don't filter based on server state
 // Chats should persist independently of whether story files exist
+/**
+ * Load chat sessions from the server manifest.
+ * Falls back to localStorage if the server is unreachable.
+ * On first call, runs a one-time migration of localStorage data → manifest.
+ */
 async function syncWithActualStories(): Promise<ChatSession[]> {
-  return loadChats();
+  try {
+    const response = await fetch(MANIFEST_API());
+    if (!response.ok) throw new Error('manifest unavailable');
+    const data = await response.json();
+    const entries: Record<string, any> = data.stories ?? {};
+
+    // Map manifest entries to ChatSession format
+    const sessions: ChatSession[] = Object.values(entries)
+      .filter((e: any) => e.source !== 'voice-canvas') // scratchpad excluded from chat list
+      .map((e: any) => ({
+        id: e.id ?? e.fileName.replace(/\.stories\.[a-z]+$/, ''),
+        title: e.title,
+        fileName: e.fileName,
+        conversation: (e.conversation ?? []).map((m: any) => ({ role: m.role, content: m.content })),
+        lastUpdated: new Date(e.updatedAt ?? e.createdAt).getTime(),
+      }))
+      .sort((a, b) => b.lastUpdated - a.lastUpdated)
+      .slice(0, MAX_RECENT_CHATS);
+
+    // Mirror to localStorage as offline cache
+    saveChats(sessions);
+
+    // One-time migration: push any localStorage chats the server doesn't know about
+    migrateLocalStorageToManifest(entries);
+
+    return sessions;
+  } catch {
+    // Server unreachable — fall back to localStorage
+    return loadChats();
+  }
+}
+
+/**
+ * Migrate localStorage chats to the manifest once. This handles the transition
+ * for existing users who have chat history that the server doesn't know about yet.
+ */
+async function migrateLocalStorageToManifest(
+  manifestEntries: Record<string, any>,
+): Promise<void> {
+  try {
+    if (localStorage.getItem(MIGRATION_FLAG)) return;
+    const localChats = loadChats();
+    if (localChats.length === 0) {
+      localStorage.setItem(MIGRATION_FLAG, '1');
+      return;
+    }
+
+    const manifestFileNames = new Set(Object.keys(manifestEntries));
+    let migrated = 0;
+
+    for (const chat of localChats) {
+      if (!chat.fileName || manifestFileNames.has(chat.fileName)) continue;
+      if (!chat.conversation?.length) continue;
+
+      const conversation = chat.conversation
+        .filter(m => (m.role === 'user' || m.role === 'ai') && m.content)
+        .map(m => ({ role: m.role as 'user' | 'ai', content: m.content }));
+
+      await fetch(`${MANIFEST_API()}/${encodeURIComponent(chat.fileName)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: chat.id,
+          title: chat.title,
+          source: 'panel',
+          conversation,
+        }),
+      });
+      migrated++;
+    }
+
+    localStorage.setItem(MIGRATION_FLAG, '1');
+    if (migrated > 0) console.log(`[story-ui] Migrated ${migrated} chats to manifest`);
+  } catch {
+    // Non-fatal — migration will retry next session
+  }
+}
+
+/**
+ * Persist a chat session's conversation to the manifest after generation.
+ * Also updates localStorage as a cache.
+ */
+async function persistChatToManifest(session: ChatSession): Promise<void> {
+  // Update localStorage immediately (optimistic)
+  const chats = loadChats().filter(c => c.id !== session.id);
+  chats.unshift(session);
+  if (chats.length > MAX_RECENT_CHATS) chats.splice(MAX_RECENT_CHATS);
+  saveChats(chats);
+
+  // Persist to server manifest (non-blocking)
+  if (!session.fileName) return;
+  try {
+    const conversation = session.conversation
+      .filter(m => (m.role === 'user' || m.role === 'ai') && m.content)
+      .map(m => ({ role: m.role as 'user' | 'ai', content: m.content }));
+    await fetch(`${MANIFEST_API()}/${encodeURIComponent(session.fileName)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversation }),
+    });
+  } catch {
+    // Non-fatal — localStorage already updated
+  }
 }
 
 async function fetchOrphanStories(): Promise<OrphanStory[]> {
   try {
-    const response = await fetch(STORIES_API());
-    if (!response.ok) return [];
+    // With the manifest, "orphans" are entries the server knows about but have
+    // no conversation history (externally generated from Claude Desktop / MCP).
+    const response = await fetch(MANIFEST_API());
+    if (!response.ok) throw new Error('manifest unavailable');
     const data = await response.json();
-    const serverStories = data.stories || [];
-    const localChats = loadChats();
-    const chatIds = new Set(localChats.map(c => c.id));
-    return serverStories
-      .filter((s: any) => !chatIds.has(s.id))
-      .map((s: any) => ({ id: s.id, title: s.title, fileName: s.fileName }));
-  } catch (e) {
-    return [];
+    const entries: Record<string, any> = data.stories ?? {};
+
+    return Object.values(entries)
+      .filter((e: any) =>
+        e.source !== 'voice-canvas' &&
+        (!e.conversation || e.conversation.length === 0)
+      )
+      .map((e: any) => ({
+        id: e.id ?? e.fileName.replace(/\.stories\.[a-z]+$/, ''),
+        title: e.title,
+        fileName: e.fileName,
+      }));
+  } catch {
+    // Fall back to the old localStorage-based orphan detection
+    try {
+      const response = await fetch(STORIES_API());
+      if (!response.ok) return [];
+      const data = await response.json();
+      const serverStories = data.stories || [];
+      const localChats = loadChats();
+      const chatIds = new Set(localChats.map(c => c.id));
+      return serverStories
+        .filter((s: any) => !chatIds.has(s.id))
+        .map((s: any) => ({ id: s.id, title: s.title, fileName: s.fileName }));
+    } catch {
+      return [];
+    }
   }
 }
 
@@ -1429,7 +1559,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   }, []);
 
   // Finalize streaming
-  const finalizeStreamingConversation = useCallback((newConversation: Message[], completion: CompletionFeedback, userInput: string) => {
+  const finalizeStreamingConversation = useCallback(async (newConversation: Message[], completion: CompletionFeedback, userInput: string) => {
     // Track this story as panel-generated to prevent false MCP detection
     // The story ID is the fileName without .stories.tsx extension
     if (completion.success && completion.fileName) {
@@ -1461,8 +1591,8 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
         lastUpdated: Date.now(),
       };
       if (chatIndex !== -1) chats[chatIndex] = updatedSession;
-      saveChats(chats);
-      dispatch({ type: 'SET_RECENT_CHATS', payload: chats });
+      await persistChatToManifest(updatedSession);
+      dispatch({ type: 'SET_RECENT_CHATS', payload: loadChats() });
     } else {
       // FIX: Use fileName as chat ID (not storyId) so delete endpoint can find the actual file
       // storyId is like "story-a1b2c3d4" but fileName is "Button-a1b2c3d4.stories.tsx"
@@ -1476,11 +1606,8 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
         conversation: updatedConversation,
         lastUpdated: Date.now(),
       };
-      const chats = loadChats().filter(c => c.id !== chatId);
-      chats.unshift(newSession);
-      if (chats.length > MAX_RECENT_CHATS) chats.splice(MAX_RECENT_CHATS);
-      saveChats(chats);
-      dispatch({ type: 'SET_RECENT_CHATS', payload: chats });
+      await persistChatToManifest(newSession);
+      dispatch({ type: 'SET_RECENT_CHATS', payload: loadChats() });
 
       // Auto-refresh Storybook for NEW stories to fix Vite HMR import map issue
       // This fixes the "importers[path] is not a function" error
@@ -1643,11 +1770,8 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
             conversation: updatedConversation,
             lastUpdated: Date.now(),
           };
-          const chats = loadChats().filter(c => c.id !== chatId);
-          chats.unshift(newSession);
-          if (chats.length > MAX_RECENT_CHATS) chats.splice(MAX_RECENT_CHATS);
-          saveChats(chats);
-          dispatch({ type: 'SET_RECENT_CHATS', payload: chats });
+          await persistChatToManifest(newSession);
+          dispatch({ type: 'SET_RECENT_CHATS', payload: loadChats() });
         } catch (fallbackErr: unknown) {
           const errorMessage = fallbackErr instanceof Error ? fallbackErr.message : 'Unknown error';
           dispatch({ type: 'SET_ERROR', payload: errorMessage });
@@ -2117,11 +2241,9 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                 ],
                 lastUpdated: Date.now(),
               };
-              const chats = loadChats().filter((c: any) => c.id !== chatId);
-              chats.unshift(newSession);
-              if (chats.length > MAX_RECENT_CHATS) chats.splice(MAX_RECENT_CHATS);
-              saveChats(chats);
-              dispatch({ type: 'SET_RECENT_CHATS', payload: chats });
+              persistChatToManifest(newSession).then(() => {
+                dispatch({ type: 'SET_RECENT_CHATS', payload: loadChats() });
+              });
               panelGeneratedStoryIds.current.add(chatId);
             }}
             onError={(error: string) => dispatch({ type: 'SET_ERROR', payload: error })}

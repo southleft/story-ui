@@ -15,6 +15,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { loadUserConfig } from '../../story-generator/configLoader.js';
 import { logger } from '../../story-generator/logger.js';
+import { getManifestManager } from '../../story-generator/manifestManager.js';
 
 interface ComponentNodeInput {
   id?: string;
@@ -254,6 +255,19 @@ export async function canvasSaveHandler(req: Request, res: Response) {
     }
 
     fs.writeFileSync(filePath, code, 'utf-8');
+
+    // Register with manifest
+    try {
+      getManifestManager().upsert(fileName, {
+        id: slug,
+        title,
+        source: 'voice-save',
+        conversation: [],
+        metadata: { prompt: lastPrompt ?? title },
+      });
+    } catch (manifestErr) {
+      logger.warn('[manifest] canvasSave upsert error (non-fatal):', manifestErr);
+    }
 
     logger.log(`Canvas saved: ${fileName}`);
 
