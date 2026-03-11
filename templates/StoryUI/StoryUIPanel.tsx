@@ -1207,6 +1207,9 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
 
         // Check for new stories not created by this panel session
         for (const storyId of currentStoryIds) {
+          // Never treat the voice-canvas scratchpad as an externally generated story —
+          // it is created on first canvas use and should never trigger a page reload.
+          if (storyId === 'generated-voice-canvas--default' || storyId.startsWith('voice-canvas')) continue;
           if (!knownStoryIds.current.has(storyId) && !panelGeneratedStoryIds.current.has(storyId)) {
             // New story detected that wasn't created by this panel - must be from MCP remote
             console.log('[Story UI] Detected externally generated story:', storyId);
@@ -2335,8 +2338,8 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
             provider={state.selectedProvider}
             model={state.selectedModel}
             onSave={(result: { fileName: string; code: string; title: string }) => {
-              // Track the saved story
-              const chatId = result.fileName || Date.now().toString();
+              // Track the saved story — use fileName stem as chatId (consistent with manifest entry IDs)
+              const chatId = result.fileName.replace(/\.stories\.[a-z]+$/, '') || Date.now().toString();
               const newSession = {
                 id: chatId,
                 title: result.title,
