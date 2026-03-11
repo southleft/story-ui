@@ -2107,7 +2107,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
               }).map(chat => (
                 <div
                   key={chat.id}
-                  className={`sui-chat-item ${state.activeChatId === chat.id ? 'active' : ''} ${contextMenuId === chat.id ? 'menu-open' : ''}`}
+                  className={`sui-chat-item ${state.activeChatId === chat.id ? 'active' : ''} ${contextMenuId === chat.id ? 'menu-open' : ''} ${chat.conversation.length === 0 ? 'sui-chat-item--no-history' : ''}`}
                   onClick={() => renamingChatId !== chat.id && handleSelectChat(chat)}
                   role="button"
                   tabIndex={0}
@@ -2137,9 +2137,6 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                   ) : (
                     <>
                       <div className="sui-chat-item-title">
-                        {chat.conversation.length === 0 && (
-                          <span className="sui-source-badge" title="No chat history — click to view or continue">⚡</span>
-                        )}
                         {chat.title}
                       </div>
                       <div className="sui-chat-item-actions">
