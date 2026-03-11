@@ -17,6 +17,7 @@ import { extractAndValidateCodeBlock, validateStoryCode } from '../../story-gene
 import { createFrameworkAwareFallbackStory } from './storyHelpers.js';
 import { isBlacklistedComponent, isBlacklistedIcon, getBlacklistErrorMessage, ICON_CORRECTIONS } from '../../story-generator/componentBlacklist.js';
 import { StoryTracker, StoryMapping } from '../../story-generator/storyTracker.js';
+import { getManifestManager } from '../../story-generator/manifestManager.js';
 import { EnhancedComponentDiscovery } from '../../story-generator/enhancedComponentDiscovery.js';
 import { getDocumentation, isDeprecatedComponent, getComponentReplacement } from '../../story-generator/documentation-sources.js';
 import { postProcessStory, fixBarrelImports } from '../../story-generator/postProcessStory.js';
@@ -1050,6 +1051,22 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       prompt
     };
     storyTracker.registerStory(mapping);
+
+    // Upsert manifest entry — links the story file to its chat conversation
+    try {
+      const manifestConversation = (conversation ?? [])
+        .filter((m: any) => (m.role === 'user' || m.role === 'ai') && typeof m.content === 'string' && m.content.trim())
+        .map((m: any) => ({ role: m.role as 'user' | 'ai', content: m.content as string }));
+      getManifestManager().upsert(finalFileName, {
+        id: storyIdSlug,
+        title: cleanTitle,
+        source: manifestConversation.length > 0 ? 'panel' : 'mcp-external',
+        conversation: manifestConversation,
+        metadata: { prompt },
+      });
+    } catch (manifestErr) {
+      logger.warn('[manifest] upsert error (non-fatal):', manifestErr);
+    }
 
     // Save to history
     historyManager.addVersion(

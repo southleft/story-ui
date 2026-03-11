@@ -51,6 +51,32 @@ const MANAGED_FILES = [
     source: 'templates/StoryUI/index.tsx',
     target: 'src/stories/StoryUI/index.tsx',
     description: 'Panel registration'
+  },
+  // Voice Canvas files
+  {
+    source: 'templates/StoryUI/voice/VoiceCanvas.tsx',
+    target: 'src/stories/StoryUI/voice/VoiceCanvas.tsx',
+    description: 'Voice Canvas component'
+  },
+  {
+    source: 'templates/StoryUI/voice/VoiceControls.tsx',
+    target: 'src/stories/StoryUI/voice/VoiceControls.tsx',
+    description: 'Voice control UI components'
+  },
+  {
+    source: 'templates/StoryUI/voice/useVoiceInput.ts',
+    target: 'src/stories/StoryUI/voice/useVoiceInput.ts',
+    description: 'Voice input hook'
+  },
+  {
+    source: 'templates/StoryUI/voice/voiceCommands.ts',
+    target: 'src/stories/StoryUI/voice/voiceCommands.ts',
+    description: 'Voice command definitions'
+  },
+  {
+    source: 'templates/StoryUI/voice/types.ts',
+    target: 'src/stories/StoryUI/voice/types.ts',
+    description: 'Voice module type definitions'
   }
 ];
 

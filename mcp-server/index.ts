@@ -46,6 +46,15 @@ import { canvasSaveHandler } from './routes/canvasSave.js';
 import { canvasGenerateHandler } from './routes/canvasGenerate.js';
 import { canvasPreviewHandler } from './routes/canvasPreview.js';
 import { getAdapterRegistry } from '../story-generator/framework-adapters/index.js';
+// Manifest — story ↔ chat source of truth
+import {
+  manifestGetHandler,
+  manifestPatchHandler,
+  manifestDeleteHandler,
+  manifestReconcileHandler,
+  manifestPollHandler,
+} from './routes/manifest.js';
+import { getManifestManager } from '../story-generator/manifestManager.js';
 
 // Supported story file extensions for all frameworks
 const STORY_EXTENSIONS = ['.stories.tsx', '.stories.ts', '.stories.svelte', '.stories.js'];
@@ -139,6 +148,14 @@ app.post('/mcp/canvas-generate', canvasGenerateHandler); // generate + write voi
 app.post('/mcp/canvas-preview', canvasPreviewHandler);   // undo/redo: rewrite voice-canvas.stories.tsx
 app.post('/mcp/canvas-save', canvasSaveHandler);         // save canvas to named .stories.tsx
 app.post('/mcp/canvas-intent', canvasIntentHandler);     // legacy (kept for compatibility)
+
+// Manifest — story ↔ chat source of truth
+// NOTE: /reconcile must be registered BEFORE /:fileName to avoid route conflict
+app.get('/story-ui/manifest/poll', manifestPollHandler);
+app.post('/story-ui/manifest/reconcile', manifestReconcileHandler);
+app.get('/story-ui/manifest', manifestGetHandler);
+app.patch('/story-ui/manifest/:fileName', manifestPatchHandler);
+app.delete('/story-ui/manifest/:fileName', manifestDeleteHandler);
 // Expose design-system config for auto-registry loading
 app.get('/mcp/canvas-config', (_req, res) => {
   res.json({
@@ -543,6 +560,7 @@ app.delete('/story-ui/stories/:id', async (req, res) => {
 
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
+      getManifestManager().delete(fileName);
       console.log(`✅ Deleted story: ${filePath}`);
       return res.json({ success: true, message: 'Story deleted successfully' });
     }
@@ -557,6 +575,7 @@ app.delete('/story-ui/stories/:id', async (req, res) => {
       if (matchingFile) {
         const matchedFilePath = path.join(storiesPath, matchingFile);
         fs.unlinkSync(matchedFilePath);
+        getManifestManager().delete(matchingFile);
         console.log(`✅ Deleted story by hash match: ${matchedFilePath}`);
         return res.json({ success: true, message: 'Story deleted successfully' });
       }
@@ -710,6 +729,7 @@ app.delete('/story-ui/stories', async (req, res) => {
       }
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
+        getManifestManager().delete(fileName);
         console.log(`✅ Deleted story: ${filePath}`);
         return res.json({ success: true, message: 'Story deleted successfully' });
       }
@@ -726,6 +746,7 @@ app.delete('/story-ui/stories', async (req, res) => {
             return res.status(400).json({ success: false, error: 'Invalid file path' });
           }
           fs.unlinkSync(filePath);
+          getManifestManager().delete(matchingFile);
           console.log(`✅ Deleted story by hash match: ${filePath}`);
           return res.json({ success: true, message: 'Story deleted successfully' });
         }
@@ -746,11 +767,13 @@ app.delete('/story-ui/stories', async (req, res) => {
     const storyFiles = files.filter(file => isStoryFile(file));
     let deleted = 0;
 
+    const manifest = getManifestManager();
     for (const file of storyFiles) {
       try {
         const fp = safePath(storiesPath, file);
         if (!fp) continue;
         fs.unlinkSync(fp);
+        manifest.delete(file);
         deleted++;
       } catch (err) {
         console.error(`Error deleting ${file}:`, err);
@@ -961,6 +984,15 @@ app.listen(PORT, () => {
   console.error(`Stories will be generated to: ${config.generatedStoriesPath}`);
   // Pre-warm canvas component cache in background so first voice request is fast
   warmCanvasComponentCache().catch(() => {});
+  // Initialize manifest manager (loads file, migrates from StoryTracker, reconciles)
+  setTimeout(() => {
+    try {
+      getManifestManager();
+      console.error('[manifest] Initialized and reconciled');
+    } catch (err) {
+      console.error('[manifest] Init error:', err);
+    }
+  }, 500);
 }).on('error', (err: any) => {
   if (err.code === 'EADDRINUSE') {
     console.error(`\n❌ Port ${PORT} is already in use!`);
