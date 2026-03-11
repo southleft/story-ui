@@ -2068,63 +2068,35 @@
 }
 
 /* Text input fallback */
-.sui-canvas-text-input {
+/* Unsupported browser state */
+.sui-canvas-unsupported {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  order: 3;
-}
-
-.sui-canvas-text-field {
-  flex: 1;
-  height: 36px;
-  padding: 0 12px;
-  border: 1px solid hsl(var(--border));
-  border-radius: 8px;
-  background: hsl(var(--muted));
-  color: hsl(var(--foreground));
-  font-size: 13px;
-  font-family: var(--font-sans);
-  outline: none;
-  transition: border-color 0.2s ease;
-}
-
-.sui-canvas-text-field:focus {
-  border-color: hsl(var(--primary));
-}
-
-.sui-canvas-text-field::placeholder {
-  color: hsl(var(--muted-foreground));
-}
-
-.sui-canvas-text-field:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.sui-canvas-text-submit {
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-  border: 1px solid hsl(var(--border));
-  background: hsl(var(--primary));
-  color: hsl(var(--primary-foreground));
-  cursor: pointer;
-  display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
-  transition: opacity 0.2s ease;
+  text-align: center;
+  padding: 48px 32px;
+  gap: 16px;
+  color: hsl(var(--muted-foreground));
+  height: 100%;
 }
 
-.sui-canvas-text-submit:hover {
-  opacity: 0.85;
-}
-
-.sui-canvas-text-submit:disabled {
+.sui-canvas-unsupported svg {
   opacity: 0.4;
-  cursor: not-allowed;
+}
+
+.sui-canvas-unsupported-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+  margin: 0;
+}
+
+.sui-canvas-unsupported-desc {
+  font-size: 14px;
+  line-height: 1.6;
+  max-width: 360px;
+  margin: 0;
 }
 
 /* Mic button */

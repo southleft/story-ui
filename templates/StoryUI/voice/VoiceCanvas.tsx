@@ -63,7 +63,6 @@ export function VoiceCanvas({
   const [isListening, setIsListening] = useState(false);
   const [interimText, setInterimText] = useState('');
   const [pendingTranscript, setPendingTranscript] = useState('');
-  const [manualPrompt, setManualPrompt] = useState('');
 
   // ── Refs ──────────────────────────────────────────────────────
   const abortRef = useRef<AbortController | null>(null);
@@ -434,16 +433,6 @@ export function VoiceCanvas({
     else startListening();
   }, [startListening, stopListening]);
 
-  // ── Text input submit ──────────────────────────────────────────
-
-  const handleManualSubmit = useCallback(() => {
-    const prompt = manualPrompt.trim();
-    if (!prompt) return;
-    setManualPrompt('');
-    if (abortRef.current) abortRef.current.abort();
-    sendCanvasRequest(prompt);
-  }, [manualPrompt, sendCanvasRequest]);
-
   // ── Keyboard shortcuts ─────────────────────────────────────────
 
   useEffect(() => {
@@ -479,6 +468,32 @@ export function VoiceCanvas({
 
   const hasContent = currentCode.trim().length > 0;
   const iframeSrc = `/iframe.html?id=${STORY_ID}&viewMode=story&singleStory=true`;
+  const speechSupported = !!(
+    typeof window !== 'undefined' &&
+    ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
+  );
+
+  // ── Unsupported browser state ──────────────────────────────────
+
+  if (!speechSupported) {
+    return (
+      <div className="sui-canvas-container">
+        <div className="sui-canvas-unsupported">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+            <line x1="12" x2="12" y1="19" y2="22" />
+            <line x1="2" x2="22" y1="2" y2="22" stroke="currentColor" strokeWidth="1.5" />
+          </svg>
+          <h2 className="sui-canvas-unsupported-title">Voice not available</h2>
+          <p className="sui-canvas-unsupported-desc">
+            Voice Canvas requires the Web Speech API, which isn't supported in this browser.
+            Try Chrome or Edge for the full experience.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   // ── Render ─────────────────────────────────────────────────────
 
@@ -500,7 +515,7 @@ export function VoiceCanvas({
             </div>
             <h2 className="sui-canvas-empty-title">Voice Canvas</h2>
             <p className="sui-canvas-empty-desc">
-              Speak or type to build interfaces live with your design system components.
+              Speak to build interfaces live with your design system components.
             </p>
             <p className="sui-canvas-empty-hint">
               Try: "Create a product card with an image, title, price, and buy button"
@@ -594,37 +609,12 @@ export function VoiceCanvas({
             ) : isListening ? (
               <span className="sui-canvas-status-listening">Listening... describe what you want to build</span>
             ) : (
-              <span className="sui-canvas-status-hint">Click mic or type below</span>
+              <span className="sui-canvas-status-hint">Click the mic and describe what to build</span>
             )}
           </div>
         </div>
 
         {/* Text input */}
-        <div className="sui-canvas-text-input">
-          <input
-            type="text"
-            className="sui-canvas-text-field"
-            placeholder="Or type: 'Add a button group with three actions'"
-            value={manualPrompt}
-            onChange={(e) => setManualPrompt(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') handleManualSubmit(); }}
-            disabled={isGenerating}
-          />
-          {manualPrompt.trim() && (
-            <button
-              type="button"
-              className="sui-canvas-text-submit"
-              onClick={handleManualSubmit}
-              disabled={isGenerating}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <line x1="22" y1="2" x2="11" y2="13"/>
-                <polygon points="22 2 15 22 11 13 2 9 22 2"/>
-              </svg>
-            </button>
-          )}
-        </div>
-
         {/* Action buttons */}
         <div className="sui-canvas-bar-right">
           {canUndo && (
