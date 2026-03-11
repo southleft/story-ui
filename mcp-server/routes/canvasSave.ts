@@ -36,7 +36,7 @@ function indent(depth: number): string {
 }
 
 function serializePropValue(value: unknown): string {
-  if (typeof value === 'string') return `"${value.replace(/"/g, '\\"')}"`;
+  if (typeof value === 'string') return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
   if (typeof value === 'boolean') return `{${value}}`;
   if (typeof value === 'number') return `{${value}}`;
   if (value === null || value === undefined) return '{undefined}';
