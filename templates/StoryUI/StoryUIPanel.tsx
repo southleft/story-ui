@@ -30,6 +30,7 @@ interface ChatSession {
   fileName: string;
   conversation: Message[];
   lastUpdated: number;
+  source?: string; // 'panel' | 'mcp-external' | 'voice-save' etc.
 }
 
 interface AttachedImage {
@@ -356,6 +357,8 @@ const STORIES_API = () => `${getApiBase()}/story-ui/stories`;
 const ORPHAN_STORIES_API = () => `${getApiBase()}/story-ui/orphan-stories`;
 const MANIFEST_API = () => `${getApiBase()}/story-ui/manifest`;
 const MIGRATION_FLAG = 'story-ui-manifest-migrated-v1';
+// v2: also updates reconciled 'mcp-external' entries that have localStorage conversation data
+const MIGRATION_FLAG_V2 = 'story-ui-manifest-migrated-v2';
 const CONSIDERATIONS_API = () => `${getApiBase()}/mcp/considerations`;
 
 function isEdgeMode(): boolean {
@@ -517,6 +520,33 @@ async function testMCPConnection(): Promise<{ connected: boolean; error?: string
  * Falls back to localStorage if the server is unreachable.
  * On first call, runs a one-time migration of localStorage data → manifest.
  */
+/**
+ * Fetch the order Storybook actually displays stories in its sidebar.
+ * Returns a Map<lowercased-title, position-index> for the Generated/ group.
+ * Falls back to an empty map (caller will use alphabetical fallback).
+ */
+async function fetchStorybookOrder(): Promise<Map<string, number>> {
+  try {
+    const response = await fetch('/index.json');
+    if (!response.ok) return new Map();
+    const data = await response.json();
+    const entries: Record<string, any> = data.entries ?? {};
+    const seen = new Set<string>();
+    const order = new Map<string, number>();
+    let i = 0;
+    for (const entry of Object.values(entries)) {
+      const fullTitle: string = (entry as any).title ?? '';
+      if (fullTitle.startsWith('Generated/') && !seen.has(fullTitle)) {
+        seen.add(fullTitle);
+        order.set(fullTitle.replace('Generated/', '').toLowerCase(), i++);
+      }
+    }
+    return order;
+  } catch {
+    return new Map();
+  }
+}
+
 async function syncWithActualStories(): Promise<ChatSession[]> {
   try {
     const response = await fetch(MANIFEST_API());
@@ -533,6 +563,7 @@ async function syncWithActualStories(): Promise<ChatSession[]> {
         fileName: e.fileName,
         conversation: (e.conversation ?? []).map((m: any) => ({ role: m.role, content: m.content })),
         lastUpdated: new Date(e.updatedAt ?? e.createdAt).getTime(),
+        source: e.source,
       }))
       .sort((a, b) => b.lastUpdated - a.lastUpdated)
       .slice(0, MAX_RECENT_CHATS);
@@ -558,38 +589,53 @@ async function migrateLocalStorageToManifest(
   manifestEntries: Record<string, any>,
 ): Promise<void> {
   try {
-    if (localStorage.getItem(MIGRATION_FLAG)) return;
     const localChats = loadChats();
     if (localChats.length === 0) {
       localStorage.setItem(MIGRATION_FLAG, '1');
+      localStorage.setItem(MIGRATION_FLAG_V2, '1');
       return;
     }
 
-    const manifestFileNames = new Set(Object.keys(manifestEntries));
     let migrated = 0;
 
-    for (const chat of localChats) {
-      if (!chat.fileName || manifestFileNames.has(chat.fileName)) continue;
-      if (!chat.conversation?.length) continue;
-
-      const conversation = chat.conversation
-        .filter(m => (m.role === 'user' || m.role === 'ai') && m.content)
-        .map(m => ({ role: m.role as 'user' | 'ai', content: m.content }));
-
-      await fetch(`${MANIFEST_API()}/${encodeURIComponent(chat.fileName)}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: chat.id,
-          title: chat.title,
-          source: 'panel',
-          conversation,
-        }),
-      });
-      migrated++;
+    // v1: add chats the server doesn't know about at all
+    if (!localStorage.getItem(MIGRATION_FLAG)) {
+      for (const chat of localChats) {
+        if (!chat.fileName || chat.fileName in manifestEntries) continue;
+        if (!chat.conversation?.length) continue;
+        const conversation = chat.conversation
+          .filter(m => (m.role === 'user' || m.role === 'ai') && m.content)
+          .map(m => ({ role: m.role as 'user' | 'ai', content: m.content }));
+        await fetch(`${MANIFEST_API()}/${encodeURIComponent(chat.fileName)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: chat.id, title: chat.title, source: 'panel', conversation }),
+        });
+        migrated++;
+      }
+      localStorage.setItem(MIGRATION_FLAG, '1');
     }
 
-    localStorage.setItem(MIGRATION_FLAG, '1');
+    // v2: update reconciled 'mcp-external' entries that have conversation data in localStorage
+    if (!localStorage.getItem(MIGRATION_FLAG_V2)) {
+      for (const chat of localChats) {
+        if (!chat.fileName || !chat.conversation?.length) continue;
+        const entry = manifestEntries[chat.fileName];
+        // Only update if the manifest entry was auto-reconciled (mcp-external, no conversation)
+        if (!entry || entry.source !== 'mcp-external' || (entry.conversation?.length ?? 0) > 0) continue;
+        const conversation = chat.conversation
+          .filter(m => (m.role === 'user' || m.role === 'ai') && m.content)
+          .map(m => ({ role: m.role as 'user' | 'ai', content: m.content }));
+        await fetch(`${MANIFEST_API()}/${encodeURIComponent(chat.fileName)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: chat.id, title: chat.title, source: 'panel', conversation }),
+        });
+        migrated++;
+      }
+      localStorage.setItem(MIGRATION_FLAG_V2, '1');
+    }
+
     if (migrated > 0) console.log(`[story-ui] Migrated ${migrated} chats to manifest`);
   } catch {
     // Non-fatal — migration will retry next session
@@ -1034,6 +1080,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   const [renameValue, setRenameValue] = useState('');
   const [orphanCount, setOrphanCount] = useState<number>(0);
   const [isDeletingOrphans, setIsDeletingOrphans] = useState<boolean>(false);
+  const [storybookOrder, setStorybookOrder] = useState<Map<string, number>>(new Map());
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -1329,7 +1376,12 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
         } catch (e) {
           console.error('Failed to fetch considerations:', e);
         }
-        const syncedChats = await syncWithActualStories();
+        const [syncedChats, sbOrder] = await Promise.all([
+          syncWithActualStories(),
+          fetchStorybookOrder(),
+        ]);
+        setStorybookOrder(sbOrder);
+        // Keep manifest order (lastUpdated desc) as the base; render will re-sort by Storybook position
         const sortedChats = syncedChats.sort((a, b) => b.lastUpdated - a.lastUpdated).slice(0, MAX_RECENT_CHATS);
         dispatch({ type: 'SET_RECENT_CHATS', payload: sortedChats });
         // Start with a fresh empty chat — user clicks a chat to resume it
@@ -2046,7 +2098,13 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
 
             {/* Chat history */}
             <div className="sui-sidebar-chats">
-              {[...state.recentChats].sort((a, b) => a.title.localeCompare(b.title)).map(chat => (
+              {[...state.recentChats].sort((a, b) => {
+                // Match Storybook sidebar order (from /index.json); alphabetical fallback
+                const posA = storybookOrder.get(a.title.toLowerCase()) ?? Infinity;
+                const posB = storybookOrder.get(b.title.toLowerCase()) ?? Infinity;
+                if (posA !== posB) return posA - posB;
+                return a.title.localeCompare(b.title);
+              }).map(chat => (
                 <div
                   key={chat.id}
                   className={`sui-chat-item ${state.activeChatId === chat.id ? 'active' : ''} ${contextMenuId === chat.id ? 'menu-open' : ''}`}
@@ -2078,7 +2136,12 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                     </div>
                   ) : (
                     <>
-                      <div className="sui-chat-item-title">{chat.title}</div>
+                      <div className="sui-chat-item-title">
+                        {chat.conversation.length === 0 && (
+                          <span className="sui-source-badge" title="No chat history — click to view or continue">⚡</span>
+                        )}
+                        {chat.title}
+                      </div>
                       <div className="sui-chat-item-actions">
                         <button
                           className="sui-chat-item-menu sui-button sui-button-icon sui-button-sm"

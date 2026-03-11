@@ -853,6 +853,16 @@
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sui-source-badge {
+  font-size: 0.7em;
+  line-height: 1;
+  opacity: 0.6;
+  flex-shrink: 0;
 }
 
 .sui-chat-item-actions {
