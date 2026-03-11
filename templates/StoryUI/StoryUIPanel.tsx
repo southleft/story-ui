@@ -1746,7 +1746,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           prompt: userInput,
           conversation: newConversation,
           fileName: activeFileName,
-          isUpdate: state.activeChatId && state.conversation.length > 0,
+          isUpdate: !!(state.activeChatId && activeFileName),
           originalTitle: state.activeTitle || undefined,
           storyId: state.activeChatId || undefined,
           images: hasImages
@@ -1829,7 +1829,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
               prompt: userInput,
               conversation: newConversation,
               fileName: activeFileName,
-              isUpdate: state.activeChatId && state.conversation.length > 0,
+              isUpdate: !!(state.activeChatId && activeFileName),
               originalTitle: state.activeTitle || undefined,
               storyId: state.activeChatId || undefined,
               provider: state.selectedProvider || undefined,
@@ -2362,8 +2362,8 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
 
           {state.conversation.length === 0 && !state.loading ? (
             <div className="sui-welcome">
-              <h2 className="sui-welcome-greeting">What would you like to create?</h2>
-              <p className="sui-welcome-subtitle">Describe any UI component and I'll generate a Storybook story</p>
+              <h2 className="sui-welcome-greeting">{state.activeChatId ? 'No chat history' : 'What would you like to create?'}</h2>
+              <p className="sui-welcome-subtitle">{state.activeChatId ? 'This story has no saved chat history. Describe a change below to start editing it.' : 'Describe any UI component and I\'ll generate a Storybook story'}</p>
               <div className="sui-welcome-chips">
                 <button className="sui-chip" onClick={() => dispatch({ type: 'SET_INPUT', payload: 'Create a responsive card with image, title, and description' })}>
                   Card
