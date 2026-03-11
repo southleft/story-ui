@@ -258,12 +258,17 @@ export async function canvasSaveHandler(req: Request, res: Response) {
 
     // Register with manifest
     try {
+      const voicePrompt = lastPrompt ?? title;
       getManifestManager().upsert(fileName, {
         id: slug,
         title,
         source: 'voice-save',
-        conversation: [],
-        metadata: { prompt: lastPrompt ?? title },
+        // Seed a conversation so users can continue iterating via the chat UI
+        conversation: [
+          { role: 'user', content: voicePrompt },
+          { role: 'ai', content: `Story generated: "${title}"` },
+        ],
+        metadata: { prompt: voicePrompt },
       });
     } catch (manifestErr) {
       logger.warn('[manifest] canvasSave upsert error (non-fatal):', manifestErr);
