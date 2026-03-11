@@ -660,13 +660,16 @@ async function fetchOrphanStories(): Promise<OrphanStory[]> {
   }
 }
 
-async function deleteStoryAndChat(chatId: string): Promise<boolean> {
+async function deleteStoryAndChat(chatId: string, fileName?: string): Promise<boolean> {
+  // Use fileName if provided (more reliable), otherwise fall back to chatId
+  const fileId = fileName || chatId;
   try {
-    const response = await fetch(`${STORIES_API()}/${chatId}`, { method: 'DELETE' });
+    const response = await fetch(`${STORIES_API()}/${encodeURIComponent(fileId)}`, { method: 'DELETE' });
     // Delete chat from localStorage if:
     // - Story was successfully deleted (200/204)
     // - Story doesn't exist (404) - orphan chat case
     if (response.ok || response.status === 404) {
+      // Remove by chatId from localStorage (chatId is the session ID)
       const chats = loadChats().filter(c => c.id !== chatId);
       saveChats(chats);
       return true;
@@ -1832,7 +1835,9 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     if (e) e.stopPropagation();
     setContextMenuId(null);
     if (confirm('Delete this story and chat? This action cannot be undone.')) {
-      const success = await deleteStoryAndChat(chatId);
+      // Look up the actual fileName from the chat session (more reliable than chatId)
+      const chat = state.recentChats.find(c => c.id === chatId);
+      const success = await deleteStoryAndChat(chatId, chat?.fileName);
       if (success) {
         const updatedChats = state.recentChats.filter(chat => chat.id !== chatId);
         dispatch({ type: 'SET_RECENT_CHATS', payload: updatedChats });
@@ -1913,19 +1918,29 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     setRenameValue(currentTitle);
   };
 
-  const handleConfirmRename = (chatId: string) => {
+  const handleConfirmRename = async (chatId: string) => {
     if (!renameValue.trim()) {
       setRenamingChatId(null);
       return;
     }
+    const newTitle = renameValue.trim();
     const chats = loadChats();
     const chatIndex = chats.findIndex(c => c.id === chatId);
     if (chatIndex !== -1) {
-      chats[chatIndex].title = renameValue.trim();
+      const chat = chats[chatIndex];
+      chats[chatIndex].title = newTitle;
       saveChats(chats);
       dispatch({ type: 'SET_RECENT_CHATS', payload: chats });
       if (state.activeChatId === chatId) {
-        dispatch({ type: 'SET_ACTIVE_CHAT', payload: { id: chatId, title: renameValue.trim() } });
+        dispatch({ type: 'SET_ACTIVE_CHAT', payload: { id: chatId, title: newTitle } });
+      }
+      // Propagate rename to story file and manifest (non-blocking)
+      if (chat.fileName) {
+        fetch(`${STORIES_API()}/${encodeURIComponent(chat.fileName)}/rename`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: newTitle }),
+        }).catch(() => { /* non-fatal */ });
       }
     }
     setRenamingChatId(null);
@@ -2031,7 +2046,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
 
             {/* Chat history */}
             <div className="sui-sidebar-chats">
-              {state.recentChats.map(chat => (
+              {[...state.recentChats].sort((a, b) => a.title.localeCompare(b.title)).map(chat => (
                 <div
                   key={chat.id}
                   className={`sui-chat-item ${state.activeChatId === chat.id ? 'active' : ''} ${contextMenuId === chat.id ? 'menu-open' : ''}`}
@@ -2230,7 +2245,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
             model={state.selectedModel}
             onSave={(result: { fileName: string; code: string; title: string }) => {
               // Track the saved story
-              const chatId = result.fileName.replace('.stories.tsx', '') || Date.now().toString();
+              const chatId = result.fileName || Date.now().toString();
               const newSession = {
                 id: chatId,
                 title: result.title,

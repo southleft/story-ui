@@ -535,6 +535,36 @@ app.post('/story-ui/stories', async (req, res) => {
   }
 });
 
+// Rename story title in file and manifest
+app.patch('/story-ui/stories/:fileName/rename', async (req, res) => {
+  try {
+    const { fileName } = req.params;
+    const { title } = req.body;
+    if (!title || typeof title !== 'string' || !title.trim()) {
+      return res.status(400).json({ error: 'title is required' });
+    }
+    const newTitle = title.trim();
+    const storiesPath = config.generatedStoriesPath;
+    const filePath = safePath(storiesPath, fileName);
+    if (!filePath || !fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Story not found' });
+    }
+    // Update the title string inside the file (replaces title: 'Generated/OldTitle')
+    let content = fs.readFileSync(filePath, 'utf-8');
+    content = content.replace(
+      /(title:\s*['"`]Generated\/)[^'"`]*/,
+      `$1${newTitle.replace(/'/g, "\\'")}`
+    );
+    fs.writeFileSync(filePath, content, 'utf-8');
+    // Update manifest entry title
+    getManifestManager().upsert(fileName, { title: newTitle });
+    return res.json({ success: true, title: newTitle });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return res.status(500).json({ error: message });
+  }
+});
+
 // Delete story by ID (RESTful endpoint)
 // Supports both fileName format (Button-a1b2c3d4.stories.tsx) and legacy storyId format (story-a1b2c3d4)
 app.delete('/story-ui/stories/:id', async (req, res) => {
