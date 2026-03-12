@@ -1103,7 +1103,9 @@ interface StoryUIPanelProps {
 
 function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   const [state, dispatch] = useReducer(panelReducer, initialState);
-  const [panelMode, setPanelMode] = useState<'chat' | 'canvas'>('chat');
+  const [panelMode, setPanelMode] = useState<'chat' | 'canvas'>(() => {
+    try { return localStorage.getItem('__sui_panel_mode__') === 'canvas' ? 'canvas' : 'chat'; } catch { return 'chat'; }
+  });
   const [canvasRegistry, setCanvasRegistry] = useState<Record<string, any>>({});
   const [canvasProvider, setCanvasProvider] = useState<React.ComponentType<{ children: React.ReactNode }> | null>(null);
   const [contextMenuId, setContextMenuId] = useState<string | null>(null);
@@ -1172,6 +1174,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   // and trigger automatic refresh since MCP has no browser context
   const panelGeneratedStoryIds = useRef<Set<string>>(new Set());
   const voiceModeActiveRef = useRef(false);
+  const canvasModeRef = useRef(panelMode === 'canvas');
   const knownStoryIds = useRef<Set<string>>(new Set());
   const isPollingInitialized = useRef(false);
 
@@ -1211,6 +1214,13 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           // it is created on first canvas use and should never trigger a page reload.
           if (storyId === 'generated-voice-canvas--default' || storyId.startsWith('voice-canvas')) continue;
           if (!knownStoryIds.current.has(storyId) && !panelGeneratedStoryIds.current.has(storyId)) {
+            // When Voice Canvas is active, a story was just saved from the canvas —
+            // skip the page reload to keep the live editing session intact.
+            if (canvasModeRef.current) {
+              knownStoryIds.current = currentStoryIds;
+              break;
+            }
+
             // New story detected that wasn't created by this panel - must be from MCP remote
             console.log('[Story UI] Detected externally generated story:', storyId);
             console.log('[Story UI] Triggering refresh to register new story in Vite import map...');
@@ -2259,12 +2269,12 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
               <button
                 type="button"
                 className={`sui-mode-toggle-btn ${panelMode === 'chat' ? 'sui-mode-toggle-btn--active' : ''}`}
-                onClick={() => setPanelMode('chat')}
+                onClick={() => { canvasModeRef.current = false; setPanelMode('chat'); try { localStorage.removeItem('__sui_panel_mode__'); } catch {} }}
               >Chat</button>
               <button
                 type="button"
                 className={`sui-mode-toggle-btn ${panelMode === 'canvas' ? 'sui-mode-toggle-btn--active' : ''}`}
-                onClick={() => setPanelMode('canvas')}
+                onClick={() => { canvasModeRef.current = true; setPanelMode('canvas'); try { localStorage.setItem('__sui_panel_mode__', 'canvas'); } catch {} }}
               >Voice Canvas</button>
             </div>
           </div>
