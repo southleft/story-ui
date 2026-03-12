@@ -19,6 +19,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 const STORY_ID = 'generated-voice-canvas--default';
 const LS_KEY = '__voice_canvas_code__';
+const LS_PROMPT_KEY = '__voice_canvas_prompt__';
 const IFRAME_ORIGIN = window.location.origin;
 
 // ── Types ─────────────────────────────────────────────────────
@@ -55,6 +56,7 @@ export function VoiceCanvas({
   const [isGenerating, setIsGenerating] = useState(false);
   const [statusText, setStatusText] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [savedMessage, setSavedMessage] = useState('');
 
   // ── Last prompt (used for auto-title on save) ─────────────────
   const lastPromptRef = useRef('');
@@ -153,6 +155,7 @@ export function VoiceCanvas({
         }
 
         lastPromptRef.current = transcript;
+        try { localStorage.setItem(LS_PROMPT_KEY, transcript); } catch {}
         conversationRef.current.push(
           { role: 'user', content: transcript },
           { role: 'assistant', content: '[Generated canvas component]' },
@@ -219,6 +222,7 @@ export function VoiceCanvas({
     setPendingTranscript('');
     pendingTranscriptRef.current = '';
     try { localStorage.removeItem(LS_KEY); } catch {}
+    try { localStorage.removeItem(LS_PROMPT_KEY); } catch {}
   }, []);
 
   // ── Save ───────────────────────────────────────────────────────
@@ -245,9 +249,10 @@ export function VoiceCanvas({
 
       const result = await response.json();
       onSave?.(result);
-      // Clear the canvas — saved story in sidebar is the permanent copy,
-      // canvas is now a fresh scratchpad.
-      clear();
+      // Show a transient "Saved!" confirmation — keep the canvas alive so the
+      // user can keep editing without losing their session.
+      setSavedMessage(result.title || 'Saved!');
+      setTimeout(() => setSavedMessage(''), 3000);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       setErrorMessage(msg);
@@ -451,6 +456,25 @@ export function VoiceCanvas({
     return () => window.removeEventListener('keydown', handler);
   }, [undo, redo]);
 
+  // ── Restore state after Storybook reload ──────────────────────
+  // Storybook reloads the page when a new .stories.tsx file is saved.
+  // Code is already persisted to localStorage by sendCodeToIframe,
+  // so we just need to read it back and restore storyReady on mount.
+
+  useEffect(() => {
+    try {
+      const savedCode = localStorage.getItem(LS_KEY);
+      if (savedCode && savedCode.trim()) {
+        setCurrentCode(savedCode);
+        setStoryReady(true);
+      }
+      const savedPrompt = localStorage.getItem(LS_PROMPT_KEY);
+      if (savedPrompt) {
+        lastPromptRef.current = savedPrompt;
+      }
+    } catch { /* localStorage unavailable */ }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Cleanup ────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -565,6 +589,16 @@ export function VoiceCanvas({
             >
               ×
             </button>
+          </div>
+        )}
+
+        {/* Save confirmation toast */}
+        {savedMessage && (
+          <div className="sui-canvas-saved-toast">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+            <span>Saved: {savedMessage}</span>
           </div>
         )}
       </div>

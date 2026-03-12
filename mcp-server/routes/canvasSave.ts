@@ -12,7 +12,6 @@
 import { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
-import crypto from 'crypto';
 import { loadUserConfig } from '../../story-generator/configLoader.js';
 import { logger } from '../../story-generator/logger.js';
 import { getManifestManager } from '../../story-generator/manifestManager.js';
@@ -206,7 +205,10 @@ function titleFromPrompt(prompt: string): string {
     .filter(w => w.length > 0 && !stop.has(w.toLowerCase()))
     .slice(0, 6)
     .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
-  return words.join(' ') || 'Voice Canvas';
+  if (words.length > 0) return words.join(' ');
+  // Avoid 'Voice Canvas' — that title belongs to the live scratchpad
+  const now = new Date();
+  return `Canvas ${now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
 }
 
 export async function canvasSaveHandler(req: Request, res: Response) {
@@ -237,10 +239,10 @@ export async function canvasSaveHandler(req: Request, res: Response) {
       return res.status(400).json({ error: 'jsxCode or tree.root is required' });
     }
 
-    // Build a safe filename
+    // Build a safe filename — slug only (no hash) so re-saving the same title
+    // overwrites the same file and avoids Storybook duplicate story ID errors.
     const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-    const hash = crypto.createHash('md5').update(code).digest('hex').slice(0, 8);
-    const fileName = `${slug}-${hash}.stories.tsx`;
+    const fileName = `${slug}.stories.tsx`;
 
     // Resolve output directory safely
     const resolvedDir = path.resolve(process.cwd(), storiesDir);
@@ -252,6 +254,24 @@ export async function canvasSaveHandler(req: Request, res: Response) {
     // Path traversal check
     if (!filePath.startsWith(resolvedDir)) {
       return res.status(400).json({ error: 'Invalid file path' });
+    }
+
+    // Remove any stale hashed versions of the same slug (e.g. slug-a1b2c3d4.stories.tsx)
+    // that may have been created by a previous version of canvas save.
+    try {
+      const stalePattern = new RegExp(`^${slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-[0-9a-f]{8}\\.stories\\.tsx$`);
+      for (const f of fs.readdirSync(resolvedDir)) {
+        if (stalePattern.test(f)) {
+          const stalePath = path.resolve(resolvedDir, f);
+          if (stalePath.startsWith(resolvedDir)) {
+            fs.unlinkSync(stalePath);
+            getManifestManager().delete(f);
+            logger.log(`Canvas save: removed stale file ${f}`);
+          }
+        }
+      }
+    } catch (cleanupErr) {
+      logger.warn('[canvasSave] stale file cleanup error (non-fatal):', cleanupErr);
     }
 
     fs.writeFileSync(filePath, code, 'utf-8');
