@@ -1106,6 +1106,9 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   const [panelMode, setPanelMode] = useState<'chat' | 'canvas'>(() => {
     try { return localStorage.getItem('__sui_panel_mode__') === 'canvas' ? 'canvas' : 'chat'; } catch { return 'chat'; }
   });
+  // Tracks whether Voice Canvas is available (React-only feature). Defaults true to
+  // avoid flashing the tab away on initial render; corrected after canvas-config loads.
+  const [isReactFramework, setIsReactFramework] = useState(true);
   const [canvasRegistry, setCanvasRegistry] = useState<Record<string, any>>({});
   const [canvasProvider, setCanvasProvider] = useState<React.ComponentType<{ children: React.ReactNode }> | null>(null);
   const [contextMenuId, setContextMenuId] = useState<string | null>(null);
@@ -1419,6 +1422,21 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           }
         } catch (e) {
           console.error('Failed to fetch considerations:', e);
+        }
+        try {
+          const canvasCfgRes = await fetch(`${getApiBase()}/mcp/canvas-config`);
+          if (canvasCfgRes.ok) {
+            const canvasCfg = await canvasCfgRes.json();
+            const isReact = !canvasCfg.componentFramework || canvasCfg.componentFramework === 'react';
+            setIsReactFramework(isReact);
+            if (!isReact && panelMode === 'canvas') {
+              setPanelMode('chat');
+              canvasModeRef.current = false;
+              try { localStorage.removeItem('__sui_panel_mode__'); } catch {}
+            }
+          }
+        } catch {
+          // canvas-config unavailable — default to showing the tab
         }
         const [syncedChats, sbOrder] = await Promise.all([
           syncWithActualStories(),
@@ -2271,11 +2289,13 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                 className={`sui-mode-toggle-btn ${panelMode === 'chat' ? 'sui-mode-toggle-btn--active' : ''}`}
                 onClick={() => { canvasModeRef.current = false; setPanelMode('chat'); try { localStorage.removeItem('__sui_panel_mode__'); } catch {} }}
               >Chat</button>
-              <button
-                type="button"
-                className={`sui-mode-toggle-btn ${panelMode === 'canvas' ? 'sui-mode-toggle-btn--active' : ''}`}
-                onClick={() => { canvasModeRef.current = true; setPanelMode('canvas'); try { localStorage.setItem('__sui_panel_mode__', 'canvas'); } catch {} }}
-              >Voice Canvas</button>
+              {isReactFramework && (
+                <button
+                  type="button"
+                  className={`sui-mode-toggle-btn ${panelMode === 'canvas' ? 'sui-mode-toggle-btn--active' : ''}`}
+                  onClick={() => { canvasModeRef.current = true; setPanelMode('canvas'); try { localStorage.setItem('__sui_panel_mode__', 'canvas'); } catch {} }}
+                >Voice Canvas</button>
+              )}
             </div>
           </div>
           <div className="sui-header-right">
