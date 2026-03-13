@@ -138,11 +138,13 @@ export function getAvailableModels(
     'claude-sonnet-4-6', // Claude Sonnet 4.6
     'claude-sonnet-4-5-20250929',
     // OpenAI
-    'gpt-5.1', // GPT-5.1 - flagship
+    'gpt-4.1', // GPT-4.1 - 1M context flagship
+    'o3', // o3 reasoning
+    'o4-mini', // o4 mini reasoning
     'gpt-4o',
     // Gemini
-    'gemini-3-pro-preview', // Gemini 3 Pro Preview - flagship
-    'gemini-3-pro',
+    'gemini-3.1-pro-preview', // Gemini 3.1 Pro Preview - flagship
+    'gemini-2.5-pro', // Gemini 2.5 Pro - stable
   ];
 
   return filteredModels.map((model: ModelInfo) => ({

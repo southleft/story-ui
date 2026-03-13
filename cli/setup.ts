@@ -246,14 +246,14 @@ const LLM_PROVIDERS = {
   openai: {
     name: 'OpenAI (GPT)',
     envKey: 'OPENAI_API_KEY',
-    models: ['gpt-5.1', 'gpt-5.1-thinking', 'gpt-4o', 'gpt-4o-mini'],
+    models: ['gpt-4.1', 'gpt-4.1-mini', 'o3', 'o4-mini', 'gpt-4o', 'gpt-4o-mini'],
     docsUrl: 'https://platform.openai.com/api-keys',
     description: 'Versatile and fast'
   },
   gemini: {
     name: 'Google Gemini',
     envKey: 'GEMINI_API_KEY',
-    models: ['gemini-3-pro', 'gemini-2.0-flash-exp', 'gemini-2.0-flash', 'gemini-1.5-pro'],
+    models: ['gemini-3.1-pro-preview', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-3-flash-preview'],
     docsUrl: 'https://aistudio.google.com/app/apikey',
     description: 'Cost-effective with good performance'
   }

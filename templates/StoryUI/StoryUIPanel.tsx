@@ -784,17 +784,19 @@ function getModelDisplayName(model: string): string {
     'claude-haiku-4-5-20251001': 'Claude Haiku 4.5',
     'claude-sonnet-4-20250514': 'Claude Sonnet 4',
     // OpenAI models
-    'gpt-5.2': 'GPT-5.2',
-    'gpt-5.1': 'GPT-5.1',
+    'gpt-4.1': 'GPT-4.1',
+    'gpt-4.1-mini': 'GPT-4.1 Mini',
+    'o3': 'o3',
+    'o4-mini': 'o4 Mini',
     'gpt-4o': 'GPT-4o',
     'gpt-4o-mini': 'GPT-4o Mini',
     'o1': 'o1',
     // Gemini models
-    'gemini-3-pro-preview': 'Gemini 3 Pro Preview',
+    'gemini-3.1-pro-preview': 'Gemini 3.1 Pro Preview',
     'gemini-2.5-pro': 'Gemini 2.5 Pro',
     'gemini-2.5-flash': 'Gemini 2.5 Flash',
-    'gemini-2.0-flash': 'Gemini 2.0 Flash',
-    'gemini-1.5-pro': 'Gemini 1.5 Pro',
+    'gemini-2.5-flash-lite': 'Gemini 2.5 Flash Lite',
+    'gemini-3-flash-preview': 'Gemini 3 Flash Preview',
   };
   return displayNames[model] || model;
 }

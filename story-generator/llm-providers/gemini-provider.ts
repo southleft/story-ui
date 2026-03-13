@@ -19,12 +19,12 @@ import {
 import { BaseLLMProvider } from './base-provider.js';
 import { logger } from '../logger.js';
 
-// Gemini model definitions - Updated December 2025
-// Top 5 models - Reference: https://ai.google.dev/gemini-api/docs/models
+// Gemini model definitions - Updated March 2026
+// Reference: https://ai.google.dev/gemini-api/docs/models
 const GEMINI_MODELS: ModelInfo[] = [
   {
-    id: 'gemini-3-pro-preview',
-    name: 'Gemini 3 Pro Preview',
+    id: 'gemini-3.1-pro-preview',
+    name: 'Gemini 3.1 Pro Preview',
     provider: 'gemini',
     contextWindow: 1048576,
     maxOutputTokens: 65536,
@@ -65,35 +65,35 @@ const GEMINI_MODELS: ModelInfo[] = [
     outputPricePer1kTokens: 0.0006,
   },
   {
-    id: 'gemini-2.0-flash',
-    name: 'Gemini 2.0 Flash',
+    id: 'gemini-2.5-flash-lite',
+    name: 'Gemini 2.5 Flash Lite',
     provider: 'gemini',
     contextWindow: 1048576,
-    maxOutputTokens: 8192,
+    maxOutputTokens: 65536,
     supportsVision: true,
     supportsDocuments: true,
     supportsFunctionCalling: true,
     supportsStreaming: true,
-    inputPricePer1kTokens: 0.00,
-    outputPricePer1kTokens: 0.00,
+    inputPricePer1kTokens: 0.00008,
+    outputPricePer1kTokens: 0.0003,
   },
   {
-    id: 'gemini-1.5-pro',
-    name: 'Gemini 1.5 Pro',
+    id: 'gemini-3-flash-preview',
+    name: 'Gemini 3 Flash Preview',
     provider: 'gemini',
-    contextWindow: 2097152,
-    maxOutputTokens: 8192,
+    contextWindow: 1048576,
+    maxOutputTokens: 65536,
     supportsVision: true,
     supportsDocuments: true,
     supportsFunctionCalling: true,
     supportsStreaming: true,
-    inputPricePer1kTokens: 0.00125,
-    outputPricePer1kTokens: 0.005,
+    inputPricePer1kTokens: 0.00015,
+    outputPricePer1kTokens: 0.0006,
   },
 ];
 
-// Default model - Gemini 3 Pro Preview (most capable)
-const DEFAULT_MODEL = 'gemini-3-pro-preview';
+// Default model - Gemini 2.5 Pro (stable flagship, March 2026)
+const DEFAULT_MODEL = 'gemini-2.5-pro';
 
 // API configuration
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';

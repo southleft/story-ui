@@ -455,16 +455,19 @@ npm run storybook
 - `claude-sonnet-4-20250514` - Previous generation
 
 ### OpenAI
-- `gpt-5.2` - Most capable (default)
-- `gpt-5.1` - Previous generation
+- `gpt-4.1` - 1M context window flagship (default)
+- `gpt-4.1-mini` - Smaller, economical 1M context
+- `o3` - Reasoning model (100k output)
+- `o4-mini` - Economical reasoning model
 - `gpt-4o` - Fast multimodal
 - `gpt-4o-mini` - Economical
 
 ### Gemini
-- `gemini-3-pro-preview` - Most capable (recommended)
-- `gemini-2.5-pro` - Previous generation flagship
+- `gemini-3.1-pro-preview` - Most capable preview
+- `gemini-2.5-pro` - Stable flagship (default)
 - `gemini-2.5-flash` - Fast, efficient
-- `gemini-2.0-flash` - Free tier option
+- `gemini-2.5-flash-lite` - Most economical
+- `gemini-3-flash-preview` - Fast preview
 
 ---
 
