@@ -1,3 +1,10 @@
+## [4.13.2](https://github.com/southleft/story-ui/compare/v4.13.1...v4.13.2) (2026-03-13)
+
+
+### Bug Fixes
+
+* **generator:** update Claude model IDs to current versions ([5014087](https://github.com/southleft/story-ui/commit/5014087f27c00ba6874d5fef33fe5f4ed21fd7b6))
+
 ## [4.13.1](https://github.com/southleft/story-ui/compare/v4.13.0...v4.13.1) (2026-03-13)
 
 
