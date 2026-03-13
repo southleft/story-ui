@@ -4,7 +4,10 @@
  * Generates a JSX component for the Voice Canvas preview.
  * Uses the same quality pipeline as standard story generation.
  * Writes a voice-canvas.stories.tsx file so the iframe renders with
- * the full Storybook decorator chain (MantineProvider, themes, etc.).
+ * the full Storybook decorator chain (Provider, themes, etc.).
+ *
+ * Voice Canvas requires a React-based Storybook framework.
+ * Components come from window.__STORY_UI_DESIGN_SYSTEM__ set in .storybook/preview.tsx.
  *
  * POST /mcp/canvas-generate
  * Body: { prompt, canvasCode?, provider, model, conversationHistory? }
@@ -76,11 +79,15 @@ STRICT RULES:
 //
 const VOICE_CANVAS_TEMPLATE = `import React, { useState, useEffect } from 'react';
 import { LiveProvider, LivePreview, LiveError } from 'react-live';
-import * as MantineCore from '@mantine/core';
 import type { Meta, StoryObj } from '@storybook/react';
 
 const meta: Meta = { title: 'Generated/Voice Canvas' };
 export default meta;
+
+// Design system components set by .storybook/preview.tsx via:
+//   (window as any).__STORY_UI_DESIGN_SYSTEM__ = YourDesignSystemModule;
+// Works with any React component library (Mantine, Chakra, MUI, shadcn, etc.)
+const designSystem = (window as any).__STORY_UI_DESIGN_SYSTEM__ || {};
 
 // Module-level scope — created once, never recreated, so react-live
 // does not re-transpile on every parent re-render.
@@ -93,12 +100,19 @@ const scope = {
   useRef: React.useRef,
   useReducer: React.useReducer,
   useContext: React.useContext,
-  ...MantineCore,
+  ...designSystem,
 };
 
+// Optional themed provider set in preview.tsx via:
+//   (window as any).__STORY_UI_CANVAS_PROVIDER__ = ({ children }) => <Provider>{children}</Provider>;
+// Falls back to a passthrough if not configured.
+const CanvasProvider: React.ComponentType<{ children: React.ReactNode }> =
+  (window as any).__STORY_UI_CANVAS_PROVIDER__ ||
+  (({ children }: { children: React.ReactNode }) => React.createElement(React.Fragment, null, children));
+
 const PLACEHOLDER = \`const Canvas = () => (
-  <div style={{ padding: '24px', textAlign: 'center', color: 'var(--mantine-color-dimmed, #868e96)' }}>
-    Voice Canvas is ready
+  <div style={{ padding: '24px', textAlign: 'center', color: '#868e96' }}>
+    Voice Canvas is ready — describe what you want to build
   </div>
 );
 render(<Canvas />);\`;
@@ -122,10 +136,12 @@ export const Default: StoryObj = {
     }, []);
 
     return (
-      <LiveProvider code={code} scope={scope} noInline>
-        <LivePreview />
-        <LiveError style={{ color: 'red', fontFamily: 'monospace', fontSize: '12px', padding: '8px', whiteSpace: 'pre-wrap' }} />
-      </LiveProvider>
+      <CanvasProvider>
+        <LiveProvider code={code} scope={scope} noInline>
+          <LivePreview />
+          <LiveError style={{ color: 'red', fontFamily: 'monospace', fontSize: '12px', padding: '8px', whiteSpace: 'pre-wrap' }} />
+        </LiveProvider>
+      </CanvasProvider>
     );
   },
 };
@@ -186,6 +202,13 @@ export async function canvasGenerateHandler(req: Request, res: Response) {
 
     // Load config + discover components — same quality context as standard generation
     const config = loadUserConfig();
+
+    // Voice Canvas requires React — it uses react-live to render JSX in the browser.
+    if (config.componentFramework && config.componentFramework !== 'react') {
+      return res.status(400).json({
+        error: `Voice Canvas is only available for React-based Storybook projects. Current framework: ${config.componentFramework}`,
+      });
+    }
     const discovery = new EnhancedComponentDiscovery(config);
     const components = await discovery.discoverAll();
 

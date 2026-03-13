@@ -143,10 +143,19 @@ function setupStorybookPreview(designSystem: string) {
   const designSystemConfigs = {
     chakra: {
       imports: [
+        "import React from 'react'",
         "import type { Preview } from '@storybook/react-vite'",
-        "import { ChakraProvider, defaultSystem } from '@chakra-ui/react'",
-        "import React from 'react'"
+        "import * as ChakraUI from '@chakra-ui/react'",
       ],
+      globals: `
+const { ChakraProvider, defaultSystem } = ChakraUI;
+
+// Expose all Chakra components for Voice Canvas live preview.
+// Voice Canvas uses these globals to render components without import statements.
+(window as any).__STORY_UI_DESIGN_SYSTEM__ = ChakraUI;
+(window as any).__STORY_UI_CANVAS_PROVIDER__ = ({ children }: { children: React.ReactNode }) => (
+  <ChakraProvider value={defaultSystem}>{children}</ChakraProvider>
+);`,
       decorator: `(Story) => (
       <ChakraProvider value={defaultSystem}>
         <Story />
@@ -155,11 +164,20 @@ function setupStorybookPreview(designSystem: string) {
     },
     mantine: {
       imports: [
+        "import React from 'react'",
         "import type { Preview } from '@storybook/react-vite'",
-        "import { MantineProvider } from '@mantine/core'",
+        "import * as MantineCore from '@mantine/core'",
         "import '@mantine/core/styles.css'",
-        "import React from 'react'"
       ],
+      globals: `
+const { MantineProvider } = MantineCore;
+
+// Expose all Mantine components for Voice Canvas live preview.
+// Voice Canvas uses these globals to render components without import statements.
+(window as any).__STORY_UI_DESIGN_SYSTEM__ = MantineCore;
+(window as any).__STORY_UI_CANVAS_PROVIDER__ = ({ children }: { children: React.ReactNode }) => (
+  <MantineProvider>{children}</MantineProvider>
+);`,
       decorator: `(Story) => (
       <MantineProvider>
         <Story />
@@ -173,6 +191,7 @@ function setupStorybookPreview(designSystem: string) {
 
   // Create the preview content
   const previewContent = `${config.imports.join('\n')}
+${(config as any).globals || ''}
 
 const preview: Preview = {
   parameters: {
