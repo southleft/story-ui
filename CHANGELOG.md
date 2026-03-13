@@ -31,6 +31,39 @@
 * **ui:** rewrite Voice Canvas v5 with Storybook iframe + postMessage ([d3fb822](https://github.com/southleft/story-ui/commit/d3fb82200fc5a3d7b1753f2f5eaa5959a250796b))
 * **ui:** sync chat list order with Storybook sidebar and surface MCP stories ([a733acf](https://github.com/southleft/story-ui/commit/a733acf794a2bd0b361e2538ac1e80e3b22a0c57))
 
+# [4.13.0](https://github.com/southleft/story-ui/compare/v4.12.1...v4.13.0) (2026-03-13)
+
+
+### Bug Fixes
+
+* **mcp:** escape backslashes in prop strings and fix JSDoc on upsert ([f89e459](https://github.com/southleft/story-ui/commit/f89e459ebfa6d6628cf38ebe2fadb934a601ccb1))
+* **ui:** add text input fallback and no-speech feedback to Voice Canvas ([b53a6ef](https://github.com/southleft/story-ui/commit/b53a6ef9ec3d2e2c3d1c398df51accd2181a3659))
+* **ui:** auto-detect working mic and suggest system default change in Voice Canvas ([6181936](https://github.com/southleft/story-ui/commit/6181936f368093c0f1a7698a07fc1a19cd74bdae))
+* **ui:** auto-title canvas saves from last voice prompt, remove save dialog ([7e268eb](https://github.com/southleft/story-ui/commit/7e268ebeffac364835c42371fdc984004802eb09))
+* **ui:** clear canvas after save so scratchpad and saved story are distinct ([cfc0ade](https://github.com/southleft/story-ui/commit/cfc0ade8afc85051743fc382322383d3a4efffc9))
+* **ui:** detect silent mic device and show actionable warning in Voice Canvas ([7f49319](https://github.com/southleft/story-ui/commit/7f49319807aa827b20a7528deac64e95b7939c1d))
+* **ui:** fix Voice Canvas SSE parsing and generate-while-speaking ([474ecef](https://github.com/southleft/story-ui/commit/474ecefeb04e06b2f719e678a1ccbb24e4f921f5))
+* **ui:** handle no-history stories correctly when selected from chat list ([d39375e](https://github.com/southleft/story-ui/commit/d39375e627bae6da3e07aebb54fc2a9adeddeed1))
+* **ui:** persist Voice Canvas state across Storybook reloads ([eab88cf](https://github.com/southleft/story-ui/commit/eab88cf68b0c37eb4b162d1210ee576d77569371))
+* **ui:** prevent page reload from killing Voice Canvas on first use ([10f4273](https://github.com/southleft/story-ui/commit/10f4273703249624b5a95875b25fead05ad82d60))
+* **ui:** remove text input from Voice Canvas; gate on Web Speech API ([8f975fa](https://github.com/southleft/story-ui/commit/8f975fa4c0162d3edd5c16c07c24e31b35499963))
+* **ui:** sync story/chat titles, ordering, delete, and rename propagation ([68b4995](https://github.com/southleft/story-ui/commit/68b499511dfb2a87eb371e3868c7632e1a193e7a))
+* **ui:** synthesize conversations from metadata.prompt for all generated stories ([256ffd3](https://github.com/southleft/story-ui/commit/256ffd3d5f9480f6c329476ee667313f5985e846))
+
+
+### Features
+
+* **mcp:** add manifest-based story/chat sync system ([47be809](https://github.com/southleft/story-ui/commit/47be8091ac9b2329e0f02d9383234516a90b952e))
+* **mcp:** auto-install react-live on first Voice Canvas use ([95fde5a](https://github.com/southleft/story-ui/commit/95fde5a0b08313c3bfd01de68813e5f66ff8c909))
+* **ui:** add deterministic style-to-token mapping for voice-to-story conversion ([7643944](https://github.com/southleft/story-ui/commit/7643944e42dec97de438c3224cf0a1b145ace2cd))
+* **ui:** add section-tagged edits and dedicated story conversion endpoint ([6c22c43](https://github.com/southleft/story-ui/commit/6c22c4321acfaebaefd1eed616cde100d9f686d7))
+* **ui:** add Voice Canvas mode for ephemeral voice-to-UI generation ([4f93e34](https://github.com/southleft/story-ui/commit/4f93e347321a08b88d43cbba9b11805ea315b981))
+* **ui:** add voice-activated UI generation ([9b4a6fd](https://github.com/southleft/story-ui/commit/9b4a6fd534077acbed318f864603484dc9db4aac))
+* **ui:** decouple Voice Canvas from Mantine, gate to React-only ([de2bdcd](https://github.com/southleft/story-ui/commit/de2bdcd40cdb7e0189c3aa10ba1f5a091efda9d4))
+* **ui:** replace lightning badge with subtle border; seed voice story conversations ([ad6c595](https://github.com/southleft/story-ui/commit/ad6c5958eca3176a97b9aa798ee13c78dfc7bf8b))
+* **ui:** rewrite Voice Canvas v5 with Storybook iframe + postMessage ([d3fb822](https://github.com/southleft/story-ui/commit/d3fb82200fc5a3d7b1753f2f5eaa5959a250796b))
+* **ui:** sync chat list order with Storybook sidebar and surface MCP stories ([a733acf](https://github.com/southleft/story-ui/commit/a733acf794a2bd0b361e2538ac1e80e3b22a0c57))
+
 ## [4.12.1](https://github.com/southleft/story-ui/compare/v4.12.0...v4.12.1) (2026-03-07)
 
 
