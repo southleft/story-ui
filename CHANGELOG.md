@@ -1,3 +1,10 @@
+## [4.13.3](https://github.com/southleft/story-ui/compare/v4.13.2...v4.13.3) (2026-03-13)
+
+
+### Bug Fixes
+
+* **generator:** update OpenAI and Gemini model IDs to current versions ([d37b8ae](https://github.com/southleft/story-ui/commit/d37b8aeb05fde3bbfc8f2b54bccf1789ef045eea))
+
 ## [4.13.2](https://github.com/southleft/story-ui/compare/v4.13.1...v4.13.2) (2026-03-13)
 
 
