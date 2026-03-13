@@ -57,6 +57,7 @@ export function VoiceCanvas({
   const [statusText, setStatusText] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [savedMessage, setSavedMessage] = useState('');
+  const [lastPrompt, setLastPrompt] = useState('');
 
   // ── Last prompt (used for auto-title on save) ─────────────────
   const lastPromptRef = useRef('');
@@ -78,6 +79,9 @@ export function VoiceCanvas({
   const stopListeningRef = useRef<() => void>(() => {});
   const currentCodeRef = useRef(currentCode);
   currentCodeRef.current = currentCode;
+  // Incremented on every new generation to prevent stale finally blocks from
+  // clobbering the state of a newer in-flight request.
+  const generationCounterRef = useRef(0);
   // Ref to the preview iframe element
   const iframeRef = useRef<HTMLIFrameElement>(null);
   // True after the iframe fires its onLoad event
@@ -105,12 +109,24 @@ export function VoiceCanvas({
   const sendCanvasRequest = useCallback(async (transcript: string) => {
     if (abortRef.current) abortRef.current.abort();
 
+    // Stamp this generation so stale finally blocks from aborted requests
+    // don't clobber the state of a newer in-flight request.
+    const genId = ++generationCounterRef.current;
+
     setIsGenerating(true);
     setStatusText('Thinking...');
     setErrorMessage('');
 
     const controller = new AbortController();
     abortRef.current = controller;
+
+    // 120-second safety timeout — prevents infinite "Thinking…" when the
+    // MCP server accepts the connection but the LLM takes too long.
+    let timedOut = false;
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 120_000);
 
     try {
       const currentCode = currentCodeRef.current;
@@ -155,6 +171,7 @@ export function VoiceCanvas({
         }
 
         lastPromptRef.current = transcript;
+        setLastPrompt(transcript);
         try { localStorage.setItem(LS_PROMPT_KEY, transcript); } catch {}
         conversationRef.current.push(
           { role: 'user', content: transcript },
@@ -169,14 +186,27 @@ export function VoiceCanvas({
 
       setStatusText('');
     } catch (error) {
-      if ((error as Error).name === 'AbortError') return;
-      const msg = error instanceof Error ? error.message : String(error);
-      setErrorMessage(msg);
-      setStatusText('');
-      onError?.(msg);
+      if ((error as Error).name === 'AbortError') {
+        // Only surface a timeout error if this is still the active generation.
+        if (timedOut && generationCounterRef.current === genId) {
+          setErrorMessage('Request timed out — the LLM took too long. Please try again.');
+          setStatusText('');
+        }
+        return;
+      }
+      if (generationCounterRef.current === genId) {
+        const msg = error instanceof Error ? error.message : String(error);
+        setErrorMessage(msg);
+        setStatusText('');
+        onError?.(msg);
+      }
     } finally {
-      setIsGenerating(false);
-      abortRef.current = null;
+      clearTimeout(timeoutId);
+      // Only reset shared state if no newer generation has started since we began.
+      if (generationCounterRef.current === genId) {
+        setIsGenerating(false);
+        abortRef.current = null;
+      }
     }
   }, [apiBase, provider, model, storyReady, sendCodeToIframe, onError]);
 
@@ -275,7 +305,13 @@ export function VoiceCanvas({
     if (autoSubmitRef.current) clearTimeout(autoSubmitRef.current);
     autoSubmitRef.current = setTimeout(() => {
       const prompt = transcript.trim();
-      if (prompt) sendCanvasRequest(prompt);
+      if (prompt) {
+        // Clear the pending transcript BEFORE sending so that stopListening
+        // (if pressed moments later) doesn't fire a duplicate request.
+        pendingTranscriptRef.current = '';
+        setPendingTranscript('');
+        sendCanvasRequest(prompt);
+      }
       autoSubmitRef.current = null;
     }, 1200);
   }, [sendCanvasRequest]);
@@ -471,6 +507,7 @@ export function VoiceCanvas({
       const savedPrompt = localStorage.getItem(LS_PROMPT_KEY);
       if (savedPrompt) {
         lastPromptRef.current = savedPrompt;
+        setLastPrompt(savedPrompt);
       }
     } catch { /* localStorage unavailable */ }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -642,6 +679,10 @@ export function VoiceCanvas({
               <span className="sui-canvas-status-final">{pendingTranscript}</span>
             ) : isListening ? (
               <span className="sui-canvas-status-listening">Listening... describe what you want to build</span>
+            ) : lastPrompt ? (
+              <span className="sui-canvas-status-hint" title={lastPrompt}>
+                ✓ {lastPrompt.length > 72 ? lastPrompt.slice(0, 69) + '…' : lastPrompt}
+              </span>
             ) : (
               <span className="sui-canvas-status-hint">Click the mic and describe what to build</span>
             )}
