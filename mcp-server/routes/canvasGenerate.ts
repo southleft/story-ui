@@ -17,6 +17,7 @@
 import { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
+import { execSync } from 'child_process';
 import { loadUserConfig } from '../../story-generator/configLoader.js';
 import { EnhancedComponentDiscovery } from '../../story-generator/enhancedComponentDiscovery.js';
 import { buildClaudePrompt } from '../../story-generator/promptGenerator.js';
@@ -147,6 +148,39 @@ export const Default: StoryObj = {
 };
 `;
 
+// ── Dependency check ──────────────────────────────────────────
+
+/**
+ * Ensure react-live is installed in the user's project.
+ * Runs once on first canvas-generate call and is a no-op thereafter.
+ * Detects pnpm / yarn / npm automatically.
+ */
+let reactLiveChecked = false;
+export function ensureReactLive(): void {
+  if (reactLiveChecked) return;
+  reactLiveChecked = true;
+
+  const cwd = process.cwd();
+  const reactLiveDir = path.join(cwd, 'node_modules', 'react-live');
+  if (fs.existsSync(reactLiveDir)) return;
+
+  logger.log('[canvas-generate] react-live not found — installing...');
+  try {
+    let cmd = 'npm install react-live --save';
+    if (fs.existsSync(path.join(cwd, 'pnpm-lock.yaml'))) {
+      cmd = 'pnpm add react-live';
+    } else if (fs.existsSync(path.join(cwd, 'yarn.lock'))) {
+      cmd = 'yarn add react-live';
+    }
+    execSync(cmd, { cwd, stdio: 'pipe' });
+    logger.log('[canvas-generate] react-live installed successfully');
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error('[canvas-generate] Could not auto-install react-live', { error: msg });
+    logger.log('[canvas-generate] Run manually: npm install react-live');
+  }
+}
+
 // ── Write story to disk (once) ────────────────────────────────
 
 /**
@@ -242,7 +276,8 @@ export async function canvasGenerateHandler(req: Request, res: Response) {
     // Extract the canvas code from the LLM response
     const result = extractCanvasCode(response);
 
-    // Ensure the static story template exists (no-op if already written)
+    // Ensure react-live is installed and story template exists (no-ops after first run)
+    ensureReactLive();
     const storiesDir = config.generatedStoriesPath || './src/stories/generated/';
     ensureVoiceCanvasStory(storiesDir);
 
