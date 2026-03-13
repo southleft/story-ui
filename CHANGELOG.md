@@ -1,3 +1,10 @@
+## [4.13.1](https://github.com/southleft/story-ui/compare/v4.13.0...v4.13.1) (2026-03-13)
+
+
+### Bug Fixes
+
+* **ui:** fix Voice Canvas stuck-in-thinking race condition and add last-prompt display ([42d3916](https://github.com/southleft/story-ui/commit/42d39168a43bcb56a91cdbd7302dee4530609e2a))
+
 # [4.13.0](https://github.com/southleft/story-ui/compare/v4.12.1...v4.13.0) (2026-03-13)
 
 
