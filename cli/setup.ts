@@ -239,7 +239,7 @@ const LLM_PROVIDERS = {
   claude: {
     name: 'Claude (Anthropic)',
     envKey: 'ANTHROPIC_API_KEY',
-    models: ['claude-opus-4-5-20251101', 'claude-sonnet-4-5-20250929', 'claude-haiku-4-5-20251001'],
+    models: ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-opus-4-20250514', 'claude-sonnet-4-5-20250929', 'claude-haiku-4-5-20251001'],
     docsUrl: 'https://console.anthropic.com/',
     description: 'Recommended - Best for complex reasoning and code quality'
   },

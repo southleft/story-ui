@@ -54,7 +54,7 @@ export interface SettingsResponse {
  */
 export function loadSettingsConfig(): SettingsConfig {
   const defaultProvider = (process.env.DEFAULT_PROVIDER as ProviderType) || 'claude';
-  const defaultModel = process.env.DEFAULT_MODEL || 'claude-opus-4-5-20251101';
+  const defaultModel = process.env.DEFAULT_MODEL || 'claude-sonnet-4-6';
 
   // Parse allowed providers
   const allowedProvidersEnv = process.env.ALLOWED_PROVIDERS;
@@ -134,7 +134,8 @@ export function getAvailableModels(
   // Mark recommended models based on capabilities
   const recommendedModels = [
     // Claude
-    'claude-opus-4-5-20251101', // Claude Opus 4.5 - flagship
+    'claude-opus-4-6', // Claude Opus 4.6 - flagship
+    'claude-sonnet-4-6', // Claude Sonnet 4.6
     'claude-sonnet-4-5-20250929',
     // OpenAI
     'gpt-5.1', // GPT-5.1 - flagship

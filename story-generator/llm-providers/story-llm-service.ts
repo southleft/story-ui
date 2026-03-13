@@ -133,7 +133,7 @@ export async function chatCompletion(
   try {
     const response = await provider.chat(chatMessages, {
       model: options?.model,
-      maxTokens: options?.maxTokens || 8192,
+      maxTokens: options?.maxTokens,
       temperature: options?.temperature,
       systemPrompt,
     });
@@ -211,7 +211,7 @@ export async function chatCompletionWithImages(
   try {
     const response = await provider.chat(chatMessages, {
       model: options?.model,
-      maxTokens: options?.maxTokens || 8192,
+      maxTokens: options?.maxTokens,
       temperature: options?.temperature,
     });
 

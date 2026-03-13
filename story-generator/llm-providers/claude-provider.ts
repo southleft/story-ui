@@ -19,12 +19,37 @@ import {
 import { BaseLLMProvider } from './base-provider.js';
 import { logger } from '../logger.js';
 
-// Claude model definitions - Updated December 2025
-// Top 4 models only - Reference: Anthropic API documentation
+// Claude model definitions - Updated March 2026
 const CLAUDE_MODELS: ModelInfo[] = [
   {
-    id: 'claude-opus-4-5-20251101',
-    name: 'Claude Opus 4.5',
+    id: 'claude-opus-4-6',
+    name: 'Claude Opus 4.6',
+    provider: 'claude',
+    contextWindow: 200000,
+    maxOutputTokens: 32000,
+    supportsVision: true,
+    supportsDocuments: true,
+    supportsFunctionCalling: true,
+    supportsStreaming: true,
+    inputPricePer1kTokens: 0.015,
+    outputPricePer1kTokens: 0.075,
+  },
+  {
+    id: 'claude-sonnet-4-6',
+    name: 'Claude Sonnet 4.6',
+    provider: 'claude',
+    contextWindow: 200000,
+    maxOutputTokens: 16000,
+    supportsVision: true,
+    supportsDocuments: true,
+    supportsFunctionCalling: true,
+    supportsStreaming: true,
+    inputPricePer1kTokens: 0.003,
+    outputPricePer1kTokens: 0.015,
+  },
+  {
+    id: 'claude-opus-4-20250514',
+    name: 'Claude Opus 4',
     provider: 'claude',
     contextWindow: 200000,
     maxOutputTokens: 32000,
@@ -76,8 +101,8 @@ const CLAUDE_MODELS: ModelInfo[] = [
   },
 ];
 
-// Default model - Claude Sonnet 4.5 (recommended for agents and coding)
-const DEFAULT_MODEL = 'claude-opus-4-5-20251101';
+// Default model - Claude Sonnet 4.6 (latest recommended)
+const DEFAULT_MODEL = 'claude-sonnet-4-6';
 
 // API configuration
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';

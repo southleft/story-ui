@@ -447,8 +447,10 @@ npm run storybook
 ## LLM Provider Models
 
 ### Claude (Anthropic)
-- `claude-opus-4-5-20251101` - Most capable (default)
-- `claude-sonnet-4-5-20250929` - Recommended balance
+- `claude-opus-4-6` - Most capable (Opus 4.6)
+- `claude-sonnet-4-6` - Recommended balance (default)
+- `claude-opus-4-20250514` - Claude Opus 4
+- `claude-sonnet-4-5-20250929` - Claude Sonnet 4.5
 - `claude-haiku-4-5-20251001` - Fast, economical
 - `claude-sonnet-4-20250514` - Previous generation
 
