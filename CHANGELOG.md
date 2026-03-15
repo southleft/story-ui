@@ -1,3 +1,10 @@
+# [4.14.0](https://github.com/southleft/story-ui/compare/v4.13.3...v4.14.0) (2026-03-15)
+
+
+### Features
+
+* **ui:** add New Canvas button and forwardRef clear handle ([33d214c](https://github.com/southleft/story-ui/commit/33d214ce485177129dca0de3ac41764323efe229))
+
 ## [4.13.3](https://github.com/southleft/story-ui/compare/v4.13.2...v4.13.3) (2026-03-13)
 
 
