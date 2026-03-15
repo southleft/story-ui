@@ -1,3 +1,15 @@
+# [4.15.0](https://github.com/southleft/story-ui/compare/v4.14.0...v4.15.0) (2026-03-15)
+
+
+### Bug Fixes
+
+* **ui:** add saveStory to startListening dependency array ([8dd8247](https://github.com/southleft/story-ui/commit/8dd82479b3e266bf39be81c3239e5594d298999f))
+
+
+### Features
+
+* **ui:** add voice save commands and auto-fix missing render() call ([0274d7c](https://github.com/southleft/story-ui/commit/0274d7c638e2602c1bb17fac16e345620a90e2ac))
+
 # [4.14.0](https://github.com/southleft/story-ui/compare/v4.13.3...v4.14.0) (2026-03-15)
 
 
