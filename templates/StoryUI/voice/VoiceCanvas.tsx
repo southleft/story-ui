@@ -469,7 +469,7 @@ function VoiceCanvas({
       isListeningRef.current = false;
       setIsListening(false);
     }
-  }, [clear, undo, redo, scheduleIntent]);
+  }, [clear, undo, redo, scheduleIntent, saveStory]);
 
   // ── Voice: stop ────────────────────────────────────────────────
 
