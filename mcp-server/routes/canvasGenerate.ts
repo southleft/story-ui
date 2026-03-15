@@ -202,20 +202,38 @@ export function ensureVoiceCanvasStory(storiesDir: string): void {
 // ── Code extraction ───────────────────────────────────────────
 
 /**
+ * If the LLM forgot to add a render() call (required by react-live noInline mode),
+ * detect the last defined PascalCase component and append render(<ComponentName />).
+ * This prevents the "No-Inline evaluations must call render" error when voice input
+ * is ambiguous or short and the LLM skips the final line.
+ */
+function ensureRenderCall(code: string): string {
+  if (/\brender\s*\(/.test(code)) return code;
+
+  // Find the last PascalCase component/const defined in the code
+  const matches = [...code.matchAll(/(?:const|function)\s+([A-Z][A-Za-z0-9]*)/g)];
+  const componentName = matches.at(-1)?.[1] ?? 'Canvas';
+  return `${code}\nrender(<${componentName} />);`;
+}
+
+/**
  * Extract the canvas component code from the LLM response.
  * Handles markdown code fences and stray text.
  */
 function extractCanvasCode(response: string): string {
+  let code: string;
+
   // Prefer explicit code fence
   const fenceMatch = response.match(/```(?:jsx|tsx|js|ts)?\n([\s\S]+?)\n```/);
-  if (fenceMatch) return fenceMatch[1].trim();
+  if (fenceMatch) {
+    code = fenceMatch[1].trim();
+  } else {
+    // Fall back: find the Canvas component block
+    const canvasMatch = response.match(/(const Canvas\s*=[\s\S]+?render\s*\(<Canvas\s*\/>?\);?\s*$)/m);
+    code = canvasMatch ? canvasMatch[1].trim() : response.trim();
+  }
 
-  // Fall back: find the Canvas component block
-  const canvasMatch = response.match(/(const Canvas\s*=[\s\S]+?render\s*\(<Canvas\s*\/>?\);?\s*$)/m);
-  if (canvasMatch) return canvasMatch[1].trim();
-
-  // Last resort: return the whole response trimmed
-  return response.trim();
+  return ensureRenderCall(code);
 }
 
 // ── Handler ───────────────────────────────────────────────────

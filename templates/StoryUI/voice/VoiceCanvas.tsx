@@ -14,6 +14,7 @@
  * StoryUIPanel is never accidentally reset.
  */
 import React, { useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { parseVoiceCommand } from './voiceCommands.js';
 
 // ── Constants ─────────────────────────────────────────────────
 
@@ -374,20 +375,27 @@ function VoiceCanvas({
         setPendingTranscript(accumulated);
         setInterimText('');
 
-        const trimmed = final.trim().toLowerCase();
-        if (trimmed.split(/\s+/).length <= 3) {
-          if (trimmed === 'clear' || trimmed === 'start over') {
+        const command = parseVoiceCommand(final);
+        if (command) {
+          if (command.type === 'clear') {
             clear(); pendingTranscriptRef.current = ''; setPendingTranscript(''); return;
           }
-          if (trimmed === 'undo') {
+          if (command.type === 'undo') {
             undo(); pendingTranscriptRef.current = ''; setPendingTranscript(''); return;
           }
-          if (trimmed === 'redo') {
+          if (command.type === 'redo') {
             redo(); pendingTranscriptRef.current = ''; setPendingTranscript(''); return;
           }
-          if (trimmed === 'stop' || trimmed === 'stop listening') {
+          if (command.type === 'stop') {
             stopListeningRef.current(); return;
           }
+          if (command.type === 'save') {
+            saveStory(); pendingTranscriptRef.current = ''; setPendingTranscript(''); return;
+          }
+          if (command.type === 'new-chat') {
+            clear(); pendingTranscriptRef.current = ''; setPendingTranscript(''); return;
+          }
+          // 'submit' falls through to schedule an LLM generation below
         }
 
         if (abortRef.current) abortRef.current.abort();

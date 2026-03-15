@@ -52,7 +52,8 @@ export type VoiceCommandType =
   | 'clear'
   | 'stop'
   | 'new-chat'
-  | 'submit';
+  | 'submit'
+  | 'save';
 
 export interface VoiceCommand {
   type: VoiceCommandType;
