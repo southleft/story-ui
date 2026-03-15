@@ -13,7 +13,7 @@
  * This means undo/redo has ZERO file I/O and ZERO HMR, so the outer
  * StoryUIPanel is never accidentally reset.
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 
 // ── Constants ─────────────────────────────────────────────────
 
@@ -34,15 +34,22 @@ export interface VoiceCanvasProps {
   onError?: (error: string) => void;
 }
 
+/** Imperative handle exposed to parent via ref — used by "New Chat" button */
+export interface VoiceCanvasHandle {
+  /** Clear the canvas: abort generation, reset all state, blank the iframe */
+  clear: () => void;
+}
+
 // ── Component ─────────────────────────────────────────────────
 
-export function VoiceCanvas({
+export const VoiceCanvas = React.forwardRef<VoiceCanvasHandle, VoiceCanvasProps>(
+function VoiceCanvas({
   apiBase,
   provider,
   model,
   onSave,
   onError,
-}: VoiceCanvasProps) {
+}: VoiceCanvasProps, ref) {
   // ── Code + history ───────────────────────────────────────────
   const [currentCode, setCurrentCode] = useState('');
   const [undoStack, setUndoStack] = useState<string[]>([]);
@@ -239,6 +246,13 @@ export function VoiceCanvas({
   // ── Clear ─────────────────────────────────────────────────────
 
   const clear = useCallback(() => {
+    // Abort any in-flight generation so it doesn't land after the reset
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    generationCounterRef.current += 1; // invalidate any pending finally-block
+
     const current = currentCodeRef.current;
     if (current.trim()) {
       setUndoStack(prev => [...prev.slice(-19), current]);
@@ -249,10 +263,16 @@ export function VoiceCanvas({
     iframeLoadedRef.current = false;
     conversationRef.current = [];
     setErrorMessage('');
+    setIsGenerating(false);
+    setStatusText('');
     setPendingTranscript('');
     pendingTranscriptRef.current = '';
+    setLastPrompt('');
+    lastPromptRef.current = '';
     try { localStorage.removeItem(LS_KEY); } catch {}
     try { localStorage.removeItem(LS_PROMPT_KEY); } catch {}
+    // Force the iframe to remount — it will read empty localStorage and show the placeholder
+    setIframeKey(k => k + 1);
   }, []);
 
   // ── Save ───────────────────────────────────────────────────────
@@ -556,6 +576,10 @@ export function VoiceCanvas({
     );
   }
 
+  // ── Imperative handle (for parent "New Canvas" button) ──────────
+
+  useImperativeHandle(ref, () => ({ clear }), [clear]);
+
   // ── Render ─────────────────────────────────────────────────────
 
   return (
@@ -740,4 +764,5 @@ export function VoiceCanvas({
       </div>
     </div>
   );
-}
+});
+

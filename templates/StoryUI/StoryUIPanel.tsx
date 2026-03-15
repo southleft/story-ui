@@ -9,7 +9,7 @@
 import React, { useState, useEffect, useRef, useCallback, useReducer } from 'react';
 import './StoryUIPanel.css';
 import { VoiceControls } from './voice/VoiceControls.js';
-import { VoiceCanvas } from './voice/VoiceCanvas.js';
+import { VoiceCanvas, type VoiceCanvasHandle } from './voice/VoiceCanvas.js';
 import type { VoiceCommand } from './voice/types.js';
 
 // ============================================
@@ -1182,6 +1182,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   const panelGeneratedStoryIds = useRef<Set<string>>(new Set());
   const voiceModeActiveRef = useRef(false);
   const canvasModeRef = useRef(panelMode === 'canvas');
+  const voiceCanvasRef = useRef<VoiceCanvasHandle>(null);
   const knownStoryIds = useRef<Set<string>>(new Set());
   const isPollingInitialized = useRef(false);
 
@@ -1913,7 +1914,14 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     dispatch({ type: 'SET_ACTIVE_CHAT', payload: { id: chat.id, title: chat.title } });
   };
 
-  const handleNewChat = () => dispatch({ type: 'NEW_CHAT' });
+  const handleNewChat = () => {
+    dispatch({ type: 'NEW_CHAT' });
+    // When on Voice Canvas, also clear the canvas state (abort generation,
+    // reset code, blank the iframe, clear conversation history)
+    if (panelMode === 'canvas') {
+      voiceCanvasRef.current?.clear();
+    }
+  };
 
   // Voice input handlers
   const handleVoiceTranscript = useCallback((text: string) => {
@@ -2159,7 +2167,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
             {/* New Chat */}
             <button className="sui-button sui-button-default" onClick={handleNewChat} style={{ width: '100%', marginBottom: '16px' }}>
               {Icons.plus}
-              <span>New Chat</span>
+              <span>{panelMode === 'canvas' ? 'New Canvas' : 'New Chat'}</span>
             </button>
 
             {/* Chat history */}
@@ -2368,6 +2376,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
 
         {panelMode === 'canvas' ? (
           <VoiceCanvas
+            ref={voiceCanvasRef}
             apiBase={getApiBase()}
             provider={state.selectedProvider}
             model={state.selectedModel}
