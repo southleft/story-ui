@@ -20,11 +20,11 @@ import { BaseLLMProvider } from './base-provider.js';
 import { logger } from '../logger.js';
 
 // OpenAI model definitions - Updated March 2026
-// Reference: https://platform.openai.com/docs/models
+// Reference: https://developers.openai.com/api/docs/models
 const OPENAI_MODELS: ModelInfo[] = [
   {
-    id: 'gpt-4.1',
-    name: 'GPT-4.1',
+    id: 'gpt-5.4',
+    name: 'GPT-5.4',
     provider: 'openai',
     contextWindow: 1047576,
     maxOutputTokens: 32768,
@@ -36,8 +36,8 @@ const OPENAI_MODELS: ModelInfo[] = [
     outputPricePer1kTokens: 0.008,
   },
   {
-    id: 'gpt-4.1-mini',
-    name: 'GPT-4.1 Mini',
+    id: 'gpt-5.4-mini',
+    name: 'GPT-5.4 Mini',
     provider: 'openai',
     contextWindow: 1047576,
     maxOutputTokens: 32768,
@@ -47,20 +47,6 @@ const OPENAI_MODELS: ModelInfo[] = [
     supportsStreaming: true,
     inputPricePer1kTokens: 0.0004,
     outputPricePer1kTokens: 0.0016,
-  },
-  {
-    id: 'o3',
-    name: 'o3',
-    provider: 'openai',
-    contextWindow: 200000,
-    maxOutputTokens: 100000,
-    supportsVision: true,
-    supportsDocuments: false,
-    supportsFunctionCalling: true,
-    supportsStreaming: true,
-    supportsReasoning: true,
-    inputPricePer1kTokens: 0.01,
-    outputPricePer1kTokens: 0.04,
   },
   {
     id: 'o4-mini',
@@ -76,36 +62,10 @@ const OPENAI_MODELS: ModelInfo[] = [
     inputPricePer1kTokens: 0.0011,
     outputPricePer1kTokens: 0.0044,
   },
-  {
-    id: 'gpt-4o',
-    name: 'GPT-4o',
-    provider: 'openai',
-    contextWindow: 128000,
-    maxOutputTokens: 16384,
-    supportsVision: true,
-    supportsDocuments: false,
-    supportsFunctionCalling: true,
-    supportsStreaming: true,
-    inputPricePer1kTokens: 0.0025,
-    outputPricePer1kTokens: 0.01,
-  },
-  {
-    id: 'gpt-4o-mini',
-    name: 'GPT-4o Mini',
-    provider: 'openai',
-    contextWindow: 128000,
-    maxOutputTokens: 16384,
-    supportsVision: true,
-    supportsDocuments: false,
-    supportsFunctionCalling: true,
-    supportsStreaming: true,
-    inputPricePer1kTokens: 0.00015,
-    outputPricePer1kTokens: 0.0006,
-  },
 ];
 
 // Default model - GPT-4.1 (1M context window, March 2026)
-const DEFAULT_MODEL = 'gpt-4.1';
+const DEFAULT_MODEL = 'gpt-5.4';
 
 // API configuration
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
@@ -174,7 +134,7 @@ export class OpenAIProvider extends BaseLLMProvider {
     // Determine which token parameter to use based on model
     // o-series models (o1, o3, o4-mini, etc.) require max_completion_tokens instead of max_tokens
     const maxTokens = options?.maxTokens || this.getSelectedModel()?.maxOutputTokens || 4096;
-    const useMaxCompletionTokens = /^o\d/.test(model);
+    const useMaxCompletionTokens = /^o\d/.test(model) || /^gpt-5/.test(model);
 
     const requestBody: Record<string, unknown> = {
       model,
@@ -245,7 +205,7 @@ export class OpenAIProvider extends BaseLLMProvider {
     // Determine which token parameter to use based on model
     // o-series models (o1, o3, o4-mini, etc.) require max_completion_tokens instead of max_tokens
     const maxTokens = options?.maxTokens || this.getSelectedModel()?.maxOutputTokens || 4096;
-    const useMaxCompletionTokens = /^o\d/.test(model);
+    const useMaxCompletionTokens = /^o\d/.test(model) || /^gpt-5/.test(model);
 
     const requestBody: Record<string, unknown> = {
       model,
@@ -348,8 +308,8 @@ export class OpenAIProvider extends BaseLLMProvider {
           'Authorization': `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          max_tokens: 1,
+          model: 'gpt-5.4-mini',
+          max_completion_tokens: 1,
           messages: [{ role: 'user', content: 'Hi' }],
         }),
         signal: AbortSignal.timeout(10000),

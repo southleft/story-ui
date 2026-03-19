@@ -449,25 +449,17 @@ npm run storybook
 ### Claude (Anthropic)
 - `claude-opus-4-6` - Most capable (Opus 4.6)
 - `claude-sonnet-4-6` - Recommended balance (default)
-- `claude-opus-4-20250514` - Claude Opus 4
-- `claude-sonnet-4-5-20250929` - Claude Sonnet 4.5
 - `claude-haiku-4-5-20251001` - Fast, economical
-- `claude-sonnet-4-20250514` - Previous generation
 
 ### OpenAI
-- `gpt-4.1` - 1M context window flagship (default)
-- `gpt-4.1-mini` - Smaller, economical 1M context
-- `o3` - Reasoning model (100k output)
-- `o4-mini` - Economical reasoning model
-- `gpt-4o` - Fast multimodal
-- `gpt-4o-mini` - Economical
+- `gpt-5.4` - Frontier flagship, 1M context (default)
+- `gpt-5.4-mini` - Fast, economical 1M context
+- `o4-mini` - Reasoning model (100k output)
 
 ### Gemini
-- `gemini-3.1-pro-preview` - Most capable preview
-- `gemini-2.5-pro` - Stable flagship (default)
-- `gemini-2.5-flash` - Fast, efficient
-- `gemini-2.5-flash-lite` - Most economical
-- `gemini-3-flash-preview` - Fast preview
+- `gemini-3.1-pro-preview` - Most capable, 1M context (default)
+- `gemini-3-flash-preview` - Fast frontier
+- `gemini-2.5-flash` - Stable, fast, efficient
 
 ---
 

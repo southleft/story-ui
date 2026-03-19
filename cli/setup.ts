@@ -239,21 +239,21 @@ const LLM_PROVIDERS = {
   claude: {
     name: 'Claude (Anthropic)',
     envKey: 'ANTHROPIC_API_KEY',
-    models: ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-opus-4-20250514', 'claude-sonnet-4-5-20250929', 'claude-haiku-4-5-20251001'],
+    models: ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
     docsUrl: 'https://console.anthropic.com/',
     description: 'Recommended - Best for complex reasoning and code quality'
   },
   openai: {
     name: 'OpenAI (GPT)',
     envKey: 'OPENAI_API_KEY',
-    models: ['gpt-4.1', 'gpt-4.1-mini', 'o3', 'o4-mini', 'gpt-4o', 'gpt-4o-mini'],
+    models: ['gpt-5.4', 'gpt-5.4-mini', 'o4-mini'],
     docsUrl: 'https://platform.openai.com/api-keys',
     description: 'Versatile and fast'
   },
   gemini: {
     name: 'Google Gemini',
     envKey: 'GEMINI_API_KEY',
-    models: ['gemini-3.1-pro-preview', 'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-3-flash-preview'],
+    models: ['gemini-3.1-pro-preview', 'gemini-3-flash-preview', 'gemini-2.5-flash'],
     docsUrl: 'https://aistudio.google.com/app/apikey',
     description: 'Cost-effective with good performance'
   }

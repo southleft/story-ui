@@ -135,16 +135,13 @@ export function getAvailableModels(
   const recommendedModels = [
     // Claude
     'claude-opus-4-6', // Claude Opus 4.6 - flagship
-    'claude-sonnet-4-6', // Claude Sonnet 4.6
-    'claude-sonnet-4-5-20250929',
+    'claude-sonnet-4-6', // Claude Sonnet 4.6 - balanced
     // OpenAI
-    'gpt-4.1', // GPT-4.1 - 1M context flagship
-    'o3', // o3 reasoning
-    'o4-mini', // o4 mini reasoning
-    'gpt-4o',
+    'gpt-5.4', // GPT-5.4 - flagship
+    'gpt-5.4-mini', // GPT-5.4 Mini - fast
     // Gemini
     'gemini-3.1-pro-preview', // Gemini 3.1 Pro Preview - flagship
-    'gemini-2.5-pro', // Gemini 2.5 Pro - stable
+    'gemini-3-flash-preview', // Gemini 3 Flash Preview - fast
   ];
 
   return filteredModels.map((model: ModelInfo) => ({

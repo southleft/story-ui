@@ -178,7 +178,7 @@ export function initializeFromEnv(): void {
   if (claudeKey) {
     registry.configureProvider('claude', {
       apiKey: claudeKey,
-      model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-5-20250929',
+      model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
     });
     logger.info('Claude provider configured from environment');
   }
@@ -188,7 +188,7 @@ export function initializeFromEnv(): void {
   if (openaiKey) {
     registry.configureProvider('openai', {
       apiKey: openaiKey,
-      model: process.env.OPENAI_MODEL || 'gpt-4o',
+      model: process.env.OPENAI_MODEL || 'gpt-5.4',
       organizationId: process.env.OPENAI_ORG_ID,
     });
     logger.info('OpenAI provider configured from environment');
@@ -199,7 +199,7 @@ export function initializeFromEnv(): void {
   if (geminiKey) {
     registry.configureProvider('gemini', {
       apiKey: geminiKey,
-      model: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+      model: process.env.GEMINI_MODEL || 'gemini-3.1-pro-preview',
     });
     logger.info('Gemini provider configured from environment');
   }
