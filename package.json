@@ -32,7 +32,8 @@
     "mcp": "yarn build && node dist/mcp-server/mcp-stdio-server.js",
     "dev": "tsc --watch",
     "prepublishOnly": "npm run build",
-    "test": "echo \"Tests coming soon\" && exit 0",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "release": "semantic-release",
     "release:dry-run": "semantic-release --dry-run",
     "commit": "cz",
@@ -110,7 +111,8 @@
     "cz-conventional-changelog": "^3.3.0",
     "husky": "^9.1.7",
     "semantic-release": "^24.2.0",
-    "ts-node": "^10.9.2"
+    "ts-node": "^10.9.2",
+    "vitest": "^4.1.0"
   },
   "peerDependencies": {
     "@storybook/react": ">=6.0.0",

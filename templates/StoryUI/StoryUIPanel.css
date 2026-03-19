@@ -2067,7 +2067,36 @@
   flex-shrink: 0;
 }
 
-/* Text input fallback */
+/* Text input in voice bar */
+.sui-canvas-text-input {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 0 12px;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  color: hsl(var(--foreground));
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.sui-canvas-text-input::placeholder {
+  color: hsl(var(--muted-foreground));
+}
+
+.sui-canvas-text-input:focus {
+  border-color: hsl(var(--primary));
+  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.15);
+}
+
+.sui-canvas-text-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* Unsupported browser state */
 .sui-canvas-unsupported {
   display: flex;
