@@ -41,10 +41,8 @@ import {
 } from './routes/frameworks.js';
 import mcpRemoteRouter from './routes/mcpRemote.js';
 // Voice Canvas endpoints
-import { canvasIntentHandler, warmCanvasComponentCache } from './routes/canvasIntent.js';
 import { canvasSaveHandler } from './routes/canvasSave.js';
 import { canvasGenerateHandler, ensureVoiceCanvasStory } from './routes/canvasGenerate.js';
-import { canvasPreviewHandler } from './routes/canvasPreview.js';
 import { getAdapterRegistry } from '../story-generator/framework-adapters/index.js';
 // Manifest — story ↔ chat source of truth
 import {
@@ -146,9 +144,7 @@ app.post('/mcp/generate-story', generateStoryFromPrompt);
 app.post('/mcp/generate-story-stream', generateStoryFromPromptStream);
 // Voice Canvas endpoints
 app.post('/mcp/canvas-generate', canvasGenerateHandler); // generate + write voice-canvas.stories.tsx
-app.post('/mcp/canvas-preview', canvasPreviewHandler);   // undo/redo: rewrite voice-canvas.stories.tsx
 app.post('/mcp/canvas-save', canvasSaveHandler);         // save canvas to named .stories.tsx
-app.post('/mcp/canvas-intent', canvasIntentHandler);     // legacy (kept for compatibility)
 
 // Manifest — story ↔ chat source of truth
 // NOTE: /reconcile must be registered BEFORE /:fileName to avoid route conflict
@@ -1013,8 +1009,6 @@ if (storybookProxyEnabled) {
 app.listen(PORT, () => {
   console.error(`MCP server running on port ${PORT}`);
   console.error(`Stories will be generated to: ${config.generatedStoriesPath}`);
-  // Pre-warm canvas component cache in background so first voice request is fast
-  warmCanvasComponentCache().catch(() => {});
   // Ensure voice-canvas scratchpad story file exists before client polling starts.
   // If it's missing, the first canvas generate creates it, triggering a false-positive
   // "externally generated story" detection which reloads the page and kills Voice Canvas.
