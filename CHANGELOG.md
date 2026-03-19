@@ -1,3 +1,17 @@
+# [4.16.0](https://github.com/southleft/story-ui/compare/v4.15.0...v4.16.0) (2026-03-19)
+
+
+### Bug Fixes
+
+* remove ~1,215 lines of dead canvas code ([3d3687c](https://github.com/southleft/story-ui/commit/3d3687cf5ab98f21a64d225cea3062cfeacca475))
+* security hardening for voice canvas and Gemini API key exposure ([f7c328c](https://github.com/southleft/story-ui/commit/f7c328c8a3f122fcac90e12fa8b40fb7bd7a488b))
+* update LLM models to latest versions (March 2026) ([c9fa30e](https://github.com/southleft/story-ui/commit/c9fa30e10261ef7de9366692c70e6a28345238e8))
+
+
+### Features
+
+* add test suite for canvas pure functions ([05b41b3](https://github.com/southleft/story-ui/commit/05b41b33a9d97eaa6c2ef6b4c13b60f9c2b46a7a))
+
 # [4.15.0](https://github.com/southleft/story-ui/compare/v4.14.0...v4.15.0) (2026-03-15)
 
 
