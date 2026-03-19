@@ -37,8 +37,8 @@ const GEMINI_MODELS: ModelInfo[] = [
     outputPricePer1kTokens: 0.012,
   },
   {
-    id: 'gemini-2.5-pro',
-    name: 'Gemini 2.5 Pro',
+    id: 'gemini-3-flash-preview',
+    name: 'Gemini 3 Flash Preview',
     provider: 'gemini',
     contextWindow: 1048576,
     maxOutputTokens: 65536,
@@ -46,9 +46,8 @@ const GEMINI_MODELS: ModelInfo[] = [
     supportsDocuments: true,
     supportsFunctionCalling: true,
     supportsStreaming: true,
-    supportsReasoning: true,
-    inputPricePer1kTokens: 0.00125,
-    outputPricePer1kTokens: 0.01,
+    inputPricePer1kTokens: 0.00015,
+    outputPricePer1kTokens: 0.0006,
   },
   {
     id: 'gemini-2.5-flash',
@@ -64,36 +63,10 @@ const GEMINI_MODELS: ModelInfo[] = [
     inputPricePer1kTokens: 0.00015,
     outputPricePer1kTokens: 0.0006,
   },
-  {
-    id: 'gemini-2.5-flash-lite',
-    name: 'Gemini 2.5 Flash Lite',
-    provider: 'gemini',
-    contextWindow: 1048576,
-    maxOutputTokens: 65536,
-    supportsVision: true,
-    supportsDocuments: true,
-    supportsFunctionCalling: true,
-    supportsStreaming: true,
-    inputPricePer1kTokens: 0.00008,
-    outputPricePer1kTokens: 0.0003,
-  },
-  {
-    id: 'gemini-3-flash-preview',
-    name: 'Gemini 3 Flash Preview',
-    provider: 'gemini',
-    contextWindow: 1048576,
-    maxOutputTokens: 65536,
-    supportsVision: true,
-    supportsDocuments: true,
-    supportsFunctionCalling: true,
-    supportsStreaming: true,
-    inputPricePer1kTokens: 0.00015,
-    outputPricePer1kTokens: 0.0006,
-  },
 ];
 
-// Default model - Gemini 2.5 Pro (stable flagship, March 2026)
-const DEFAULT_MODEL = 'gemini-2.5-pro';
+// Default model - Gemini 3.1 Pro Preview (flagship, March 2026)
+const DEFAULT_MODEL = 'gemini-3.1-pro-preview';
 
 // API configuration
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -181,13 +154,14 @@ export class GeminiProvider extends BaseLLMProvider {
       };
     }
 
-    const url = `${this.getApiUrl(model)}?key=${apiKey}`;
+    const url = this.getApiUrl(model);
 
     try {
       const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
         },
         body: JSON.stringify(requestBody),
         signal: AbortSignal.timeout(this.config.timeout || 120000),
@@ -242,13 +216,14 @@ export class GeminiProvider extends BaseLLMProvider {
       };
     }
 
-    const url = `${this.getApiUrl(model, true)}?key=${apiKey}&alt=sse`;
+    const url = `${this.getApiUrl(model, true)}?alt=sse`;
 
     try {
       const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
         },
         body: JSON.stringify(requestBody),
         signal: AbortSignal.timeout(this.config.timeout || 120000),
@@ -328,11 +303,12 @@ export class GeminiProvider extends BaseLLMProvider {
   async validateApiKey(apiKey: string): Promise<ValidationResult> {
     try {
       // Make a minimal API call to validate the key
-      const url = `${this.getApiUrl('gemini-2.0-flash')}?key=${apiKey}`;
+      const url = this.getApiUrl('gemini-2.5-flash');
       const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
         },
         body: JSON.stringify({
           contents: [{ parts: [{ text: 'Hi' }] }],

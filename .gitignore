@@ -87,8 +87,10 @@ ROOT_CAUSE_ANALYSIS.md
 *_TEST_REPORT.md
 STORY_UI_PRODUCTION_REQUIREMENTS.md
 
-# Playwright MCP artifacts (dev testing screenshots)
+# Playwright artifacts (dev testing screenshots)
 .playwright-mcp/
+.playwright-cli/
+*.tgz
 
 # Serena MCP artifacts (dev semantic code tools)
 .serena/

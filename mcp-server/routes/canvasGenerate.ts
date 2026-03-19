@@ -17,12 +17,19 @@
 import { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
-import { execSync } from 'child_process';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 import { loadUserConfig } from '../../story-generator/configLoader.js';
 import { EnhancedComponentDiscovery } from '../../story-generator/enhancedComponentDiscovery.js';
 import { buildClaudePrompt } from '../../story-generator/promptGenerator.js';
 import { chatCompletion } from '../../story-generator/llm-providers/story-llm-service.js';
 import { logger } from '../../story-generator/logger.js';
+
+// ── Component discovery cache ─────────────────────────────────
+let _componentCache: { components: any[]; timestamp: number } | null = null;
+const COMPONENT_CACHE_TTL = 300_000; // 5 minutes
 
 // ── Constants ─────────────────────────────────────────────────
 export const VOICE_CANVAS_STORY_ID = 'generated-voice-canvas--default';
@@ -127,6 +134,8 @@ export const Default: StoryObj = {
 
     useEffect(() => {
       const handler = (e: MessageEvent) => {
+        // Only accept messages from same origin to prevent cross-origin code injection
+        if (e.origin !== window.location.origin) return;
         if (e.data?.type === 'VOICE_CANVAS_UPDATE' && typeof e.data.code === 'string') {
           setCode(e.data.code);
           try { localStorage.setItem('${LS_KEY}', e.data.code); } catch {}
@@ -156,29 +165,43 @@ export const Default: StoryObj = {
  * Detects pnpm / yarn / npm automatically.
  */
 let reactLiveChecked = false;
-export function ensureReactLive(): void {
+let reactLiveInstalling: Promise<void> | null = null;
+
+export async function ensureReactLive(): Promise<void> {
   if (reactLiveChecked) return;
-  reactLiveChecked = true;
+  // If another request is already installing, wait for it
+  if (reactLiveInstalling) return reactLiveInstalling;
 
   const cwd = process.cwd();
   const reactLiveDir = path.join(cwd, 'node_modules', 'react-live');
-  if (fs.existsSync(reactLiveDir)) return;
+  if (fs.existsSync(reactLiveDir)) {
+    reactLiveChecked = true;
+    return;
+  }
 
   logger.log('[canvas-generate] react-live not found — installing...');
-  try {
-    let cmd = 'npm install react-live --save';
-    if (fs.existsSync(path.join(cwd, 'pnpm-lock.yaml'))) {
-      cmd = 'pnpm add react-live';
-    } else if (fs.existsSync(path.join(cwd, 'yarn.lock'))) {
-      cmd = 'yarn add react-live';
+
+  reactLiveInstalling = (async () => {
+    try {
+      let cmd = 'npm install react-live --save';
+      if (fs.existsSync(path.join(cwd, 'pnpm-lock.yaml'))) {
+        cmd = 'pnpm add react-live';
+      } else if (fs.existsSync(path.join(cwd, 'yarn.lock'))) {
+        cmd = 'yarn add react-live';
+      }
+      await execAsync(cmd, { cwd });
+      reactLiveChecked = true;
+      logger.log('[canvas-generate] react-live installed successfully');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error('[canvas-generate] Could not auto-install react-live', { error: msg });
+      logger.log('[canvas-generate] Run manually: npm install react-live');
+    } finally {
+      reactLiveInstalling = null;
     }
-    execSync(cmd, { cwd, stdio: 'pipe' });
-    logger.log('[canvas-generate] react-live installed successfully');
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    logger.error('[canvas-generate] Could not auto-install react-live', { error: msg });
-    logger.log('[canvas-generate] Run manually: npm install react-live');
-  }
+  })();
+
+  return reactLiveInstalling;
 }
 
 // ── Write story to disk (once) ────────────────────────────────
@@ -207,7 +230,7 @@ export function ensureVoiceCanvasStory(storiesDir: string): void {
  * This prevents the "No-Inline evaluations must call render" error when voice input
  * is ambiguous or short and the LLM skips the final line.
  */
-function ensureRenderCall(code: string): string {
+export function ensureRenderCall(code: string): string {
   if (/\brender\s*\(/.test(code)) return code;
 
   // Find the last PascalCase component/const defined in the code
@@ -220,7 +243,7 @@ function ensureRenderCall(code: string): string {
  * Extract the canvas component code from the LLM response.
  * Handles markdown code fences and stray text.
  */
-function extractCanvasCode(response: string): string {
+export function extractCanvasCode(response: string): string {
   let code: string;
 
   // Prefer explicit code fence
@@ -236,11 +259,106 @@ function extractCanvasCode(response: string): string {
   return ensureRenderCall(code);
 }
 
+// ── Security sanitization ─────────────────────────────────────
+
+/**
+ * Dangerous patterns that must be neutralized in LLM-generated canvas code.
+ *
+ * Each entry defines a regex (applied with the global flag) and a replacement
+ * string.  The replacement comments out the dangerous call so the surrounding
+ * code still parses — this avoids rejecting an entire response because the LLM
+ * happened to mention one of these tokens inside a string literal or comment.
+ *
+ * Categories covered:
+ *   - Arbitrary code execution (eval, Function constructor)
+ *   - Cookie / domain access
+ *   - Storage APIs (localStorage, sessionStorage)
+ *   - Network requests (fetch, XMLHttpRequest, WebSocket)
+ *   - Location manipulation
+ *   - Script injection
+ *   - Unsafe React patterns (dangerouslySetInnerHTML)
+ *   - Prototype pollution (__proto__, constructor.prototype)
+ *   - Dynamic / CommonJS imports
+ */
+const DANGEROUS_PATTERNS: Array<{ pattern: RegExp; label: string; replacement: string }> = [
+  // Arbitrary code execution
+  { pattern: /\beval\s*\(/g,             label: 'eval()',               replacement: '/* [sanitized: eval] */void(' },
+  { pattern: /\bnew\s+Function\s*\(/g,   label: 'new Function()',       replacement: '/* [sanitized: new Function] */void(' },
+  { pattern: /\bFunction\s*\(/g,         label: 'Function()',           replacement: '/* [sanitized: Function] */void(' },
+
+  // Cookie / domain access
+  { pattern: /\bdocument\.cookie\b/g,    label: 'document.cookie',      replacement: '/* [sanitized: document.cookie] */undefined' },
+  { pattern: /\bdocument\.domain\b/g,    label: 'document.domain',      replacement: '/* [sanitized: document.domain] */undefined' },
+
+  // Storage APIs
+  { pattern: /\blocalStorage\b/g,        label: 'localStorage',         replacement: '/* [sanitized: localStorage] */undefined' },
+  { pattern: /\bsessionStorage\b/g,      label: 'sessionStorage',       replacement: '/* [sanitized: sessionStorage] */undefined' },
+
+  // Network requests
+  { pattern: /\bfetch\s*\(/g,           label: 'fetch()',              replacement: '/* [sanitized: fetch] */void(' },
+  { pattern: /\bnew\s+XMLHttpRequest\b/g, label: 'XMLHttpRequest',     replacement: '/* [sanitized: XMLHttpRequest] */undefined' },
+  { pattern: /\bXMLHttpRequest\b/g,      label: 'XMLHttpRequest',      replacement: '/* [sanitized: XMLHttpRequest] */undefined' },
+  { pattern: /\bnew\s+WebSocket\s*\(/g,  label: 'WebSocket',           replacement: '/* [sanitized: WebSocket] */void(' },
+  { pattern: /\bWebSocket\s*\(/g,        label: 'WebSocket',           replacement: '/* [sanitized: WebSocket] */void(' },
+
+  // Location manipulation
+  { pattern: /\bwindow\.location\b/g,    label: 'window.location',      replacement: '/* [sanitized: window.location] */undefined' },
+
+  // Script injection
+  { pattern: /<script\b/gi,             label: '<script>',             replacement: '/* [sanitized: script tag] */undefined' },
+
+  // Unsafe React patterns
+  { pattern: /\bdangerouslySetInnerHTML\b/g, label: 'dangerouslySetInnerHTML', replacement: '/* [sanitized: dangerouslySetInnerHTML] */undefined' },
+
+  // Prototype pollution
+  { pattern: /__proto__/g,              label: '__proto__',            replacement: '/* [sanitized: __proto__] */undefined' },
+  { pattern: /\bconstructor\.prototype\b/g, label: 'constructor.prototype', replacement: '/* [sanitized: constructor.prototype] */undefined' },
+
+  // Dynamic imports
+  { pattern: /\bimport\s*\(/g,          label: 'dynamic import()',     replacement: '/* [sanitized: dynamic import] */void(' },
+
+  // CommonJS require
+  { pattern: /\brequire\s*\(/g,         label: 'require()',            replacement: '/* [sanitized: require] */void(' },
+];
+
+/**
+ * Scan LLM-generated canvas code for dangerous patterns and neutralize them.
+ *
+ * Instead of rejecting the entire response, each dangerous token is replaced
+ * with a safe alternative (typically a comment + `undefined` or `void(`) so
+ * the rest of the generated JSX remains functional.
+ *
+ * Returns the sanitized code string.  Logs a warning for every pattern found.
+ */
+export function sanitizeCanvasCode(code: string): string {
+  let sanitized = code;
+  const found: string[] = [];
+
+  for (const { pattern, label, replacement } of DANGEROUS_PATTERNS) {
+    // Reset lastIndex in case the regex was used before (global flag)
+    pattern.lastIndex = 0;
+    if (pattern.test(sanitized)) {
+      found.push(label);
+      // Reset again before replace — .test() advances lastIndex
+      pattern.lastIndex = 0;
+      sanitized = sanitized.replace(pattern, replacement);
+    }
+  }
+
+  if (found.length > 0) {
+    logger.warn(
+      `[canvas-generate] Sanitized ${found.length} dangerous pattern(s) from LLM output: ${found.join(', ')}`
+    );
+  }
+
+  return sanitized;
+}
+
 // ── Handler ───────────────────────────────────────────────────
 
 export async function canvasGenerateHandler(req: Request, res: Response) {
   try {
-    const {
+    let {
       prompt,
       canvasCode,
       provider,
@@ -252,6 +370,29 @@ export async function canvasGenerateHandler(req: Request, res: Response) {
       return res.status(400).json({ error: 'prompt is required' });
     }
 
+    // ── Request body size limits (truncate, don't reject) ──────
+    const MAX_PROMPT = 5_000;
+    const MAX_CANVAS_CODE = 50_000;
+    const MAX_HISTORY_ENTRIES = 50;
+    const MAX_HISTORY_CONTENT = 10_000;
+
+    if (prompt.length > MAX_PROMPT) {
+      prompt = prompt.slice(0, MAX_PROMPT);
+    }
+    if (canvasCode && typeof canvasCode === 'string' && canvasCode.length > MAX_CANVAS_CODE) {
+      canvasCode = canvasCode.slice(0, MAX_CANVAS_CODE);
+    }
+    if (Array.isArray(conversationHistory)) {
+      if (conversationHistory.length > MAX_HISTORY_ENTRIES) {
+        conversationHistory = conversationHistory.slice(-MAX_HISTORY_ENTRIES);
+      }
+      for (const entry of conversationHistory) {
+        if (entry && typeof entry.content === 'string' && entry.content.length > MAX_HISTORY_CONTENT) {
+          entry.content = entry.content.slice(0, MAX_HISTORY_CONTENT);
+        }
+      }
+    }
+
     // Load config + discover components — same quality context as standard generation
     const config = loadUserConfig();
 
@@ -261,8 +402,15 @@ export async function canvasGenerateHandler(req: Request, res: Response) {
         error: `Voice Canvas is only available for React-based Storybook projects. Current framework: ${config.componentFramework}`,
       });
     }
-    const discovery = new EnhancedComponentDiscovery(config);
-    const components = await discovery.discoverAll();
+    let components: any[];
+    const now = Date.now();
+    if (_componentCache && now - _componentCache.timestamp < COMPONENT_CACHE_TTL) {
+      components = _componentCache.components;
+    } else {
+      const discovery = new EnhancedComponentDiscovery(config);
+      components = await discovery.discoverAll();
+      _componentCache = { components, timestamp: now };
+    }
 
     // Build the system prompt using the standard prompt pipeline
     const baseSystemPrompt = await buildClaudePrompt(prompt, config, components);
@@ -291,11 +439,15 @@ export async function canvasGenerateHandler(req: Request, res: Response) {
       temperature: 0.3,
     });
 
-    // Extract the canvas code from the LLM response
-    const result = extractCanvasCode(response);
+    // Extract the canvas code from the LLM response and sanitize it.
+    // sanitizeCanvasCode neutralizes dangerous patterns (eval, fetch, script
+    // injection, prototype pollution, etc.) before the code reaches the
+    // client where react-live would execute it as arbitrary JS.
+    const rawCode = extractCanvasCode(response);
+    const result = sanitizeCanvasCode(rawCode);
 
     // Ensure react-live is installed and story template exists (no-ops after first run)
-    ensureReactLive();
+    await ensureReactLive();
     const storiesDir = config.generatedStoriesPath || './src/stories/generated/';
     ensureVoiceCanvasStory(storiesDir);
 

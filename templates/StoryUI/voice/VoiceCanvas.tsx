@@ -5,7 +5,7 @@
  *   - LLM generates JSX code string
  *   - Server writes a STATIC react-live story template ONCE on first use
  *     (voice-canvas.stories.tsx never changes after creation — no HMR cascade)
- *   - Preview renders in a Storybook iframe (full decorator chain = correct Mantine theme)
+ *   - Preview renders in a Storybook iframe (full decorator chain = correct theme)
  *   - Code updates on generate / undo / redo are delivered via:
  *       1. localStorage (persists across iframe reloads)
  *       2. window.postMessage (instant in-place update, no iframe reload needed)
@@ -67,13 +67,21 @@ function VoiceCanvas({
   const [savedMessage, setSavedMessage] = useState('');
   const [lastPrompt, setLastPrompt] = useState('');
 
-  // ── Last prompt (used for auto-title on save) ─────────────────
+  // ── Prompt tracking ─────────────────────────────────────────
+  // firstPromptRef captures the initial creation prompt — used for auto-title
+  // on save because it best describes the component (not the last edit command).
+  // lastPromptRef tracks the most recent prompt for display purposes.
+  const firstPromptRef = useRef('');
   const lastPromptRef = useRef('');
 
   // ── Voice input ──────────────────────────────────────────────
   const [isListening, setIsListening] = useState(false);
   const [interimText, setInterimText] = useState('');
   const [pendingTranscript, setPendingTranscript] = useState('');
+
+  // ── Text input ──────────────────────────────────────────────
+  const [textInput, setTextInput] = useState('');
+  const textInputRef = useRef<HTMLInputElement>(null);
 
   // ── Refs ──────────────────────────────────────────────────────
   const abortRef = useRef<AbortController | null>(null);
@@ -178,9 +186,14 @@ function VoiceCanvas({
           setIframeKey(k => k + 1);
         }
 
+        // Track the first prompt for save title (describes the component),
+        // and the last prompt for display in the status bar.
+        if (!firstPromptRef.current) {
+          firstPromptRef.current = transcript;
+        }
         lastPromptRef.current = transcript;
         setLastPrompt(transcript);
-        try { localStorage.setItem(LS_PROMPT_KEY, transcript); } catch {}
+        try { localStorage.setItem(LS_PROMPT_KEY, firstPromptRef.current); } catch {}
         conversationRef.current.push(
           { role: 'user', content: transcript },
           { role: 'assistant', content: '[Generated canvas component]' },
@@ -217,6 +230,16 @@ function VoiceCanvas({
       }
     }
   }, [apiBase, provider, model, storyReady, sendCodeToIframe, onError]);
+
+  // ── Text input submit ────────────────────────────────────────
+
+  const handleTextSubmit = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter') return;
+    const value = textInput.trim();
+    if (!value || isGenerating) return;
+    setTextInput('');
+    sendCanvasRequest(value);
+  }, [textInput, isGenerating, sendCanvasRequest]);
 
   // ── Undo ──────────────────────────────────────────────────────
   // No file I/O — just update code and postMessage to the already-loaded iframe
@@ -269,6 +292,7 @@ function VoiceCanvas({
     setPendingTranscript('');
     pendingTranscriptRef.current = '';
     setLastPrompt('');
+    firstPromptRef.current = '';
     lastPromptRef.current = '';
     try { localStorage.removeItem(LS_KEY); } catch {}
     try { localStorage.removeItem(LS_PROMPT_KEY); } catch {}
@@ -289,7 +313,7 @@ function VoiceCanvas({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           jsxCode: code,
-          lastPrompt: lastPromptRef.current,
+          lastPrompt: firstPromptRef.current || lastPromptRef.current,
         }),
       });
 
@@ -534,6 +558,7 @@ function VoiceCanvas({
       }
       const savedPrompt = localStorage.getItem(LS_PROMPT_KEY);
       if (savedPrompt) {
+        firstPromptRef.current = savedPrompt;
         lastPromptRef.current = savedPrompt;
         setLastPrompt(savedPrompt);
       }
@@ -562,31 +587,16 @@ function VoiceCanvas({
     ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
   );
 
-  // ── Unsupported browser state ──────────────────────────────────
-
-  if (!speechSupported) {
-    return (
-      <div className="sui-canvas-container">
-        <div className="sui-canvas-unsupported">
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-            <line x1="12" x2="12" y1="19" y2="22" />
-            <line x1="2" x2="22" y1="2" y2="22" stroke="currentColor" strokeWidth="1.5" />
-          </svg>
-          <h2 className="sui-canvas-unsupported-title">Voice not available</h2>
-          <p className="sui-canvas-unsupported-desc">
-            Voice Canvas requires the Web Speech API, which isn't supported in this browser.
-            Try Chrome or Edge for the full experience.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
   // ── Imperative handle (for parent "New Canvas" button) ──────────
 
   useImperativeHandle(ref, () => ({ clear }), [clear]);
+
+  // ── Focus text input when not listening ──────────────────────
+  useEffect(() => {
+    if (!isListening && !isGenerating && textInputRef.current) {
+      textInputRef.current.focus();
+    }
+  }, [isListening, isGenerating]);
 
   // ── Render ─────────────────────────────────────────────────────
 
@@ -608,7 +618,9 @@ function VoiceCanvas({
             </div>
             <h2 className="sui-canvas-empty-title">Voice Canvas</h2>
             <p className="sui-canvas-empty-desc">
-              Speak to build interfaces live with your design system components.
+              {speechSupported
+                ? 'Speak or type to build interfaces live with your design system components.'
+                : 'Type a prompt to build interfaces live with your design system components.'}
             </p>
             <p className="sui-canvas-empty-hint">
               Try: "Create a product card with an image, title, price, and buy button"
@@ -624,7 +636,7 @@ function VoiceCanvas({
           </div>
         )}
 
-        {/* Storybook iframe — renders with full Mantine decorator chain */}
+        {/* Storybook iframe — renders with full decorator chain */}
         {storyReady && (
           <div className="sui-canvas-live-wrapper">
             {/* Re-generation overlay */}
@@ -684,44 +696,55 @@ function VoiceCanvas({
       <div className={`sui-canvas-bar ${isListening ? 'sui-canvas-bar--active' : ''}`}>
         <div className="sui-canvas-bar-left">
 
-          {/* Mic button */}
-          <button
-            type="button"
-            className={`sui-canvas-mic ${isListening ? 'sui-canvas-mic--active' : ''}`}
-            onClick={toggleListening}
-            aria-label={isListening ? 'Stop voice input' : 'Start voice input'}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-              <line x1="12" x2="12" y1="19" y2="22" />
-            </svg>
-            {isListening && <span className="sui-canvas-mic-pulse" />}
-          </button>
+          {/* Mic button — hidden when speech API is unavailable */}
+          {speechSupported && (
+            <button
+              type="button"
+              className={`sui-canvas-mic ${isListening ? 'sui-canvas-mic--active' : ''}`}
+              onClick={toggleListening}
+              aria-label={isListening ? 'Stop voice input' : 'Start voice input'}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                <line x1="12" x2="12" y1="19" y2="22" />
+              </svg>
+              {isListening && <span className="sui-canvas-mic-pulse" />}
+            </button>
+          )}
 
-          {/* Transcript display */}
-          <div className="sui-canvas-transcript">
-            {isGenerating ? (
-              <span className="sui-canvas-status-rendering">{statusText || 'Building interface...'}</span>
-            ) : interimText ? (
-              <span className="sui-canvas-status-interim">
-                {pendingTranscript ? pendingTranscript + ' ' : ''}{interimText}
-              </span>
-            ) : pendingTranscript ? (
-              <span className="sui-canvas-status-final">{pendingTranscript}</span>
-            ) : isListening ? (
-              <span className="sui-canvas-status-listening">Listening... describe what you want to build</span>
-            ) : lastPrompt ? (
-              <span className="sui-canvas-status-hint" title={lastPrompt}>
-                ✓ {lastPrompt.length > 72 ? lastPrompt.slice(0, 69) + '…' : lastPrompt}
-              </span>
-            ) : (
-              <span className="sui-canvas-status-hint">Click the mic and describe what to build</span>
-            )}
-          </div>
+          {/* Transcript display — shown while listening or generating */}
+          {(isListening || isGenerating) && (
+            <div className="sui-canvas-transcript">
+              {isGenerating ? (
+                <span className="sui-canvas-status-rendering">{statusText || 'Building interface...'}</span>
+              ) : interimText ? (
+                <span className="sui-canvas-status-interim">
+                  {pendingTranscript ? pendingTranscript + ' ' : ''}{interimText}
+                </span>
+              ) : pendingTranscript ? (
+                <span className="sui-canvas-status-final">{pendingTranscript}</span>
+              ) : (
+                <span className="sui-canvas-status-listening">Listening... describe what you want to build</span>
+              )}
+            </div>
+          )}
+
+          {/* Text input — shown when not listening and not generating */}
+          {!isListening && !isGenerating && (
+            <input
+              ref={textInputRef}
+              type="text"
+              className="sui-canvas-text-input"
+              placeholder="Type what to build..."
+              value={textInput}
+              onChange={(e) => setTextInput(e.target.value)}
+              onKeyDown={handleTextSubmit}
+              disabled={isGenerating}
+            />
+          )}
         </div>
 
-        {/* Text input */}
         {/* Action buttons */}
         <div className="sui-canvas-bar-right">
           {canUndo && (

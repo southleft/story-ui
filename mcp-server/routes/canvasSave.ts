@@ -151,7 +151,7 @@ ${jsx}
  * Convert a react-live canvas component (JSX string) to a proper .stories.tsx file.
  * The input is in the format: `const Canvas = () => { ... }; render(<Canvas />);`
  */
-function jsxCodeToStory(jsxCode: string, title: string, importPath: string): string {
+export function jsxCodeToStory(jsxCode: string, title: string, importPath: string): string {
   // Remove the render(<Canvas />) call at the end
   const cleanCode = jsxCode.replace(/\nrender\s*\(<Canvas\s*\/>\);?\s*$/, '').trim();
 
@@ -196,7 +196,7 @@ function jsxCodeToStory(jsxCode: string, title: string, importPath: string): str
 // ── Express handler ─────────────────────────────────────────
 
 /** Derive a readable title from the last voice/text prompt. */
-function titleFromPrompt(prompt: string): string {
+export function titleFromPrompt(prompt: string): string {
   // Strip filler words, take first ~6 meaningful words, title-case
   const stop = new Set(['a', 'an', 'the', 'with', 'and', 'for', 'of', 'to', 'in', 'on', 'at', 'by']);
   const words = prompt
@@ -213,17 +213,34 @@ function titleFromPrompt(prompt: string): string {
 
 export async function canvasSaveHandler(req: Request, res: Response) {
   try {
-    const { tree, jsxCode, title: rawTitle, lastPrompt } = req.body;
+    const { tree, jsxCode, title: rawTitle, lastPrompt: rawLastPrompt } = req.body;
+
+    // ── Request body size limits ───────────────────────────────
+    const MAX_JSX_CODE = 100_000;
+    const MAX_TITLE = 200;
+    const MAX_LAST_PROMPT = 5_000;
+
+    if (jsxCode && typeof jsxCode === 'string' && jsxCode.length > MAX_JSX_CODE) {
+      return res.status(400).json({ error: `jsxCode exceeds maximum length of ${MAX_JSX_CODE} characters` });
+    }
+
+    // Truncate title and lastPrompt if needed (safe to trim these)
+    const safeTitle = (rawTitle && typeof rawTitle === 'string')
+      ? rawTitle.slice(0, MAX_TITLE)
+      : rawTitle;
+    const lastPrompt = (rawLastPrompt && typeof rawLastPrompt === 'string' && rawLastPrompt.length > MAX_LAST_PROMPT)
+      ? rawLastPrompt.slice(0, MAX_LAST_PROMPT)
+      : rawLastPrompt;
 
     // Auto-generate title from last prompt if not provided
-    const title = (rawTitle && typeof rawTitle === 'string' && rawTitle.trim())
-      ? rawTitle.trim()
+    const title = (safeTitle && typeof safeTitle === 'string' && safeTitle.trim())
+      ? safeTitle.trim()
       : (lastPrompt && typeof lastPrompt === 'string' && lastPrompt.trim())
         ? titleFromPrompt(lastPrompt.trim())
-        : 'Voice Canvas';
+        : `Canvas ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`;
 
     const config = loadUserConfig();
-    const importPath = config.importPath || '@mantine/core';
+    const importPath = config.importPath || '';
     const storiesDir = config.generatedStoriesPath || './src/stories/generated/';
 
     let code: string;
