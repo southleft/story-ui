@@ -1,3 +1,10 @@
+## [4.16.4](https://github.com/southleft/story-ui/compare/v4.16.3...v4.16.4) (2026-03-19)
+
+
+### Bug Fixes
+
+* voice canvas starts clean, hide scratchpad from sidebar ([5455f29](https://github.com/southleft/story-ui/commit/5455f29ec1f2fdb6bcb5111bc87d9d1789f61e4a))
+
 ## [4.16.3](https://github.com/southleft/story-ui/compare/v4.16.2...v4.16.3) (2026-03-19)
 
 
