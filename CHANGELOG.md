@@ -1,3 +1,10 @@
+## [4.16.1](https://github.com/southleft/story-ui/compare/v4.16.0...v4.16.1) (2026-03-19)
+
+
+### Bug Fixes
+
+* show friendly model names in dropdown instead of API slugs ([a07f77d](https://github.com/southleft/story-ui/commit/a07f77d44dc988fd186d0471f95a0087aba74380))
+
 # [4.16.0](https://github.com/southleft/story-ui/compare/v4.15.0...v4.16.0) (2026-03-19)
 
 
