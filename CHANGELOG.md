@@ -1,3 +1,10 @@
+## [4.16.2](https://github.com/southleft/story-ui/compare/v4.16.1...v4.16.2) (2026-03-19)
+
+
+### Bug Fixes
+
+* resolve actual component exports instead of Vue directory names ([61054cb](https://github.com/southleft/story-ui/commit/61054cbb530431f3e2a5dcbcf6a7dfee1ecc35a3))
+
 ## [4.16.1](https://github.com/southleft/story-ui/compare/v4.16.0...v4.16.1) (2026-03-19)
 
 
