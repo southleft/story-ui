@@ -1010,12 +1010,14 @@ app.listen(PORT, () => {
   console.error(`MCP server running on port ${PORT}`);
   console.error(`Stories will be generated to: ${config.generatedStoriesPath}`);
   // Ensure voice-canvas scratchpad story file exists before client polling starts.
-  // If it's missing, the first canvas generate creates it, triggering a false-positive
-  // "externally generated story" detection which reloads the page and kills Voice Canvas.
-  try {
-    ensureVoiceCanvasStory(config.generatedStoriesPath || './src/stories/generated/');
-  } catch (err) {
-    console.error('[voice-canvas] Could not pre-create story template:', err);
+  // Only for React projects — voice-canvas.stories.tsx imports react-live which
+  // breaks non-React Storybook builds (Vue, Angular, Svelte, Web Components).
+  if (!config.componentFramework || config.componentFramework === 'react') {
+    try {
+      ensureVoiceCanvasStory(config.generatedStoriesPath || './src/stories/generated/');
+    } catch (err) {
+      console.error('[voice-canvas] Could not pre-create story template:', err);
+    }
   }
   // Initialize manifest manager (loads file, migrates from StoryTracker, reconciles)
   setTimeout(() => {
