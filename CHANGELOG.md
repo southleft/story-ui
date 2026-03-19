@@ -1,3 +1,10 @@
+## [4.16.6](https://github.com/southleft/story-ui/compare/v4.16.5...v4.16.6) (2026-03-19)
+
+
+### Bug Fixes
+
+* saved canvas stories fail with React is not defined ([04374d1](https://github.com/southleft/story-ui/commit/04374d1605843811ae23dd8a7b444472cf9a34e9))
+
 ## [4.16.5](https://github.com/southleft/story-ui/compare/v4.16.4...v4.16.5) (2026-03-19)
 
 
