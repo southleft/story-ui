@@ -89,7 +89,7 @@ const VOICE_CANVAS_TEMPLATE = `import React, { useState, useEffect } from 'react
 import { LiveProvider, LivePreview, LiveError } from 'react-live';
 import type { Meta, StoryObj } from '@storybook/react';
 
-const meta: Meta = { title: 'Generated/Voice Canvas', tags: ['!sidebar'] };
+const meta: Meta = { title: 'Generated/Voice Canvas', tags: ['voice-canvas-internal'] };
 export default meta;
 
 // Design system components set by .storybook/preview.tsx via:
