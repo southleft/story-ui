@@ -153,7 +153,12 @@ ${jsx}
  */
 export function jsxCodeToStory(jsxCode: string, title: string, importPath: string): string {
   // Remove the render(<Canvas />) call at the end
-  const cleanCode = jsxCode.replace(/\nrender\s*\(<Canvas\s*\/>\);?\s*$/, '').trim();
+  let cleanCode = jsxCode.replace(/\nrender\s*\(<Canvas\s*\/>\);?\s*$/, '').trim();
+
+  // The canvas code is generated for react-live where `React` is a global.
+  // Replace `React.useState(...)` → `useState(...)` etc. so the saved story
+  // works with named imports and doesn't need a default React import.
+  cleanCode = cleanCode.replace(/\bReact\.(useState|useEffect|useCallback|useMemo|useRef|useReducer|useContext|createElement|Fragment)\b/g, '$1');
 
   // Extract component names used in JSX (uppercase identifiers after '<')
   const tagMatches = cleanCode.match(/(?<=<)([A-Z][a-zA-Z.]*)/g) ?? [];
@@ -164,15 +169,20 @@ export function jsxCodeToStory(jsxCode: string, title: string, importPath: strin
   }
   const sortedComponents = Array.from(componentSet).sort();
 
-  // Detect React hooks used
-  const hookNames = ['useState', 'useEffect', 'useCallback', 'useMemo', 'useRef', 'useReducer', 'useContext'];
+  // Detect React hooks and utilities used
+  const hookNames = ['useState', 'useEffect', 'useCallback', 'useMemo', 'useRef', 'useReducer', 'useContext', 'createElement', 'Fragment'];
   const usedHooks = hookNames.filter(h => new RegExp(`\\b${h}\\b`).test(cleanCode));
 
+  // If the code still references `React.` for anything else, import React as a whole
+  const needsReactImport = /\bReact\./.test(cleanCode);
+
   const lines: string[] = [];
-  if (sortedComponents.length > 0) {
+  if (sortedComponents.length > 0 && importPath) {
     lines.push(`import { ${sortedComponents.join(', ')} } from '${importPath}';`);
   }
-  if (usedHooks.length > 0) {
+  if (needsReactImport) {
+    lines.push(`import React${usedHooks.length > 0 ? `, { ${usedHooks.join(', ')} }` : ''} from 'react';`);
+  } else if (usedHooks.length > 0) {
     lines.push(`import { ${usedHooks.join(', ')} } from 'react';`);
   }
   lines.push(`import type { Meta, StoryObj } from '@storybook/react';`);
