@@ -549,19 +549,16 @@ function VoiceCanvas({
   // Code is already persisted to localStorage by sendCodeToIframe,
   // so we just need to read it back and restore storyReady on mount.
 
+  // Voice Canvas always starts with a clean slate — no session restore.
+  // Each time the user switches to the Canvas tab or reloads, they see
+  // the empty "describe what you want to build" state, same as Chat.
+  // localStorage is still used for postMessage bridging within a single
+  // generation session, but we clear it on mount so stale code from a
+  // previous session never auto-loads.
   useEffect(() => {
     try {
-      const savedCode = localStorage.getItem(LS_KEY);
-      if (savedCode && savedCode.trim()) {
-        setCurrentCode(savedCode);
-        setStoryReady(true);
-      }
-      const savedPrompt = localStorage.getItem(LS_PROMPT_KEY);
-      if (savedPrompt) {
-        firstPromptRef.current = savedPrompt;
-        lastPromptRef.current = savedPrompt;
-        setLastPrompt(savedPrompt);
-      }
+      localStorage.removeItem(LS_KEY);
+      localStorage.removeItem(LS_PROMPT_KEY);
     } catch { /* localStorage unavailable */ }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

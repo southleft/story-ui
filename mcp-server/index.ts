@@ -145,6 +145,16 @@ app.post('/mcp/generate-story-stream', generateStoryFromPromptStream);
 // Voice Canvas endpoints
 app.post('/mcp/canvas-generate', canvasGenerateHandler); // generate + write voice-canvas.stories.tsx
 app.post('/mcp/canvas-save', canvasSaveHandler);         // save canvas to named .stories.tsx
+// Ensure voice-canvas story template exists (lightweight, no LLM call)
+app.post('/mcp/canvas-ensure', (_req, res) => {
+  try {
+    const storiesDir = config.generatedStoriesPath || './src/stories/generated/';
+    ensureVoiceCanvasStory(storiesDir);
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.json({ ok: false });
+  }
+});
 
 // Manifest — story ↔ chat source of truth
 // NOTE: /reconcile must be registered BEFORE /:fileName to avoid route conflict
