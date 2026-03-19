@@ -563,17 +563,38 @@ export class DynamicPackageDiscovery {
       // export * from "./ComponentName/index.js" or export * from "./ComponentName/index.mjs"
       const reExportRegex = /export\s+\*\s+from\s+["']\.\/([^/]+)\/index(?:\.m?js)?["']/g;
       let match;
+      const componentsDir = path.dirname(componentsIndexPath);
 
       while ((match = reExportRegex.exec(content)) !== null) {
         const componentDir = match[1];
-        // Component name is the directory name
+
+        // Resolve actual named exports from each subdirectory's index.d.ts
+        // This prevents directory names (e.g. "VGrid") from being treated as
+        // components when the directory actually re-exports different names
+        // (e.g. VContainer, VCol, VRow, VSpacer).
+        const subdirTypings = path.join(componentsDir, componentDir, 'index.d.ts');
+        if (fs.existsSync(subdirTypings)) {
+          try {
+            const realExports = this.extractComponentsFromTypings(
+              fs.readFileSync(subdirTypings, 'utf-8')
+            );
+            if (realExports.length > 0) {
+              for (const name of realExports) {
+                exports[name] = () => {};
+                exports[name].displayName = name;
+                exports[name].__componentPath = `${this.packageName}/${path.relative(packagePath, componentsDir)}/${componentDir}`;
+              }
+              continue; // Skip the directory-name fallback below
+            }
+          } catch { /* fall through to directory-name fallback */ }
+        }
+
+        // Fallback: use directory name when we can't resolve actual exports
         if (this.isComponentName(componentDir)) {
           exports[componentDir] = () => {};
           exports[componentDir].displayName = componentDir;
-          // GENERIC: Use relative path from package, not hardcoded design system name
-          const relativePath = path.relative(packagePath, componentsIndexPath);
-          const componentsDir = path.dirname(relativePath);
-          exports[componentDir].__componentPath = `${this.packageName}/${componentsDir}/${componentDir}`;
+          const relPath = path.relative(packagePath, componentsIndexPath);
+          exports[componentDir].__componentPath = `${this.packageName}/${path.dirname(relPath)}/${componentDir}`;
         }
       }
 
