@@ -1,3 +1,10 @@
+## [4.16.3](https://github.com/southleft/story-ui/compare/v4.16.2...v4.16.3) (2026-03-19)
+
+
+### Bug Fixes
+
+* only create voice-canvas story template for React projects ([4776f0f](https://github.com/southleft/story-ui/commit/4776f0fe3afa54b6ac33aa0a0bbadb234f92968f))
+
 ## [4.16.2](https://github.com/southleft/story-ui/compare/v4.16.1...v4.16.2) (2026-03-19)
 
 
