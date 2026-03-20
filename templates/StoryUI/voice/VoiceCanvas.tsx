@@ -93,6 +93,7 @@ function VoiceCanvas({
   const audioCheckRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
   const stopListeningRef = useRef<() => void>(() => {});
+  const startListeningRef = useRef<() => void>(() => {});
   const currentCodeRef = useRef(currentCode);
   currentCodeRef.current = currentCode;
   // Incremented on every new generation to prevent stale finally blocks from
@@ -128,6 +129,16 @@ function VoiceCanvas({
     // Stamp this generation so stale finally blocks from aborted requests
     // don't clobber the state of a newer in-flight request.
     const genId = ++generationCounterRef.current;
+
+    // Pause voice recognition while the LLM is thinking so the user can
+    // talk freely without triggering new requests or aborting this one.
+    // The mic resumes automatically when generation completes.
+    const wasListening = isListeningRef.current;
+    if (wasListening && recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch { /* already stopped */ }
+      recognitionRef.current = null;
+      // Keep isListeningRef.current = true so we know to resume later
+    }
 
     setIsGenerating(true);
     setStatusText('Thinking...');
@@ -227,6 +238,16 @@ function VoiceCanvas({
       if (generationCounterRef.current === genId) {
         setIsGenerating(false);
         abortRef.current = null;
+
+        // Resume voice recognition if it was active before generation started.
+        // This lets the user keep talking hands-free across multiple edits.
+        if (wasListening && isListeningRef.current) {
+          setTimeout(() => {
+            if (isListeningRef.current && !recognitionRef.current) {
+              startListeningRef.current();
+            }
+          }, 300);
+        }
       }
     }
   }, [apiBase, provider, model, storyReady, sendCodeToIframe, onError]);
@@ -494,6 +515,8 @@ function VoiceCanvas({
       setIsListening(false);
     }
   }, [clear, undo, redo, scheduleIntent, saveStory]);
+
+  startListeningRef.current = startListening;
 
   // ── Voice: stop ────────────────────────────────────────────────
 
