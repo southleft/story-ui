@@ -1,3 +1,10 @@
+## [4.16.10](https://github.com/southleft/story-ui/compare/v4.16.9...v4.16.10) (2026-03-20)
+
+
+### Bug Fixes
+
+* set explicit foreground color on canvas container for dark mode ([30e9b0c](https://github.com/southleft/story-ui/commit/30e9b0c7d96685b67d3ac0a2b3174df439eb6486))
+
 ## [4.16.9](https://github.com/southleft/story-ui/compare/v4.16.8...v4.16.9) (2026-03-20)
 
 
