@@ -124,6 +124,14 @@ function VoiceCanvas({
   // ── Generate / Edit ───────────────────────────────────────────
 
   const sendCanvasRequest = useCallback(async (transcript: string) => {
+    // Reject prompts that are too short to produce useful output.
+    // Fragments like "create a" or "please" result in broken code.
+    const wordCount = transcript.trim().split(/\s+/).length;
+    if (wordCount < 3) {
+      setErrorMessage('Say a bit more — describe what you want to build.');
+      return;
+    }
+
     if (abortRef.current) abortRef.current.abort();
 
     // Stamp this generation so stale finally blocks from aborted requests
@@ -371,15 +379,18 @@ function VoiceCanvas({
     if (autoSubmitRef.current) clearTimeout(autoSubmitRef.current);
     autoSubmitRef.current = setTimeout(() => {
       const prompt = transcript.trim();
-      if (prompt) {
-        // Clear the pending transcript BEFORE sending so that stopListening
-        // (if pressed moments later) doesn't fire a duplicate request.
+      // Require at least 3 words to avoid sending fragments like "create a"
+      // or "please" that produce bad LLM output. Short pauses mid-thought
+      // are common in natural speech — the longer delay (3s) gives the user
+      // time to continue before auto-submitting.
+      const wordCount = prompt.split(/\s+/).length;
+      if (prompt && wordCount >= 3) {
         pendingTranscriptRef.current = '';
         setPendingTranscript('');
         sendCanvasRequest(prompt);
       }
       autoSubmitRef.current = null;
-    }, 1200);
+    }, 3000);
   }, [sendCanvasRequest]);
 
   // ── Voice: start ───────────────────────────────────────────────
