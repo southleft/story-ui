@@ -107,10 +107,15 @@ function VoiceCanvas({
   // ── Code → iframe bridge ─────────────────────────────────────
 
   /**
-   * Push code to the story preview iframe via postMessage.
-   * No localStorage persistence — each session starts clean.
+   * Push code to the story preview iframe.
+   * Uses both localStorage (for initial load before message listener is ready)
+   * and postMessage (for instant updates once the iframe is running).
    */
   const sendCodeToIframe = useCallback((code: string) => {
+    // Write to localStorage so the iframe can read it on initial mount —
+    // postMessage alone doesn't work for the first generation because the
+    // iframe's React component hasn't attached its message listener yet.
+    try { localStorage.setItem(LS_KEY, code); } catch {}
     if (iframeRef.current?.contentWindow && iframeLoadedRef.current) {
       iframeRef.current.contentWindow.postMessage(
         { type: 'VOICE_CANVAS_UPDATE', code },
@@ -195,12 +200,16 @@ function VoiceCanvas({
         }
 
         setCurrentCode(newCode);
-        sendCodeToIframe(newCode);
 
-        // First generation — mount the iframe
+        // First generation — mount the iframe. Write to localStorage
+        // BEFORE mounting so the iframe reads the code on initial render.
+        // For subsequent generations, sendCodeToIframe uses postMessage.
         if (!storyReady) {
+          try { localStorage.setItem(LS_KEY, newCode); } catch {}
           setStoryReady(true);
           setIframeKey(k => k + 1);
+        } else {
+          sendCodeToIframe(newCode);
         }
 
         // Track the first prompt for save title (describes the component),

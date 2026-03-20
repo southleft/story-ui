@@ -127,15 +127,18 @@ render(<Canvas />);\`;
 
 export const Default: StoryObj = {
   render: () => {
-    // Always start with the placeholder — no localStorage restore.
-    // Code updates arrive exclusively via postMessage from the parent panel.
-    // This prevents stale code from a previous session causing errors.
-    const [code, setCode] = useState(PLACEHOLDER);
+    // Read from localStorage on mount for the initial code delivery.
+    // The parent panel writes code to localStorage just before mounting
+    // the iframe, since postMessage can't work until our listener is ready.
+    const [code, setCode] = useState(() => {
+      try {
+        const saved = localStorage.getItem('${LS_KEY}');
+        if (saved && saved.trim()) return saved;
+      } catch {}
+      return PLACEHOLDER;
+    });
 
     useEffect(() => {
-      // Clear any stale code left in localStorage from older versions
-      try { localStorage.removeItem('${LS_KEY}'); } catch {}
-
       const handler = (e: MessageEvent) => {
         if (e.origin !== window.location.origin) return;
         if (e.data?.type === 'VOICE_CANVAS_UPDATE' && typeof e.data.code === 'string') {
