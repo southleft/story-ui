@@ -1,3 +1,10 @@
+## [4.16.11](https://github.com/southleft/story-ui/compare/v4.16.10...v4.16.11) (2026-03-20)
+
+
+### Bug Fixes
+
+* restore localStorage bridge for first-generation iframe delivery ([1516c73](https://github.com/southleft/story-ui/commit/1516c73f63cd2989c3638cca0ac2ad908508c5a4))
+
 ## [4.16.10](https://github.com/southleft/story-ui/compare/v4.16.9...v4.16.10) (2026-03-20)
 
 
