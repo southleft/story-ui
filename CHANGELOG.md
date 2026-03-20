@@ -1,3 +1,10 @@
+## [4.16.7](https://github.com/southleft/story-ui/compare/v4.16.6...v4.16.7) (2026-03-20)
+
+
+### Bug Fixes
+
+* pause voice recognition during generation, resume after ([bd93ec6](https://github.com/southleft/story-ui/commit/bd93ec65bdf0c94e93cd5e75bbf059cf5ce042ce))
+
 ## [4.16.6](https://github.com/southleft/story-ui/compare/v4.16.5...v4.16.6) (2026-03-19)
 
 
