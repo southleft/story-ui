@@ -107,12 +107,10 @@ function VoiceCanvas({
   // ── Code → iframe bridge ─────────────────────────────────────
 
   /**
-   * Persist code and push it to the story preview iframe.
-   * Safe to call before the iframe is loaded — the code is stored in localStorage
-   * and the story reads it on mount.
+   * Push code to the story preview iframe via postMessage.
+   * No localStorage persistence — each session starts clean.
    */
   const sendCodeToIframe = useCallback((code: string) => {
-    try { localStorage.setItem(LS_KEY, code); } catch {}
     if (iframeRef.current?.contentWindow && iframeLoadedRef.current) {
       iframeRef.current.contentWindow.postMessage(
         { type: 'VOICE_CANVAS_UPDATE', code },
@@ -212,7 +210,6 @@ function VoiceCanvas({
         }
         lastPromptRef.current = transcript;
         setLastPrompt(transcript);
-        try { localStorage.setItem(LS_PROMPT_KEY, firstPromptRef.current); } catch {}
         conversationRef.current.push(
           { role: 'user', content: transcript },
           { role: 'assistant', content: '[Generated canvas component]' },
@@ -731,8 +728,9 @@ function VoiceCanvas({
           {speechSupported && (
             <button
               type="button"
-              className={`sui-canvas-mic ${isListening ? 'sui-canvas-mic--active' : ''}`}
+              className={`sui-canvas-mic ${isListening && !isGenerating ? 'sui-canvas-mic--active' : ''}`}
               onClick={toggleListening}
+              disabled={isGenerating}
               aria-label={isListening ? 'Stop voice input' : 'Start voice input'}
             >
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -740,7 +738,7 @@ function VoiceCanvas({
                 <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
                 <line x1="12" x2="12" y1="19" y2="22" />
               </svg>
-              {isListening && <span className="sui-canvas-mic-pulse" />}
+              {isListening && !isGenerating && <span className="sui-canvas-mic-pulse" />}
             </button>
           )}
 

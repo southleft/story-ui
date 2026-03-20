@@ -127,18 +127,19 @@ render(<Canvas />);\`;
 
 export const Default: StoryObj = {
   render: () => {
-    const [code, setCode] = useState(() => {
-      try { return localStorage.getItem('${LS_KEY}') || PLACEHOLDER; }
-      catch { return PLACEHOLDER; }
-    });
+    // Always start with the placeholder — no localStorage restore.
+    // Code updates arrive exclusively via postMessage from the parent panel.
+    // This prevents stale code from a previous session causing errors.
+    const [code, setCode] = useState(PLACEHOLDER);
 
     useEffect(() => {
+      // Clear any stale code left in localStorage from older versions
+      try { localStorage.removeItem('${LS_KEY}'); } catch {}
+
       const handler = (e: MessageEvent) => {
-        // Only accept messages from same origin to prevent cross-origin code injection
         if (e.origin !== window.location.origin) return;
         if (e.data?.type === 'VOICE_CANVAS_UPDATE' && typeof e.data.code === 'string') {
           setCode(e.data.code);
-          try { localStorage.setItem('${LS_KEY}', e.data.code); } catch {}
         }
       };
       window.addEventListener('message', handler);
