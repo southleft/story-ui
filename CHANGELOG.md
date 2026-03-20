@@ -1,3 +1,10 @@
+## [4.16.8](https://github.com/southleft/story-ui/compare/v4.16.7...v4.16.8) (2026-03-20)
+
+
+### Bug Fixes
+
+* increase voice auto-submit delay to 3s and require minimum 3 words ([67562cb](https://github.com/southleft/story-ui/commit/67562cb84480d6aa237761f3fe3ca04db2c3f969))
+
 ## [4.16.7](https://github.com/southleft/story-ui/compare/v4.16.6...v4.16.7) (2026-03-20)
 
 
