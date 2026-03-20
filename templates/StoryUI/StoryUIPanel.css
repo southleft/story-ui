@@ -1974,6 +1974,7 @@
   flex-direction: column;
   height: 100%;
   background: hsl(var(--background));
+  color: hsl(var(--foreground));
   position: relative;
 }
 
