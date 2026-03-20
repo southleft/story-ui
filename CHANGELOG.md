@@ -1,3 +1,10 @@
+## [4.16.9](https://github.com/southleft/story-ui/compare/v4.16.8...v4.16.9) (2026-03-20)
+
+
+### Bug Fixes
+
+* eliminate stale localStorage causing errors on canvas reload ([9f62088](https://github.com/southleft/story-ui/commit/9f620882f31704dec22dcc7ec3ca1c5c6306481e))
+
 ## [4.16.8](https://github.com/southleft/story-ui/compare/v4.16.7...v4.16.8) (2026-03-20)
 
 
