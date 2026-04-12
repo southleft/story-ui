@@ -1,19 +1,20 @@
 # Story UI
 
-*AI-powered Storybook story generator for any JavaScript framework*
+*AI-powered Storybook story generator for any JavaScript framework and design system*
 
 [![npm version](https://badge.fury.io/js/%40tpitre%2Fstory-ui.svg)](https://badge.fury.io/js/%40tpitre%2Fstory-ui)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Story UI revolutionizes component documentation by automatically generating Storybook stories through AI-powered conversations. Works with **any framework** (React, Vue, Angular, Svelte, Web Components) and **any LLM provider** (Claude, OpenAI, Gemini).
+Story UI generates working Storybook stories from natural language. Describe what you want, and the AI writes production-ready story code using your design system's actual components. Works with **any framework** and **any component library**.
 
 ## Why Story UI?
 
-- **Framework Agnostic**: Works with React, Vue, Angular, Svelte, and Web Components
-- **Multi-Provider AI**: Choose between Claude, OpenAI, or Google Gemini - always using the latest models
-- **Design System Aware**: Learns your component library and generates appropriate code
-- **Production Ready**: Deploy as a standalone web app with full MCP integration
-- **Zero Lock-in**: Use any component library - Mantine, Vuetify, Angular Material, Shoelace, or your own
+- **Design-System Agnostic**: React, Vue, Angular, Svelte, Web Components — bring your own component library
+- **Multi-Provider AI**: Claude, OpenAI, or Gemini with automatic model selection
+- **Self-Healing Generation**: Validates generated code with TypeScript AST parsing and auto-corrects errors through an LLM retry loop
+- **Voice Canvas**: Speak your component ideas and see them rendered live in Storybook
+- **Storybook MCP Integration**: Fetches component docs and story patterns from Storybook's MCP addon for higher-quality output
+- **Zero Lock-in**: Use Mantine, Vuetify, Angular Material, Shoelace, shadcn/ui, or your own components
 
 ---
 
@@ -40,24 +41,35 @@ Story UI will guide you through:
 
 ## Features
 
-### Core Capabilities
-- **AI-Powered Story Generation**: Describe what you want in natural language
-- **Intelligent Iteration**: Modify existing stories without losing your work
-- **Real-time Preview**: See generated stories instantly in Storybook
-- **TypeScript Support**: Full type-aware story generation
-- **Vision Support**: Attach screenshots for visual component requests
+### AI-Powered Story Generation
+Describe what you want in natural language. Story UI generates complete, working Storybook stories using your design system's components with proper imports, props, and TypeScript types.
+
+### Self-Healing Code Generation
+When generated code has syntax errors, invalid imports, or forbidden patterns, Story UI automatically:
+1. Validates with TypeScript AST parsing and pattern checking
+2. Sends errors back to the LLM with correction context
+3. Retries up to 3 times, tracking error history to detect stuck loops
+4. Selects the best attempt if all retries fail
+
+### Voice Canvas
+A live playground mode where you speak component ideas and see them rendered instantly in Storybook. Uses browser speech recognition with auto-submit, pauses during generation, and renders output through an iframe with `react-live`.
+
+### Intelligent Iteration
+Continue the conversation to refine generated stories. Story UI preserves context and modifies only what you request.
+
+### Vision Support
+Attach screenshots or mockups to your prompt. The AI uses them as reference when generating components.
 
 ### Story Management
-- **Edit Existing Stories**: Modify any generated story through conversation
-- **Delete Stories**: Remove stories directly from the Story UI panel
-- **Orphan Detection**: Find and clean up stories without associated chat history
-- **Full MCP Integration**: Manage stories via Claude Desktop or any MCP-compatible client
+- Edit, delete, and organize generated stories from the panel
+- Orphan detection for stories without chat history
+- File-based manifest system for tracking generated assets
 
 ### Multi-Framework Support
 
 | Framework | Design Systems | Status |
 |-----------|---------------|--------|
-| React | Mantine, Chakra UI, Material UI, Custom | Fully Supported |
+| React | Mantine, Chakra UI, Material UI, shadcn/ui, Custom | Fully Supported |
 | Vue | Vuetify, Custom | Fully Supported |
 | Angular | Angular Material, Custom | Fully Supported |
 | Svelte | Flowbite-Svelte, Custom | Fully Supported |
@@ -65,342 +77,124 @@ Story UI will guide you through:
 
 ### Multi-Provider LLM Support
 
-| Provider | Models | Best For |
-|----------|--------|----------|
-| **Claude** (Anthropic) | claude-opus-4-5-20251101, claude-sonnet-4-5-20250929, claude-haiku-4-5-20251001, claude-sonnet-4-20250514 | Complex reasoning, code quality |
-| **GPT** (OpenAI) | gpt-5.2, gpt-5.1, gpt-4o, gpt-4o-mini | Versatility, latest capabilities |
-| **Gemini** (Google) | gemini-3-pro-preview, gemini-2.5-pro, gemini-2.5-flash, gemini-2.0-flash | Advanced reasoning, fast generation |
-
-### Production Deployment
-- **Railway**: Node.js backend with file-based story persistence
-- **MCP Integration**: Connect AI clients directly to production
+| Provider | Models | Default |
+|----------|--------|---------|
+| **Claude** (Anthropic) | Claude Opus 4.6, Claude Sonnet 4.6, Claude Haiku 4.5 | `claude-sonnet-4-6` |
+| **GPT** (OpenAI) | GPT-5.4, GPT-5.4 Mini, o4 Mini | `gpt-5.4` |
+| **Gemini** (Google) | Gemini 3.1 Pro Preview, Gemini 3 Flash Preview, Gemini 2.5 Flash | `gemini-3.1-pro-preview` |
 
 ---
 
-## Installation Options
+## Installation
 
-### Option 1: Interactive Setup (Recommended)
+### Interactive Setup (Recommended)
 
 ```bash
 npx story-ui init
 ```
 
-The interactive installer will ask:
+The installer prompts for:
+1. **Framework** — React, Vue, Angular, Svelte, or Web Components
+2. **Design System** — framework-specific options (Mantine, Vuetify, Angular Material, etc.)
+3. **AI Provider** — Claude (recommended), OpenAI, or Gemini
+4. **Configuration** — paths, ports, and API keys
 
-1. **Framework Selection**
-   ```
-   ? Which JavaScript framework are you using?
-     > React
-       Vue
-       Angular
-       Svelte
-       Web Components
-   ```
-
-2. **Design System Selection** (varies by framework)
-   ```
-   # For React:
-   ? Choose a design system:
-     > Mantine - Most Popular
-       Chakra UI
-       Material UI
-       Custom
-
-   # For Vue:
-   ? Choose a design system:
-     > Vuetify - Most Popular
-       Custom
-
-   # For Angular:
-   ? Choose a design system:
-     > Angular Material - Most Popular
-       Custom
-   ```
-
-3. **AI Provider Selection**
-   ```
-   ? Which AI provider do you prefer?
-     > Claude (Anthropic) - Recommended
-       OpenAI
-       Google Gemini
-
-   ? Enter your API key:
-   ```
-
-### Option 2: Manual Configuration
+### Manual Configuration
 
 Create `story-ui.config.js` in your project root:
 
 ```javascript
-export default {
+module.exports = {
   // Framework: 'react' | 'vue' | 'angular' | 'svelte' | 'web-components'
-  framework: 'react',
+  componentFramework: 'react',
 
   // Component library import path
   importPath: '@mantine/core',
 
-  // Path to custom components
-  componentsPath: './src/components',
-
   // Generated stories location
   generatedStoriesPath: './src/stories/generated/',
 
-  // LLM provider configuration
-  llmProvider: 'claude', // 'claude' | 'openai' | 'gemini'
+  // LLM provider: 'claude' | 'openai' | 'gemini'
+  llmProvider: 'claude',
+
+  // Import style: 'barrel' (default) or 'individual'
+  // Use 'individual' for libraries without barrel exports (shadcn/ui, Radix Vue, Angular Material)
+  // Use 'barrel' for libraries with index.ts barrel exports (Mantine, Chakra, Vuetify)
+  importStyle: 'barrel',
 
   // Story configuration
   storyPrefix: 'Generated/',
-  defaultAuthor: 'Story UI AI'
+  defaultAuthor: 'Story UI AI',
+
+  // Layout rules for multi-component compositions
+  layoutRules: {
+    multiColumnWrapper: 'SimpleGrid',
+    columnComponent: 'div',
+    containerComponent: 'Container',
+  },
 };
 ```
 
-### Advanced Configuration: Import Examples (Web Components / Custom Libraries)
+### Import Examples (Web Components / Custom Libraries)
 
-For component libraries with non-standard import paths (especially Web Components with local imports), use `importExamples` to teach the AI your import patterns:
+For component libraries with non-standard import paths, use `importExamples` to teach the AI your patterns:
 
 ```javascript
-export default {
+module.exports = {
   framework: 'web-components',
   importPath: '../../../components',
 
-  // Teach the AI your library's import structure
   importExamples: [
     "import '../../../components/button/button'; // For <my-button>",
     "import '../../../components/card/card'; // For <my-card>",
-    "import '../../../components/icon/icons/check'; // For <my-icon-check>",
   ],
-
-  // ... other config
 };
 ```
-
-The AI uses these examples to understand your component library's folder structure and generate correct imports.
 
 ---
 
 ## Usage
 
-### Basic Story Generation
+### Generating Stories
 
 Start the Story UI server:
 ```bash
 npm run story-ui
 ```
 
-Then describe what you want:
+Open Storybook and navigate to the Story UI panel. Describe what you want:
+
 ```
-You: "Create a product card with image, title, price, and add to cart button"
+Create a product card with image, title, price, and add to cart button
 ```
 
-Story UI generates:
-```tsx
-export const ProductCard = {
-  render: () => (
-    <Card shadow="sm" padding="lg" radius="md" withBorder>
-      <Card.Section>
-        <Image src="https://example.com/product.jpg" height={160} alt="Product" />
-      </Card.Section>
-      <Group justify="space-between" mt="md" mb="xs">
-        <Text fw={500}>Product Name</Text>
-        <Badge color="pink">On Sale</Badge>
-      </Group>
-      <Text size="sm" c="dimmed">$29.99</Text>
-      <Button color="blue" fullWidth mt="md" radius="md">
-        Add to Cart
-      </Button>
-    </Card>
-  )
-};
-```
+Story UI generates a complete `.stories.tsx` file using your design system's components, writes it to your generated stories directory, and Storybook picks it up automatically via file watcher.
 
-### Iterating on Stories
+### Iterating
 
 Continue the conversation to refine:
 ```
-You: "Make the button green and add a quantity selector"
+Make the button green and add a quantity selector
 ```
 
-Story UI modifies only what you requested, preserving the rest.
+Story UI modifies only what you requested, preserving the rest of the story.
 
-### Using with Different Frameworks
+### Voice Canvas
 
-**Vue Example:**
-```
-You: "Create a user profile card with avatar, name, and edit button"
-```
-
-Generates Vue template:
-```vue
-<template>
-  <v-card class="mx-auto" max-width="400">
-    <v-card-item>
-      <v-avatar size="80">
-        <v-img src="https://example.com/avatar.jpg" alt="User" />
-      </v-avatar>
-      <v-card-title>John Doe</v-card-title>
-      <v-card-subtitle>Software Engineer</v-card-subtitle>
-    </v-card-item>
-    <v-card-actions>
-      <v-btn color="primary" variant="outlined">Edit Profile</v-btn>
-    </v-card-actions>
-  </v-card>
-</template>
-```
-
-**Angular Example:**
-```
-You: "Create a data table with sorting and pagination"
-```
-
-Generates Angular component:
-```typescript
-@Component({
-  selector: 'app-data-table',
-  template: `
-    <mat-table [dataSource]="dataSource" matSort>
-      <ng-container matColumnDef="name">
-        <mat-header-cell *matHeaderCellDef mat-sort-header>Name</mat-header-cell>
-        <mat-cell *matCellDef="let element">{{element.name}}</mat-cell>
-      </ng-container>
-      <!-- Additional columns -->
-    </mat-table>
-    <mat-paginator [pageSizeOptions]="[5, 10, 25]" showFirstLastButtons />
-  `
-})
-export class DataTableComponent { }
-```
-
----
-
-## MCP Server Integration
-
-Story UI includes a Model Context Protocol (MCP) server, allowing direct integration with AI clients like Claude Desktop and Claude Code.
-
-### Claude Desktop Integration (Recommended)
-
-The easiest way to connect is via Claude Desktop's built-in connector UI:
-
-1. Open **Claude Desktop**
-2. Go to **Settings** → **Connectors**
-3. Click **"Add custom connector"**
-4. Enter:
-   - **Name**: `Story UI React` (or any descriptive name)
-   - **URL**: Your deployed Railway URL + `/mcp-remote/mcp`
-     - Example: `https://your-app-name.up.railway.app/mcp-remote/mcp`
-5. Click **Add**
-6. **Restart Claude Desktop**
-
-> **Note**: The URL will be your own Railway deployment URL. See [Production Deployment](#production-deployment) to set up your instance.
-
-**Multiple Projects**: If you have multiple Storybook projects, add a separate connector for each:
-- `Story UI React` → `https://my-react-app.up.railway.app/mcp-remote/mcp`
-- `Story UI Vue` → `https://my-vue-app.up.railway.app/mcp-remote/mcp`
-
-Once connected, you'll have access to all Story UI tools directly in your Claude conversations:
-- `generate-story` - Generate Storybook stories from natural language
-- `list-components` - Discover available components
-- `list-stories` - View existing stories
-- `get-story` / `update-story` / `delete-story` - Manage stories
-- `get-component-props` - Get component property information
-- `test-connection` - Verify MCP connection
-
-### Claude Code Integration
-
-Connect via Claude Code's built-in MCP support:
-
-```bash
-# Add your production Railway deployment
-claude mcp add --transport http story-ui-react https://your-react-app.up.railway.app/mcp-remote/mcp
-
-# Add another project (if needed)
-claude mcp add --transport http story-ui-vue https://your-vue-app.up.railway.app/mcp-remote/mcp
-
-# For local development (default port is 4001)
-claude mcp add --transport http story-ui-local http://localhost:4001/mcp-remote/mcp
-```
-
-### Manual Configuration (Advanced)
-
-For running multiple local Story UI instances with different ports, configure your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
-
-```json
-{
-  "mcpServers": {
-    "story-ui-react": {
-      "command": "npx",
-      "args": ["@tpitre/story-ui", "start", "--port", "4001"]
-    },
-    "story-ui-vue": {
-      "command": "npx",
-      "args": ["@tpitre/story-ui", "start", "--port", "4002"]
-    },
-    "story-ui-angular": {
-      "command": "npx",
-      "args": ["@tpitre/story-ui", "start", "--port", "4003"]
-    }
-  }
-}
-```
-
-> **Note**: When using Claude Desktop, API keys are managed through your Anthropic account - no need to configure them in the MCP server.
-
-### Starting the Local MCP Server
-
-```bash
-# Start with default port (4001)
-npx story-ui start
-
-# Or specify a custom port
-npx story-ui start --port 4002
-```
-
-This starts the Story UI HTTP server with MCP endpoint at `http://localhost:<port>/mcp-remote/mcp`.
-
-### Available MCP Commands
-
-Once connected, you can use these commands in Claude Desktop:
-- "Use Story UI to create a hero section with a CTA button"
-- "List all available components in Story UI"
-- "Generate a dashboard layout with sidebar navigation"
-- "Show me the stories I've generated"
+Switch to Voice Canvas mode in the panel header. Speak your component ideas and see them rendered live. The canvas uses `react-live` for instant rendering without page reloads.
 
 ---
 
 ## Storybook MCP Integration
 
-Story UI can automatically connect to [Storybook MCP](https://github.com/storybookjs/addon-mcp) (`@storybook/addon-mcp`) to fetch component documentation, UI building guidelines, and existing story patterns. This enhances story generation quality by ensuring generated stories match your existing codebase patterns.
+Story UI can connect to [Storybook MCP](https://github.com/storybookjs/addon-mcp) (`@storybook/addon-mcp`) to fetch component documentation, UI building guidelines, and existing story patterns. This enhances generation quality by ensuring output matches your codebase.
 
-### How It Works
+### Setup
 
-When Story UI detects a running Storybook instance with the MCP addon, it automatically fetches:
-
-- **Component Documentation**: Props, descriptions, and usage examples for all components
-- **UI Building Instructions**: Storybook-specific guidelines for writing stories
-- **Story Patterns**: Existing story examples to match code style and conventions
-
-### Configuration
-
-Add the Storybook MCP URL to your `story-ui.config.js`:
+1. Install `@storybook/addon-mcp` and enable `experimentalComponentsManifest` in `.storybook/main.js`:
 
 ```javascript
 export default {
-  // ... other config options
-
-  // Storybook MCP integration
-  storybookMcpUrl: 'http://localhost:6006',  // Your Storybook URL
-  storybookMcpTimeout: 5000,                  // Timeout in ms (default: 5000)
-};
-```
-
-### Requirements
-
-1. **Storybook 8.4+** with `@storybook/addon-mcp` installed
-2. **`experimentalComponentsManifest: true`** enabled in `.storybook/main.js`:
-
-```javascript
-// .storybook/main.js
-export default {
-  // ... other config
   features: {
     experimentalComponentsManifest: true,
   },
@@ -411,248 +205,208 @@ export default {
 };
 ```
 
-### Automatic Context Fetching
+2. Add the Storybook URL to `story-ui.config.js`:
 
-When both Story UI and Storybook are running, context is fetched automatically during story generation:
-
-```
-🔗 Fetching context from Storybook MCP: http://localhost:6006
-✅ Storybook MCP context fetched in 2226ms
-   - Component docs: 43 components
-   - UI building instructions: available
-   - Story patterns: 10 examples
+```javascript
+module.exports = {
+  // ... other config
+  storybookMcpUrl: 'http://localhost:6006',
+  storybookMcpTimeout: 5000,
+};
 ```
 
-This context is injected into the AI prompt, resulting in:
-- More accurate component prop usage
-- Consistent code style with existing stories
-- Proper import statements matching your project
+When both Story UI and Storybook are running, context is fetched automatically during generation, resulting in more accurate component usage and consistent code style.
+
+---
+
+## MCP Server Integration
+
+Story UI includes a Model Context Protocol (MCP) server for direct integration with AI clients like Claude Desktop and Claude Code.
+
+### Claude Desktop
+
+1. Open **Claude Desktop** > **Settings** > **Connectors**
+2. Click **Add custom connector**
+3. Enter your deployment URL + `/mcp-remote/mcp`
+4. Restart Claude Desktop
+
+### Claude Code
+
+```bash
+# Production deployment
+claude mcp add --transport http story-ui https://your-app.up.railway.app/mcp-remote/mcp
+
+# Local development
+claude mcp add --transport http story-ui-local http://localhost:4001/mcp-remote/mcp
+```
+
+### Available MCP Tools
+
+Once connected, these tools are available in Claude conversations:
+- `generate-story` — Generate Storybook stories from natural language
+- `list-components` — Discover available components
+- `list-stories` — View existing generated stories
+- `get-story` / `update-story` / `delete-story` — Manage stories
+- `get-component-props` — Get component property information
+- `test-connection` — Verify MCP connection
+
+### Local STDIO Server
+
+For Claude Desktop local integration without a deployed server:
+
+```json
+{
+  "mcpServers": {
+    "story-ui": {
+      "command": "npx",
+      "args": ["@tpitre/story-ui", "mcp"]
+    }
+  }
+}
+```
+
+This requires the HTTP server running on port 4001 (`npm run story-ui`).
 
 ---
 
 ## Production Deployment
 
-Story UI can be deployed as a standalone web application accessible from anywhere. We recommend Railway for its ease of use, but any Node.js hosting platform will work.
+Story UI can be deployed as a standalone web application. Railway is recommended for its simplicity.
 
-### Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Your Deployment (e.g., Railway)           │
-│  ┌─────────────────────────────────────────────────────────┐│
-│  │              Express MCP Server (Node.js)                ││
-│  │  - Serves Storybook with Story UI addon                  ││
-│  │  - API routes for story generation                       ││
-│  │  - Multi-provider LLM support (Claude, OpenAI, Gemini)   ││
-│  │  - File-based story persistence                          ││
-│  └─────────────────────────────────────────────────────────┘│
-└──────────────────────────────────────────────────────────────┘
-```
-
-### Deploy to Railway (Recommended)
-
-Railway provides a straightforward deployment experience with automatic HTTPS and file-based story persistence.
-
-**Quick Start:**
+### Deploy to Railway
 
 ```bash
-# Install Railway CLI
 npm install -g @railway/cli
 railway login
-
-# Initialize and deploy from your Storybook project
 railway init
 railway up
 ```
 
-**Environment Variables (set in Railway Dashboard):**
-- `ANTHROPIC_API_KEY` - Required for Claude models
-- `OPENAI_API_KEY` - Optional, for OpenAI models
-- `GEMINI_API_KEY` - Optional, for Gemini models
+**Environment Variables:**
+- `ANTHROPIC_API_KEY` — Required for Claude models
+- `OPENAI_API_KEY` — Optional, for OpenAI models
+- `GEMINI_API_KEY` — Optional, for Gemini models
+- `STORYBOOK_PROXY_ENABLED` — Enable Storybook proxy mode for live demos
+- `STORYBOOK_PROXY_PORT` — Internal Storybook port (default: 6006)
 
-**After Deployment:**
-
-Your Railway app will have a URL like `https://your-app-name.up.railway.app`. Use this URL to connect MCP clients:
-
-```bash
-# In Claude Code
-claude mcp add --transport http story-ui https://your-app-name.up.railway.app/mcp-remote/mcp
-```
-
-Or add it to Claude Desktop via **Settings** → **Connectors** → **Add custom connector**.
-
-**Important for Storybook Live Mode Deployments:**
-
-If deploying Storybook with Story UI integrated (where users can generate stories in the deployed app), ensure the StoryUI panel files are committed to git:
-
-```bash
-# Check if StoryUI is incorrectly gitignored
-grep "StoryUI" .gitignore
-
-# If found, remove from .gitignore and commit the panel
-git add src/stories/StoryUI/
-git commit -m "Add StoryUI panel for production"
-```
-
-> **Note**: Story UI versions prior to 4.10.0 incorrectly added `src/stories/StoryUI/` to `.gitignore`. See [DEPLOYMENT.md](DEPLOYMENT.md#storybook-live-mode-deployment) for full instructions.
-
-See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions and troubleshooting.
+See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed instructions and troubleshooting.
 
 ---
 
 ## Design System Documentation
 
-Story UI can learn your design system conventions to generate better stories.
+Story UI reads your design system guidelines before every generation to produce better output.
 
-### Directory-Based Documentation (Recommended)
+### Directory-Based (Recommended)
 
-Create a `story-ui-docs/` directory:
+Create a `story-ui-docs/` directory with guidelines, tokens, and component documentation:
 
 ```
 story-ui-docs/
-├── README.md                    # Overview
 ├── guidelines/
-│   ├── accessibility.md         # A11y guidelines
-│   ├── responsive-design.md     # Responsive rules
-│   └── brand-guidelines.md      # Brand usage
+│   ├── accessibility.md
+│   └── responsive-design.md
 ├── tokens/
-│   ├── colors.json             # Color tokens
-│   ├── spacing.md              # Spacing system
-│   └── typography.json         # Typography
-├── components/
-│   ├── button.md               # Button documentation
-│   └── forms.md                # Form patterns
-└── patterns/
-    ├── layouts.md              # Layout patterns
-    └── data-tables.md          # Table patterns
+│   ├── colors.json
+│   └── spacing.md
+└── components/
+    ├── button.md
+    └── forms.md
 ```
 
-### Single-File Documentation
+### Single-File
 
-For simpler setups, use `story-ui-considerations.md`:
-
-```markdown
-# Design System Considerations
-
-## Color Usage
-- Primary actions: blue.6
-- Destructive actions: red.6
-- Success states: green.6
-
-## Component Preferences
-- Use Button with variant="filled" for primary actions
-- Use Card with shadow="sm" for content containers
-```
-
-### Component-Specific Behaviors (Critical for Web Components)
-
-For libraries where components have specific requirements (like attributes needed for visibility), document these behaviors:
-
-```markdown
-# Component-Specific Behaviors
-
-## Alert Component (`<my-alert>`)
-**IMPORTANT**: The alert requires `is-active` attribute to be visible.
-
-<!-- WRONG - will not render -->
-<my-alert variant="success">Message</my-alert>
-
-<!-- CORRECT -->
-<my-alert variant="success" is-active>Message</my-alert>
-
-## Import Patterns
-Components are in individual folders:
-- import '../../../components/alert/alert';
-- import '../../../components/icon/icons/check';
-```
-
-The AI reads this file before every story generation, ensuring component-specific rules are followed.
+For simpler setups, create `story-ui-considerations.md` in your project root with design system rules, color usage, and component preferences.
 
 ---
 
 ## CLI Reference
 
 ```bash
-# Initialize Story UI in your project
-npx story-ui init
-
-# Start the MCP server (default port: 4001)
-npx story-ui start
-npx story-ui start --port 4002  # Custom port
-
-# Run MCP STDIO server (for Claude Desktop local integration)
-npx story-ui mcp
-
-# Check installation status and version
-npx story-ui status
-
-# Update Story UI files to latest version
-npx story-ui update
+npx story-ui init          # Initialize Story UI in your project
+npx story-ui start         # Start the MCP server (default port: 4001)
+npx story-ui mcp           # Start STDIO MCP server for Claude Desktop
+npx story-ui status        # Check installation status and version
+npx story-ui update        # Update Story UI files to latest version
 ```
 
-### Resetting / Uninstalling Story UI
+---
 
-To completely remove Story UI from your project and start fresh:
+## Environment Variables
 
 ```bash
-# Remove Story UI configuration and panel files
-rm -f story-ui.config.js
-rm -f story-ui-considerations.md
-rm -rf story-ui-docs/
-rm -rf src/stories/StoryUI/
-rm -rf src/stories/generated/
-
-# Remove package.json script entries (manual)
-# Delete "story-ui" and "storybook-with-ui" from scripts
-
-# Optionally remove the package
-npm uninstall @tpitre/story-ui
-
-# Optionally clean .env (remove VITE_STORY_UI_PORT, API keys)
+# .env
+LLM_PROVIDER=claude
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...         # optional
+GEMINI_API_KEY=...            # optional
+VITE_STORY_UI_PORT=4001
 ```
-
-After removal, run `npx story-ui init` to start fresh with a clean installation.
 
 ---
 
 ## API Reference
 
-### REST Endpoints
+### Story Generation
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/story-ui/generate` | Generate story (specify provider in body) |
-| `POST` | `/story-ui/generate-stream` | Generate story with streaming |
-| `GET` | `/story-ui/providers` | List available LLM providers and models |
-| `GET` | `/story-ui/components` | List discovered components |
-| `GET` | `/story-ui/considerations` | Get design system context |
+| `POST` | `/mcp/generate-story` | Generate story from prompt |
+| `POST` | `/mcp/generate-story-stream` | Streaming story generation |
+| `POST` | `/mcp/canvas-generate` | Generate + write voice canvas story |
+| `POST` | `/mcp/canvas-save` | Save canvas to named story file |
+
+### Component Discovery
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/mcp/components` | List discovered components |
+| `GET` | `/mcp/props` | Get component props |
+| `GET` | `/mcp/frameworks` | List supported frameworks |
+| `GET` | `/mcp/frameworks/detect` | Detect current project framework |
+
+### Story Management
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
 | `GET` | `/mcp/stories` | List generated stories |
+| `GET` | `/mcp/stories/:storyId` | Get a specific story |
+| `GET` | `/mcp/stories/:storyId/content` | Get story file content |
 | `DELETE` | `/mcp/stories/:storyId` | Delete a story |
+
+### Provider Management
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/mcp/providers` | List available LLM providers |
+| `GET` | `/mcp/providers/models` | List models per provider |
+| `POST` | `/mcp/providers/configure` | Configure a provider |
+| `POST` | `/mcp/providers/validate` | Validate an API key |
+| `POST` | `/mcp/providers/model` | Set active model |
+
+### Manifest
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/story-ui/manifest` | Get story manifest |
+| `GET` | `/story-ui/manifest/poll` | Poll for manifest changes |
+| `POST` | `/story-ui/manifest/reconcile` | Reconcile manifest with filesystem |
+| `DELETE` | `/story-ui/manifest/:fileName` | Remove entry from manifest |
+
+All endpoints are also available under the `/story-ui/` prefix.
 
 ### Request Format
 
 ```typescript
 {
   prompt: string;           // User's request
-  provider?: string;        // LLM provider: 'claude' | 'openai' | 'gemini'
-  model?: string;           // Specific model to use
+  provider?: string;        // 'claude' | 'openai' | 'gemini'
+  model?: string;           // Specific model ID
   previousCode?: string;    // For iterations
   history?: Message[];      // Conversation history
   imageData?: string;       // Base64 image for vision
 }
 ```
-
----
-
-## Upgrading from v2
-
-Story UI v4 is backwards compatible with previous configurations. However, to take advantage of new features:
-
-1. **Multi-Provider Support**: Add `llmProvider` to your config
-2. **Framework Detection**: Add `framework` to your config for non-React projects
-3. **Production Deployment**: Use `npx story-ui deploy` for one-command deployment
-
-No breaking changes - existing stories and configurations will continue to work.
 
 ---
 
@@ -667,18 +421,17 @@ git clone https://github.com/southleft/story-ui.git
 cd story-ui
 npm install
 npm run build
-npm link
 
-# Test in a project
-cd your-project
-npm link @tpitre/story-ui
+# Test in a consumer project (important: run from the consumer directory)
+cd /path/to/your-storybook-project
+PORT=4001 node /path/to/story-ui/dist/mcp-server/index.js
 ```
 
 ---
 
 ## License
 
-MIT © [Story UI Contributors](LICENSE)
+MIT - [Story UI Contributors](LICENSE)
 
 ---
 
@@ -686,10 +439,6 @@ MIT © [Story UI Contributors](LICENSE)
 
 - [GitHub Repository](https://github.com/southleft/story-ui)
 - [NPM Package](https://www.npmjs.com/package/@tpitre/story-ui)
-- [Issues & Support](https://github.com/southleft/story-ui/issues)
-- [MCP Integration Guide](docs/MCP_INTEGRATION.md)
 - [Deployment Guide](DEPLOYMENT.md)
-
----
-
-*Story UI - Making component documentation delightful, one conversation at a time.*
+- [MCP Integration Guide](docs/MCP_INTEGRATION.md)
+- [Issues & Support](https://github.com/southleft/story-ui/issues)
