@@ -1,3 +1,10 @@
+## [4.16.12](https://github.com/southleft/story-ui/compare/v4.16.11...v4.16.12) (2026-05-07)
+
+
+### Bug Fixes
+
+* restore considerations endpoint and ensure react-live in consumers ([c2d1e48](https://github.com/southleft/story-ui/commit/c2d1e483767586da530b4c74857c9ffd07663f71))
+
 ## [4.16.11](https://github.com/southleft/story-ui/compare/v4.16.10...v4.16.11) (2026-03-20)
 
 
