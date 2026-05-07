@@ -1437,6 +1437,14 @@ VITE_STORY_UI_PORT=${answers.mcpPort || '4001'}
       devDependencies['concurrently'] = '^8.2.0';
       needsInstall = true;
     }
+
+    // Check for react-live (imported directly by voice canvas templates;
+    // cannot be resolved transitively when @tpitre/story-ui is symlinked)
+    if (!dependencies['react-live'] && !devDependencies['react-live']) {
+      console.log(chalk.blue('📦 Adding react-live dependency (required by voice canvas)...'));
+      devDependencies['react-live'] = '^4.1.8';
+      needsInstall = true;
+    }
     
     packageJson.dependencies = dependencies;
     packageJson.devDependencies = devDependencies;

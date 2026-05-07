@@ -1,11 +1,18 @@
 import fs from 'fs';
 import path from 'path';
+import { execSync } from 'child_process';
 import chalk from 'chalk';
 import { fileURLToPath } from 'url';
 import inquirer from 'inquirer';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Runtime dependencies that consumer projects must have installed for
+// managed template files to resolve. The voice canvas templates import
+// `react-live` directly, so it cannot be resolved transitively through
+// a symlinked @tpitre/story-ui install.
+const REQUIRED_CONSUMER_DEPS = ['react-live'];
 
 /**
  * Story UI Update Command
@@ -359,6 +366,69 @@ function updateConfigVersion(configPath: string, version: string): boolean {
 }
 
 /**
+ * Ensure the consumer project has the runtime deps required by managed
+ * template files (e.g. react-live for voice canvas). Installs any missing
+ * packages using the detected package manager.
+ */
+function ensureConsumerDependencies(options: UpdateOptions): { installed: string[]; errors: string[] } {
+  const cwd = process.cwd();
+  const packageJsonPath = path.join(cwd, 'package.json');
+  const result = { installed: [] as string[], errors: [] as string[] };
+
+  if (!fs.existsSync(packageJsonPath)) {
+    return result;
+  }
+
+  let packageJson: any;
+  try {
+    packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+  } catch (error: any) {
+    result.errors.push(`Could not read package.json: ${error.message}`);
+    return result;
+  }
+
+  const allDeps = { ...packageJson.dependencies, ...packageJson.devDependencies };
+  const missing = REQUIRED_CONSUMER_DEPS.filter((pkg) => !allDeps[pkg]);
+
+  if (missing.length === 0) {
+    return result;
+  }
+
+  if (options.dryRun) {
+    console.log(chalk.cyan(`  📋 Would install missing deps: ${missing.join(', ')}`));
+    return result;
+  }
+
+  // Detect package manager
+  const yarnLock = fs.existsSync(path.join(cwd, 'yarn.lock'));
+  const pnpmLock = fs.existsSync(path.join(cwd, 'pnpm-lock.yaml'));
+  let installCommand = `npm install --save-dev ${missing.join(' ')}`;
+  if (yarnLock) {
+    installCommand = `yarn add --dev ${missing.join(' ')}`;
+  } else if (pnpmLock) {
+    installCommand = `pnpm add -D ${missing.join(' ')}`;
+  }
+
+  console.log(chalk.bold('\n📦 Installing required runtime dependencies:'));
+  for (const pkg of missing) {
+    console.log(chalk.cyan(`   • ${pkg}`));
+  }
+  console.log(chalk.gray(`   Running: ${installCommand}`));
+
+  try {
+    execSync(installCommand, { stdio: 'inherit', cwd });
+    result.installed.push(...missing);
+    console.log(chalk.green(`   ✅ Installed: ${missing.join(', ')}`));
+  } catch (error: any) {
+    const message = `Failed to install ${missing.join(', ')}. Run "${installCommand}" manually.`;
+    result.errors.push(message);
+    console.log(chalk.yellow(`   ⚠️  ${message}`));
+  }
+
+  return result;
+}
+
+/**
  * Main update command
  */
 export async function updateCommand(options: UpdateOptions = {}): Promise<UpdateResult> {
@@ -461,7 +531,14 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
     }
   }
 
-  // Step 5: Update config version tracking
+  // Step 5: Ensure required consumer dependencies are installed
+  // (e.g. react-live, which voice canvas templates import directly)
+  const depsResult = ensureConsumerDependencies(options);
+  if (depsResult.errors.length > 0) {
+    result.errors.push(...depsResult.errors);
+  }
+
+  // Step 6: Update config version tracking
   if (!options.dryRun && installation.configPath) {
     if (updateConfigVersion(installation.configPath, result.newVersion)) {
       console.log(chalk.gray(`\n   Updated version tracking in ${path.basename(installation.configPath)}`));

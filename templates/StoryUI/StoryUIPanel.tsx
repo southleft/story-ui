@@ -361,7 +361,7 @@ const MIGRATION_FLAG = 'story-ui-manifest-migrated-v1';
 const MIGRATION_FLAG_V2 = 'story-ui-manifest-migrated-v2';
 // v3: seeds synthetic conversations for any manifest entry with metadata.prompt but no conversation
 const MIGRATION_FLAG_V3 = 'story-ui-manifest-migrated-v3';
-const CONSIDERATIONS_API = () => `${getApiBase()}/mcp/considerations`;
+const CONSIDERATIONS_API = () => `${getApiBase()}/story-ui/considerations`;
 
 function isEdgeMode(): boolean {
   if (typeof window !== 'undefined') {
