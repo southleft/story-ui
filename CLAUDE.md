@@ -447,19 +447,19 @@ npm run storybook
 ## LLM Provider Models
 
 ### Claude (Anthropic)
-- `claude-opus-4-6` - Most capable (Opus 4.6)
-- `claude-sonnet-4-6` - Recommended balance (default)
-- `claude-haiku-4-5-20251001` - Fast, economical
+- `claude-opus-4-8` - Most capable (Opus 4.8)
+- `claude-sonnet-5` - Recommended balance (default)
+- `claude-haiku-4-5` - Fast, economical
 
 ### OpenAI
-- `gpt-5.4` - Frontier flagship, 1M context (default)
+- `gpt-5.5` - Frontier flagship, 1M context (default)
 - `gpt-5.4-mini` - Fast, economical 1M context
-- `o4-mini` - Reasoning model (100k output)
+- `gpt-5.4-nano` - Fastest, high-volume tasks
 
 ### Gemini
-- `gemini-3.1-pro-preview` - Most capable, 1M context (default)
-- `gemini-3-flash-preview` - Fast frontier
-- `gemini-2.5-flash` - Stable, fast, efficient
+- `gemini-3.1-pro` - Most capable, 1M context (default)
+- `gemini-3.5-flash` - Fast frontier (GA)
+- `gemini-3.1-flash-lite` - Most cost-efficient
 
 ---
 

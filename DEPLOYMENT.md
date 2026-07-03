@@ -176,7 +176,7 @@ Railway Volumes provide persistent storage that survives deployments. This requi
 
 | Variable | Description |
 |----------|-------------|
-| `DEFAULT_MODEL` | Default model to use (e.g., `claude-sonnet-4-5-20250929`) |
+| `DEFAULT_MODEL` | Default model to use (e.g., `claude-sonnet-5`) |
 
 ### Optional
 

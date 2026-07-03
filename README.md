@@ -79,9 +79,9 @@ Attach screenshots or mockups to your prompt. The AI uses them as reference when
 
 | Provider | Models | Default |
 |----------|--------|---------|
-| **Claude** (Anthropic) | Claude Opus 4.6, Claude Sonnet 4.6, Claude Haiku 4.5 | `claude-sonnet-4-6` |
-| **GPT** (OpenAI) | GPT-5.4, GPT-5.4 Mini, o4 Mini | `gpt-5.4` |
-| **Gemini** (Google) | Gemini 3.1 Pro Preview, Gemini 3 Flash Preview, Gemini 2.5 Flash | `gemini-3.1-pro-preview` |
+| **Claude** (Anthropic) | Claude Opus 4.8, Claude Sonnet 5, Claude Haiku 4.5 | `claude-sonnet-5` |
+| **GPT** (OpenAI) | GPT-5.5, GPT-5.4 Mini, GPT-5.4 Nano | `gpt-5.5` |
+| **Gemini** (Google) | Gemini 3.1 Pro, Gemini 3.5 Flash, Gemini 3.1 Flash-Lite | `gemini-3.1-pro` |
 
 ---
 
