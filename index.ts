@@ -22,7 +22,5 @@ export {
 } from './story-generator/componentDiscovery.js';
 
 export {
-  generatePrompt,
-  buildClaudePrompt,
   buildFrameworkAwarePrompt
 } from './story-generator/promptGenerator.js';

@@ -23,7 +23,7 @@ import { promisify } from 'util';
 const execAsync = promisify(exec);
 import { loadUserConfig } from '../../story-generator/configLoader.js';
 import { EnhancedComponentDiscovery } from '../../story-generator/enhancedComponentDiscovery.js';
-import { buildClaudePrompt } from '../../story-generator/promptGenerator.js';
+import { buildFrameworkAwarePrompt } from '../../story-generator/promptGenerator.js';
 import { chatCompletionDetailed, chatCompletionStream } from '../../story-generator/llm-providers/story-llm-service.js';
 import { logger } from '../../story-generator/logger.js';
 
@@ -416,8 +416,10 @@ export async function canvasGenerateHandler(req: Request, res: Response) {
       _componentCache = { components, timestamp: now };
     }
 
-    // Build the system prompt using the standard prompt pipeline
-    const baseSystemPrompt = await buildClaudePrompt(prompt, config, components);
+    // Build the system prompt through the SAME adapter-driven pipeline as
+    // standard generation (component reference, docs, considerations, custom
+    // local components) — the canvas suffix then overrides the output format.
+    const baseSystemPrompt = await buildFrameworkAwarePrompt(prompt, config, components, { framework: 'react' });
     const systemPrompt = baseSystemPrompt + '\n' + CANVAS_MODE_SUFFIX;
 
     // Build the user message — include current canvas code for edit requests
