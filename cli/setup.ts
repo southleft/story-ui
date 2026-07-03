@@ -234,26 +234,29 @@ interface SetupAnswers {
   mcpPort?: string;
 }
 
-// LLM Provider configurations - synced with production (cloudflare-edge/src/worker.ts)
+// LLM Provider configurations — model lists come from the provider registry
+// (story-generator/llm-providers) so the CLI can never drift from the server.
+import { CLAUDE_MODELS, OPENAI_MODELS, GEMINI_MODELS } from '../story-generator/llm-providers/index.js';
+
 const LLM_PROVIDERS = {
   claude: {
     name: 'Claude (Anthropic)',
     envKey: 'ANTHROPIC_API_KEY',
-    models: ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
+    models: CLAUDE_MODELS.map(m => m.id),
     docsUrl: 'https://console.anthropic.com/',
     description: 'Recommended - Best for complex reasoning and code quality'
   },
   openai: {
     name: 'OpenAI (GPT)',
     envKey: 'OPENAI_API_KEY',
-    models: ['gpt-5.4', 'gpt-5.4-mini', 'o4-mini'],
+    models: OPENAI_MODELS.map(m => m.id),
     docsUrl: 'https://platform.openai.com/api-keys',
     description: 'Versatile and fast'
   },
   gemini: {
     name: 'Google Gemini',
     envKey: 'GEMINI_API_KEY',
-    models: ['gemini-3.1-pro-preview', 'gemini-3-flash-preview', 'gemini-2.5-flash'],
+    models: GEMINI_MODELS.map(m => m.id),
     docsUrl: 'https://aistudio.google.com/app/apikey',
     description: 'Cost-effective with good performance'
   }

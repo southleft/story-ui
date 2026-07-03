@@ -458,11 +458,21 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
   console.log(chalk.gray(`   Current version: ${result.currentVersion}`));
   console.log(chalk.gray(`   New version: ${result.newVersion}`));
 
+  // Resolve managed-file targets against the DETECTED panel directory, so
+  // installations at stories/StoryUI (no src/) update in place instead of
+  // getting a duplicate panel written to src/stories/StoryUI.
+  const panelDirRel = installation.storyUIDir
+    ? path.relative(process.cwd(), installation.storyUIDir).split(path.sep).join('/')
+    : 'src/stories/StoryUI';
+  const resolveTarget = (target: string): string =>
+    target.replace(/^src\/stories\/StoryUI/, panelDirRel);
+
   // Step 2: Show what will be updated
   console.log(chalk.bold('\n📦 Managed files to update:'));
 
-  const filesToUpdate: typeof MANAGED_FILES = [];
-  for (const file of MANAGED_FILES) {
+  const filesToUpdate: Array<{ source: string; target: string; description: string }> = [];
+  for (const managed of MANAGED_FILES) {
+    const file = { ...managed, target: resolveTarget(managed.target) };
     try {
       const sourcePath = getSourcePath(file.source);
       const targetPath = path.join(process.cwd(), file.target);
