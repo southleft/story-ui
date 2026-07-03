@@ -2762,18 +2762,22 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                       </button>
                     </div>
                   )}
-                  {msg.role === 'ai' && !msg.isError && (msg.storyEntryId || (msg.suggestions && msg.suggestions.length > 0 && isLastMessage)) && !state.loading && (
-                    <div className="sui-message-suggestions" aria-label="Story actions and suggested follow-ups">
-                      {msg.storyEntryId && (
-                        <button
-                          type="button"
-                          className="sui-chip sui-chip-open-story"
-                          onClick={() => openStoryInStorybook(msg.storyEntryId!)}
-                        >
-                          Open in Storybook {Icons.openExternal}
-                        </button>
-                      )}
-                      {isLastMessage && msg.suggestions?.map((suggestion, si) => (
+                  {/* Primary action on its own row; suggestions grouped below —
+                      mixing them in one wrapped row produced ragged layouts. */}
+                  {msg.role === 'ai' && !msg.isError && msg.storyEntryId && !state.loading && (
+                    <div className="sui-message-actions" aria-label="Story actions">
+                      <button
+                        type="button"
+                        className="sui-chip sui-chip-open-story"
+                        onClick={() => openStoryInStorybook(msg.storyEntryId!)}
+                      >
+                        Open in Storybook {Icons.openExternal}
+                      </button>
+                    </div>
+                  )}
+                  {msg.role === 'ai' && !msg.isError && isLastMessage && !state.loading && (msg.suggestions?.length ?? 0) > 0 && (
+                    <div className="sui-message-suggestions" aria-label="Suggested follow-ups">
+                      {msg.suggestions!.map((suggestion, si) => (
                         <button
                           key={si}
                           type="button"

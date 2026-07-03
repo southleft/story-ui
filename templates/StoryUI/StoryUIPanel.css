@@ -566,27 +566,29 @@
   display: inline-block;
 }
 
+/* Ghost model pickers, ChatGPT-style: text + chevron, surface on hover only.
+   Boxed 96px-wide bold buttons dominated the header next to the compact
+   mode toggle — all header controls share one quiet 28px scale now. */
 .sui-select-trigger {
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-2);
+  gap: 6px;
   height: 28px;
   padding: 0 var(--space-2);
   border-radius: var(--radius-md);
-  border: 1px solid hsl(var(--input));
-  background: hsl(var(--background));
+  border: 1px solid transparent;
+  background: transparent;
   font-size: 12px;
-  font-weight: 700;
-  color: hsl(var(--foreground));
+  font-weight: 600;
+  color: hsl(var(--muted-foreground));
   cursor: pointer;
   transition: all var(--transition-fast);
-  min-width: 96px;
 }
 
 .sui-select-trigger:hover {
-  background: hsl(var(--accent));
-  border-color: hsl(var(--primary) / 0.4);
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
 }
 
 /* The visible trigger is a div; keyboard focus lands on the transparent
@@ -1083,15 +1085,17 @@
 /* ============================================
    Input Form (Gemini-style pill)
    ============================================ */
+/* Composer modeled on ChatGPT/Claude: taller container, 15px text, larger
+   icons, prominent circular send — the familiar AI-chat input ergonomics. */
 .sui-input-form {
   display: flex;
   align-items: flex-end; /* Align buttons to bottom when textarea expands */
-  gap: var(--space-2);
+  gap: var(--space-1);
   background: hsl(var(--card));
   border: 1px solid hsl(var(--input-strong));
-  border-radius: var(--radius-2xl);
-  padding: 6px;
-  min-height: 48px;
+  border-radius: 16px;
+  padding: 10px;
+  min-height: 56px;
   transition: all var(--transition-fast);
 }
 
@@ -1101,9 +1105,9 @@
 }
 
 .sui-input-form-upload {
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-lg);
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-xl);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1130,11 +1134,11 @@
   border: none;
   background: transparent;
   color: hsl(var(--foreground));
-  /* Input text is content, not chrome — 14px matches chat-product inputs. */
-  font-size: 14px;
+  /* Input text is content, not chrome — 15px matches ChatGPT/Claude inputs. */
+  font-size: 15px;
   font-family: inherit;
-  padding: 8px 8px 8px 6px;
-  min-height: 32px;
+  padding: 7px 8px 7px 6px;
+  min-height: 36px;
   max-height: 200px;
   min-width: 0;
   resize: none;
@@ -1150,9 +1154,9 @@
 }
 
 .sui-input-form-send {
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-xl);
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2431,13 +2435,13 @@
 
 .sui-mode-toggle-btn {
   height: 24px;
-  padding: 0 10px;
+  padding: 0 12px;
   border: none;
-  border-radius: 3px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: hsl(var(--muted-foreground));
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
   transition: all 0.15s ease;
   white-space: nowrap;
@@ -2458,20 +2462,31 @@
    ============================================ */
 
 /* Suggestion chips + retry actions under AI messages. Capped at the AI
-   bubble's max-width so the row reads as part of the response card. */
+   bubble's max-width so the row reads as part of the response card, with
+   enough clearance that it doesn't crowd the card's border. */
 .sui-message-suggestions,
 .sui-message-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
-  margin-top: 10px;
   max-width: 85%;
+}
+
+/* Primary action row sits closest to the card it belongs to... */
+.sui-message-actions {
+  margin-top: 14px;
+}
+
+/* ...suggested follow-ups form their own quieter group beneath it. */
+.sui-message-suggestions {
+  margin-top: 10px;
 }
 
 .sui-chip-suggestion,
 .sui-chip-retry {
   height: auto;
-  min-height: 28px;
+  min-height: 30px;
   padding: 6px 12px;
   font-size: 12px;
   line-height: 1.3;
@@ -2582,6 +2597,7 @@
 /* "Open in Storybook" chip — solid primary button, the primary post-generation action */
 .sui-chip-open-story {
   gap: 6px;
+  height: 30px;
   background: hsl(var(--primary)) !important;
   border-color: transparent !important;
   color: hsl(var(--primary-foreground)) !important;
@@ -2639,4 +2655,18 @@
    the #479DFF accent itself AA-compliant (4.64:1) without drifting its hue. */
 .sui-root.dark .sui-completion-tag {
   background: hsl(var(--primary) / 0.06) !important;
+}
+
+
+/* Composer icons at AI-chat scale (the inline SVGs default to 14-16px) */
+.sui-input-form-upload svg,
+.sui-input-form-send svg,
+.sui-input-form .sui-voice-toggle svg {
+  width: 18px;
+  height: 18px;
+}
+
+.sui-input-form .sui-voice-toggle {
+  width: 36px;
+  height: 36px;
 }
