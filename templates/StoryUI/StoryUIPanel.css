@@ -362,14 +362,14 @@
 }
 
 .sui-header-title {
-  font-size: 13px;
+  font-size: 14px !important;
   font-weight: 800;
   color: hsl(var(--foreground));
   white-space: nowrap;
 }
 
 .sui-header-subtitle {
-  font-size: 12px;
+  font-size: 13px !important;
   color: hsl(var(--muted-foreground));
 }
 
@@ -419,7 +419,7 @@
   justify-content: center;
   gap: var(--space-2);
   white-space: nowrap;
-  font-size: 12px;
+  font-size: 13px !important;
   font-weight: 700;
   transition: all var(--transition-fast);
   cursor: pointer;
@@ -579,7 +579,7 @@
   border-radius: var(--radius-md);
   border: 1px solid transparent;
   background: transparent;
-  font-size: 12px;
+  font-size: 13px !important;
   font-weight: 600;
   color: hsl(var(--muted-foreground));
   cursor: pointer;
@@ -634,7 +634,7 @@
 }
 
 .sui-toggle-text {
-  font-size: 12px;
+  font-size: 13px !important;
   font-weight: 700;
   color: hsl(var(--muted-foreground));
   white-space: nowrap;
@@ -840,7 +840,8 @@
 
 .sui-chat-item-title {
   flex: 1;
-  font-size: 13px;
+  /* Matches Storybook's own sidebar items (14px/400, measured in SB 10) */
+  font-size: 14px !important;
   font-weight: 400;
   white-space: nowrap;
   overflow: hidden;
@@ -905,7 +906,7 @@
 }
 
 .sui-welcome-subtitle {
-  font-size: 13px;
+  font-size: 14px !important;
   color: hsl(var(--muted-foreground)) !important;
   margin: 0 0 24px 0;
   max-width: 420px;
@@ -932,7 +933,7 @@
   background: hsl(var(--background)) !important;
   border: 1px solid hsl(var(--input)) !important;
   border-radius: var(--radius-md);
-  font-size: 12px;
+  font-size: 13px !important;
   font-weight: 700;
   line-height: 1;
   color: hsl(var(--foreground)) !important;
@@ -984,8 +985,8 @@
   padding: 10px 14px;
   /* Two radius tiers panel-wide: cards/containers 8px, controls 4px. */
   border-radius: var(--radius-xl);
-  /* Chat prose is long-form reading content, not UI chrome — 14px floor. */
-  font-size: 14px !important;
+  /* Chat prose is long-form reading content, not UI chrome. */
+  font-size: 15px !important;
   line-height: 1.55 !important;
   border: 1px solid hsl(var(--border));
 }
@@ -1014,14 +1015,14 @@
  * to beat Storybook's .css-xxx :where(p) selectors (0,1,x)
  */
 .sui-message-bubble .sui-markdown {
-  font-size: 14px;
+  font-size: 15px !important;
   line-height: 1.55;
   font-family: var(--font-sans);
 }
 
 /* Paragraph styling - higher specificity beats Storybook */
 .sui-message-bubble .sui-markdown p {
-  font-size: 14px;
+  font-size: 15px !important;
   line-height: 1.55;
   margin: 0 0 10px 0;
   padding: 0;
@@ -1134,8 +1135,8 @@
   border: none;
   background: transparent;
   color: hsl(var(--foreground));
-  /* Input text is content, not chrome — 15px matches ChatGPT/Claude inputs. */
-  font-size: 15px;
+  /* Input text is content, not chrome — 16px matches ChatGPT/Claude inputs. */
+  font-size: 16px !important;
   font-family: inherit;
   padding: 7px 8px 7px 6px;
   min-height: 36px;
@@ -1243,17 +1244,18 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
   margin-bottom: 10px;
 }
 
 .sui-progress-label {
   font-weight: 700;
-  font-size: 13px;
+  font-size: 15px !important;
   color: hsl(var(--foreground));
 }
 
 .sui-progress-step {
-  font-size: 12px;
+  font-size: 13px !important;
   font-weight: 400;
   color: hsl(var(--muted-foreground));
 }
@@ -1279,7 +1281,7 @@
   color: hsl(var(--warning));
   border: 1px solid hsl(var(--warning) / 0.3);
   border-radius: var(--radius-md);
-  font-size: 12px;
+  font-size: 13px !important;
   display: inline-block;
 }
 
@@ -1327,7 +1329,7 @@
   max-width: 85%;
   padding: 14px 16px;
   border-radius: var(--radius-xl);
-  font-size: 14px;
+  font-size: 15px !important;
   line-height: 1.55;
   background: hsl(var(--ai-bubble-bg)) !important;
   color: hsl(var(--ai-bubble-fg)) !important;
@@ -1369,7 +1371,7 @@
 /* Generation-time stamp under the AI reply — metadata, not prose */
 .sui-message-meta {
   margin-top: 10px;
-  font-size: 11px;
+  font-size: 12px !important;
   color: hsl(var(--muted-foreground)) !important;
   font-variant-numeric: tabular-nums;
 }
@@ -2440,7 +2442,7 @@
   border-radius: var(--radius-md);
   background: transparent;
   color: hsl(var(--muted-foreground));
-  font-size: 12px;
+  font-size: 13px !important;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.15s ease;
@@ -2473,13 +2475,14 @@
   max-width: 85%;
 }
 
-/* Primary action row sits closest to the card it belongs to... */
-.sui-message-actions {
-  margin-top: 14px;
+/* Whichever row comes directly after the card gets clear 16px separation;
+   the second row sits 10px under the first. */
+.sui-message-actions,
+.sui-message-suggestions {
+  margin-top: 16px;
 }
 
-/* ...suggested follow-ups form their own quieter group beneath it. */
-.sui-message-suggestions {
+.sui-message-actions + .sui-message-suggestions {
   margin-top: 10px;
 }
 
@@ -2488,7 +2491,7 @@
   height: auto;
   min-height: 30px;
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: 13px !important;
   line-height: 1.3;
   text-align: left;
   white-space: normal;
@@ -2521,7 +2524,7 @@
 .sui-message-code summary {
   cursor: pointer;
   padding: 7px 12px;
-  font-size: 12px;
+  font-size: 13px !important;
   font-weight: 700;
   user-select: none;
   color: hsl(var(--muted-foreground));
@@ -2541,14 +2544,14 @@
   padding: 12px;
   max-height: 320px;
   overflow: auto;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.5;
 }
 
 /* Intent (plan) line inside the progress indicator. Color tokens instead of
    opacity — dimming the whole line washed out the bold "Plan:" label too. */
 .sui-progress-intent {
-  font-size: 13px;
+  font-size: 14px !important;
   margin-bottom: 10px;
   color: hsl(var(--muted-foreground));
 }
@@ -2589,10 +2592,7 @@
   white-space: nowrap;
 }
 
-/* Chat history density: match Storybook's compact sidebar scale */
-.sui-chat-item-title {
-  font-size: 13px;
-}
+
 
 /* "Open in Storybook" chip — solid primary button, the primary post-generation action */
 .sui-chip-open-story {
