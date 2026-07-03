@@ -7,7 +7,7 @@ import type {
   SpeechRecognitionConstructor,
   SpeechRecognitionEvent,
   SpeechRecognitionErrorEvent,
-} from './types.js';
+} from './types';
 
 const SpeechRecognitionCtor: SpeechRecognitionConstructor | null =
   typeof window !== 'undefined'

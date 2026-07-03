@@ -10,55 +10,55 @@
    CSS Custom Properties (ShadCN-style tokens)
    ============================================ */
 .sui-root {
-  /* Font System */
-  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
+  /* Font System - Storybook's exact stacks */
+  --font-sans: "Nunito Sans", -apple-system, ".SFNSText-Regular", "San Francisco", BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, Menlo, Monaco, "Roboto Mono", "Oxygen Mono", "Ubuntu Monospace", "Source Code Pro", "Droid Sans Mono", "Courier New", monospace;
 
-  /* Base Colors - Light Mode */
+  /* Base Colors - Light Mode (Storybook 10 palette) */
   --background: 0 0% 100%;
-  --foreground: 240 10% 3.9%;
-  --card: 0 0% 100%;
-  --card-foreground: 240 10% 3.9%;
+  --foreground: 210 10% 20%;
+  --card: 210 50% 98%;
+  --card-foreground: 210 10% 20%;
   --popover: 0 0% 100%;
-  --popover-foreground: 240 10% 3.9%;
-  --primary: 240 5.9% 10%;
-  --primary-foreground: 0 0% 98%;
-  --secondary: 240 4.8% 95.9%;
-  --secondary-foreground: 240 5.9% 10%;
-  --muted: 240 4.8% 95.9%;
-  --muted-foreground: 240 5% 35%; /* Darker for WCAG AA compliance - was 46.1% */
-  --accent: 240 4.8% 95.9%;
-  --accent-foreground: 240 5.9% 10%;
-  --destructive: 0 84.2% 60.2%;
-  --destructive-foreground: 0 0% 98%;
-  --border: 240 5.9% 90%;
-  --input: 240 5.9% 90%;
-  --ring: 240 5.9% 10%;
+  --popover-foreground: 210 10% 20%;
+  --primary: 212 100% 42%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 210 31% 95%;
+  --secondary-foreground: 210 10% 20%;
+  --muted: 210 31% 95%;
+  --muted-foreground: 213 10% 40%;
+  --accent: 212 100% 93%;
+  --accent-foreground: 210 10% 20%;
+  --destructive: 16 100% 38%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 210 25% 89%;
+  --input: 210 25% 89%;
+  --ring: 212 100% 42%;
 
-  /* User Bubble - Light bluish-gray tint */
-  --user-bubble-bg: 210 35% 95%;
-  --user-bubble-fg: 240 10% 3.9%;
-  --user-bubble-border: 210 25% 88%;
+  /* User Bubble - Storybook hover-blue tint */
+  --user-bubble-bg: 212 100% 93%;
+  --user-bubble-fg: 210 10% 20%;
+  --user-bubble-border: 212 70% 86%;
 
   /* AI Bubble - Pure white */
   --ai-bubble-bg: 0 0% 100%;
-  --ai-bubble-fg: 240 10% 3.9%;
-  --ai-bubble-border: 0 0% 90%;
+  --ai-bubble-fg: 210 10% 20%;
+  --ai-bubble-border: 210 25% 89%;
 
   /* Semantic Colors */
-  --success: 142 76% 36%;
+  --success: 101 52% 32%;
   --success-foreground: 0 0% 100%;
-  --warning: 38 92% 50%;
-  --warning-foreground: 0 0% 0%;
-  --info: 221 83% 53%;
+  --warning: 31 66% 35%;
+  --warning-foreground: 0 0% 100%;
+  --info: 212 100% 42%;
   --info-foreground: 0 0% 100%;
 
   /* Radius */
-  --radius-sm: 0.375rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-  --radius-xl: 1rem;
-  --radius-2xl: 1.5rem;
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --radius-xl: 8px;
+  --radius-2xl: 12px;
   --radius-full: 9999px;
 
   /* Spacing */
@@ -85,85 +85,87 @@
   --transition-slow: 300ms cubic-bezier(0.4, 0, 0.2, 1);
 
   /* Layout */
-  --sidebar-width: 280px;
-  --header-height: 56px;
-  --input-height: 52px;
+  --sidebar-width: 260px;
+  --header-height: 44px;
+  --input-height: 44px;
   --max-chat-width: 768px;
 }
 
-/* Dark Mode - Using softer dark tones instead of pure black */
+/* Dark Mode - Storybook 10 dark palette */
 .sui-root.dark {
-  --background: 222 47% 11%;
-  --foreground: 210 40% 98%;
-  --card: 222 47% 11%;
-  --card-foreground: 210 40% 98%;
-  --popover: 222 47% 11%;
-  --popover-foreground: 210 40% 98%;
-  --primary: 210 40% 98%;
-  --primary-foreground: 222 47% 11%;
-  --secondary: 217 33% 17%;
-  --secondary-foreground: 210 40% 98%;
-  --muted: 217 33% 17%;
-  --muted-foreground: 215 20% 75%;
-  --accent: 217 33% 17%;
-  --accent-foreground: 210 40% 98%;
-  --destructive: 0 72% 51%;
-  --destructive-foreground: 0 0% 100%;
-  --border: 217 33% 22%;
-  --input: 217 33% 22%;
-  --ring: 213 94% 68%;
+  --background: 220 4% 14%;
+  --foreground: 210 6% 80%;
+  --card: 210 4% 11%;
+  --card-foreground: 210 6% 80%;
+  --popover: 210 4% 11%;
+  --popover-foreground: 210 6% 80%;
+  --primary: 212 100% 64%;
+  --primary-foreground: 210 4% 11%;
+  --secondary: 216 6% 17%;
+  --secondary-foreground: 210 6% 80%;
+  --muted: 216 6% 17%;
+  --muted-foreground: 210 4% 60%;
+  --accent: 212 40% 23%;
+  --accent-foreground: 210 6% 85%;
+  --destructive: 16 100% 60%;
+  --destructive-foreground: 210 4% 11%;
+  --border: 220 3% 23%;
+  --input: 220 3% 23%;
+  --ring: 212 100% 64%;
 
-  /* User Bubble - Dark bluish tint in dark mode */
-  --user-bubble-bg: 217 33% 22%;
-  --user-bubble-fg: 210 40% 98%;
-  --user-bubble-border: 217 33% 28%;
+  /* User Bubble - Storybook hover-navy in dark mode */
+  --user-bubble-bg: 212 40% 23%;
+  --user-bubble-fg: 210 6% 85%;
+  --user-bubble-border: 212 35% 30%;
 
-  /* AI Bubble - Dark zinc in dark mode */
-  --ai-bubble-bg: 240 4% 16%;
-  --ai-bubble-fg: 0 0% 98%;
-  --ai-bubble-border: 240 4% 26%;
+  /* AI Bubble - Raised surface in dark mode */
+  --ai-bubble-bg: 216 6% 17%;
+  --ai-bubble-fg: 210 6% 80%;
+  --ai-bubble-border: 216 5% 25%;
 
-  --success: 142 69% 58%;
-  --warning: 48 96% 53%;
-  --info: 217 91% 60%;
+  --success: 101 52% 49%;
+  --warning: 41 100% 45%;
+  --info: 212 100% 64%;
+  --info-foreground: 210 4% 11%;
 }
 
 /* Dark mode fallback using system preference when .dark class not applied */
 @media (prefers-color-scheme: dark) {
   .sui-root:not(.light) {
-    --background: 222 47% 11%;
-    --foreground: 210 40% 98%;
-    --card: 222 47% 11%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222 47% 11%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 210 40% 98%;
-    --primary-foreground: 222 47% 11%;
-    --secondary: 217 33% 17%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217 33% 17%;
-    --muted-foreground: 215 20% 75%;
-    --accent: 217 33% 17%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 72% 51%;
-    --destructive-foreground: 0 0% 100%;
-    --border: 217 33% 22%;
-    --input: 217 33% 22%;
-    --ring: 213 94% 68%;
+    --background: 220 4% 14%;
+    --foreground: 210 6% 80%;
+    --card: 210 4% 11%;
+    --card-foreground: 210 6% 80%;
+    --popover: 210 4% 11%;
+    --popover-foreground: 210 6% 80%;
+    --primary: 212 100% 64%;
+    --primary-foreground: 210 4% 11%;
+    --secondary: 216 6% 17%;
+    --secondary-foreground: 210 6% 80%;
+    --muted: 216 6% 17%;
+    --muted-foreground: 210 4% 60%;
+    --accent: 212 40% 23%;
+    --accent-foreground: 210 6% 85%;
+    --destructive: 16 100% 60%;
+    --destructive-foreground: 210 4% 11%;
+    --border: 220 3% 23%;
+    --input: 220 3% 23%;
+    --ring: 212 100% 64%;
 
-    /* User Bubble - Dark bluish tint in dark mode */
-    --user-bubble-bg: 217 33% 22%;
-    --user-bubble-fg: 210 40% 98%;
-    --user-bubble-border: 217 33% 28%;
+    /* User Bubble - Storybook hover-navy in dark mode */
+    --user-bubble-bg: 212 40% 23%;
+    --user-bubble-fg: 210 6% 85%;
+    --user-bubble-border: 212 35% 30%;
 
-    /* AI Bubble - Dark zinc in dark mode */
-    --ai-bubble-bg: 240 4% 16%;
-    --ai-bubble-fg: 0 0% 98%;
-    --ai-bubble-border: 240 4% 26%;
+    /* AI Bubble - Raised surface in dark mode */
+    --ai-bubble-bg: 216 6% 17%;
+    --ai-bubble-fg: 210 6% 80%;
+    --ai-bubble-border: 216 5% 25%;
 
-    --success: 142 69% 58%;
-    --warning: 48 96% 53%;
-    --info: 217 91% 60%;
+    --success: 101 52% 49%;
+    --warning: 41 100% 45%;
+    --info: 212 100% 64%;
+    --info-foreground: 210 4% 11%;
   }
 }
 
@@ -183,7 +185,7 @@
 
   /* Typography */
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.5;
   color: hsl(var(--foreground));
   background-color: hsl(var(--background));
@@ -244,7 +246,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: var(--space-3);
+  padding: var(--space-2);
 }
 
 /* Sidebar chat list - flex grow to fill space */
@@ -265,7 +267,7 @@
   background: hsl(var(--card));
   border: 1px solid hsl(var(--border));
   border-radius: var(--radius-md);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 2px 8px hsl(210 10% 20% / 0.15);
 }
 
 .sui-context-menu-item {
@@ -277,9 +279,9 @@
   border: none;
   background: transparent;
   color: hsl(var(--foreground));
-  font-size: 0.8125rem;
+  font-size: 12px;
   cursor: pointer;
-  border-radius: var(--radius-sm);
+  border-radius: 3px;
   transition: all var(--transition-fast);
 }
 
@@ -310,7 +312,7 @@
   border-radius: var(--radius-sm);
   background: hsl(var(--background));
   color: hsl(var(--foreground));
-  font-size: 0.875rem;
+  font-size: 13px;
   outline: none;
 }
 
@@ -330,13 +332,16 @@
 
 /* Header */
 .sui-header {
-  height: var(--header-height);
-  padding: 0 var(--space-6);
+  min-height: var(--header-height);
+  padding: 0 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  row-gap: 4px;
+  column-gap: var(--space-3);
   border-bottom: 1px solid hsl(var(--border));
-  background: hsl(var(--background));
+  background: hsl(var(--card));
   flex-shrink: 0;
 }
 
@@ -353,13 +358,14 @@
 }
 
 .sui-header-title {
-  font-size: 1rem;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 800;
   color: hsl(var(--foreground));
+  white-space: nowrap;
 }
 
 .sui-header-subtitle {
-  font-size: 0.875rem;
+  font-size: 12px;
   color: hsl(var(--muted-foreground));
 }
 
@@ -407,8 +413,8 @@
   justify-content: center;
   gap: var(--space-2);
   white-space: nowrap;
-  font-size: 0.8125rem;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 700;
   transition: all var(--transition-fast);
   cursor: pointer;
   border: none;
@@ -418,7 +424,7 @@
 
 .sui-button:focus-visible {
   outline: 2px solid hsl(var(--ring));
-  outline-offset: 2px;
+  outline-offset: 1px;
 }
 
 .sui-button:disabled {
@@ -426,107 +432,65 @@
   opacity: 0.5;
 }
 
-/* Button Variants - Storybook-style with explicit fallback colors */
+/* Button Variants - Storybook outline-button idiom, variables cover both themes */
 .sui-button-default {
-  /* Explicit fallback colors to prevent Storybook bleeding */
-  background: #f4f4f5; /* hsl(240 4.8% 95.9%) */
-  color: #18181b; /* hsl(240 5.9% 10%) */
-  border: 1px solid #e4e4e7; /* hsl(240 5.9% 90%) */
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  border: 1px solid hsl(var(--input));
   border-radius: var(--radius-md);
-  height: 2rem;
+  height: 28px;
   padding: 0 var(--space-3);
 }
 
 .sui-button-default:hover {
-  background: #e4e4e7;
-  border-color: #a1a1aa;
-}
-
-/* Dark mode button defaults */
-.sui-root.dark .sui-button-default {
-  background: #1e293b; /* hsl(217 33% 17%) */
-  color: #f8fafc; /* hsl(210 40% 98%) */
-  border-color: #334155; /* hsl(217 33% 22%) */
-}
-
-.sui-root.dark .sui-button-default:hover {
-  background: #334155;
-  border-color: #94a3b8;
+  border-color: hsl(var(--primary));
+  color: hsl(var(--primary));
 }
 
 .sui-button-secondary {
-  background: #f4f4f5;
-  color: #18181b;
-  border: 1px solid #e4e4e7;
+  background: hsl(var(--secondary));
+  color: hsl(var(--secondary-foreground));
+  border: 1px solid hsl(var(--border));
   border-radius: var(--radius-md);
-  height: 2rem;
+  height: 28px;
   padding: 0 var(--space-3);
 }
 
 .sui-button-secondary:hover {
-  background: #e4e4e7;
-}
-
-.sui-root.dark .sui-button-secondary {
-  background: #1e293b;
-  color: #f8fafc;
-  border-color: #334155;
-}
-
-.sui-root.dark .sui-button-secondary:hover {
-  background: #334155;
+  background: hsl(var(--accent));
 }
 
 .sui-button-ghost {
-  color: #0a0a0b;
+  color: hsl(var(--foreground));
   border-radius: var(--radius-md);
-  height: 2rem;
+  height: 28px;
   padding: 0 var(--space-3);
 }
 
 .sui-button-ghost:hover {
-  background: #f4f4f5;
-  color: #18181b;
-}
-
-.sui-root.dark .sui-button-ghost {
-  color: #f8fafc;
-}
-
-.sui-root.dark .sui-button-ghost:hover {
-  background: #1e293b;
-  color: #f8fafc;
+  background: hsl(var(--secondary));
+  color: hsl(var(--foreground));
 }
 
 .sui-button-outline {
-  border: 1px solid #e4e4e7;
+  border: 1px solid hsl(var(--border));
   background: transparent;
-  color: #0a0a0b;
+  color: hsl(var(--foreground));
   border-radius: var(--radius-md);
-  height: 2rem;
+  height: 28px;
   padding: 0 var(--space-3);
 }
 
 .sui-button-outline:hover {
-  background: #f4f4f5;
-  color: #18181b;
-}
-
-.sui-root.dark .sui-button-outline {
-  border-color: #334155;
-  color: #f8fafc;
-}
-
-.sui-root.dark .sui-button-outline:hover {
-  background: #1e293b;
-  color: #f8fafc;
+  background: hsl(var(--secondary));
+  color: hsl(var(--foreground));
 }
 
 .sui-button-destructive {
   background: hsl(var(--destructive));
   color: hsl(var(--destructive-foreground));
   border-radius: var(--radius-md);
-  height: 2rem;
+  height: 28px;
   padding: 0 var(--space-3);
 }
 
@@ -536,25 +500,25 @@
 
 /* Button Sizes */
 .sui-button-sm {
-  height: 1.75rem;
+  height: 24px;
   padding: 0 var(--space-2);
-  font-size: 0.75rem;
+  font-size: 12px;
 }
 
 .sui-button-lg {
-  height: 2.25rem;
+  height: 32px;
   padding: 0 var(--space-4);
 }
 
 .sui-button-icon {
-  width: 2rem;
-  height: 2rem;
+  width: 28px;
+  height: 28px;
   padding: 0;
 }
 
 .sui-button-icon.sui-button-sm {
-  width: 1.75rem;
-  height: 1.75rem;
+  width: 24px;
+  height: 24px;
 }
 
 /* ============================================
@@ -601,26 +565,27 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  height: 2.25rem;
-  padding: 0 var(--space-3);
+  height: 28px;
+  padding: 0 var(--space-2);
   border-radius: var(--radius-md);
   border: 1px solid hsl(var(--input));
   background: hsl(var(--background));
-  font-size: 0.875rem;
+  font-size: 12px;
+  font-weight: 700;
   color: hsl(var(--foreground));
   cursor: pointer;
   transition: all var(--transition-fast);
-  min-width: 120px;
+  min-width: 96px;
 }
 
 .sui-select-trigger:hover {
   background: hsl(var(--accent));
+  border-color: hsl(var(--primary) / 0.4);
 }
 
 .sui-select-trigger:focus {
   outline: none;
-  border-color: hsl(var(--ring));
-  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.2);
+  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.3);
 }
 
 .sui-select-native {
@@ -633,8 +598,8 @@
 }
 
 .sui-select-icon {
-  width: 1rem;
-  height: 1rem;
+  width: 12px;
+  height: 12px;
   color: hsl(var(--muted-foreground));
   flex-shrink: 0;
 }
@@ -659,16 +624,16 @@
 }
 
 .sui-toggle-text {
-  font-size: 0.75rem;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 700;
   color: hsl(var(--muted-foreground));
   white-space: nowrap;
 }
 
 .sui-toggle-switch {
   position: relative;
-  width: 36px;
-  height: 20px;
+  width: 32px;
+  height: 18px;
   flex-shrink: 0;
 }
 
@@ -694,8 +659,8 @@
 .sui-toggle-slider::before {
   position: absolute;
   content: "";
-  height: 14px;
-  width: 14px;
+  height: 12px;
+  width: 12px;
   left: 2px;
   bottom: 2px;
   background-color: hsl(var(--background));
@@ -710,7 +675,7 @@
 }
 
 .sui-toggle-switch input:checked + .sui-toggle-slider::before {
-  transform: translateX(16px);
+  transform: translateX(14px);
 }
 
 .sui-toggle-switch input:focus + .sui-toggle-slider {
@@ -734,8 +699,10 @@
   gap: var(--space-1);
   padding: 0.125rem var(--space-2);
   border-radius: var(--radius-full);
-  font-size: 0.75rem;
-  font-weight: 500;
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: 0.2px;
   transition: all var(--transition-fast);
 }
 
@@ -749,20 +716,21 @@
   color: hsl(var(--secondary-foreground));
 }
 
+/* Connected state: Storybook's quieter status idiom — dot + plain text, no pill */
 .sui-badge-success {
-  background: hsl(var(--success) / 0.15);
-  color: hsl(var(--success));
+  background: transparent;
+  padding: 0;
+  color: hsl(var(--muted-foreground));
 }
 
+.sui-badge-success .sui-badge-dot {
+  background: hsl(var(--success));
+}
+
+/* Disconnected keeps the filled pill — it must attract attention */
 .sui-badge-destructive {
   background: hsl(var(--destructive) / 0.15);
   color: hsl(var(--destructive));
-}
-
-/* Dark mode: make destructive badge more visible */
-.sui-root.dark .sui-badge-destructive {
-  background: hsl(0 72% 25% / 0.4);
-  color: hsl(0 85% 70%);
 }
 
 .sui-badge-outline {
@@ -798,7 +766,7 @@
 
 .sui-card-title {
   font-size: 1.125rem;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1;
 }
 
@@ -825,7 +793,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: all var(--transition-fast);
@@ -834,20 +802,34 @@
 }
 
 .sui-chat-item:hover {
-  background: hsl(var(--accent));
+  background: hsl(var(--secondary));
 }
 
+/* Selected row matches Storybook's solid-primary sidebar selection */
 .sui-chat-item.active {
-  background: hsl(var(--accent));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.sui-chat-item.active .sui-chat-item-title {
+  font-weight: 700;
+}
+
+.sui-chat-item.active .sui-chat-item-menu {
+  color: hsl(var(--primary-foreground));
 }
 
 .sui-chat-item.menu-open {
-  background: hsl(var(--accent));
+  background: hsl(var(--secondary));
+}
+
+.sui-chat-item.active.menu-open {
+  background: hsl(var(--primary));
 }
 
 .sui-chat-item-title {
   flex: 1;
-  font-size: 0.875rem;
+  font-size: 13px;
   font-weight: 400;
   white-space: nowrap;
   overflow: hidden;
@@ -857,7 +839,7 @@
 
 /* Subtle indicator for stories with no chat history */
 .sui-chat-item--no-history {
-  border-left: 2px solid hsl(var(--muted-foreground) / 0.2);
+  border-left: 2px solid hsl(var(--border));
 }
 
 .sui-chat-item-actions {
@@ -899,80 +881,60 @@
 }
 
 .sui-welcome-greeting {
-  font-size: 1.75rem;
-  font-weight: 600;
-  /* Explicit high-contrast color - forces override of any inherited styles */
-  color: #18181b !important; /* hsl(240 6% 10%) - near black for maximum contrast */
-  margin-bottom: var(--space-3);
+  font-size: 20px;
+  font-weight: 800;
+  /* !important beats Storybook docs typography; the variable keeps both themes in sync */
+  color: hsl(var(--foreground)) !important;
+  margin: 0 0 var(--space-3) 0 !important;
+  padding: 0 !important;
+  border-bottom: none !important;
   line-height: 1.3;
 }
 
-/* Dark mode: ensure greeting is clearly visible - WCAG AA compliant */
-.sui-root.dark .sui-welcome-greeting {
-  color: #ffffff !important;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-}
-
 .sui-welcome-subtitle {
-  font-size: 1rem;
-  /* Explicit high-contrast color - WCAG AA compliant */
-  color: #52525b !important; /* hsl(240 5% 35%) - ~8:1 contrast on white */
-  margin-bottom: var(--space-8);
-  max-width: 400px;
-}
-
-/* Dark mode: make subtitle more visible */
-.sui-root.dark .sui-welcome-subtitle {
-  color: #cbd5e1 !important; /* hsl(213 27% 84%) - high contrast on dark bg */
+  font-size: 13px;
+  color: hsl(var(--muted-foreground)) !important;
+  margin: 0 0 24px 0;
+  max-width: 420px;
 }
 
 .sui-welcome-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-3);
+  gap: 8px;
   justify-content: center;
   max-width: 600px;
 }
 
 /* ============================================
-   Suggestion Chips (Simple pill style)
+   Suggestion Chips (Storybook outline-button style)
    ============================================ */
 .sui-chip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0.5rem 1rem;
-  /* Explicit high-contrast colors - forces override of inherited styles */
-  background: #f4f4f5 !important; /* hsl(240 4.8% 95.9%) */
-  border: 1px solid #d4d4d8 !important; /* hsl(240 5% 84%) - slightly darker border */
-  border-radius: var(--radius-full);
-  font-size: 0.875rem;
-  font-weight: 500;
+  height: 28px;
+  padding: 0 12px;
+  /* !important beats Storybook docs styles; variables keep both themes in sync */
+  background: hsl(var(--background)) !important;
+  border: 1px solid hsl(var(--input)) !important;
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  font-weight: 700;
   line-height: 1;
-  color: #18181b !important; /* hsl(240 6% 10%) - near black for high contrast */
+  color: hsl(var(--foreground)) !important;
   cursor: pointer;
   transition: all var(--transition-fast);
 }
 
 .sui-chip:hover {
-  background: #e4e4e7; /* hsl(240 4.8% 95.9%) */
-  border-color: #a1a1aa; /* hsl(240 3.8% 46.1% / 0.3) */
+  background: hsl(var(--background)) !important;
+  border-color: hsl(var(--primary)) !important;
+  color: hsl(var(--primary)) !important;
 }
 
 .sui-chip:active {
   transform: scale(0.98);
-}
-
-/* Dark mode chips */
-.sui-root.dark .sui-chip {
-  background: #1e293b !important; /* hsl(217 33% 17%) */
-  border-color: #475569 !important; /* hsl(215 19% 35%) - more visible border */
-  color: #f8fafc !important; /* hsl(210 40% 98%) - near white */
-}
-
-.sui-root.dark .sui-chip:hover {
-  background: #334155;
-  border-color: #94a3b8;
 }
 
 /* ============================================
@@ -1006,47 +968,26 @@
 /* Base bubble styles - shared between user and AI */
 .sui-message-bubble {
   max-width: 85%;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-2xl);
-  font-size: 0.9375rem !important;
-  line-height: 1.5 !important;
+  padding: 10px 14px;
+  border-radius: var(--radius-lg);
+  font-size: 13px !important;
+  line-height: 1.6 !important;
   border: 1px solid hsl(var(--border));
 }
 
-/* User bubble - light bluish-gray */
+/* User bubble - Storybook hover-blue tint */
 .sui-message-user .sui-message-bubble {
+  max-width: 75%;
   background: hsl(var(--user-bubble-bg));
   color: hsl(var(--user-bubble-fg));
   border-color: hsl(var(--user-bubble-border));
-  border-bottom-right-radius: var(--radius-sm);
 }
 
-/* User bubble - dark mode: dark bluish tint with light text */
-.sui-root.dark .sui-message-user .sui-message-bubble {
-  background: #2d3748 !important; /* Dark bluish - hsl(217 33% 22%) */
-  color: #f7fafc !important; /* Near white - hsl(210 40% 98%) */
-  border: 1px solid #4a5568 !important; /* Dark border - hsl(217 33% 28%) */
-}
-
-/* AI bubble - pure white with explicit high-contrast colors */
+/* AI bubble - card surface driven by theme variables */
 .sui-message-ai .sui-message-bubble {
-  background: #ffffff !important; /* Pure white */
-  color: #18181b !important; /* Near black - high contrast */
-  border: 1px solid #e4e4e7 !important; /* Light gray border */
-  border-bottom-left-radius: var(--radius-sm);
-}
-
-/* AI bubble - dark mode: dark background with light text */
-.sui-root.dark .sui-message-ai .sui-message-bubble {
-  background: #27272a !important; /* Dark zinc - hsl(240 4% 16%) */
-  color: #fafafa !important; /* Near white - hsl(0 0% 98%) */
-  border: 1px solid #3f3f46 !important; /* Dark border - hsl(240 4% 26%) */
-}
-
-/* AI bubble code in dark mode */
-.sui-root.dark .sui-message-ai .sui-message-bubble code {
-  background: rgba(63, 63, 70, 0.5) !important; /* Semi-transparent dark */
-  color: #e4e4e7 !important; /* Light gray text */
+  background: hsl(var(--ai-bubble-bg)) !important;
+  color: hsl(var(--ai-bubble-fg)) !important;
+  border: 1px solid hsl(var(--ai-bubble-border)) !important;
 }
 
 /*
@@ -1055,15 +996,15 @@
  * to beat Storybook's .css-xxx :where(p) selectors (0,1,x)
  */
 .sui-message-bubble .sui-markdown {
-  font-size: 0.9375rem;
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: 1.6;
   font-family: var(--font-sans);
 }
 
 /* Paragraph styling - higher specificity beats Storybook */
 .sui-message-bubble .sui-markdown p {
-  font-size: 0.9375rem;
-  line-height: 1.5;
+  font-size: 13px;
+  line-height: 1.6;
   margin: 0;
   padding: 6px 0 4px 0;
 }
@@ -1077,7 +1018,7 @@
 }
 
 .sui-message-bubble strong {
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .sui-message-bubble em {
@@ -1088,31 +1029,25 @@
    Storybook's design system aggressively overrides paragraph colors.
    These rules MUST use !important and high specificity to win. */
 
-/* Light mode: Ensure AI message text is dark on light background */
+/* Storybook's docs styles aggressively recolor paragraph text; pin it to the
+   bubble foreground variable so both themes derive from one source. */
 .sui-message-ai .sui-message-bubble p,
 .sui-message-ai .sui-message-bubble strong,
 .sui-message-ai .sui-message-bubble em,
 .sui-message-ai .sui-message-bubble span,
 .sui-message-ai .sui-message-bubble li {
-  color: #18181b !important;
-}
-
-/* Dark mode: Ensure AI message text is light on dark background */
-.sui-root.dark .sui-message-ai .sui-message-bubble p,
-.sui-root.dark .sui-message-ai .sui-message-bubble strong,
-.sui-root.dark .sui-message-ai .sui-message-bubble em,
-.sui-root.dark .sui-message-ai .sui-message-bubble span,
-.sui-root.dark .sui-message-ai .sui-message-bubble li {
-  color: #fafafa !important;
+  color: hsl(var(--ai-bubble-fg)) !important;
 }
 
 /* Inline code styling */
 .sui-message-bubble code {
   font-family: var(--font-mono);
-  font-size: 0.875rem;
-  background: hsl(var(--muted) / 0.5);
+  font-size: 12px;
+  background: hsl(var(--muted)) !important;
+  color: inherit !important;
   padding: 0.1em 0.35em;
-  border-radius: var(--radius-sm);
+  border-radius: 3px;
+  border: 1px solid hsl(var(--border));
 }
 
 .sui-message-ai .sui-message-bubble code {
@@ -1141,35 +1076,35 @@
   align-items: flex-end; /* Align buttons to bottom when textarea expands */
   gap: var(--space-2);
   background: hsl(var(--card));
-  border: 1px solid hsl(var(--border));
+  border: 1px solid hsl(var(--input));
   border-radius: var(--radius-2xl);
-  padding: 8px;
-  min-height: 56px;
+  padding: 6px;
+  min-height: 48px;
   transition: all var(--transition-fast);
 }
 
 .sui-input-form:focus-within {
   border-color: hsl(var(--ring));
-  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.2);
+  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.25);
 }
 
 .sui-input-form-upload {
-  width: 40px;
-  height: 40px;
-  border-radius: var(--radius-full);
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-lg);
   display: flex;
   align-items: center;
   justify-content: center;
   color: hsl(var(--muted-foreground));
   flex-shrink: 0;
-  border: 1px solid hsl(var(--border) / 0.5);
+  border: none;
   background: none;
   cursor: pointer;
   transition: all var(--transition-fast);
 }
 
 .sui-input-form-upload:hover:not(:disabled) {
-  background: hsl(var(--accent));
+  background: hsl(var(--secondary));
   color: hsl(var(--foreground));
 }
 
@@ -1183,10 +1118,10 @@
   border: none;
   background: transparent;
   color: hsl(var(--foreground));
-  font-size: 0.9375rem;
+  font-size: 13px;
   font-family: inherit;
-  padding: 10px var(--space-3);
-  min-height: 40px;
+  padding: 8px 10px;
+  min-height: 32px;
   max-height: 200px;
   min-width: 0;
   resize: none;
@@ -1201,9 +1136,9 @@
 }
 
 .sui-input-form-send {
-  width: 40px;
-  height: 40px;
-  border-radius: var(--radius-full);
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-lg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1216,15 +1151,13 @@
 }
 
 .sui-input-form-send:hover:not(:disabled) {
-  opacity: 0.9;
-  transform: scale(1.05);
+  background: hsl(var(--primary) / 0.9);
 }
 
 .sui-input-form-send:disabled {
   background: hsl(var(--muted));
   color: hsl(var(--muted-foreground));
   cursor: not-allowed;
-  transform: none;
 }
 
 /* ============================================
@@ -1281,8 +1214,9 @@
    ============================================ */
 .sui-progress {
   background: hsl(var(--muted));
-  border-radius: var(--radius-2xl);
-  padding: var(--space-4);
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-lg);
+  padding: 12px 14px;
 }
 
 .sui-progress-header {
@@ -1293,18 +1227,19 @@
 }
 
 .sui-progress-label {
-  font-weight: 500;
-  font-size: 0.875rem;
+  font-weight: 700;
+  font-size: 13px;
   color: hsl(var(--foreground));
 }
 
 .sui-progress-step {
-  font-size: 0.75rem;
+  font-size: 12px;
+  font-weight: 400;
   color: hsl(var(--muted-foreground));
 }
 
 .sui-progress-bar {
-  height: 4px;
+  height: 3px;
   background: hsl(var(--secondary));
   border-radius: var(--radius-full);
   overflow: hidden;
@@ -1312,7 +1247,7 @@
 
 .sui-progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, hsl(var(--info)), hsl(285 70% 50%));
+  background: hsl(var(--primary));
   border-radius: var(--radius-full);
   transition: width var(--transition-normal);
 }
@@ -1320,10 +1255,10 @@
 .sui-progress-retry {
   margin-top: var(--space-2);
   padding: var(--space-1) var(--space-2);
-  background: hsl(var(--warning) / 0.15);
+  background: hsl(var(--warning) / 0.12);
   color: hsl(var(--warning));
-  border-radius: var(--radius-md);
-  font-size: 0.75rem;
+  border-radius: 3px;
+  font-size: 12px;
   display: inline-block;
 }
 
@@ -1349,7 +1284,7 @@
   align-items: center;
   gap: var(--space-2);
   color: hsl(var(--info));
-  font-weight: 500;
+  font-weight: 700;
 }
 
 /* ============================================
@@ -1365,40 +1300,25 @@
 
 /* ============================================
    Completion Card - shares bubble styling with message bubbles
-   Uses explicit colors with !important to prevent design system overrides
+   Uses theme variables with !important to prevent design system overrides
    ============================================ */
 .sui-completion {
   max-width: 85%;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-2xl);
-  border-bottom-left-radius: var(--radius-sm);
-  font-size: 0.9375rem;
+  padding: 10px 14px;
+  border-radius: var(--radius-lg);
+  font-size: 13px;
   line-height: 1.6;
-  /* Explicit light mode colors */
-  background: #ffffff !important;
-  color: #18181b !important;
-  border: 1px solid #e4e4e7 !important;
-}
-
-/* Completion card - dark mode */
-.sui-root.dark .sui-completion {
-  background: #27272a !important;
-  color: #fafafa !important;
-  border: 1px solid #3f3f46 !important;
+  background: hsl(var(--ai-bubble-bg)) !important;
+  color: hsl(var(--ai-bubble-fg)) !important;
+  border: 1px solid hsl(var(--ai-bubble-border)) !important;
 }
 
 .sui-completion-header {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  font-weight: 500;
-  /* Explicit green for success - readable on white */
-  color: #16a34a !important;
-}
-
-/* Completion header - dark mode */
-.sui-root.dark .sui-completion-header {
-  color: #22c55e !important;
+  font-weight: 700;
+  color: hsl(var(--success)) !important;
 }
 
 .sui-completion-components {
@@ -1410,81 +1330,48 @@
 
 .sui-completion-tag {
   padding: 0.125rem var(--space-2);
-  /* Explicit blue colors - readable tag styling */
-  background: #eff6ff !important;
-  color: #2563eb !important;
-  border-radius: var(--radius-full);
+  background: hsl(var(--primary) / 0.1) !important;
+  color: hsl(var(--primary)) !important;
+  border-radius: 3px;
   font-size: 0.75rem;
   font-family: var(--font-mono);
-}
-
-/* Completion tag - dark mode */
-.sui-root.dark .sui-completion-tag {
-  background: #1e3a5f !important;
-  color: #60a5fa !important;
 }
 
 .sui-completion-metrics {
   display: flex;
   gap: var(--space-4);
   margin-top: var(--space-3);
-  font-size: 0.8125rem;
-  /* Explicit muted gray */
-  color: #71717a !important;
-}
-
-/* Completion metrics - dark mode */
-.sui-root.dark .sui-completion-metrics {
-  color: #a1a1aa !important;
+  font-size: 12px;
+  color: hsl(var(--muted-foreground)) !important;
 }
 
 /* Fallback story styling (error placeholder was created) */
 .sui-completion-fallback .sui-completion-header {
-  color: #ca8a04 !important; /* Amber/warning color */
-}
-
-.sui-root.dark .sui-completion-fallback .sui-completion-header {
-  color: #facc15 !important; /* Lighter amber for dark mode */
+  color: hsl(var(--warning)) !important;
 }
 
 .sui-completion-fallback-warning {
   margin-top: var(--space-2);
   padding: var(--space-2) var(--space-3);
-  background: #fef9c3 !important; /* Light amber background */
+  background: hsl(var(--warning) / 0.12) !important;
   border-radius: var(--radius-md);
-  font-size: 0.8125rem;
-}
-
-.sui-root.dark .sui-completion-fallback-warning {
-  background: #422006 !important; /* Dark amber background */
+  font-size: 12px;
 }
 
 .sui-completion-fallback-warning strong {
   display: block;
-  color: #ca8a04 !important; /* Amber text */
+  color: hsl(var(--warning)) !important;
   margin-bottom: var(--space-1);
-}
-
-.sui-root.dark .sui-completion-fallback-warning strong {
-  color: #facc15 !important;
 }
 
 .sui-completion-fallback-warning p {
   margin: 0;
-  color: #71717a !important; /* Muted gray */
-}
-
-.sui-root.dark .sui-completion-fallback-warning p {
-  color: #a1a1aa !important;
+  color: hsl(var(--muted-foreground)) !important;
 }
 
 /* Error completion styling (generation failed completely) */
 .sui-completion-error .sui-completion-header {
-  color: #dc2626 !important; /* Red for errors */
-}
-
-.sui-root.dark .sui-completion-error .sui-completion-header {
-  color: #f87171 !important; /* Lighter red for dark mode */
+  color: hsl(var(--destructive)) !important;
 }
 
 /* ============================================
@@ -1515,7 +1402,7 @@
    Markdown Content
    ============================================ */
 .sui-markdown strong {
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .sui-markdown em {
@@ -1546,7 +1433,7 @@
 .sui-markdown h4,
 .sui-markdown h5,
 .sui-markdown h6 {
-  font-weight: 600;
+  font-weight: 700;
   margin-top: var(--space-4);
   margin-bottom: var(--space-3);
   line-height: 1.3;
@@ -1640,7 +1527,7 @@
 
 .sui-markdown th {
   background: hsl(var(--muted));
-  font-weight: 600;
+  font-weight: 700;
 }
 
 /* Horizontal rule */
@@ -1680,11 +1567,6 @@
 
 .sui-icon-tip {
   color: hsl(var(--warning));
-}
-
-/* Dark mode: make warning/tip icon more visible */
-.sui-root.dark .sui-icon-tip {
-  color: hsl(48 96% 65%);
 }
 
 .sui-icon-wrench {
@@ -1799,10 +1681,10 @@
 
 .sui-voice-toggle {
   all: revert;
-  width: 40px;
-  height: 40px;
-  border-radius: var(--radius-full, 9999px);
-  border: 1px solid hsl(var(--border) / 0.5);
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-lg, 6px);
+  border: none;
   background: none;
   color: hsl(var(--muted-foreground));
   cursor: pointer;
@@ -1818,9 +1700,8 @@
 }
 
 .sui-voice-toggle:hover {
-  border-color: hsl(var(--primary));
-  color: hsl(var(--primary));
-  background: hsl(var(--primary) / 0.08);
+  background: hsl(var(--secondary));
+  color: hsl(var(--foreground));
 }
 
 .sui-voice-toggle--active {
@@ -1917,7 +1798,7 @@
 
 .sui-voice-privacy-title {
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 700;
   color: hsl(var(--foreground));
   margin: 0 0 8px 0;
 }
@@ -1941,7 +1822,7 @@
   padding: 8px 16px;
   border-radius: var(--radius-md, 6px);
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 700;
   cursor: pointer;
   border: none;
   font-family: inherit;
@@ -2017,7 +1898,7 @@
 
 .sui-canvas-empty-title {
   font-size: 24px;
-  font-weight: 600;
+  font-weight: 700;
   color: hsl(var(--foreground));
   margin: 0 0 8px;
 }
@@ -2117,7 +1998,7 @@
 
 .sui-canvas-unsupported-title {
   font-size: 18px;
-  font-weight: 600;
+  font-weight: 700;
   color: hsl(var(--foreground));
   margin: 0;
 }
@@ -2246,7 +2127,7 @@
   background: hsl(var(--primary));
   color: hsl(var(--primary-foreground));
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 700;
   cursor: pointer;
   transition: background 0.15s ease;
   white-space: nowrap;
@@ -2298,7 +2179,7 @@
 
 .sui-canvas-progress-phase {
   font-size: 15px;
-  font-weight: 500;
+  font-weight: 700;
   color: hsl(var(--foreground));
 }
 
@@ -2320,7 +2201,7 @@
   align-items: center;
   gap: 8px;
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 700;
   color: hsl(var(--foreground));
 }
 
@@ -2371,7 +2252,7 @@
   background: hsl(142 70% 35%);
   color: #fff;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 700;
   border-radius: 20px;
   box-shadow: 0 2px 12px rgba(0,0,0,0.2);
   white-space: nowrap;
@@ -2516,19 +2397,20 @@
 .sui-mode-toggle {
   display: flex;
   background: hsl(var(--muted));
-  border-radius: var(--radius, 6px);
+  border-radius: var(--radius-md);
   padding: 2px;
   gap: 2px;
 }
 
 .sui-mode-toggle-btn {
-  padding: 5px 12px;
+  height: 24px;
+  padding: 0 10px;
   border: none;
-  border-radius: calc(var(--radius, 6px) - 2px);
+  border-radius: 3px;
   background: transparent;
   color: hsl(var(--muted-foreground));
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 700;
   cursor: pointer;
   transition: all 0.15s ease;
   white-space: nowrap;
@@ -2540,6 +2422,164 @@
 
 .sui-mode-toggle-btn--active {
   background: hsl(var(--background));
-  color: hsl(var(--foreground));
-  box-shadow: 0 1px 2px hsl(0 0% 0% / 0.1);
+  color: hsl(var(--primary));
+  box-shadow: 0 1px 2px hsl(210 10% 20% / 0.12);
+}
+
+/* ============================================
+   Conversational chat additions (chatSummary era)
+   ============================================ */
+
+/* Suggestion chips + retry actions under AI messages */
+.sui-message-suggestions,
+.sui-message-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.sui-chip-suggestion,
+.sui-chip-retry {
+  height: auto;
+  min-height: 28px;
+  padding: 6px 12px;
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: left;
+  white-space: normal;
+}
+
+.sui-chip-retry {
+  border-color: hsl(var(--destructive) / 0.5) !important;
+  color: hsl(var(--destructive)) !important;
+}
+
+/* Collapsible generated-code view inside AI messages */
+.sui-message-code {
+  margin-top: 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.sui-message-code summary {
+  cursor: pointer;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  user-select: none;
+  background: hsl(var(--muted, 220 14% 96%));
+}
+
+.sui-message-code[open] summary {
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.sui-message-code pre {
+  margin: 0;
+  padding: 10px;
+  max-height: 320px;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* Intent (plan) line inside the progress indicator */
+.sui-progress-intent {
+  font-size: 12px;
+  margin-bottom: 8px;
+  opacity: 0.85;
+}
+
+.sui-progress-intent-components {
+  opacity: 0.7;
+}
+
+/* Respect users who prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .sui-root *,
+  .sui-root *::before,
+  .sui-root *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ============================================
+   Storybook docs-page style bleed protection
+   ============================================
+   The panel renders inside an addon-docs page, whose typography styles
+   (heading border-bottoms, margins, letter-spacing) otherwise leak in. */
+.sui-root :is(h1, h2, h3, h4, h5, h6) {
+  border-bottom: none !important;
+  letter-spacing: normal;
+}
+
+/* Header controls must never wrap mid-label */
+.sui-select-trigger,
+.sui-header .sui-header-subtitle {
+  white-space: nowrap;
+}
+
+/* Chat history density: match Storybook's compact sidebar scale */
+.sui-chat-item-title {
+  font-size: 13px;
+}
+
+/* "Open in Storybook" chip — solid primary button, the primary post-generation action */
+.sui-chip-open-story {
+  gap: 6px;
+  background: hsl(var(--primary)) !important;
+  border-color: transparent !important;
+  color: hsl(var(--primary-foreground)) !important;
+  font-weight: 700;
+}
+
+.sui-chip-open-story:hover {
+  background: hsl(var(--primary) / 0.9) !important;
+  border-color: transparent !important;
+  color: hsl(var(--primary-foreground)) !important;
+}
+
+/* ============================================
+   Voice Canvas — live code stream (watch the model write)
+   ============================================ */
+.sui-canvas-stream {
+  margin: 12px auto 0;
+  max-width: 560px;
+  max-height: 240px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column-reverse; /* stick to the newest lines */
+  text-align: left;
+  background: hsl(var(--muted) / 0.6);
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: hsl(var(--muted-foreground));
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.sui-canvas-stream--overlay {
+  max-width: 420px;
+  max-height: 160px;
+  background: hsl(var(--background) / 0.92);
+}
+
+/* Suggestion chips and actions flow BELOW the bubble, not beside it */
+.sui-message-user,
+.sui-message-ai {
+  flex-wrap: wrap;
+}
+
+.sui-message-suggestions,
+.sui-message-actions {
+  flex-basis: 100%;
 }

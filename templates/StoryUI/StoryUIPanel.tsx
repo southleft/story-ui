@@ -8,9 +8,9 @@
 
 import React, { useState, useEffect, useRef, useCallback, useReducer } from 'react';
 import './StoryUIPanel.css';
-import { VoiceControls } from './voice/VoiceControls.js';
-import { VoiceCanvas, type VoiceCanvasHandle } from './voice/VoiceCanvas.js';
-import type { VoiceCommand } from './voice/types.js';
+import { VoiceControls } from './voice/VoiceControls';
+import { VoiceCanvas, type VoiceCanvasHandle } from './voice/VoiceCanvas';
+import type { VoiceCommand } from './voice/types';
 
 // ============================================
 // Types & Interfaces
@@ -22,6 +22,16 @@ interface Message {
   isStreaming?: boolean;
   streamingData?: StreamingState;
   attachedImages?: AttachedImage[];
+  /** Follow-up refinement prompts rendered as clickable chips (AI messages). */
+  suggestions?: string[];
+  /** Generated story code, shown behind a "View code" toggle (AI messages). */
+  code?: string;
+  /** True when this AI message reports a failure — enables the retry button. */
+  isError?: boolean;
+  /** The user input that failed, so "Try again" can resend it. */
+  retryInput?: string;
+  /** Storybook entry ID once the new story is indexed — enables "Open story". */
+  storyEntryId?: string;
 }
 
 interface ChatSession {
@@ -42,9 +52,16 @@ interface AttachedImage {
 }
 
 interface IntentPreview {
-  title: string;
-  components: string[];
-  approach: string;
+  requestType: 'new' | 'modification';
+  framework: string;
+  detectedDesignSystem: string | null;
+  strategy: string;
+  estimatedComponents: string[];
+  promptAnalysis: {
+    hasVisionInput: boolean;
+    hasConversationContext: boolean;
+    hasPreviousCode: boolean;
+  };
 }
 
 interface ProgressUpdate {
@@ -95,6 +112,11 @@ interface CompletionFeedback {
   styleChoices?: StyleChoice[];
   validation?: ValidationFeedback;
   suggestions?: string[];
+  /** Model-authored conversational reply describing what was built. */
+  chatSummary?: string;
+  /** Storybook component ID for client-side navigation to the new story. */
+  storybookId?: string;
+  runtimeValidation?: { enabled: boolean; success: boolean; error?: string; healedByRetry?: boolean };
   metrics?: { totalTimeMs: number; llmCallsCount: number };
 }
 
@@ -169,6 +191,7 @@ interface PanelState {
 type PanelAction =
   | { type: 'TOGGLE_SIDEBAR' }
   | { type: 'SET_SIDEBAR'; payload: boolean }
+  | { type: 'PATCH_LAST_AI_MESSAGE'; payload: Partial<Message> }
   | { type: 'TOGGLE_CODE' }
   | { type: 'SET_DRAGGING'; payload: boolean }
   | { type: 'SET_LOADING'; payload: boolean }
@@ -240,6 +263,16 @@ function panelReducer(state: PanelState, action: PanelAction): PanelState {
       return { ...state, isBulkDeleting: action.payload };
     case 'SET_CONVERSATION':
       return { ...state, conversation: action.payload };
+    case 'PATCH_LAST_AI_MESSAGE': {
+      const conversation = [...state.conversation];
+      for (let i = conversation.length - 1; i >= 0; i--) {
+        if (conversation[i].role === 'ai') {
+          conversation[i] = { ...conversation[i], ...action.payload };
+          break;
+        }
+      }
+      return { ...state, conversation };
+    }
     case 'ADD_MESSAGE':
       return { ...state, conversation: [...state.conversation, action.payload] };
     case 'SET_RECENT_CHATS':
@@ -309,6 +342,8 @@ const USE_STREAMING = true;
 const MAX_RECENT_CHATS = 20;
 const CHAT_STORAGE_KEY = 'story-ui-chats';
 const PROVIDER_PREFS_KEY = 'story-ui-provider-prefs';
+// In-flight generation stash — survives preview-iframe reloads (sessionStorage)
+const PENDING_GEN_KEY = 'story-ui-pending-generation';
 const MAX_IMAGES = 4;
 const MAX_IMAGE_SIZE_MB = 20;
 
@@ -777,110 +812,125 @@ function formatTime(timestamp: number): string {
 function getModelDisplayName(model: string): string {
   const displayNames: Record<string, string> = {
     // Claude
-    'claude-opus-4-6': 'Claude Opus 4.6',
-    'claude-sonnet-4-6': 'Claude Sonnet 4.6',
-    'claude-haiku-4-5-20251001': 'Claude Haiku 4.5',
+    'claude-opus-4-8': 'Claude Opus 4.8',
+    'claude-sonnet-5': 'Claude Sonnet 5',
+    'claude-haiku-4-5': 'Claude Haiku 4.5',
     // OpenAI
-    'gpt-5.4': 'GPT-5.4',
+    'gpt-5.5': 'GPT-5.5',
     'gpt-5.4-mini': 'GPT-5.4 Mini',
-    'o4-mini': 'o4 Mini',
+    'gpt-5.4-nano': 'GPT-5.4 Nano',
     // Gemini
-    'gemini-3.1-pro-preview': 'Gemini 3.1 Pro',
-    'gemini-3-flash-preview': 'Gemini 3 Flash',
-    'gemini-2.5-flash': 'Gemini 2.5 Flash',
+    'gemini-3.1-pro': 'Gemini 3.1 Pro',
+    'gemini-3.5-flash': 'Gemini 3.5 Flash',
+    'gemini-3.1-flash-lite': 'Gemini 3.1 Flash-Lite',
   };
-  return displayNames[model] || model;
+  if (displayNames[model]) return displayNames[model];
+  // Fallback: turn an unknown ID into a readable label instead of raw ID,
+  // e.g. "claude-sonnet-4-6" -> "Claude Sonnet 4 6".
+  return model
+    .split(/[-_.]/)
+    .filter(Boolean)
+    .map(part => (/^\d/.test(part) ? part : part.charAt(0).toUpperCase() + part.slice(1)))
+    .join(' ');
 }
 
 // ============================================
-// Icons (Lucide-style SVG)
+// Icons (fine-line 14px set, drawn to match Storybook's icon proportions)
 // ============================================
 
 const Icons = {
   plus: (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M5 12h14" /><path d="M12 5v14" />
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 4.5v15M4.5 12h15" />
     </svg>
   ),
   messageSquare: (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
     </svg>
   ),
-  panelLeft: (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect width="18" height="18" x="3" y="3" rx="2" /><path d="M9 3v18" />
+  panelLeft: ( /* Storybook SidebarIcon geometry: frame + divider + list ticks */
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="16" rx="1.5" />
+      <path d="M9.75 4v16" />
+      <path d="M5.75 8.5h1.5M5.75 12h1.5M5.75 15.5h1.5" />
     </svg>
   ),
   x: (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M18 6 6 18" /><path d="m6 6 12 12" />
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m6 6 12 12M18 6 6 18" />
     </svg>
   ),
-  image: (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect width="18" height="18" x="3" y="3" rx="2" ry="2" /><circle cx="9" cy="9" r="2" /><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+  image: ( /* geometry from Storybook PhotoIcon: frame + dot + mountain */
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3.5" y="4.5" width="17" height="15" rx="1.5" />
+      <circle cx="8.75" cy="9.25" r="1.5" />
+      <path d="m20.5 15.5-4.4-4.4a1 1 0 0 0-1.42 0L7.5 18.25" />
+      <path d="m3.5 16.5 3.05-3.05a1 1 0 0 1 1.4 0L10 15.5" />
     </svg>
   ),
-  send: (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" />
+  send: ( /* arrow-up — modern chat idiom, matches Storybook ArrowUpIcon geometry */
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 19.5v-15M5 11.5l7-7 7 7" />
     </svg>
   ),
   chevronDown: (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="m6 9 6 6 6-6" />
     </svg>
   ),
-  trash: (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+  trash: ( /* Storybook DeleteIcon geometry incl. interior ticks */
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 6h16" />
+      <path d="M9.5 6V4.25c0-.69.56-1.25 1.25-1.25h2.5c.69 0 1.25.56 1.25 1.25V6" />
+      <path d="M6 6v13a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V6" />
+      <path d="M10 10.5v6M14 10.5v6" />
     </svg>
   ),
-  sparkles: (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
-      <path d="M5 3v4" /><path d="M19 17v4" /><path d="M3 5h4" /><path d="M17 19h4" />
-    </svg>
-  ),
-  moreVertical: (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="1" /><circle cx="12" cy="5" r="1" /><circle cx="12" cy="19" r="1" />
+  moreVertical: ( /* horizontal, filled dots — matches Storybook EllipsisIcon */
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+      <circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" />
     </svg>
   ),
   pencil: (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /><path d="m15 5 4 4" />
     </svg>
   ),
   check: (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M20 6 9 17l-5-5" />
     </svg>
   ),
   checkCircle: (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
       <path d="M22 4 12 14.01l-3-3" />
     </svg>
   ),
   xCircle: (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="10" />
       <path d="m15 9-6 6" />
       <path d="m9 9 6 6" />
     </svg>
   ),
   lightbulb: (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5" />
       <path d="M9 18h6" />
       <path d="M10 22h4" />
     </svg>
   ),
   wrench: (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+    </svg>
+  ),
+  openExternal: ( /* Storybook ShareAltIcon geometry — used by "Open in Storybook" */
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12.5 4.5H5.75A1.75 1.75 0 0 0 4 6.25v12A1.75 1.75 0 0 0 5.75 20h12a1.75 1.75 0 0 0 1.75-1.75V11.5" />
+      <path d="M14.5 3.5H20.5V9.5M20 4 11.5 12.5" />
     </svg>
   ),
 };
@@ -1028,7 +1078,7 @@ interface ProgressIndicatorProps {
 }
 
 const ProgressIndicator: React.FC<ProgressIndicatorProps> = ({ streamingState }) => {
-  const { progress, retry, completion, error } = streamingState;
+  const { intent, progress, retry, completion, error } = streamingState;
   if (error) {
     return (
       <div className="sui-error" role="alert">
@@ -1073,9 +1123,24 @@ const ProgressIndicator: React.FC<ProgressIndicatorProps> = ({ streamingState })
     );
   }
   return (
-    <div className="sui-progress" role="progressbar" aria-valuenow={progress?.step} aria-valuemax={progress?.totalSteps}>
+    <div
+      className="sui-progress"
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuenow={progress?.step ?? 0}
+      aria-valuemax={progress?.totalSteps ?? 8}
+      aria-label="Story generation progress"
+    >
+      {intent && (
+        <div className="sui-progress-intent">
+          <strong>Plan:</strong> {intent.strategy}
+          {intent.estimatedComponents.length > 0 && (
+            <span className="sui-progress-intent-components"> · {intent.estimatedComponents.slice(0, 4).join(', ')}</span>
+          )}
+        </div>
+      )}
       <div className="sui-progress-header">
-        <span className="sui-progress-label">{progress?.message || 'Please give us a moment while we generate your story...'}</span>
+        <span className="sui-progress-label">{progress?.message || 'Generating your story…'}</span>
         {progress && <span className="sui-progress-step">{progress.step}/{progress.totalSteps}</span>}
       </div>
       {progress && (
@@ -1171,6 +1236,9 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   // Used to detect when stories are created via MCP remote (Claude Desktop)
   // and trigger automatic refresh since MCP has no browser context
   const panelGeneratedStoryIds = useRef<Set<string>>(new Set());
+  // Mirrors state.loading so the story poller (registered once) can see it.
+  const loadingRef = useRef(false);
+  useEffect(() => { loadingRef.current = state.loading; }, [state.loading]);
   const voiceModeActiveRef = useRef(false);
   const canvasModeRef = useRef(panelMode === 'canvas');
   const voiceCanvasRef = useRef<VoiceCanvasHandle>(null);
@@ -1207,41 +1275,28 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           return;
         }
 
-        // Check for new stories not created by this panel session
+        // Never reload while a generation is streaming — the reload would
+        // race the completion event and drop the assistant's reply.
+        if (loadingRef.current) {
+          knownStoryIds.current = currentStoryIds;
+          return;
+        }
+
+        // Check for new stories not created by this panel session.
+        // Storybook ≥9 registers new story files live (sidebar + preview both
+        // update without a reload), so external stories only need a chat-list
+        // resync — the old full-page reload is gone.
         for (const storyId of currentStoryIds) {
-          // Never treat the voice-canvas scratchpad as an externally generated story —
-          // it is created on first canvas use and should never trigger a page reload.
           if (storyId === 'generated-voice-canvas--default' || storyId.startsWith('voice-canvas')) continue;
           if (!knownStoryIds.current.has(storyId) && !panelGeneratedStoryIds.current.has(storyId)) {
-            // When Voice Canvas is active, a story was just saved from the canvas —
-            // skip the page reload to keep the live editing session intact.
-            if (canvasModeRef.current) {
-              knownStoryIds.current = currentStoryIds;
-              break;
-            }
-
-            // New story detected that wasn't created by this panel - must be from MCP remote
             console.log('[Story UI] Detected externally generated story:', storyId);
-            console.log('[Story UI] Triggering refresh to register new story in Vite import map...');
-
-            // Update known stories before refresh
-            knownStoryIds.current = currentStoryIds;
-
-            // Trigger refresh with a short delay
-            setTimeout(() => {
-              try {
-                if (window.top && window.top !== window) {
-                  window.top.location.reload();
-                } else if (window.parent && window.parent !== window) {
-                  window.parent.location.reload();
-                } else {
-                  window.location.reload();
-                }
-              } catch (error) {
-                console.warn('[Story UI] Could not auto-refresh for MCP-generated story');
-              }
-            }, 1000);
-            return; // Only trigger one refresh
+            try {
+              const sessions = await syncWithActualStories();
+              dispatch({ type: 'SET_RECENT_CHATS', payload: sessions });
+            } catch {
+              // Chat list resync is best-effort.
+            }
+            break;
           }
         }
 
@@ -1275,6 +1330,97 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     };
 
     checkStorybookMcp();
+  }, []);
+
+  // Recover an in-flight generation after a preview-iframe reload.
+  // Vite reloads the docs page when the new story file lands, which kills the
+  // SSE stream mid-generation. The server finishes anyway and persists the
+  // assistant reply to the manifest — so on remount, restore the conversation
+  // from the stash and poll the manifest until the reply appears.
+  useEffect(() => {
+    let cancelled = false;
+    let raw: string | null = null;
+    try { raw = sessionStorage.getItem(PENDING_GEN_KEY); } catch {}
+    if (!raw) return;
+
+    let pending: {
+      userInput: string;
+      conversation: Array<{ role: 'user' | 'ai'; content: string }>;
+      fileName: string | null;
+      chatId: string | null;
+      title: string | null;
+      startedAt: number;
+    };
+    try { pending = JSON.parse(raw); } catch {
+      try { sessionStorage.removeItem(PENDING_GEN_KEY); } catch {}
+      return;
+    }
+
+    const MAX_RECOVERY_MS = 4 * 60_000;
+    if (!pending.startedAt || Date.now() - pending.startedAt > MAX_RECOVERY_MS) {
+      try { sessionStorage.removeItem(PENDING_GEN_KEY); } catch {}
+      return;
+    }
+
+    // Restore the conversation and show a resuming state
+    dispatch({ type: 'SET_CONVERSATION', payload: pending.conversation.map(m => ({ role: m.role, content: m.content })) });
+    if (pending.chatId) {
+      dispatch({ type: 'SET_ACTIVE_CHAT', payload: { id: pending.chatId, title: pending.title || '' } });
+    }
+    dispatch({ type: 'SET_LOADING', payload: true });
+    dispatch({
+      type: 'SET_STREAMING_STATE',
+      payload: { progress: { phase: 'llm_thinking', step: 4, totalSteps: 8, message: 'Reconnecting to your in-progress generation…' } },
+    });
+
+    const finishRecovery = () => {
+      try { sessionStorage.removeItem(PENDING_GEN_KEY); } catch {}
+      dispatch({ type: 'SET_LOADING', payload: false });
+      dispatch({ type: 'SET_STREAMING_STATE', payload: null });
+    };
+
+    const poll = async () => {
+      const deadline = pending.startedAt + MAX_RECOVERY_MS;
+      while (!cancelled && Date.now() < deadline) {
+        try {
+          const res = await fetch(MANIFEST_API());
+          if (res.ok) {
+            const data = await res.json();
+            const entries: Record<string, any> = data.stories ?? {};
+            const entry = Object.values(entries).find((e: any) => {
+              if (pending.fileName && e.fileName === pending.fileName) return true;
+              return e.metadata?.prompt === pending.userInput;
+            }) as any;
+            const conv = entry?.conversation ?? [];
+            const last = conv[conv.length - 1];
+            if (entry && last?.role === 'ai') {
+              if (cancelled) return;
+              finishRecovery();
+              dispatch({
+                type: 'SET_CONVERSATION',
+                payload: conv.map((m: any) => ({ role: m.role, content: m.content })),
+              });
+              dispatch({ type: 'SET_ACTIVE_CHAT', payload: { id: entry.fileName || entry.id, title: entry.title || pending.title || '' } });
+              try {
+                const sessions = await syncWithActualStories();
+                if (!cancelled) dispatch({ type: 'SET_RECENT_CHATS', payload: sessions });
+              } catch { /* best effort */ }
+              // entry.id is the storyIdSlug — enables the "Open in Storybook" chip
+              if (entry.id) {
+                awaitStoryIndexed(String(entry.id));
+              }
+              return;
+            }
+          }
+        } catch { /* server busy — keep polling */ }
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      }
+      if (!cancelled) finishRecovery();
+    };
+    poll();
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Detect Storybook MANAGER theme (not preview background)
@@ -1351,7 +1497,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     };
   }, []);
 
-  // Close context menu when clicking outside
+  // Close context menu when clicking outside or pressing Escape
   useEffect(() => {
     if (!contextMenuId) return;
 
@@ -1361,9 +1507,18 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
         setContextMenuId(null);
       }
     };
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setContextMenuId(null);
+      }
+    };
 
     document.addEventListener('click', handleClickOutside);
-    return () => document.removeEventListener('click', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('click', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
   }, [contextMenuId]);
 
   // Initialize on mount
@@ -1602,7 +1757,9 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     }
   }, [state.attachedImages.length]);
 
-  // Build response message
+  // Build response message. When the server includes a model-authored
+  // chatSummary, that becomes the assistant's voice; the structured receipt
+  // is only used as a fallback for older servers.
   const buildConversationalResponse = (completion: CompletionFeedback, isUpdate: boolean): string => {
     const parts: string[] = [];
     const isFallback = completion.isFallback === true;
@@ -1615,23 +1772,34 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     if (isFallback) {
       parts.push(`\n\n⚠️ **Generation failed** - An error placeholder was saved. You may want to delete this story and try again with a simpler request.`);
     }
-    const componentCount = completion.componentsUsed?.length || 0;
-    if (componentCount > 0) {
-      const names = completion.componentsUsed.slice(0, 5).map(c => `\`${c.name}\``).join(', ');
-      parts.push(`\nBuilt with ${names}${componentCount > 5 ? '...' : ''}.`);
+
+    if (completion.chatSummary && !isFallback) {
+      // Conversational reply authored by the model
+      parts.push(`\n\n${completion.chatSummary}`);
+    } else {
+      // Legacy receipt built from code analysis
+      const componentCount = completion.componentsUsed?.length || 0;
+      if (componentCount > 0) {
+        const names = completion.componentsUsed.slice(0, 5).map(c => `\`${c.name}\``).join(', ');
+        parts.push(`\nBuilt with ${names}${componentCount > 5 ? '…' : ''}.`);
+      }
+      if (completion.layoutChoices?.length > 0) {
+        const layout = completion.layoutChoices[0];
+        parts.push(`\n\n**Layout:** ${layout.pattern} - ${layout.reason}.`);
+      }
+      if (completion.suggestions && completion.suggestions.length > 0 && !completion.suggestions[0].toLowerCase().includes('review the generated code')) {
+        parts.push(`\n\n[TIP] **Tip:** ${completion.suggestions[0]}`);
+      }
     }
-    if (completion.layoutChoices?.length > 0) {
-      const layout = completion.layoutChoices[0];
-      parts.push(`\n\n**Layout:** ${layout.pattern} - ${layout.reason}.`);
-    }
+
     if (completion.validation?.autoFixApplied) {
       parts.push(`\n\n[WRENCH] **Auto-fixed:** Minor syntax issues were automatically corrected.`);
     }
-    if (completion.suggestions && completion.suggestions.length > 0 && !completion.suggestions[0].toLowerCase().includes('review the generated code')) {
-      parts.push(`\n\n[TIP] **Tip:** ${completion.suggestions[0]}`);
+    if (completion.runtimeValidation?.enabled && !completion.runtimeValidation.success) {
+      parts.push(`\n\n⚠️ **Heads up:** the story saved but may not render correctly in Storybook (${completion.runtimeValidation.error || 'runtime error'}). Ask me to fix it or try regenerating.`);
     }
-    if (!isUpdate && !hasShownRefreshHint.current) {
-      parts.push(isEdgeMode() ? `\n\n_Story saved to cloud._` : `\n\n_Storybook will auto-refresh in 2 seconds to register the new story..._`);
+    if (!isUpdate && isEdgeMode() && !hasShownRefreshHint.current) {
+      parts.push(`\n\n_Story saved to cloud._`);
       hasShownRefreshHint.current = true;
     }
     if (completion.metrics?.totalTimeMs) {
@@ -1641,34 +1809,67 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   };
 
   /**
-   * Trigger a Storybook refresh to fix Vite HMR issues with new story files.
-   * This is a workaround for the known Storybook + Vite bug where new story files
-   * aren't properly registered in Vite's import map until a page refresh.
-   * See: https://github.com/storybookjs/storybook/issues/30431
+   * No-reload story registration (Storybook ≥9 handles new story files live):
+   * poll the story index until the new story appears, then attach its entry ID
+   * to the last AI message so an "Open story" button can navigate to it
+   * client-side via the addons channel. Replaces the old full-page reload
+   * workaround for storybookjs/storybook#30431, which is fixed upstream.
    */
-  const triggerStorybookRefresh = useCallback((storyTitle: string, delayMs: number = 2000) => {
-    // Only refresh for new stories (not updates) to avoid disrupting workflow
-    console.log(`[Story UI] Scheduling Storybook refresh in ${delayMs}ms for new story: ${storyTitle}`);
+  const awaitStoryIndexed = useCallback((storybookId: string) => {
+    let cancelled = false;
+    const maxAttempts = 15;
+    let attempt = 0;
 
-    setTimeout(() => {
-      try {
-        // Try to refresh the parent Storybook frame
-        if (window.top && window.top !== window) {
-          console.log('[Story UI] Refreshing Storybook to register new story file...');
-          window.top.location.reload();
-        } else if (window.parent && window.parent !== window) {
-          console.log('[Story UI] Refreshing parent frame...');
-          window.parent.location.reload();
-        } else {
-          // Fallback: refresh current window
-          console.log('[Story UI] Refreshing current window...');
-          window.location.reload();
+    const poll = async () => {
+      while (!cancelled && attempt < maxAttempts) {
+        attempt++;
+        try {
+          const res = await fetch('/index.json', { cache: 'no-store' });
+          if (res.ok) {
+            const index = await res.json();
+            const entries = index.entries || {};
+            // Prefer a real story entry; fall back to the docs entry.
+            const entryId =
+              Object.keys(entries).find(id => id.startsWith(`${storybookId}--`) && entries[id].type === 'story') ||
+              Object.keys(entries).find(id => id.startsWith(`${storybookId}--`));
+            if (entryId) {
+              if (!cancelled) {
+                dispatch({ type: 'PATCH_LAST_AI_MESSAGE', payload: { storyEntryId: entryId } });
+              }
+              return;
+            }
+          }
+        } catch {
+          // Index not reachable yet — keep polling.
         }
-      } catch (error) {
-        // Cross-origin restrictions may prevent programmatic refresh
-        console.warn('[Story UI] Could not auto-refresh Storybook. Please refresh manually (Cmd/Ctrl + R).');
+        await new Promise(resolve => setTimeout(resolve, 1500));
       }
-    }, delayMs);
+      if (!cancelled) {
+        console.warn(`[Story UI] Story "${storybookId}" did not appear in the index after ${maxAttempts} polls`);
+      }
+    };
+
+    poll();
+    return () => { cancelled = true; };
+  }, []);
+
+  /** Navigate the Storybook manager to a story without a page reload. */
+  const openStoryInStorybook = useCallback((entryId: string) => {
+    try {
+      const channel = (window as any).__STORYBOOK_ADDONS_CHANNEL__;
+      if (channel?.emit) {
+        channel.emit('selectStory', { storyId: entryId });
+        return;
+      }
+    } catch {
+      // fall through to URL navigation
+    }
+    try {
+      const target = window.top ?? window;
+      target.location.href = `${target.location.pathname}?path=/story/${entryId}`;
+    } catch {
+      window.open(`/?path=/story/${entryId}`, '_blank');
+    }
   }, []);
 
   // Finalize streaming
@@ -1682,7 +1883,16 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
 
     const isUpdate = completion.summary.action === 'updated';
     const responseMessage = buildConversationalResponse(completion, isUpdate);
-    const aiMsg: Message = { role: 'ai', content: responseMessage };
+    const aiMsg: Message = {
+      role: 'ai',
+      content: responseMessage,
+      // Model-authored follow-ups become clickable refinement chips. Legacy
+      // warning-style suggestions (no chatSummary) stay inline text only.
+      suggestions: completion.chatSummary && completion.success ? completion.suggestions : undefined,
+      code: completion.code,
+      isError: !completion.success,
+      retryInput: !completion.success ? userInput : undefined,
+    };
     const updatedConversation = [...newConversation, aiMsg];
     dispatch({ type: 'SET_CONVERSATION', payload: updatedConversation });
     const isExistingSession = state.activeChatId && state.conversation.length > 0;
@@ -1722,19 +1932,21 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
       await persistChatToManifest(newSession);
       dispatch({ type: 'SET_RECENT_CHATS', payload: loadChats() });
 
-      // Auto-refresh Storybook for NEW stories to fix Vite HMR import map issue
-      // This fixes the "importers[path] is not a function" error
-      if (completion.success && completion.title) {
-        triggerStorybookRefresh(completion.title);
-      }
     }
-  }, [state.activeChatId, state.activeTitle, state.conversation.length, triggerStorybookRefresh]);
 
-  // Handle send
-  const handleSend = async (e?: React.FormEvent) => {
+    // Watch the story index and attach an "Open story" link when the new
+    // story is ready — no page reload needed (Storybook ≥9 indexes live).
+    if (completion.success && completion.storybookId) {
+      awaitStoryIndexed(completion.storybookId);
+    }
+  }, [state.activeChatId, state.activeTitle, state.conversation.length, awaitStoryIndexed]);
+
+  // Handle send. overrideInput lets retry buttons and suggestion chips send
+  // without round-tripping through the (possibly stale) input state.
+  const handleSend = async (e?: React.FormEvent, overrideInput?: string) => {
     if (e) e.preventDefault();
-    if (!state.input.trim() && state.attachedImages.length === 0) return;
-    const userInput = state.input.trim() || (state.attachedImages.length > 0 ? 'Create a component that matches this design' : '');
+    if (!overrideInput && !state.input.trim() && state.attachedImages.length === 0) return;
+    const userInput = overrideInput?.trim() || state.input.trim() || (state.attachedImages.length > 0 ? 'Create a component that matches this design' : '');
     dispatch({ type: 'SET_ERROR', payload: null });
     dispatch({ type: 'SET_LOADING', payload: true });
     dispatch({ type: 'SET_STREAMING_STATE', payload: null });
@@ -1768,7 +1980,22 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
         if (abortControllerRef.current) abortControllerRef.current.abort();
         abortControllerRef.current = new AbortController();
         dispatch({ type: 'SET_STREAMING_STATE', payload: {} });
-        // DEBUG: Log exact request body before sending
+
+        // Stash the in-flight generation so it survives a preview-iframe
+        // reload (Vite reloads the docs page when the new story file lands).
+        // The server persists the assistant reply to the manifest, so the
+        // remounted panel can recover the finished conversation from there.
+        try {
+          sessionStorage.setItem(PENDING_GEN_KEY, JSON.stringify({
+            userInput,
+            conversation: newConversation.map(m => ({ role: m.role, content: m.content })),
+            fileName: activeFileName || null,
+            chatId: state.activeChatId || null,
+            title: state.activeTitle || null,
+            startedAt: Date.now(),
+          }));
+        } catch { /* sessionStorage unavailable */ }
+
         const requestBody = {
           prompt: userInput,
           conversation: newConversation,
@@ -1784,6 +2011,9 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           model: state.selectedModel || undefined,
           considerations: state.considerations || undefined,
           useStorybookMcp: state.storybookMcpAvailable && state.useStorybookMcp,
+          // The panel runs inside Storybook, so it knows the origin where the
+          // MCP addon lives — lets the server fetch context with zero config.
+          storybookUrl: state.storybookMcpAvailable && state.useStorybookMcp ? window.location.origin : undefined,
           voiceMode: voiceModeActiveRef.current || undefined,
         };
         const response = await fetch(MCP_STREAM_API(), {
@@ -1824,6 +2054,11 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                     break;
                   case 'completion':
                     completionData = event.data as CompletionFeedback;
+                    // Register immediately so the story poller never classifies
+                    // this panel-generated story as external (reload race).
+                    if (completionData.fileName) {
+                      panelGeneratedStoryIds.current.add(completionData.fileName.replace(/\.stories\.\w+$/, ''));
+                    }
                     dispatch({ type: 'UPDATE_STREAMING_STATE', payload: { completion: completionData } });
                     break;
                   case 'error':
@@ -1837,16 +2072,23 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
             }
           }
         }
+        try { sessionStorage.removeItem(PENDING_GEN_KEY); } catch {}
         if (completionData) {
           finalizeStreamingConversation(newConversation, completionData, userInput);
         } else if (errorData) {
           dispatch({ type: 'SET_ERROR', payload: errorData.message });
-          const errorConversation = [...newConversation, { role: 'ai' as const, content: `Error: ${errorData.message}\n\n${errorData.suggestion || ''}` }];
+          const errorConversation = [...newConversation, {
+            role: 'ai' as const,
+            content: `Error: ${errorData.message}\n\n${errorData.suggestion || ''}`,
+            isError: true,
+            retryInput: userInput,
+          }];
           dispatch({ type: 'SET_CONVERSATION', payload: errorConversation });
         }
       } catch (err: unknown) {
         if ((err as Error).name === 'AbortError') return;
         console.warn('Streaming failed, falling back to non-streaming:', err);
+        try { sessionStorage.removeItem(PENDING_GEN_KEY); } catch {}
         dispatch({ type: 'SET_STREAMING_STATE', payload: null });
         try {
           const res = await fetch(MCP_API(), {
@@ -1863,6 +2105,9 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
               model: state.selectedModel || undefined,
               considerations: state.considerations || undefined,
               useStorybookMcp: state.storybookMcpAvailable && state.useStorybookMcp,
+          // The panel runs inside Storybook, so it knows the origin where the
+          // MCP addon lives — lets the server fetch context with zero config.
+          storybookUrl: state.storybookMcpAvailable && state.useStorybookMcp ? window.location.origin : undefined,
             }),
           });
           const data = await res.json();
@@ -1888,7 +2133,12 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
         } catch (fallbackErr: unknown) {
           const errorMessage = fallbackErr instanceof Error ? fallbackErr.message : 'Unknown error';
           dispatch({ type: 'SET_ERROR', payload: errorMessage });
-          const errorConversation = [...newConversation, { role: 'ai' as const, content: `Error: ${errorMessage}` }];
+          const errorConversation = [...newConversation, {
+            role: 'ai' as const,
+            content: `Error: ${errorMessage}`,
+            isError: true,
+            retryInput: userInput,
+          }];
           dispatch({ type: 'SET_CONVERSATION', payload: errorConversation });
         }
       } finally {
@@ -2145,21 +2395,21 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
       <aside className={`sui-sidebar ${state.sidebarOpen ? '' : 'collapsed'}`} aria-label="Chat history">
         {state.sidebarOpen && (
           <div className="sui-sidebar-content">
-            {/* Toggle */}
-            <button
-              className="sui-button sui-button-ghost"
-              onClick={() => dispatch({ type: 'TOGGLE_SIDEBAR' })}
-              style={{ width: '100%', marginBottom: '12px', justifyContent: 'flex-start' }}
-            >
-              {Icons.panelLeft}
-              <span style={{ marginLeft: '8px' }}>Hide sidebar</span>
-            </button>
-
-            {/* New Chat */}
-            <button className="sui-button sui-button-default" onClick={handleNewChat} style={{ width: '100%', marginBottom: '16px' }}>
-              {Icons.plus}
-              <span>{panelMode === 'canvas' ? 'New Canvas' : 'New Chat'}</span>
-            </button>
+            {/* New story + hide sidebar (icon-only) on one row */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+              <button className="sui-button sui-button-default" onClick={handleNewChat} style={{ flex: 1 }}>
+                {Icons.plus}
+                <span>{panelMode === 'canvas' ? 'New canvas' : 'New story'}</span>
+              </button>
+              <button
+                className="sui-button sui-button-ghost sui-button-icon"
+                onClick={() => dispatch({ type: 'TOGGLE_SIDEBAR' })}
+                aria-label="Hide sidebar"
+                title="Hide sidebar"
+              >
+                {Icons.panelLeft}
+              </button>
+            </div>
 
             {/* Chat history */}
             <div className="sui-sidebar-chats">
@@ -2243,12 +2493,12 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                   {isDeletingOrphans ? (
                     <>
                       <span className="sui-orphan-spinner" />
-                      <span>Deleting...</span>
+                      <span>Deleting…</span>
                     </>
                   ) : (
                     <>
                       {Icons.trash}
-                      <span>{orphanCount} orphan {orphanCount === 1 ? 'story' : 'stories'}</span>
+                      <span>Clean up {orphanCount} unlinked {orphanCount === 1 ? 'story' : 'stories'}</span>
                     </>
                   )}
                 </button>
@@ -2345,7 +2595,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
             {state.storybookMcpAvailable && (
               <div className="sui-mcp-toggle" title="Use Storybook MCP context for enhanced component generation">
                 <label className="sui-toggle-label">
-                  <span className="sui-toggle-text">MCP Context</span>
+                  <span className="sui-toggle-text">MCP context</span>
                   <div className="sui-toggle-switch">
                     <input
                       type="checkbox"
@@ -2399,8 +2649,8 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
 
           {state.conversation.length === 0 && !state.loading ? (
             <div className="sui-welcome">
-              <h2 className="sui-welcome-greeting">{state.activeChatId ? 'No chat history' : 'What would you like to create?'}</h2>
-              <p className="sui-welcome-subtitle">{state.activeChatId ? 'This story has no saved chat history. Describe a change below to start editing it.' : 'Describe any UI component and I\'ll generate a Storybook story'}</p>
+              <h2 className="sui-welcome-greeting">{state.activeChatId ? 'No conversation yet' : 'What should we build?'}</h2>
+              <p className="sui-welcome-subtitle">{state.activeChatId ? 'This story doesn\'t have a conversation yet. Describe a change below to start editing it.' : 'Describe a component and Story UI writes the story — using your design system.'}</p>
               <div className="sui-welcome-chips">
                 <button className="sui-chip" onClick={() => dispatch({ type: 'SET_INPUT', payload: 'Create a responsive card with image, title, and description' })}>
                   Card
@@ -2424,25 +2674,68 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
             </div>
           ) : (
             <div className="sui-chat-messages">
-              {state.conversation.map((msg, i) => (
+              {state.conversation.map((msg, i) => {
+                const isLastMessage = i === state.conversation.length - 1;
+                return (
                 <article key={i} className={`sui-message ${msg.role === 'user' ? 'sui-message-user' : 'sui-message-ai'}`}>
                   <div className="sui-message-bubble">
                     {msg.role === 'ai' ? renderMarkdown(msg.content) : msg.content}
                     {msg.role === 'user' && msg.attachedImages && msg.attachedImages.length > 0 && (
                       <div className="sui-message-images">
                         {msg.attachedImages.map(img => (
-                          <img key={img.id} src={img.base64 ? `data:${img.mediaType};base64,${img.base64}` : img.preview} alt="attached" className="sui-message-image" />
+                          <img key={img.id} src={img.base64 ? `data:${img.mediaType};base64,${img.base64}` : img.preview} alt="Image attached to this message" className="sui-message-image" />
                         ))}
                       </div>
                     )}
+                    {msg.role === 'ai' && msg.code && (
+                      <details className="sui-message-code">
+                        <summary>View generated code</summary>
+                        <pre><code>{msg.code}</code></pre>
+                      </details>
+                    )}
                   </div>
+                  {msg.role === 'ai' && msg.isError && msg.retryInput && isLastMessage && !state.loading && (
+                    <div className="sui-message-actions">
+                      <button
+                        type="button"
+                        className="sui-chip sui-chip-retry"
+                        onClick={() => handleSend(undefined, msg.retryInput)}
+                      >
+                        ↻ Try again
+                      </button>
+                    </div>
+                  )}
+                  {msg.role === 'ai' && !msg.isError && (msg.storyEntryId || (msg.suggestions && msg.suggestions.length > 0 && isLastMessage)) && !state.loading && (
+                    <div className="sui-message-suggestions" aria-label="Story actions and suggested follow-ups">
+                      {msg.storyEntryId && (
+                        <button
+                          type="button"
+                          className="sui-chip sui-chip-open-story"
+                          onClick={() => openStoryInStorybook(msg.storyEntryId!)}
+                        >
+                          Open in Storybook {Icons.openExternal}
+                        </button>
+                      )}
+                      {isLastMessage && msg.suggestions?.map((suggestion, si) => (
+                        <button
+                          key={si}
+                          type="button"
+                          className="sui-chip sui-chip-suggestion"
+                          onClick={() => handleSend(undefined, suggestion)}
+                        >
+                          {suggestion}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </article>
-              ))}
+                );
+              })}
               {state.loading && (
                 <div className="sui-message sui-message-ai">
                   {state.streamingState ? <ProgressIndicator streamingState={state.streamingState} /> : (
                     <div className="sui-progress">
-                      <span className="sui-progress-label">Please give us a moment while we generate your story<span className="sui-loading" /></span>
+                      <span className="sui-progress-label">Generating your story<span className="sui-loading" /></span>
                     </div>
                   )}
                 </div>
@@ -2487,7 +2780,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                   }
                 }}
                 onPaste={handlePaste}
-                placeholder={state.attachedImages.length > 0 ? 'Describe what to create from these images...' : 'Describe a UI component...'}
+                placeholder={state.attachedImages.length > 0 ? 'Describe what to build from these images…' : 'Describe a component or layout…'}
               />
               <VoiceControls
                 onTranscript={handleVoiceTranscript}

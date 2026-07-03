@@ -14,7 +14,7 @@
  * StoryUIPanel is never accidentally reset.
  */
 import React, { useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { parseVoiceCommand } from './voiceCommands.js';
+import { parseVoiceCommand } from './voiceCommands';
 
 // ── Constants ─────────────────────────────────────────────────
 
@@ -63,6 +63,8 @@ function VoiceCanvas({
   // ── Generation state ─────────────────────────────────────────
   const [isGenerating, setIsGenerating] = useState(false);
   const [statusText, setStatusText] = useState('');
+  // Live LLM output shown while generating — the "watch it being written" feed.
+  const [streamingCode, setStreamingCode] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [savedMessage, setSavedMessage] = useState('');
   const [lastPrompt, setLastPrompt] = useState('');
@@ -179,6 +181,7 @@ function VoiceCanvas({
           provider: provider || 'claude',
           model: model || undefined,
           conversationHistory: conversationRef.current,
+          stream: true,
         }),
         signal: controller.signal,
       });
@@ -188,10 +191,54 @@ function VoiceCanvas({
         throw new Error(`Server error ${response.status}: ${err}`);
       }
 
-      setStatusText('Building...');
+      setStatusText('Building…');
 
-      const data = await response.json();
-      const newCode: string = data.canvasCode ?? '';
+      // Consume the SSE stream: `chunk` events carry raw LLM text deltas that
+      // drive the live "writing code" overlay; the final `complete` event
+      // carries the extracted + sanitized code that actually renders.
+      let newCode = '';
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('text/event-stream') && response.body) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let currentEvent = '';
+        let streamError: string | null = null;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            if (line.startsWith('event: ')) {
+              currentEvent = line.slice(7).trim();
+            } else if (line.startsWith('data: ')) {
+              try {
+                const payload = JSON.parse(line.slice(6));
+                if (currentEvent === 'chunk' && payload.delta) {
+                  if (generationCounterRef.current === genId) {
+                    setStreamingCode(prev => (prev + payload.delta).slice(-6000));
+                  }
+                } else if (currentEvent === 'complete') {
+                  newCode = payload.canvasCode ?? '';
+                } else if (currentEvent === 'error') {
+                  streamError = payload.error || 'Generation stream failed';
+                }
+              } catch { /* malformed SSE line */ }
+            }
+          }
+        }
+        if (streamError) throw new Error(streamError);
+      } else {
+        // Legacy non-streaming server
+        const data = await response.json();
+        newCode = data.canvasCode ?? '';
+      }
+      if (generationCounterRef.current === genId) {
+        setStreamingCode('');
+      }
 
       if (newCode.trim()) {
         if (currentCode.trim()) {
@@ -219,9 +266,11 @@ function VoiceCanvas({
         }
         lastPromptRef.current = transcript;
         setLastPrompt(transcript);
+        // Store the actual generated code (capped) so multi-turn edits give
+        // the model a real record of what it previously produced.
         conversationRef.current.push(
           { role: 'user', content: transcript },
-          { role: 'assistant', content: '[Generated canvas component]' },
+          { role: 'assistant', content: newCode.slice(0, 4000) },
         );
         if (conversationRef.current.length > 40) {
           conversationRef.current = conversationRef.current.slice(-40);
@@ -251,6 +300,7 @@ function VoiceCanvas({
       // Only reset shared state if no newer generation has started since we began.
       if (generationCounterRef.current === genId) {
         setIsGenerating(false);
+        setStreamingCode('');
         abortRef.current = null;
 
         // Resume voice recognition if it was active before generation started.
@@ -467,11 +517,21 @@ function VoiceCanvas({
 
     recognition.onerror = (event: any) => {
       if (event.error === 'aborted' || event.error === 'no-speech') return;
-      if (event.error === 'not-allowed') {
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
         setErrorMessage('Microphone access denied');
         isListeningRef.current = false;
         setIsListening(false);
+        return;
       }
+      if (event.error === 'network') {
+        // The browser's cloud speech service is unreachable — stop the
+        // restart loop and tell the user instead of failing silently.
+        setErrorMessage('Speech recognition is unavailable (network error). You can keep typing commands instead.');
+        isListeningRef.current = false;
+        setIsListening(false);
+        return;
+      }
+      setErrorMessage(`Speech recognition error: ${event.error}`);
     };
 
     recognition.onend = () => {
@@ -665,22 +725,28 @@ function VoiceCanvas({
           </div>
         )}
 
-        {/* First-generation spinner */}
+        {/* First generation — live code stream while the model writes */}
         {!storyReady && isGenerating && (
           <div className="sui-canvas-progress">
             <div className="sui-canvas-progress-spinner" />
-            <span className="sui-canvas-progress-text">{statusText || 'Building...'}</span>
+            <span className="sui-canvas-progress-text">{statusText || 'Building…'}</span>
+            {streamingCode && (
+              <pre className="sui-canvas-stream" aria-hidden="true"><code>{streamingCode.slice(-2200)}</code></pre>
+            )}
           </div>
         )}
 
         {/* Storybook iframe — renders with full decorator chain */}
         {storyReady && (
           <div className="sui-canvas-live-wrapper">
-            {/* Re-generation overlay */}
+            {/* Re-generation overlay with live code stream */}
             {isGenerating && (
               <div className="sui-canvas-regen-overlay">
                 <div className="sui-canvas-progress-spinner sui-canvas-progress-spinner--sm" />
-                <span>{statusText || 'Regenerating...'}</span>
+                <span>{statusText || 'Regenerating…'}</span>
+                {streamingCode && (
+                  <pre className="sui-canvas-stream sui-canvas-stream--overlay" aria-hidden="true"><code>{streamingCode.slice(-1200)}</code></pre>
+                )}
               </div>
             )}
 

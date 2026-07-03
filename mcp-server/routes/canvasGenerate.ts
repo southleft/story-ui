@@ -24,7 +24,7 @@ const execAsync = promisify(exec);
 import { loadUserConfig } from '../../story-generator/configLoader.js';
 import { EnhancedComponentDiscovery } from '../../story-generator/enhancedComponentDiscovery.js';
 import { buildClaudePrompt } from '../../story-generator/promptGenerator.js';
-import { chatCompletion } from '../../story-generator/llm-providers/story-llm-service.js';
+import { chatCompletionDetailed, chatCompletionStream } from '../../story-generator/llm-providers/story-llm-service.js';
 import { logger } from '../../story-generator/logger.js';
 
 // ── Component discovery cache ─────────────────────────────────
@@ -435,31 +435,71 @@ export async function canvasGenerateHandler(req: Request, res: Response) {
       { role: 'user', content: userMessage },
     ];
 
-    // Call the LLM
-    const response = await chatCompletion(messages, {
+    // Ensure react-live is installed and story template exists (no-ops after first run)
+    await ensureReactLive();
+    const storiesDir = config.generatedStoriesPath || './src/stories/generated/';
+    ensureVoiceCanvasStory(storiesDir);
+
+    // Streaming mode: emit raw LLM text deltas over SSE so the canvas can show
+    // the code being written in real time, then a final `complete` event with
+    // the extracted + sanitized code that actually gets rendered.
+    if (req.body.stream === true) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders();
+
+      let fullResponse = '';
+      try {
+        for await (const delta of chatCompletionStream(messages, {
+          provider: provider as any,
+          model,
+          maxTokens: 4096,
+          temperature: 0.3,
+        })) {
+          fullResponse += delta;
+          res.write(`event: chunk\ndata: ${JSON.stringify({ delta })}\n\n`);
+        }
+
+        const rawCode = extractCanvasCode(fullResponse);
+        const result = sanitizeCanvasCode(rawCode);
+        logger.log(`[canvas-generate] Streamed ${result.split('\n').length} lines for: "${prompt.slice(0, 60)}"`);
+        res.write(`event: complete\ndata: ${JSON.stringify({ canvasCode: result, storyId: VOICE_CANVAS_STORY_ID })}\n\n`);
+      } catch (streamError) {
+        const message = streamError instanceof Error ? streamError.message : String(streamError);
+        logger.error('[canvas-generate] Stream error', { error: message });
+        res.write(`event: error\ndata: ${JSON.stringify({ error: message })}\n\n`);
+      }
+      res.end();
+      return;
+    }
+
+    // Non-streaming mode (legacy clients)
+    const response = await chatCompletionDetailed(messages, {
       provider: provider as any,
       model,
       maxTokens: 4096,
       temperature: 0.3,
     });
 
+    if (response.truncated) {
+      logger.warn('[canvas-generate] LLM response truncated at token limit');
+    }
+
     // Extract the canvas code from the LLM response and sanitize it.
     // sanitizeCanvasCode neutralizes dangerous patterns (eval, fetch, script
     // injection, prototype pollution, etc.) before the code reaches the
     // client where react-live would execute it as arbitrary JS.
-    const rawCode = extractCanvasCode(response);
+    const rawCode = extractCanvasCode(response.content);
     const result = sanitizeCanvasCode(rawCode);
-
-    // Ensure react-live is installed and story template exists (no-ops after first run)
-    await ensureReactLive();
-    const storiesDir = config.generatedStoriesPath || './src/stories/generated/';
-    ensureVoiceCanvasStory(storiesDir);
 
     logger.log(`[canvas-generate] Generated ${result.split('\n').length} lines for: "${prompt.slice(0, 60)}"`);
 
     return res.json({
       canvasCode: result,
       storyId: VOICE_CANVAS_STORY_ID,
+      truncated: response.truncated || undefined,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

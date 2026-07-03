@@ -1,4 +1,4 @@
-import type { VoiceCommand, VoiceCommandType } from './types.js';
+import type { VoiceCommand, VoiceCommandType } from './types';
 
 // Client-side voice commands that are intercepted before reaching the LLM
 const COMMAND_MAP: Record<string, VoiceCommandType> = {
@@ -79,10 +79,16 @@ export function parseVoiceCommand(transcript: string): VoiceCommand | null {
     }
   }
 
-  // Save-intent phrases can appear anywhere in a longer utterance
-  for (const phrase of SAVE_INTENT_PHRASES) {
-    if (normalized.includes(phrase)) {
-      return { type: 'save', raw: transcript };
+  // Save-intent phrases in longer utterances — approval speech like
+  // "this is good, save it, stop listening" triggers a save. But a build
+  // INSTRUCTION containing a save phrase ("add a save it for later button")
+  // must not: build verbs indicate the user is describing UI, not approving.
+  const BUILD_VERBS = /\b(add|create|make|build|put|place|insert|change|update|remove|delete|move|swap|show|display)\b/;
+  if (!BUILD_VERBS.test(normalized)) {
+    for (const phrase of SAVE_INTENT_PHRASES) {
+      if (normalized.includes(phrase)) {
+        return { type: 'save', raw: transcript };
+      }
     }
   }
 

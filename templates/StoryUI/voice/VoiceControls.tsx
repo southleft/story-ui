@@ -1,7 +1,7 @@
 import React, { useCallback, useRef, useState, useEffect } from 'react';
-import { useVoiceInput } from './useVoiceInput.js';
-import { parseVoiceCommand } from './voiceCommands.js';
-import type { VoiceCommand } from './types.js';
+import { useVoiceInput } from './useVoiceInput';
+import { parseVoiceCommand } from './voiceCommands';
+import type { VoiceCommand } from './types';
 
 interface VoiceControlsProps {
   onTranscript: (text: string) => void;
@@ -119,16 +119,16 @@ export function VoiceControls({
         title={isListening ? 'Stop voice input' : 'Start voice input'}
       >
         {isListening ? (
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-            <line x1="12" x2="12" y1="19" y2="22" />
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="9" y="3" width="6" height="11" rx="3" />
+            <path d="M18.5 11.5a6.5 6.5 0 0 1-13 0" />
+            <path d="M12 18v3" />
           </svg>
         ) : (
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-            <line x1="12" x2="12" y1="19" y2="22" />
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="9" y="3" width="6" height="11" rx="3" />
+            <path d="M18.5 11.5a6.5 6.5 0 0 1-13 0" />
+            <path d="M12 18v3" />
           </svg>
         )}
         {isListening && <span className="sui-voice-pulse" />}
