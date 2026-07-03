@@ -13,10 +13,11 @@
     "declarationMap": true
   },
   "include": [
+    "index.ts",
+    "story-ui.config.ts",
     "cli/**/*.ts",
     "mcp-server/**/*.ts",
     "story-generator/**/*.ts",
-    "visual-builder/**/*.ts",
     "templates/**/*.ts",
     "templates/**/*.tsx"
   ],

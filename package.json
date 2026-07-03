@@ -20,7 +20,7 @@
   },
   "files": [
     "dist",
-    "templates",
+    "templates/StoryUI",
     ".env.sample",
     "README.md",
     "LICENSE"
@@ -28,8 +28,8 @@
   "scripts": {
     "build": "tsc && npm run copy-templates",
     "copy-templates": "node -e \"const fs=require('fs');const path=require('path');const src='templates/StoryUI';const dst='dist/templates/StoryUI';['.css','.mdx','.tsx','.ts'].forEach(ext=>{fs.readdirSync(src).filter(f=>f.endsWith(ext)).forEach(f=>fs.copyFileSync(path.join(src,f),path.join(dst,f)))});const vsrc=path.join(src,'voice');const vdst=path.join(dst,'voice');if(fs.existsSync(vsrc)){fs.mkdirSync(vdst,{recursive:true});fs.readdirSync(vsrc).filter(f=>f.endsWith('.tsx')||f.endsWith('.ts')).forEach(f=>fs.copyFileSync(path.join(vsrc,f),path.join(vdst,f)));const csrc=path.join(vsrc,'canvas');const cdst=path.join(vdst,'canvas');if(fs.existsSync(csrc)){fs.mkdirSync(cdst,{recursive:true});fs.readdirSync(csrc).filter(f=>f.endsWith('.tsx')||f.endsWith('.ts')).forEach(f=>fs.copyFileSync(path.join(csrc,f),path.join(cdst,f)))}}console.log('Template files copied to dist/')\"",
-    "start": "yarn build && node dist/mcp-server/index.js",
-    "mcp": "yarn build && node dist/mcp-server/mcp-stdio-server.js",
+    "start": "npm run build && node dist/mcp-server/index.js",
+    "mcp": "npm run build && node dist/mcp-server/mcp-stdio-server.js",
     "dev": "tsc --watch",
     "prepublishOnly": "npm run build",
     "test": "vitest run",
@@ -76,7 +76,6 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.23.0",
     "chalk": "^5.3.0",
-    "cheerio": "^1.2.0",
     "commander": "^11.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
@@ -86,8 +85,7 @@
     "inquirer": "^9.2.0",
     "node-fetch": "^2.6.7",
     "react-live": "^4.1.8",
-    "typescript": "^5.8.3",
-    "zod": "^3.22.4"
+    "typescript": "^5.8.3"
   },
   "devDependencies": {
     "@commitlint/cli": "^19.6.1",
