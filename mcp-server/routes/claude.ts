@@ -42,22 +42,29 @@ export async function claudeProxy(req: Request, res: Response) {
       ];
     }
 
-    // Add assistant prefill if provided (forces Claude to continue from this point)
-    // This is a powerful technique to control output format
+    // Assistant-turn prefill is rejected (HTTP 400) by Claude 4.6+ models, so we
+    // emulate it: instruct the model to begin with the prefill text, then
+    // normalize the response so callers still receive output starting with it.
     if (prefillAssistant) {
       chatMessages = [
         ...chatMessages,
-        { role: 'assistant' as const, content: prefillAssistant }
+        {
+          role: 'user' as const,
+          content: `Begin your response with exactly: ${prefillAssistant}\nDo not include any text before it.`
+        }
       ];
     }
 
-    const response = await chatCompletion(chatMessages, {
+    let response = await chatCompletion(chatMessages, {
       model,
       maxTokens: maxTokens || 4096
     });
 
-    // If we used a prefill, prepend it to the response so the client gets the full output
-    const fullResponse = prefillAssistant ? prefillAssistant + response : response;
+    if (prefillAssistant && !response.trimStart().startsWith(prefillAssistant)) {
+      response = prefillAssistant + response;
+    }
+
+    const fullResponse = response;
 
     // Return response in a format compatible with the old Claude API
     res.json({

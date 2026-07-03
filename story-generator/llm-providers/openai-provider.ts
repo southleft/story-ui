@@ -17,14 +17,15 @@ import {
   ImageContent,
 } from './types.js';
 import { BaseLLMProvider } from './base-provider.js';
+import { fetchWithRetry } from './http-utils.js';
 import { logger } from '../logger.js';
 
-// OpenAI model definitions - Updated March 2026
+// OpenAI model definitions - Updated July 2026
 // Reference: https://developers.openai.com/api/docs/models
-const OPENAI_MODELS: ModelInfo[] = [
+export const OPENAI_MODELS: ModelInfo[] = [
   {
-    id: 'gpt-5.4',
-    name: 'GPT-5.4',
+    id: 'gpt-5.5',
+    name: 'GPT-5.5',
     provider: 'openai',
     contextWindow: 1047576,
     maxOutputTokens: 32768,
@@ -32,8 +33,8 @@ const OPENAI_MODELS: ModelInfo[] = [
     supportsDocuments: true,
     supportsFunctionCalling: true,
     supportsStreaming: true,
-    inputPricePer1kTokens: 0.002,
-    outputPricePer1kTokens: 0.008,
+    inputPricePer1kTokens: 0.005,
+    outputPricePer1kTokens: 0.03,
   },
   {
     id: 'gpt-5.4-mini',
@@ -49,26 +50,39 @@ const OPENAI_MODELS: ModelInfo[] = [
     outputPricePer1kTokens: 0.0016,
   },
   {
-    id: 'o4-mini',
-    name: 'o4 Mini',
+    id: 'gpt-5.4-nano',
+    name: 'GPT-5.4 Nano',
     provider: 'openai',
-    contextWindow: 200000,
-    maxOutputTokens: 100000,
+    contextWindow: 1047576,
+    maxOutputTokens: 32768,
     supportsVision: true,
     supportsDocuments: false,
     supportsFunctionCalling: true,
     supportsStreaming: true,
-    supportsReasoning: true,
-    inputPricePer1kTokens: 0.0011,
-    outputPricePer1kTokens: 0.0044,
+    inputPricePer1kTokens: 0.0001,
+    outputPricePer1kTokens: 0.0004,
   },
 ];
 
-// Default model - GPT-4.1 (1M context window, March 2026)
-const DEFAULT_MODEL = 'gpt-5.4';
+// Older model IDs consumers may still have configured; kept working via passthrough.
+export const OPENAI_LEGACY_MODEL_ALIASES: Record<string, string> = {
+  'gpt-5.4': 'gpt-5.5',
+  'o4-mini': 'gpt-5.4-mini',
+};
+
+// Default model - GPT-5.5 (flagship, 1M context window, July 2026)
+const DEFAULT_MODEL = 'gpt-5.5';
 
 // API configuration
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
+
+// o-series reasoning models reject temperature/top_p outright; gpt-5.x models
+// on chat.completions accept only the default temperature. Suppress both to
+// avoid 400s — output style is steered via prompting instead.
+function acceptsSamplingParams(model?: string): boolean {
+  if (!model) return true;
+  return !/^o\d/.test(model) && !/^gpt-5/.test(model);
+}
 
 interface OpenAIMessage {
   role: 'user' | 'assistant' | 'system';
@@ -145,19 +159,21 @@ export class OpenAIProvider extends BaseLLMProvider {
     };
 
     // Add optional parameters
-    // Note: temperature is not supported for o-series models (o1, o3, o4-mini, etc.)
-    if (options?.temperature !== undefined && !/^o\d/.test(model)) {
-      requestBody.temperature = options.temperature;
-    }
-    if (options?.topP !== undefined) {
-      requestBody.top_p = options.topP;
+    // Reasoning models (o-series) and gpt-5.x reject non-default sampling params.
+    if (acceptsSamplingParams(model)) {
+      if (options?.temperature !== undefined) {
+        requestBody.temperature = options.temperature;
+      }
+      if (options?.topP !== undefined) {
+        requestBody.top_p = options.topP;
+      }
     }
     if (options?.stopSequences?.length) {
       requestBody.stop = options.stopSequences;
     }
 
     try {
-      const response = await fetch(this.config.baseUrl || OPENAI_API_URL, {
+      const response = await fetchWithRetry(this.config.baseUrl || OPENAI_API_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -214,15 +230,16 @@ export class OpenAIProvider extends BaseLLMProvider {
         ? { max_completion_tokens: maxTokens }
         : { max_tokens: maxTokens }),
       stream: true,
+      // Ask OpenAI to include a final usage chunk so token accounting works.
+      stream_options: { include_usage: true },
     };
 
-    // Note: temperature is not supported for o-series models (o1, o3, o4-mini, etc.)
-    if (options?.temperature !== undefined && !/^o\d/.test(model)) {
+    if (acceptsSamplingParams(model) && options?.temperature !== undefined) {
       requestBody.temperature = options.temperature;
     }
 
     try {
-      const response = await fetch(this.config.baseUrl || OPENAI_API_URL, {
+      const response = await fetchWithRetry(this.config.baseUrl || OPENAI_API_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -451,15 +468,5 @@ export class OpenAIProvider extends BaseLLMProvider {
     }
   }
 
-  // Token estimation using tiktoken approximation
-  estimateTokens(text: string): number {
-    // Rough estimate: ~4 characters per token for English text
-    // OpenAI uses cl100k_base encoding for newer models
-    return Math.ceil(text.length / 4);
-  }
 }
 
-// Factory function
-export function createOpenAIProvider(config?: Partial<ProviderConfig>): OpenAIProvider {
-  return new OpenAIProvider(config);
-}

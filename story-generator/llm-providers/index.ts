@@ -11,9 +11,26 @@ export * from './types.js';
 export { BaseLLMProvider } from './base-provider.js';
 
 // Provider implementations
-export { ClaudeProvider, createClaudeProvider } from './claude-provider.js';
-export { OpenAIProvider, createOpenAIProvider } from './openai-provider.js';
-export { GeminiProvider, createGeminiProvider } from './gemini-provider.js';
+export { ClaudeProvider, CLAUDE_MODELS } from './claude-provider.js';
+export { OpenAIProvider, OPENAI_MODELS } from './openai-provider.js';
+export { GeminiProvider, GEMINI_MODELS } from './gemini-provider.js';
+
+// Legacy model-ID aliases (kept so consumer configs written against older
+// releases keep working after an update).
+import { CLAUDE_LEGACY_MODEL_ALIASES } from './claude-provider.js';
+import { OPENAI_LEGACY_MODEL_ALIASES } from './openai-provider.js';
+import { GEMINI_LEGACY_MODEL_ALIASES } from './gemini-provider.js';
+
+export const LEGACY_MODEL_ALIASES: Record<string, string> = {
+  ...CLAUDE_LEGACY_MODEL_ALIASES,
+  ...OPENAI_LEGACY_MODEL_ALIASES,
+  ...GEMINI_LEGACY_MODEL_ALIASES,
+};
+
+/** Map an outdated model ID to its current equivalent (identity for current IDs). */
+export function resolveModelAlias(modelId: string): string {
+  return LEGACY_MODEL_ALIASES[modelId] || modelId;
+}
 
 // Provider registry
 import {
@@ -178,7 +195,7 @@ export function initializeFromEnv(): void {
   if (claudeKey) {
     registry.configureProvider('claude', {
       apiKey: claudeKey,
-      model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
+      model: resolveModelAlias(process.env.CLAUDE_MODEL || 'claude-sonnet-5'),
     });
     logger.info('Claude provider configured from environment');
   }
@@ -188,7 +205,7 @@ export function initializeFromEnv(): void {
   if (openaiKey) {
     registry.configureProvider('openai', {
       apiKey: openaiKey,
-      model: process.env.OPENAI_MODEL || 'gpt-5.4',
+      model: resolveModelAlias(process.env.OPENAI_MODEL || 'gpt-5.5'),
       organizationId: process.env.OPENAI_ORG_ID,
     });
     logger.info('OpenAI provider configured from environment');
@@ -199,7 +216,7 @@ export function initializeFromEnv(): void {
   if (geminiKey) {
     registry.configureProvider('gemini', {
       apiKey: geminiKey,
-      model: process.env.GEMINI_MODEL || 'gemini-3.1-pro-preview',
+      model: resolveModelAlias(process.env.GEMINI_MODEL || 'gemini-3.1-pro'),
     });
     logger.info('Gemini provider configured from environment');
   }

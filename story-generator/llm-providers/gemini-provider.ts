@@ -17,14 +17,15 @@ import {
   ImageContent,
 } from './types.js';
 import { BaseLLMProvider } from './base-provider.js';
+import { fetchWithRetry } from './http-utils.js';
 import { logger } from '../logger.js';
 
-// Gemini model definitions - Updated March 2026
+// Gemini model definitions - Updated July 2026
 // Reference: https://ai.google.dev/gemini-api/docs/models
-const GEMINI_MODELS: ModelInfo[] = [
+export const GEMINI_MODELS: ModelInfo[] = [
   {
-    id: 'gemini-3.1-pro-preview',
-    name: 'Gemini 3.1 Pro Preview',
+    id: 'gemini-3.1-pro',
+    name: 'Gemini 3.1 Pro',
     provider: 'gemini',
     contextWindow: 1048576,
     maxOutputTokens: 65536,
@@ -37,21 +38,8 @@ const GEMINI_MODELS: ModelInfo[] = [
     outputPricePer1kTokens: 0.012,
   },
   {
-    id: 'gemini-3-flash-preview',
-    name: 'Gemini 3 Flash Preview',
-    provider: 'gemini',
-    contextWindow: 1048576,
-    maxOutputTokens: 65536,
-    supportsVision: true,
-    supportsDocuments: true,
-    supportsFunctionCalling: true,
-    supportsStreaming: true,
-    inputPricePer1kTokens: 0.00015,
-    outputPricePer1kTokens: 0.0006,
-  },
-  {
-    id: 'gemini-2.5-flash',
-    name: 'Gemini 2.5 Flash',
+    id: 'gemini-3.5-flash',
+    name: 'Gemini 3.5 Flash',
     provider: 'gemini',
     contextWindow: 1048576,
     maxOutputTokens: 65536,
@@ -63,13 +51,49 @@ const GEMINI_MODELS: ModelInfo[] = [
     inputPricePer1kTokens: 0.00015,
     outputPricePer1kTokens: 0.0006,
   },
+  {
+    id: 'gemini-3.1-flash-lite',
+    name: 'Gemini 3.1 Flash-Lite',
+    provider: 'gemini',
+    contextWindow: 1048576,
+    maxOutputTokens: 65536,
+    supportsVision: true,
+    supportsDocuments: true,
+    supportsFunctionCalling: true,
+    supportsStreaming: true,
+    inputPricePer1kTokens: 0.0001,
+    outputPricePer1kTokens: 0.0004,
+  },
 ];
 
-// Default model - Gemini 3.1 Pro Preview (flagship, March 2026)
-const DEFAULT_MODEL = 'gemini-3.1-pro-preview';
+// Older/preview model IDs consumers may still have configured. The
+// 3.1-pro-preview and 3.1-flash-lite-preview aliases are being retired
+// upstream (July 2026), so these are remapped rather than passed through.
+export const GEMINI_LEGACY_MODEL_ALIASES: Record<string, string> = {
+  'gemini-3.1-pro-preview': 'gemini-3.1-pro',
+  'gemini-3-flash-preview': 'gemini-3.5-flash',
+  'gemini-2.5-flash': 'gemini-3.5-flash',
+};
+
+// Default model - Gemini 3.1 Pro (flagship, July 2026)
+const DEFAULT_MODEL = 'gemini-3.1-pro';
 
 // API configuration
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
+
+// Retired preview IDs must be remapped or requests will 404 upstream.
+function resolveGeminiModel(model: string): string {
+  return GEMINI_LEGACY_MODEL_ALIASES[model] || model;
+}
+
+// Relaxed safety thresholds: UI code generation is regularly false-positived
+// by the default thresholds (e.g. medical dashboard mockups).
+const GEMINI_SAFETY_SETTINGS = [
+  { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
+  { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_ONLY_HIGH' },
+  { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_ONLY_HIGH' },
+  { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_ONLY_HIGH' },
+];
 
 interface GeminiContent {
   role: 'user' | 'model';
@@ -132,12 +156,13 @@ export class GeminiProvider extends BaseLLMProvider {
       throw new Error('Gemini API key not configured');
     }
 
-    const model = options?.model || this.config.model;
+    const model = resolveGeminiModel(options?.model || this.config.model);
     const geminiContents = this.convertMessages(messages);
     const systemPrompt = this.buildSystemPrompt(options);
 
     const requestBody: Record<string, unknown> = {
       contents: geminiContents,
+      safetySettings: GEMINI_SAFETY_SETTINGS,
       generationConfig: {
         maxOutputTokens: options?.maxTokens || this.getSelectedModel()?.maxOutputTokens || 8192,
         ...(options?.temperature !== undefined && { temperature: options.temperature }),
@@ -157,7 +182,7 @@ export class GeminiProvider extends BaseLLMProvider {
     const url = this.getApiUrl(model);
 
     try {
-      const response = await fetch(url, {
+      const response = await fetchWithRetry(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -198,15 +223,19 @@ export class GeminiProvider extends BaseLLMProvider {
       return;
     }
 
-    const model = options?.model || this.config.model;
+    const model = resolveGeminiModel(options?.model || this.config.model);
     const geminiContents = this.convertMessages(messages);
     const systemPrompt = this.buildSystemPrompt(options);
 
     const requestBody: Record<string, unknown> = {
       contents: geminiContents,
+      safetySettings: GEMINI_SAFETY_SETTINGS,
       generationConfig: {
         maxOutputTokens: options?.maxTokens || this.getSelectedModel()?.maxOutputTokens || 8192,
         ...(options?.temperature !== undefined && { temperature: options.temperature }),
+        ...(options?.topP !== undefined && { topP: options.topP }),
+        ...(options?.topK !== undefined && { topK: options.topK }),
+        ...(options?.stopSequences?.length && { stopSequences: options.stopSequences }),
       },
     };
 
@@ -219,7 +248,7 @@ export class GeminiProvider extends BaseLLMProvider {
     const url = `${this.getApiUrl(model, true)}?alt=sse`;
 
     try {
-      const response = await fetch(url, {
+      const response = await fetchWithRetry(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -303,7 +332,7 @@ export class GeminiProvider extends BaseLLMProvider {
   async validateApiKey(apiKey: string): Promise<ValidationResult> {
     try {
       // Make a minimal API call to validate the key
-      const url = this.getApiUrl('gemini-2.5-flash');
+      const url = this.getApiUrl('gemini-3.5-flash');
       const response = await fetch(url, {
         method: 'POST',
         headers: {
@@ -428,15 +457,5 @@ export class GeminiProvider extends BaseLLMProvider {
     }
   }
 
-  // Token estimation for Gemini
-  estimateTokens(text: string): number {
-    // Gemini uses a similar tokenization to other LLMs
-    // Rough estimate: ~4 characters per token
-    return Math.ceil(text.length / 4);
-  }
 }
 
-// Factory function
-export function createGeminiProvider(config?: Partial<ProviderConfig>): GeminiProvider {
-  return new GeminiProvider(config);
-}

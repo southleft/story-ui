@@ -9,6 +9,7 @@
 import {
   getProviderRegistry,
   initializeFromEnv,
+  resolveModelAlias,
   ChatMessage,
   ChatResponse,
   LLMProvider,
@@ -17,6 +18,20 @@ import {
   MessageContent,
 } from './index.js';
 import { logger } from '../logger.js';
+
+/**
+ * Result of a chat completion including metadata callers need to detect
+ * truncation and account for token usage.
+ */
+export interface ChatCompletionResult {
+  content: string;
+  finishReason: ChatResponse['finishReason'];
+  usage?: ChatResponse['usage'];
+  provider: string;
+  model: string;
+  /** True when the model stopped because it hit the output token limit. */
+  truncated: boolean;
+}
 
 // Initialize providers from environment on module load
 let initialized = false;
@@ -35,14 +50,28 @@ export function getStoryProvider(): LLMProvider {
   ensureInitialized();
   const registry = getProviderRegistry();
 
-  // First try to get a configured provider
+  // Honor the operator-configured default provider first.
+  const envDefault = process.env.DEFAULT_PROVIDER as ProviderType | undefined;
+  if (envDefault) {
+    const provider = registry.get(envDefault);
+    if (provider?.isConfigured()) {
+      return provider;
+    }
+  }
+
+  // Then the registry default (set via the providers API).
+  const defaultProvider = registry.getDefault();
+  if (defaultProvider?.isConfigured()) {
+    return defaultProvider;
+  }
+
+  // Then any configured provider.
   const configured = registry.getConfiguredProviders();
   if (configured.length > 0) {
     return configured[0];
   }
 
-  // Fall back to default provider (may not be configured)
-  const defaultProvider = registry.getDefault();
+  // Fall back to the (unconfigured) default so callers get a useful error.
   if (defaultProvider) {
     return defaultProvider;
   }
@@ -90,6 +119,89 @@ export async function chatCompletion(
     temperature?: number;
   }
 ): Promise<string> {
+  const result = await chatCompletionDetailed(messages, options);
+  return result.content;
+}
+
+/**
+ * Streaming chat completion — yields text deltas as the model generates them.
+ * Used by the Voice Canvas to render code in real time. Throws on stream
+ * errors; callers should surface them to the user.
+ */
+export async function* chatCompletionStream(
+  messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
+  options?: {
+    provider?: ProviderType;
+    model?: string;
+    maxTokens?: number;
+    temperature?: number;
+  }
+): AsyncGenerator<string> {
+  ensureInitialized();
+
+  let provider: LLMProvider;
+  if (options?.provider) {
+    const registry = getProviderRegistry();
+    const requestedProvider = registry.get(options.provider);
+    provider = requestedProvider?.isConfigured() ? requestedProvider : getStoryProvider();
+  } else {
+    provider = getStoryProvider();
+  }
+  if (!provider.isConfigured()) {
+    throw new Error(`${provider.name} provider is not configured. Please set the API key.`);
+  }
+
+  const systemMessages = messages.filter(msg => msg.role === 'system');
+  const nonSystemMessages = messages.filter(msg => msg.role !== 'system');
+  const systemPrompt = systemMessages.map(msg => msg.content).join('\n\n') || undefined;
+
+  const chatMessages: ChatMessage[] = nonSystemMessages.map(msg => ({
+    role: msg.role as 'user' | 'assistant',
+    content: msg.content,
+  }));
+
+  const model = options?.model ? resolveModelAlias(options.model) : undefined;
+
+  if (!provider.chatStream) {
+    // Provider without streaming support — degrade to a single final chunk.
+    const result = await provider.chat(chatMessages, {
+      model,
+      maxTokens: options?.maxTokens,
+      temperature: options?.temperature,
+      systemPrompt,
+    });
+    yield result.content;
+    return;
+  }
+
+  for await (const chunk of provider.chatStream(chatMessages, {
+    model,
+    maxTokens: options?.maxTokens,
+    temperature: options?.temperature,
+    systemPrompt,
+  })) {
+    if (chunk.type === 'text' && chunk.content) {
+      yield chunk.content;
+    } else if (chunk.type === 'error') {
+      throw new Error(chunk.error || 'LLM stream error');
+    }
+  }
+}
+
+/**
+ * Chat completion that also returns finish reason and token usage so callers
+ * can detect truncation and track cost. Prefer this over chatCompletion for
+ * generation pipelines.
+ */
+export async function chatCompletionDetailed(
+  messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
+  options?: {
+    provider?: ProviderType;
+    model?: string;
+    maxTokens?: number;
+    temperature?: number;
+  }
+): Promise<ChatCompletionResult> {
   ensureInitialized();
 
   // Use explicitly requested provider, or fall back to first configured
@@ -123,22 +235,39 @@ export async function chatCompletion(
     content: msg.content,
   }));
 
+  const model = options?.model ? resolveModelAlias(options.model) : undefined;
+
   logger.debug('Sending chat request to provider', {
     provider: provider.name,
-    model: options?.model || provider.getConfig().model,
+    model: model || provider.getConfig().model,
     messageCount: chatMessages.length,
     hasSystemPrompt: !!systemPrompt,
   });
 
   try {
     const response = await provider.chat(chatMessages, {
-      model: options?.model,
+      model,
       maxTokens: options?.maxTokens,
       temperature: options?.temperature,
       systemPrompt,
     });
 
-    return response.content;
+    if (response.finishReason === 'length') {
+      logger.warn('LLM response was truncated at the output token limit', {
+        provider: provider.name,
+        model: model || provider.getConfig().model,
+        maxTokens: options?.maxTokens,
+      });
+    }
+
+    return {
+      content: response.content,
+      finishReason: response.finishReason,
+      usage: response.usage,
+      provider: provider.name,
+      model: response.model,
+      truncated: response.finishReason === 'length',
+    };
   } catch (error) {
     logger.error('LLM chat completion failed', {
       provider: provider.name,
@@ -201,16 +330,18 @@ export async function chatCompletionWithImages(
     content: msg.content,
   }));
 
+  const model = options?.model ? resolveModelAlias(options.model) : undefined;
+
   logger.debug('Sending chat request with images to provider', {
     provider: provider.name,
-    model: options?.model || provider.getConfig().model,
+    model: model || provider.getConfig().model,
     messageCount: messages.length,
     hasImages,
   });
 
   try {
     const response = await provider.chat(chatMessages, {
-      model: options?.model,
+      model,
       maxTokens: options?.maxTokens,
       temperature: options?.temperature,
     });

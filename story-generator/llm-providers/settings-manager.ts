@@ -13,7 +13,7 @@
  */
 
 import { ProviderType, ModelInfo, LLMProvider } from './types.js';
-import { getProviderRegistry } from './index.js';
+import { getProviderRegistry, resolveModelAlias } from './index.js';
 import { logger } from '../logger.js';
 
 export interface UserSettings {
@@ -54,7 +54,8 @@ export interface SettingsResponse {
  */
 export function loadSettingsConfig(): SettingsConfig {
   const defaultProvider = (process.env.DEFAULT_PROVIDER as ProviderType) || 'claude';
-  const defaultModel = process.env.DEFAULT_MODEL || 'claude-sonnet-4-6';
+  // Resolve legacy model IDs so configs written against older releases keep working.
+  const defaultModel = resolveModelAlias(process.env.DEFAULT_MODEL || 'claude-sonnet-5');
 
   // Parse allowed providers
   const allowedProvidersEnv = process.env.ALLOWED_PROVIDERS;
@@ -131,18 +132,9 @@ export function getAvailableModels(
     ? allModels.filter((model: ModelInfo) => config.allowedModels.includes(model.id))
     : allModels;
 
-  // Mark recommended models based on capabilities
-  const recommendedModels = [
-    // Claude
-    'claude-opus-4-6', // Claude Opus 4.6 - flagship
-    'claude-sonnet-4-6', // Claude Sonnet 4.6 - balanced
-    // OpenAI
-    'gpt-5.4', // GPT-5.4 - flagship
-    'gpt-5.4-mini', // GPT-5.4 Mini - fast
-    // Gemini
-    'gemini-3.1-pro-preview', // Gemini 3.1 Pro Preview - flagship
-    'gemini-3-flash-preview', // Gemini 3 Flash Preview - fast
-  ];
+  // Recommended = the provider's top two registry entries (flagship + balanced).
+  // Derived from the registry so this never drifts when models are updated.
+  const recommendedModels = allModels.slice(0, 2).map((m: ModelInfo) => m.id);
 
   return filteredModels.map((model: ModelInfo) => ({
     id: model.id,
@@ -233,7 +225,7 @@ export function applyUserSettings(settings: UserSettings): {
   const config = loadSettingsConfig();
 
   let provider = settings.selectedProvider || config.defaultProvider;
-  let model = settings.selectedModel || config.defaultModel;
+  let model = resolveModelAlias(settings.selectedModel || config.defaultModel);
   let applied = true;
   let fallbackReason: string | undefined;
 

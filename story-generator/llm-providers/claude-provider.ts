@@ -17,28 +17,29 @@ import {
   ImageContent,
 } from './types.js';
 import { BaseLLMProvider } from './base-provider.js';
+import { fetchWithRetry } from './http-utils.js';
 import { logger } from '../logger.js';
 
-// Claude model definitions - Updated March 2026
-const CLAUDE_MODELS: ModelInfo[] = [
+// Claude model definitions - Updated July 2026
+export const CLAUDE_MODELS: ModelInfo[] = [
   {
-    id: 'claude-opus-4-6',
-    name: 'Claude Opus 4.6',
+    id: 'claude-opus-4-8',
+    name: 'Claude Opus 4.8',
     provider: 'claude',
-    contextWindow: 200000,
-    maxOutputTokens: 32000,
+    contextWindow: 1000000,
+    maxOutputTokens: 16000,
     supportsVision: true,
     supportsDocuments: true,
     supportsFunctionCalling: true,
     supportsStreaming: true,
-    inputPricePer1kTokens: 0.015,
-    outputPricePer1kTokens: 0.075,
+    inputPricePer1kTokens: 0.005,
+    outputPricePer1kTokens: 0.025,
   },
   {
-    id: 'claude-sonnet-4-6',
-    name: 'Claude Sonnet 4.6',
+    id: 'claude-sonnet-5',
+    name: 'Claude Sonnet 5',
     provider: 'claude',
-    contextWindow: 200000,
+    contextWindow: 1000000,
     maxOutputTokens: 16000,
     supportsVision: true,
     supportsDocuments: true,
@@ -48,7 +49,7 @@ const CLAUDE_MODELS: ModelInfo[] = [
     outputPricePer1kTokens: 0.015,
   },
   {
-    id: 'claude-haiku-4-5-20251001',
+    id: 'claude-haiku-4-5',
     name: 'Claude Haiku 4.5',
     provider: 'claude',
     contextWindow: 200000,
@@ -57,17 +58,32 @@ const CLAUDE_MODELS: ModelInfo[] = [
     supportsDocuments: false,
     supportsFunctionCalling: true,
     supportsStreaming: true,
-    inputPricePer1kTokens: 0.0008,
-    outputPricePer1kTokens: 0.015,
+    inputPricePer1kTokens: 0.001,
+    outputPricePer1kTokens: 0.005,
   },
 ];
 
-// Default model - Claude Sonnet 4.6 (latest recommended)
-const DEFAULT_MODEL = 'claude-sonnet-4-6';
+// Older model IDs consumers may still have in .env / saved settings.
+// They remain active upstream, so requests pass through unchanged; this map
+// only keeps display/selection working after an update.
+export const CLAUDE_LEGACY_MODEL_ALIASES: Record<string, string> = {
+  'claude-opus-4-6': 'claude-opus-4-8',
+  'claude-sonnet-4-6': 'claude-sonnet-5',
+  'claude-haiku-4-5-20251001': 'claude-haiku-4-5',
+};
+
+// Default model - Claude Sonnet 5 (best balance for code generation)
+const DEFAULT_MODEL = 'claude-sonnet-5';
 
 // API configuration
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
+
+// Sonnet 5, Opus 4.7/4.8, and Fable/Mythos reject temperature/top_p/top_k with a 400.
+function supportsSamplingParams(model?: string): boolean {
+  if (!model) return true;
+  return !/^claude-(sonnet-5|opus-4-[78]|fable|mythos)/.test(model);
+}
 
 interface AnthropicMessage {
   role: 'user' | 'assistant';
@@ -137,21 +153,24 @@ export class ClaudeProvider extends BaseLLMProvider {
     if (systemPrompt) {
       requestBody.system = systemPrompt;
     }
-    if (options?.temperature !== undefined) {
-      requestBody.temperature = options.temperature;
-    }
-    if (options?.topP !== undefined) {
-      requestBody.top_p = options.topP;
-    }
-    if (options?.topK !== undefined) {
-      requestBody.top_k = options.topK;
+    // Claude Sonnet 5 / Opus 4.7+ / Fable reject sampling parameters with a 400.
+    if (supportsSamplingParams(model)) {
+      if (options?.temperature !== undefined) {
+        requestBody.temperature = options.temperature;
+      }
+      if (options?.topP !== undefined) {
+        requestBody.top_p = options.topP;
+      }
+      if (options?.topK !== undefined) {
+        requestBody.top_k = options.topK;
+      }
     }
     if (options?.stopSequences?.length) {
       requestBody.stop_sequences = options.stopSequences;
     }
 
     try {
-      const response = await fetch(ANTHROPIC_API_URL, {
+      const response = await fetchWithRetry(ANTHROPIC_API_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -207,12 +226,12 @@ export class ClaudeProvider extends BaseLLMProvider {
     if (systemPrompt) {
       requestBody.system = systemPrompt;
     }
-    if (options?.temperature !== undefined) {
+    if (supportsSamplingParams(model) && options?.temperature !== undefined) {
       requestBody.temperature = options.temperature;
     }
 
     try {
-      const response = await fetch(ANTHROPIC_API_URL, {
+      const response = await fetchWithRetry(ANTHROPIC_API_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -297,7 +316,7 @@ export class ClaudeProvider extends BaseLLMProvider {
           'anthropic-version': ANTHROPIC_VERSION,
         },
         body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001', // Use latest Haiku for fast validation
+          model: 'claude-haiku-4-5', // Use latest Haiku for fast validation
           max_tokens: 1,
           messages: [{ role: 'user', content: 'Hi' }],
         }),
@@ -411,16 +430,5 @@ export class ClaudeProvider extends BaseLLMProvider {
     }
   }
 
-  // Token estimation specific to Claude (using cl100k_base-like estimation)
-  estimateTokens(text: string): number {
-    // Claude uses a similar tokenization to GPT-4
-    // Rough estimate: ~4 characters per token for English
-    // This is a simple heuristic; actual tokenization may vary
-    return Math.ceil(text.length / 4);
-  }
 }
 
-// Factory function
-export function createClaudeProvider(config?: Partial<ProviderConfig>): ClaudeProvider {
-  return new ClaudeProvider(config);
-}
