@@ -1423,6 +1423,32 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // "Edit in Story UI" handoff: the manager toolbar button (manager.tsx)
+  // stashes the generated story's component id in sessionStorage before
+  // navigating here. Once the chat list is loaded, open that story's chat.
+  useEffect(() => {
+    if (state.recentChats.length === 0) return;
+    let request: { componentId?: string } | null = null;
+    try {
+      request = JSON.parse(sessionStorage.getItem('story-ui-edit-request') || 'null');
+    } catch { /* malformed stash — ignore */ }
+    if (!request?.componentId) return;
+    try { sessionStorage.removeItem('story-ui-edit-request'); } catch {}
+    // Primary match: injected meta id (= manifest entry id). Fallback: stories
+    // without an injected id (e.g. Svelte defineMeta) get a title-derived
+    // Storybook id — 'Generated/My Card' → 'generated-my-card'.
+    const sanitize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    const chat = state.recentChats.find(c =>
+      c.id === request!.componentId ||
+      `generated-${sanitize(c.title)}` === request!.componentId
+    );
+    if (chat) {
+      dispatch({ type: 'SET_CONVERSATION', payload: chat.conversation });
+      dispatch({ type: 'SET_ACTIVE_CHAT', payload: { id: chat.id, title: chat.title } });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.recentChats]);
+
   // Detect Storybook MANAGER theme (not preview background)
   // This ensures Story UI follows Storybook's overall theme, not the story preview background toggle
   useEffect(() => {

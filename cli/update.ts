@@ -4,6 +4,7 @@ import { execSync } from 'child_process';
 import chalk from 'chalk';
 import { fileURLToPath } from 'url';
 import inquirer from 'inquirer';
+import { ensureManagerAddonWiring } from './setup.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -58,6 +59,11 @@ const MANAGED_FILES = [
     source: 'templates/StoryUI/index.tsx',
     target: 'src/stories/StoryUI/index.tsx',
     description: 'Panel registration'
+  },
+  {
+    source: 'templates/StoryUI/manager.tsx',
+    target: 'src/stories/StoryUI/manager.tsx',
+    description: '"Edit in Story UI" manager toolbar button'
   },
   // Voice Canvas files
   {
@@ -546,6 +552,16 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
   const depsResult = ensureConsumerDependencies(options);
   if (depsResult.errors.length > 0) {
     result.errors.push(...depsResult.errors);
+  }
+
+  // Wire the manager toolbar button for installs that predate it (no-op when
+  // already wired or on Storybook <9).
+  if (!options.dryRun && installation.storyUIDir) {
+    try {
+      ensureManagerAddonWiring(installation.storyUIDir);
+    } catch (wireError: any) {
+      result.errors.push(`manager wiring: ${wireError.message}`);
+    }
   }
 
   // Step 6: Update config version tracking

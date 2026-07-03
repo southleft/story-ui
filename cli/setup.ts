@@ -102,6 +102,58 @@ export function cleanupDefaultStorybookComponents() {
 
 
 /**
+ * Wire the Story UI manager addon (the "Edit in Story UI" toolbar button on
+ * generated stories) into .storybook/manager.ts(x). Creates the file when
+ * missing, prepends the import when the file exists without it.
+ *
+ * Skipped on Storybook <9 — the addon imports 'storybook/manager-api', which
+ * only exists in the consolidated 9+ package, and a broken import would take
+ * down the whole manager UI.
+ */
+export function ensureManagerAddonWiring(storyUITargetDir: string): void {
+  const storybookDir = path.join(process.cwd(), '.storybook');
+  if (!fs.existsSync(storybookDir)) return;
+
+  let sbMajor = 0;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf-8'));
+    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+    const version = deps['storybook']
+      || Object.entries(deps).find(([name]) => name.startsWith('@storybook/'))?.[1]
+      || '';
+    sbMajor = parseInt(String(version).replace(/^[^\d]*/, ''), 10) || 0;
+  } catch { /* unknown version — treat as unsupported */ }
+  if (sbMajor < 9) {
+    console.log(chalk.gray('   Skipping "Edit in Story UI" toolbar button (requires Storybook 9+)'));
+    return;
+  }
+
+  let relImport = path
+    .relative(storybookDir, path.join(path.resolve(storyUITargetDir), 'manager'))
+    .split(path.sep)
+    .join('/');
+  if (!relImport.startsWith('.')) relImport = './' + relImport;
+  const importLine = `import '${relImport}';`;
+
+  const existing = ['manager.tsx', 'manager.ts', 'manager.js']
+    .map(f => path.join(storybookDir, f))
+    .find(p => fs.existsSync(p));
+
+  if (existing) {
+    const content = fs.readFileSync(existing, 'utf-8');
+    if (content.includes('StoryUI/manager')) return; // already wired
+    fs.writeFileSync(existing, `${importLine}\n${content}`);
+    console.log(chalk.green(`✅ Added the "Edit in Story UI" toolbar button to .storybook/${path.basename(existing)}`));
+  } else {
+    fs.writeFileSync(
+      path.join(storybookDir, 'manager.ts'),
+      `// Storybook manager customizations\n${importLine}\n`
+    );
+    console.log(chalk.green('✅ Created .storybook/manager.ts with the "Edit in Story UI" toolbar button'));
+  }
+}
+
+/**
  * Set up Storybook preview file with appropriate providers for design systems
  */
 function setupStorybookPreview(designSystem: string) {
@@ -1013,7 +1065,7 @@ Material UI (MUI) is a React component library implementing Material Design.
 
   // Copy component files
   const templatesDir = path.resolve(__dirname, '../../templates/StoryUI');
-  const componentFiles = ['StoryUIPanel.tsx', 'StoryUIPanel.mdx', 'StoryUIPanel.css'];
+  const componentFiles = ['StoryUIPanel.tsx', 'StoryUIPanel.mdx', 'StoryUIPanel.css', 'manager.tsx'];
 
   // Voice Canvas files (subdirectory)
   const voiceFiles = ['VoiceCanvas.tsx', 'VoiceControls.tsx', 'useVoiceInput.ts', 'voiceCommands.ts', 'types.ts'];
@@ -1041,6 +1093,9 @@ Material UI (MUI) is a React component library implementing Material Design.
       console.warn(chalk.yellow(`⚠️  Template file not found: ${file}`));
     }
   }
+
+  // Wire the "Edit in Story UI" toolbar button into the Storybook manager
+  ensureManagerAddonWiring(storyUITargetDir);
 
   // Copy Voice Canvas files
   const voiceSourceDir = path.join(templatesDir, 'voice');

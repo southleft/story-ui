@@ -60,6 +60,8 @@ A live playground mode where you speak component ideas and see them rendered ins
 ### Conversational Iteration
 The panel is a real back-and-forth chat: the AI summarizes what it built, offers follow-up suggestions, and you refine in plain language. Generated stories appear in Storybook's sidebar without a page reload — click **Open in Storybook** to jump straight to the new story while keeping your conversation intact.
 
+It works in the other direction too: when viewing any generated story, an **Edit in Story UI** button in Storybook's toolbar takes you back to that story's chat, ready to keep iterating (Storybook 9+).
+
 ### Vision Support
 Attach screenshots or mockups to your prompt. The AI uses them as reference when generating components.
 
@@ -202,6 +204,8 @@ Make the button green and add a quantity selector
 ```
 
 Story UI modifies only what you requested, preserving the rest of the story.
+
+Coming back later? Open any generated story and click **Edit in Story UI** in the toolbar — the panel opens with that story's conversation loaded.
 
 ### Voice Canvas
 
