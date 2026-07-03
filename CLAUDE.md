@@ -1,7 +1,7 @@
 # Story UI - AI Assistant Project Guide
 
-> **Last Updated**: January 6, 2026
-> **Current Version**: 4.6.3
+> **Last Updated**: July 3, 2026
+> **Current Version**: 4.16.12
 > **Production URL**: https://app-production-16de.up.railway.app (Vue/Vuetify example)
 > **Repository**: https://github.com/southleft/story-ui
 
@@ -31,8 +31,11 @@ This document provides comprehensive context for AI assistants working on the St
 |---------|----------|
 | MCP Server (Express) | `mcp-server/index.ts` |
 | STDIO MCP Server | `mcp-server/mcp-stdio-server.ts` |
-| Story Generation | `mcp-server/routes/generateStory.ts` |
-| Streaming Generation | `mcp-server/routes/generateStoryStream.ts` |
+| Generation Pipeline (shared core) | `mcp-server/routes/generationCore.ts` |
+| Story Generation (JSON transport) | `mcp-server/routes/generateStory.ts` |
+| Streaming Generation (SSE transport) | `mcp-server/routes/generateStoryStream.ts` |
+| Import Isolation | `validateImportIsolation` in `generationCore.ts` |
+| Documentation Loader | `story-generator/documentationLoader.ts` |
 | Self-Healing Loop | `story-generator/selfHealingLoop.ts` |
 | Component Discovery | `story-generator/componentDiscovery.ts` |
 | LLM Providers | `story-generator/llm-providers/` |
@@ -416,7 +419,7 @@ npm run storybook
 
 1. **Don't hardcode design systems** - Use `considerations.ts` for design-system-specific rules
 2. **Don't forget CORS** - All API endpoints need CORS headers
-3. **Don't skip prefill** - Always prefill with `<` to ensure JSX output
+3. **Don't use assistant prefill** - Claude 4.6+ models reject the `<` prefill with a 400; code-only output is enforced by prompt contract instead. Sonnet 5 / Opus 4.7+ also reject temperature/top_p/top_k
 4. **Don't use .stories.tsx for panel in non-React** - Use MDX wrapper
 5. **Don't forget Angular tsconfig for TSX** - Needs `"jsx": "react-jsx"`
 6. **Don't use --port flag** - Use `PORT=4101` environment variable instead
@@ -425,6 +428,19 @@ npm run storybook
 ---
 
 ## Issue History & Resolutions
+
+### July 2026 (major modernization)
+
+| Issue | Root Cause | Resolution |
+|-------|------------|------------|
+| Generation routes drifted (~700 duplicated lines) | Copy-paste between JSON/SSE routes | Extracted `mcp-server/routes/generationCore.ts`; both routes are thin transports |
+| Post-generation full-page reload | Legacy assumption; Storybook ≥9 indexes live | Removed reload; panel polls /index.json, "Open in Storybook" navigates via addons channel |
+| Panel chat lost mid-generation | New story file makes Vite reload the preview iframe (kills SSE) | Server persists AI reply to manifest; panel stashes in-flight state in sessionStorage and recovers |
+| AI imported packages not in the design system | No deterministic guard | `validateImportIsolation` in generationCore; considerations file is the only escape hatch |
+| Storybook MCP toggle was a double no-op | Stale tool names + unset config | Panel sends its origin as `storybookUrl`; client uses `get-storybook-story-instructions` + components manifest |
+| Custom local components avoided by AI | Both prompt paths claimed local components import from the npm library path | `base-adapter.getImportPath` now emits real relative paths + "CUSTOM PROJECT COMPONENT" labeling. NOTE: framework adapters are the LIVE prompt path, not promptGenerator's legacy `generateComponentReference` |
+| Claude prefill 400s | Claude 4.6+ rejects assistant prefill | Prefill removed; prompt-contract enforcement |
+| Docs folder only read Markdown | Limited glob | documentationLoader ingests md/mdx/json/yaml/yml/xml/html/txt with char budgets |
 
 ### December 2025
 

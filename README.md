@@ -51,11 +51,14 @@ When generated code has syntax errors, invalid imports, or forbidden patterns, S
 3. Retries up to 3 times, tracking error history to detect stuck loops
 4. Selects the best attempt if all retries fail
 
-### Voice Canvas
-A live playground mode where you speak component ideas and see them rendered instantly in Storybook. Uses browser speech recognition with auto-submit, pauses during generation, and renders output through an iframe with `react-live`.
+### Import Isolation (No Hallucinated Dependencies)
+Every generated story is deterministically validated against an import allowlist: your design system's package (including scoped siblings and subpaths), the framework runtime, Storybook packages, and your configured icon package. The AI cannot introduce Tailwind, shadcn/ui, Radix, or any other library on its own — the **only** way to permit an additional package is to name it explicitly in `story-ui-considerations.md` (e.g. "Allowed additional imports: `@tabler/icons-react`"). Violations are caught before the file is written and routed through self-healing.
 
-### Intelligent Iteration
-Continue the conversation to refine generated stories. Story UI preserves context and modifies only what you request.
+### Voice Canvas
+A live playground mode where you speak component ideas and see them rendered instantly in Storybook. Uses browser speech recognition with auto-submit, streams generated code into the canvas in real time as the LLM produces it, and renders output through an iframe with `react-live`.
+
+### Conversational Iteration
+The panel is a real back-and-forth chat: the AI summarizes what it built, offers follow-up suggestions, and you refine in plain language. Generated stories appear in Storybook's sidebar without a page reload — click **Open in Storybook** to jump straight to the new story while keeping your conversation intact.
 
 ### Vision Support
 Attach screenshots or mockups to your prompt. The AI uses them as reference when generating components.
@@ -189,7 +192,7 @@ Open Storybook and navigate to the Story UI panel. Describe what you want:
 Create a product card with image, title, price, and add to cart button
 ```
 
-Story UI generates a complete `.stories.tsx` file using your design system's components, writes it to your generated stories directory, and Storybook picks it up automatically via file watcher.
+Story UI generates a complete `.stories.tsx` file using your design system's components, writes it to your generated stories directory, and Storybook indexes it live — no page reload. The chat replies with a summary of what was built and an **Open in Storybook** link that navigates directly to the new story.
 
 ### Iterating
 
@@ -237,6 +240,8 @@ module.exports = {
 ```
 
 When both Story UI and Storybook are running, context is fetched automatically during generation, resulting in more accurate component usage and consistent code style.
+
+> **Zero-config option**: the panel's "Storybook MCP" toggle sends your Storybook's own URL with each request, so the addon works without setting `storybookMcpUrl` at all. With `experimentalComponentsManifest` enabled, Story UI also pulls the components manifest — curated story snippets and extracted props per component — which is the deepest knowledge source available for compiled component libraries.
 
 ---
 
@@ -314,13 +319,18 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed instructions and troubleshooting
 
 ---
 
-## Design System Documentation
+## Teaching the AI Your Design System
 
-Story UI reads your design system guidelines before every generation to produce better output.
+Story UI reads two knowledge sources before every generation. They serve different purposes:
 
-### Directory-Based (Recommended)
+| Source | Answers | Examples |
+|--------|---------|----------|
+| `story-ui-docs/` | *What is this design system?* | Design tokens, component usage docs, brand guidelines |
+| `story-ui-considerations.md` | *How should the AI use it?* | "Always use `size='sm'` for buttons in forms", "Never use raw hex colors", allowed extra imports |
 
-Create a `story-ui-docs/` directory with guidelines, tokens, and component documentation:
+### `story-ui-docs/` — Design System Documentation
+
+Create a `story-ui-docs/` directory with guidelines, tokens, and component documentation. Story UI ingests **Markdown, MDX, JSON, YAML, XML, HTML, and plain text** — drop in exported design tokens or docs in whatever format you already have:
 
 ```
 story-ui-docs/
@@ -328,16 +338,18 @@ story-ui-docs/
 │   ├── accessibility.md
 │   └── responsive-design.md
 ├── tokens/
-│   ├── colors.json
-│   └── spacing.md
+│   ├── colors.yaml
+│   └── spacing.json
 └── components/
     ├── button.md
-    └── forms.md
+    └── forms.mdx
 ```
 
-### Single-File
+Large files are truncated to a per-file budget with a total cap, and the cache invalidates automatically when any nested file changes.
 
-For simpler setups, create `story-ui-considerations.md` in your project root with design system rules, color usage, and component preferences.
+### `story-ui-considerations.md` — AI Rules
+
+Rules for how the AI must treat your design system: component preferences, prop conventions, things to avoid. This file is also the **only mechanism for permitting imports outside your design system** — a package mentioned here (e.g. `@tabler/icons-react`) passes import isolation; anything unmentioned is rejected.
 
 ---
 
