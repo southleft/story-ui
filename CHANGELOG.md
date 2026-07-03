@@ -1,3 +1,24 @@
+# [4.17.0](https://github.com/southleft/story-ui/compare/v4.16.12...v4.17.0) (2026-07-03)
+
+
+### Bug Fixes
+
+* **cli:** resolve update targets against the detected panel directory ([91c508e](https://github.com/southleft/story-ui/commit/91c508e5368b32e5e94ea47ececa69b3ba90e991))
+* **ui:** 14px minimum type floor across the panel ([bdff158](https://github.com/southleft/story-ui/commit/bdff15837a33b15a05099496d69f5d94bbb54a44))
+* **ui:** chat-scale composer, balanced header controls, separated action rows ([3f90a54](https://github.com/southleft/story-ui/commit/3f90a5413b2298d3b0eab500c65edd81e912e7f9))
+* **ui:** correct theme detection, contrast, focus indicators, and chat typography ([ba98e4e](https://github.com/southleft/story-ui/commit/ba98e4ebe8c5da791d5fb7ff361612264bbc4277))
+* **ui:** unified type scale pinned against docs-page style bleed ([5a3973d](https://github.com/southleft/story-ui/commit/5a3973d6ab567b4a57c2053a2aeab0193b02ec7c))
+
+
+### Features
+
+* **generator:** first-class support for custom local component libraries ([f5737fa](https://github.com/southleft/story-ui/commit/f5737fa8994f58849a85aea8d0d738083a553add))
+* **generator:** unified generation core with isolation and richer context ([d63beb4](https://github.com/southleft/story-ui/commit/d63beb4c5feb249427eda461a6139e02e74c38da))
+* **generator:** update LLM providers to current models with retry and streaming ([609399a](https://github.com/southleft/story-ui/commit/609399a1b7a51f6c3d480e8415e822d4df3569e3))
+* **ui:** "Edit in Story UI" toolbar button on generated stories ([ccf4006](https://github.com/southleft/story-ui/commit/ccf4006568c94d3d98ba56163855b842eab0a4d7))
+* **ui:** conversational chat, Storybook-native design, no-reload flow ([dc426fb](https://github.com/southleft/story-ui/commit/dc426fb32513969aaa258821ca692e16286ef16e))
+* **ui:** voice canvas provenance marker in the story list ([ffbbbbe](https://github.com/southleft/story-ui/commit/ffbbbbea3c2d43228670cd98b262852fd427952e))
+
 ## [4.16.12](https://github.com/southleft/story-ui/compare/v4.16.11...v4.16.12) (2026-05-07)
 
 
