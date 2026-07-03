@@ -201,6 +201,7 @@ export async function runStoryGeneration(
   } = request;
 
   const totalSteps = GENERATION_TOTAL_STEPS;
+  const startedAt = Date.now();
 
   if (!prompt) {
     throw new GenerationError('MISSING_PROMPT', 'No prompt provided', {
@@ -748,6 +749,8 @@ export async function runStoryGeneration(
         : undefined;
   }
 
+  const storybookId = computeStorybookId(fixedFileContents, storyIdSlug);
+
   // Manifest upsert — links the story file to its chat conversation. The
   // assistant reply is appended server-side so the conversation survives even
   // if the panel never receives the completion event.
@@ -766,7 +769,19 @@ export async function runStoryGeneration(
       title: cleanTitle,
       source: manifestConversation.length > 0 ? 'panel' : 'mcp-external',
       conversation: manifestConversation,
-      metadata: { provider: provider ?? undefined, model: model ?? undefined, prompt },
+      metadata: {
+        provider: provider ?? undefined,
+        model: model ?? undefined,
+        prompt,
+        // Full completion payload so a panel that reloaded mid-generation
+        // (or reopens this chat later) can restore code/timing/suggestions.
+        lastCompletion: isFallbackStory ? undefined : {
+          code: fixedFileContents.slice(0, 60_000),
+          suggestions: suggestions?.slice(0, 5),
+          generationTimeMs: Date.now() - startedAt,
+          storybookId,
+        },
+      },
     });
   } catch (manifestErr) {
     logger.warn('[manifest] upsert error (non-fatal):', manifestErr);
@@ -824,7 +839,7 @@ export async function runStoryGeneration(
     },
     chatSummary,
     suggestions,
-    storybookId: computeStorybookId(fixedFileContents, storyIdSlug),
+    storybookId,
   };
 }
 

@@ -34,6 +34,8 @@ interface Message {
   storyEntryId?: string;
   /** Generation duration — rendered as a muted metadata stamp, not prose. */
   generationTimeMs?: number;
+  /** Storybook component id (persisted) — resolved to a full entry id on chat open. */
+  storybookComponentId?: string;
 }
 
 interface ChatSession {
@@ -608,6 +610,17 @@ async function syncWithActualStories(): Promise<ChatSession[]> {
                 { role: 'ai' as const, content: `Story generated: "${e.title}"` },
               ]
             : [];
+        // Rehydrate the last reply's completion payload (code viewer, timing,
+        // suggestion chips) — persisted server-side precisely because the
+        // preview iframe can reload mid-generation and lose the live event.
+        const lastCompletion = e.metadata?.lastCompletion;
+        const lastMsg = conversation[conversation.length - 1];
+        if (lastCompletion && lastMsg?.role === 'ai') {
+          lastMsg.code = lastCompletion.code || undefined;
+          lastMsg.suggestions = lastCompletion.suggestions?.length ? lastCompletion.suggestions : undefined;
+          lastMsg.generationTimeMs = lastCompletion.generationTimeMs || undefined;
+          lastMsg.storybookComponentId = lastCompletion.storybookId || undefined;
+        }
         return {
           id: e.id ?? e.fileName.replace(/\.stories\.[a-z]+$/, ''),
           title: e.title,
@@ -1398,10 +1411,15 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
             if (entry && last?.role === 'ai') {
               if (cancelled) return;
               finishRecovery();
-              dispatch({
-                type: 'SET_CONVERSATION',
-                payload: conv.map((m: any) => ({ role: m.role, content: m.content })),
-              });
+              const restored: Message[] = conv.map((m: any) => ({ role: m.role, content: m.content }));
+              const lastCompletion = entry.metadata?.lastCompletion;
+              const restoredLast = restored[restored.length - 1];
+              if (lastCompletion && restoredLast?.role === 'ai') {
+                restoredLast.code = lastCompletion.code || undefined;
+                restoredLast.suggestions = lastCompletion.suggestions?.length ? lastCompletion.suggestions : undefined;
+                restoredLast.generationTimeMs = lastCompletion.generationTimeMs || undefined;
+              }
+              dispatch({ type: 'SET_CONVERSATION', payload: restored });
               dispatch({ type: 'SET_ACTIVE_CHAT', payload: { id: entry.fileName || entry.id, title: entry.title || pending.title || '' } });
               try {
                 const sessions = await syncWithActualStories();
@@ -1447,6 +1465,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     if (chat) {
       dispatch({ type: 'SET_CONVERSATION', payload: chat.conversation });
       dispatch({ type: 'SET_ACTIVE_CHAT', payload: { id: chat.id, title: chat.title } });
+      awaitStoryIndexed(request!.componentId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.recentChats]);
@@ -2191,6 +2210,10 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   const handleSelectChat = (chat: ChatSession) => {
     dispatch({ type: 'SET_CONVERSATION', payload: chat.conversation });
     dispatch({ type: 'SET_ACTIVE_CHAT', payload: { id: chat.id, title: chat.title } });
+    const last = chat.conversation[chat.conversation.length - 1];
+    if (last?.role === 'ai' && last.storybookComponentId) {
+      awaitStoryIndexed(last.storybookComponentId);
+    }
   };
 
   const handleNewChat = () => {

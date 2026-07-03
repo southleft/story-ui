@@ -51,6 +51,19 @@ export interface ManifestEntry {
     model?: string;
     /** The original generation prompt */
     prompt?: string;
+    /**
+     * Completion payload of the most recent generation. The panel lives in
+     * Storybook's preview iframe, which reloads when the new story file lands
+     * — killing the in-flight stream. Persisting this lets a recovered (or
+     * reopened) conversation restore the full reply: code viewer, timing,
+     * and suggestion chips, not just the text.
+     */
+    lastCompletion?: {
+      code?: string;
+      suggestions?: string[];
+      generationTimeMs?: number;
+      storybookId?: string;
+    };
   };
 }
 

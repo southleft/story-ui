@@ -103,6 +103,15 @@ describe('generation pipeline (integration)', () => {
     expect(entry!.conversation.at(-1)!.role).toBe('ai');
     expect(entry!.conversation.at(-1)!.content).toContain('I put together');
 
+    // The full completion payload is persisted so a panel that reloaded
+    // mid-generation (or reopens this chat later) can restore the reply.
+    const lastCompletion = entry!.metadata.lastCompletion;
+    expect(lastCompletion).toBeTruthy();
+    expect(lastCompletion!.code).toContain(FIXTURE_LIB);
+    expect(lastCompletion!.suggestions).toHaveLength(3);
+    expect(lastCompletion!.generationTimeMs).toBeGreaterThanOrEqual(0);
+    expect(lastCompletion!.storybookId).toBe(outcome.storybookId);
+
     // All 8 pipeline steps reported
     expect(progressPhases).toContain('config_loaded');
     expect(progressPhases).toContain('components_discovered');
