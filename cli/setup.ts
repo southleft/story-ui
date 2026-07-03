@@ -1509,4 +1509,22 @@ VITE_STORY_UI_PORT=${answers.mcpPort || '4001'}
   console.log('- Generated stories are automatically excluded from git');
   console.log('- The Story UI panel is in your stories under "Story UI/Story Generator"');
   console.log('- You can modify story-ui.config.js to customize the configuration');
+
+  console.log('\n📚 Teach the AI your design system (highly recommended):');
+  console.log(`- ${chalk.cyan('story-ui-docs/')} — what your design system IS: component docs, design`);
+  console.log('  tokens, patterns (Markdown, JSON, YAML, or XML files are all read)');
+  console.log(`- ${chalk.cyan('story-ui-considerations.md')} — how the AI should USE it: rules,`);
+  console.log('  constraints, and any packages it is explicitly allowed to import');
+  console.log(`- For maximum fidelity, add ${chalk.cyan('features: { experimentalComponentsManifest: true }')}`);
+  console.log('  to .storybook/main.ts — the AI then learns from your own curated stories');
+  console.log('  via @storybook/addon-mcp (keep the "MCP context" toggle on in the panel)');
+
+  console.log('\n🧩 Custom component libraries work too:');
+  console.log('- Components in local directories (src/components, src/ui, or a configured');
+  console.log('  componentsPath) are discovered automatically — no npm package required —');
+  console.log('  and imported into generated stories via their real relative paths');
+
+  console.log('\n🎨 Reference environments that showcase Story UI:');
+  console.log('- React + Mantine · Vue 3 + Vuetify · Angular + Material');
+  console.log('- Svelte 5 + Flowbite · Web Components + Shoelace');
 }

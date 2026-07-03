@@ -75,6 +75,27 @@ Attach screenshots or mockups to your prompt. The AI uses them as reference when
 | Svelte | Flowbite-Svelte, Custom | Fully Supported |
 | Web Components | Shoelace, Custom | Fully Supported |
 
+**Reference showcase environments** — the combinations we develop and test
+against, chosen for component breadth so Story UI can compose virtually any
+layout for any industry (fintech dashboards, e-commerce, marketing pages):
+
+| Framework | Showcase Library | Why |
+|-----------|-----------------|-----|
+| React | [Mantine](https://mantine.dev) | 100+ components incl. charts, dates, dropzone — the broadest single-library surface |
+| Vue 3 | [Vuetify](https://vuetifyjs.com) | The most complete Vue component suite |
+| Angular | [Angular Material](https://material.angular.dev) | The canonical Angular library + CDK |
+| Svelte 5 | [Flowbite-Svelte](https://flowbite-svelte.com) | Broad, actively maintained Svelte 5 components |
+| Web Components | [Shoelace](https://shoelace.style) | The reference framework-agnostic component library |
+
+### Custom Component Libraries (no npm package required)
+
+Story UI is not limited to published packages. Components in local project
+directories (`src/components`, `src/ui`, or a configured `componentsPath`) are
+discovered automatically — including their prop types, extracted straight from
+your source — listed to the AI as first-class "custom project components", and
+imported into generated stories via their real relative paths. Off-the-shelf
+and custom components compose together in the same story.
+
 ### Multi-Provider LLM Support
 
 | Provider | Models | Default |
