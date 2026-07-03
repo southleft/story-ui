@@ -189,7 +189,7 @@
 
   /* Typography */
   font-family: var(--font-sans);
-  font-size: 13px;
+  font-size: 14px !important;
   line-height: 1.5;
   color: hsl(var(--foreground));
   background-color: hsl(var(--background));
@@ -283,7 +283,7 @@
   border: none;
   background: transparent;
   color: hsl(var(--foreground));
-  font-size: 12px;
+  font-size: 14px !important;
   cursor: pointer;
   border-radius: 3px;
   transition: all var(--transition-fast);
@@ -316,7 +316,7 @@
   border-radius: var(--radius-sm);
   background: hsl(var(--background));
   color: hsl(var(--foreground));
-  font-size: 13px;
+  font-size: 14px !important;
   outline: none;
 }
 
@@ -369,7 +369,7 @@
 }
 
 .sui-header-subtitle {
-  font-size: 13px !important;
+  font-size: 14px !important;
   color: hsl(var(--muted-foreground));
 }
 
@@ -419,7 +419,7 @@
   justify-content: center;
   gap: var(--space-2);
   white-space: nowrap;
-  font-size: 13px !important;
+  font-size: 14px !important;
   font-weight: 700;
   transition: all var(--transition-fast);
   cursor: pointer;
@@ -508,7 +508,7 @@
 .sui-button-sm {
   height: 24px;
   padding: 0 var(--space-2);
-  font-size: 12px;
+  font-size: 14px !important;
 }
 
 .sui-button-lg {
@@ -538,7 +538,7 @@
   border: 1px solid hsl(var(--input));
   background: hsl(var(--background));
   padding: 0 var(--space-3);
-  font-size: 0.875rem;
+  font-size: 14px !important;
   color: hsl(var(--foreground));
   transition: all var(--transition-fast);
 }
@@ -579,7 +579,7 @@
   border-radius: var(--radius-md);
   border: 1px solid transparent;
   background: transparent;
-  font-size: 13px !important;
+  font-size: 14px !important;
   font-weight: 600;
   color: hsl(var(--muted-foreground));
   cursor: pointer;
@@ -634,7 +634,7 @@
 }
 
 .sui-toggle-text {
-  font-size: 13px !important;
+  font-size: 14px !important;
   font-weight: 700;
   color: hsl(var(--muted-foreground));
   white-space: nowrap;
@@ -710,7 +710,7 @@
   gap: var(--space-1);
   padding: 0.125rem var(--space-2);
   border-radius: var(--radius-full);
-  font-size: 12px;
+  font-size: 14px !important;
   line-height: 1;
   font-weight: 700;
   letter-spacing: 0.2px;
@@ -782,7 +782,7 @@
 }
 
 .sui-card-description {
-  font-size: 0.875rem;
+  font-size: 14px !important;
   color: hsl(var(--muted-foreground));
 }
 
@@ -906,8 +906,8 @@
 }
 
 .sui-welcome-subtitle {
-  font-size: 14px !important;
-  color: hsl(var(--muted-foreground)) !important;
+  font-size: 15px !important;
+  color: hsl(var(--foreground) / 0.85) !important;
   margin: 0 0 24px 0;
   max-width: 420px;
 }
@@ -933,7 +933,7 @@
   background: hsl(var(--background)) !important;
   border: 1px solid hsl(var(--input)) !important;
   border-radius: var(--radius-md);
-  font-size: 13px !important;
+  font-size: 14px !important;
   font-weight: 700;
   line-height: 1;
   color: hsl(var(--foreground)) !important;
@@ -1057,7 +1057,7 @@
 /* Inline code styling */
 .sui-message-bubble code {
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: 14px !important;
   background: hsl(var(--muted)) !important;
   color: inherit !important;
   padding: 0.1em 0.35em;
@@ -1195,7 +1195,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  font-size: 0.8125rem;
+  font-size: 14px !important;
   color: hsl(var(--muted-foreground));
 }
 
@@ -1223,7 +1223,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
+  font-size: 14px !important;
   border: none;
   cursor: pointer;
 }
@@ -1245,7 +1245,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
 .sui-progress-label {
@@ -1255,7 +1255,7 @@
 }
 
 .sui-progress-step {
-  font-size: 13px !important;
+  font-size: 14px !important;
   font-weight: 400;
   color: hsl(var(--muted-foreground));
 }
@@ -1275,13 +1275,13 @@
 }
 
 .sui-progress-retry {
-  margin-top: 10px;
-  padding: 4px 10px;
+  margin-top: 14px;
+  padding: 6px 12px;
   background: hsl(var(--warning) / 0.12);
   color: hsl(var(--warning));
   border: 1px solid hsl(var(--warning) / 0.3);
   border-radius: var(--radius-md);
-  font-size: 13px !important;
+  font-size: 14px !important;
   display: inline-block;
 }
 
@@ -1318,7 +1318,7 @@
   color: hsl(var(--destructive));
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-lg);
-  font-size: 0.875rem;
+  font-size: 14px !important;
 }
 
 /* ============================================
@@ -1356,7 +1356,7 @@
   background: hsl(var(--primary) / 0.1) !important;
   color: hsl(var(--primary)) !important;
   border-radius: 3px;
-  font-size: 0.75rem;
+  font-size: 14px !important;
   font-family: var(--font-mono);
 }
 
@@ -1364,14 +1364,14 @@
   display: flex;
   gap: var(--space-4);
   margin-top: var(--space-3);
-  font-size: 12px;
+  font-size: 14px !important;
   color: hsl(var(--muted-foreground)) !important;
 }
 
 /* Generation-time stamp under the AI reply — metadata, not prose */
 .sui-message-meta {
   margin-top: 10px;
-  font-size: 12px !important;
+  font-size: 14px !important;
   color: hsl(var(--muted-foreground)) !important;
   font-variant-numeric: tabular-nums;
 }
@@ -1386,7 +1386,7 @@
   padding: var(--space-2) var(--space-3);
   background: hsl(var(--warning) / 0.12) !important;
   border-radius: var(--radius-md);
-  font-size: 12px;
+  font-size: 14px !important;
 }
 
 .sui-completion-fallback-warning strong {
@@ -1442,7 +1442,7 @@
 
 .sui-markdown code {
   font-family: var(--font-mono);
-  font-size: 0.875em;
+  font-size: 14px !important;
   background: hsl(var(--muted));
   padding: 0.125em 0.375em;
   border-radius: var(--radius-sm);
@@ -1521,7 +1521,7 @@
   margin-bottom: var(--space-3);
   overflow-x: auto;
   font-family: var(--font-mono);
-  font-size: 0.875em;
+  font-size: 14px !important;
   line-height: 1.5;
 }
 
@@ -1546,7 +1546,7 @@
   width: 100%;
   border-collapse: collapse;
   margin-bottom: var(--space-3);
-  font-size: 0.875em;
+  font-size: 14px !important;
 }
 
 .sui-markdown th,
@@ -1665,7 +1665,7 @@
   border: none;
   background: transparent;
   color: hsl(var(--muted-foreground));
-  font-size: 0.75rem;
+  font-size: 14px !important;
   cursor: pointer;
   border-radius: var(--radius-sm);
   transition: all var(--transition-fast);
@@ -1783,7 +1783,7 @@
   border: 1px solid hsl(var(--border));
   border-radius: var(--radius-lg, 8px);
   padding: 8px 14px;
-  font-size: 13px;
+  font-size: 14px !important;
   line-height: 1.4;
   white-space: nowrap;
   max-width: 320px;
@@ -1837,7 +1837,7 @@
 }
 
 .sui-voice-privacy-text {
-  font-size: 13px;
+  font-size: 14px !important;
   line-height: 1.5;
   color: hsl(var(--muted-foreground));
   margin: 0 0 20px 0;
@@ -1854,7 +1854,7 @@
   all: revert;
   padding: 8px 16px;
   border-radius: var(--radius-md, 6px);
-  font-size: 13px;
+  font-size: 14px !important;
   font-weight: 700;
   cursor: pointer;
   border: none;
@@ -1943,7 +1943,7 @@
 }
 
 .sui-canvas-empty-hint {
-  font-size: 13px;
+  font-size: 14px !important;
   font-style: italic;
   opacity: 0.6;
   margin: 0;
@@ -2159,7 +2159,7 @@
   border: none;
   background: hsl(var(--primary));
   color: hsl(var(--primary-foreground));
-  font-size: 13px;
+  font-size: 14px !important;
   font-weight: 700;
   cursor: pointer;
   transition: background 0.15s ease;
@@ -2217,7 +2217,7 @@
 }
 
 .sui-canvas-progress-detail {
-  font-size: 13px;
+  font-size: 14px !important;
   color: hsl(var(--muted-foreground));
 }
 
@@ -2239,7 +2239,7 @@
 }
 
 .sui-canvas-success-components {
-  font-size: 12px;
+  font-size: 14px !important;
   color: hsl(var(--muted-foreground));
   padding-left: 28px;
 }
@@ -2253,7 +2253,7 @@
   padding: 12px 16px;
   background: hsl(0 80% 97%);
   color: hsl(0 70% 45%);
-  font-size: 13px;
+  font-size: 14px !important;
   border-top: 1px solid hsl(0 80% 90%);
 }
 
@@ -2284,7 +2284,7 @@
   padding: 8px 16px;
   background: hsl(142 70% 35%);
   color: #fff;
-  font-size: 13px;
+  font-size: 14px !important;
   font-weight: 700;
   border-radius: 20px;
   box-shadow: 0 2px 12px rgba(0,0,0,0.2);
@@ -2305,7 +2305,7 @@
   padding: 12px 16px;
   background: hsl(0 80% 97%);
   color: hsl(0 70% 45%);
-  font-size: 12px;
+  font-size: 14px !important;
   font-family: monospace;
   border-top: 1px solid hsl(0 80% 90%);
   white-space: pre-wrap;
@@ -2321,7 +2321,7 @@
   justify-content: center;
   gap: 10px;
   background: hsl(var(--background, 0 0% 100%) / 0.75);
-  font-size: 13px;
+  font-size: 14px !important;
   color: hsl(var(--muted-foreground, 0 0% 45%));
   backdrop-filter: blur(2px);
 }
@@ -2358,7 +2358,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 6px 16px;
-  font-size: 12px;
+  font-size: 14px !important;
   color: hsl(var(--muted-foreground));
   border-top: 1px solid hsl(var(--border));
   background: hsl(var(--muted) / 0.3);
@@ -2388,7 +2388,7 @@
   border-radius: var(--radius, 6px);
   background: hsl(var(--background));
   color: hsl(var(--foreground));
-  font-size: 13px;
+  font-size: 14px !important;
   outline: none;
 }
 
@@ -2403,7 +2403,7 @@
   border-radius: var(--radius, 6px);
   background: hsl(var(--primary, 210 100% 50%));
   color: hsl(var(--primary-foreground, 0 0% 100%));
-  font-size: 13px;
+  font-size: 14px !important;
   cursor: pointer;
   white-space: nowrap;
 }
@@ -2419,7 +2419,7 @@
 
 /* Metrics badge */
 .sui-canvas-metrics {
-  font-size: 12px;
+  font-size: 14px !important;
   color: hsl(var(--muted-foreground));
   opacity: 0.7;
   font-variant-numeric: tabular-nums;
@@ -2442,7 +2442,7 @@
   border-radius: var(--radius-md);
   background: transparent;
   color: hsl(var(--muted-foreground));
-  font-size: 13px !important;
+  font-size: 14px !important;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.15s ease;
@@ -2491,7 +2491,7 @@
   height: auto;
   min-height: 30px;
   padding: 6px 12px;
-  font-size: 13px !important;
+  font-size: 14px !important;
   line-height: 1.3;
   text-align: left;
   white-space: normal;
@@ -2524,7 +2524,7 @@
 .sui-message-code summary {
   cursor: pointer;
   padding: 7px 12px;
-  font-size: 13px !important;
+  font-size: 14px !important;
   font-weight: 700;
   user-select: none;
   color: hsl(var(--muted-foreground));
@@ -2544,15 +2544,15 @@
   padding: 12px;
   max-height: 320px;
   overflow: auto;
-  font-size: 13px;
+  font-size: 14px !important;
   line-height: 1.5;
 }
 
 /* Intent (plan) line inside the progress indicator. Color tokens instead of
    opacity — dimming the whole line washed out the bold "Plan:" label too. */
 .sui-progress-intent {
-  font-size: 14px !important;
-  margin-bottom: 10px;
+  font-size: 15px !important;
+  margin-bottom: 12px;
   color: hsl(var(--muted-foreground));
 }
 
@@ -2626,7 +2626,7 @@
   border-radius: var(--radius-md);
   padding: 10px 12px;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 14px !important;
   line-height: 1.5;
   color: hsl(var(--muted-foreground));
   white-space: pre-wrap;
