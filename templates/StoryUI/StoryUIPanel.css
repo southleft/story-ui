@@ -838,6 +838,15 @@
   background: hsl(var(--primary));
 }
 
+/* Voice Canvas provenance marker on chat-list items */
+.sui-chat-item-voice {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: -1px;
+  margin-right: 6px;
+  color: hsl(var(--success));
+}
+
 .sui-chat-item-title {
   flex: 1;
   /* Matches Storybook's own sidebar items (14px/400, measured in SB 10) */

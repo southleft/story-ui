@@ -55,7 +55,7 @@ When generated code has syntax errors, invalid imports, or forbidden patterns, S
 Every generated story is deterministically validated against an import allowlist: your design system's package (including scoped siblings and subpaths), the framework runtime, Storybook packages, and your configured icon package. The AI cannot introduce Tailwind, shadcn/ui, Radix, or any other library on its own — the **only** way to permit an additional package is to name it explicitly in `story-ui-considerations.md` (e.g. "Allowed additional imports: `@tabler/icons-react`"). Violations are caught before the file is written and routed through self-healing.
 
 ### Voice Canvas
-A live playground mode where you speak component ideas and see them rendered instantly in Storybook. Uses browser speech recognition with auto-submit, streams generated code into the canvas in real time as the LLM produces it, and renders output through an iframe with `react-live`.
+A live playground mode where you speak component ideas and see them rendered instantly in Storybook. Uses browser speech recognition with auto-submit, streams generated code into the canvas in real time as the LLM produces it, and renders output through an iframe with `react-live`. Stories saved from the canvas carry a microphone marker in the panel's story list, so you can tell voice-created stories apart from chat-generated ones.
 
 ### Conversational Iteration
 The panel is a real back-and-forth chat: the AI summarizes what it built, offers follow-up suggestions, and you refine in plain language. Generated stories appear in Storybook's sidebar without a page reload — click **Open in Storybook** to jump straight to the new story while keeping your conversation intact.
