@@ -32,6 +32,8 @@ interface Message {
   retryInput?: string;
   /** Storybook entry ID once the new story is indexed — enables "Open story". */
   storyEntryId?: string;
+  /** Generation duration — rendered as a muted metadata stamp, not prose. */
+  generationTimeMs?: number;
 }
 
 interface ChatSession {
@@ -1453,43 +1455,55 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   // This ensures Story UI follows Storybook's overall theme, not the story preview background toggle
   useEffect(() => {
     const detectManagerTheme = () => {
-      let managerIsDark = false;
+      // null = could not determine from the manager; fall back to system pref.
+      // A determined `false` (manager IS light) must NOT be overridden by the
+      // system preference — that made the panel render dark inside a light
+      // Storybook whenever the OS was in dark mode.
+      let managerIsDark: boolean | null = null;
 
-      // Strategy 1: Check parent frame for Storybook manager theme (Storybook 8+)
-      // The manager theme is set in .storybook/manager.tsx via addons.setConfig({ theme: themes.dark })
       try {
         if (window.parent !== window) {
-          const parentBody = window.parent.document.body;
-          const parentHtml = window.parent.document.documentElement;
+          const parentDoc = window.parent.document;
+          const parentBody = parentDoc.body;
+          const parentHtml = parentDoc.documentElement;
 
-          // Check for Storybook's dark theme class (most reliable)
+          // Explicit theme markers win when present
           if (parentBody.classList.contains('sb-dark') ||
               parentHtml.classList.contains('sb-dark') ||
               parentHtml.getAttribute('data-theme') === 'dark' ||
               parentBody.getAttribute('data-theme') === 'dark') {
             managerIsDark = true;
-          }
-
-          // Check Storybook manager sidebar/header background color as fallback
-          // The manager UI elements use the theme colors, not the preview background
-          const managerEl = window.parent.document.querySelector('.sb-sidebar, [class*="sidebar"], .sb-bar');
-          if (managerEl && !managerIsDark) {
-            const bgColor = window.getComputedStyle(managerEl).backgroundColor;
-            const rgb = bgColor.match(/\d+/g);
-            if (rgb && rgb.length >= 3) {
-              const luminance = (0.299 * parseInt(rgb[0]) + 0.587 * parseInt(rgb[1]) + 0.114 * parseInt(rgb[2])) / 255;
+          } else {
+            // Luminance of the manager chrome. Walk candidates until one has a
+            // NON-TRANSPARENT background — `rgba(0, 0, 0, 0)` naively parses
+            // as black and previously forced dark mode unconditionally.
+            const candidates = [
+              parentDoc.querySelector('.sidebar-container'),
+              parentDoc.querySelector('#storybook-explorer-menu')?.parentElement ?? null,
+              parentDoc.querySelector('.sb-bar'),
+              parentBody,
+              parentHtml,
+            ];
+            for (const el of candidates) {
+              if (!el) continue;
+              const bg = window.parent.getComputedStyle(el).backgroundColor;
+              const match = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+              if (!match) continue;
+              const alpha = match[4] === undefined ? 1 : parseFloat(match[4]);
+              if (alpha < 0.5) continue; // transparent — not a real surface color
+              const luminance = (0.299 * +match[1] + 0.587 * +match[2] + 0.114 * +match[3]) / 255;
               managerIsDark = luminance < 0.5;
+              break;
             }
           }
         }
       } catch {
-        // Cross-origin access not allowed, fall back to system preference
+        // Cross-origin access not allowed — managerIsDark stays null
       }
 
-      // Strategy 2: If not in iframe or can't detect, use system preference
-      if (!managerIsDark) {
-        const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        managerIsDark = systemPrefersDark;
+      // Only when the manager theme is genuinely unknowable, use the system preference.
+      if (managerIsDark === null) {
+        managerIsDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
       }
 
       dispatch({ type: 'SET_DARK_MODE', payload: managerIsDark });
@@ -1828,9 +1842,6 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
       parts.push(`\n\n_Story saved to cloud._`);
       hasShownRefreshHint.current = true;
     }
-    if (completion.metrics?.totalTimeMs) {
-      parts.push(`\n\n_${(completion.metrics.totalTimeMs / 1000).toFixed(1)}s_`);
-    }
     return parts.join('');
   };
 
@@ -1918,6 +1929,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
       code: completion.code,
       isError: !completion.success,
       retryInput: !completion.success ? userInput : undefined,
+      generationTimeMs: completion.metrics?.totalTimeMs,
     };
     const updatedConversation = [...newConversation, aiMsg];
     dispatch({ type: 'SET_CONVERSATION', payload: updatedConversation });
@@ -2415,8 +2427,11 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   // Render
   // ============================================
 
+  // Explicit light/dark class: the CSS prefers-color-scheme fallback only
+  // applies to .sui-root:not(.light), so a detected-light panel must carry
+  // the .light class or a dark-mode OS forces dark variables anyway.
   return (
-    <div className={`sui-root ${state.isDarkMode ? 'dark' : ''}`}>
+    <div className={`sui-root ${state.isDarkMode ? 'dark' : 'light'}`}>
       {/* Sidebar */}
       <aside className={`sui-sidebar ${state.sidebarOpen ? '' : 'collapsed'}`} aria-label="Chat history">
         {state.sidebarOpen && (
@@ -2452,7 +2467,16 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                   onClick={() => renamingChatId !== chat.id && handleSelectChat(chat)}
                   role="button"
                   tabIndex={0}
-                  onKeyDown={e => e.key === 'Enter' && renamingChatId !== chat.id && handleSelectChat(chat)}
+                  aria-current={state.activeChatId === chat.id || undefined}
+                  onKeyDown={e => {
+                    // Only when the row itself is focused — Enter/Space on the
+                    // inner Save/Cancel/More buttons must not also select the chat.
+                    if (e.target !== e.currentTarget) return;
+                    if ((e.key === 'Enter' || e.key === ' ') && renamingChatId !== chat.id) {
+                      e.preventDefault();
+                      handleSelectChat(chat);
+                    }
+                  }}
                 >
                   {renamingChatId === chat.id ? (
                     <div className="sui-chat-item-rename">
@@ -2485,6 +2509,8 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                           className="sui-chat-item-menu sui-button sui-button-icon sui-button-sm"
                           onClick={e => { e.stopPropagation(); setContextMenuId(contextMenuId === chat.id ? null : chat.id); }}
                           aria-label="More options"
+                          aria-haspopup="menu"
+                          aria-expanded={contextMenuId === chat.id}
                         >
                           {Icons.moreVertical}
                         </button>
@@ -2566,12 +2592,14 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
               <button
                 type="button"
                 className={`sui-mode-toggle-btn ${panelMode === 'chat' ? 'sui-mode-toggle-btn--active' : ''}`}
+                aria-pressed={panelMode === 'chat'}
                 onClick={() => { canvasModeRef.current = false; setPanelMode('chat'); try { localStorage.removeItem('__sui_panel_mode__'); } catch {} }}
               >Chat</button>
               {isReactFramework && (
                 <button
                   type="button"
                   className={`sui-mode-toggle-btn ${panelMode === 'canvas' ? 'sui-mode-toggle-btn--active' : ''}`}
+                  aria-pressed={panelMode === 'canvas'}
                   onClick={() => { canvasModeRef.current = true; setPanelMode('canvas'); try { localStorage.setItem('__sui_panel_mode__', 'canvas'); } catch {} }}
                 >Voice Canvas</button>
               )}
@@ -2670,7 +2698,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
         ) : (
         <>
         {/* Chat area */}
-        <section className="sui-chat-area" role="log" aria-live="polite">
+        <section className="sui-chat-area">
           {state.error && <div className="sui-error" role="alert" style={{ margin: '24px' }}>{state.error}</div>}
 
           {state.conversation.length === 0 && !state.loading ? (
@@ -2699,7 +2727,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
               </div>
             </div>
           ) : (
-            <div className="sui-chat-messages">
+            <div className="sui-chat-messages" role="log">
               {state.conversation.map((msg, i) => {
                 const isLastMessage = i === state.conversation.length - 1;
                 return (
@@ -2712,6 +2740,9 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                           <img key={img.id} src={img.base64 ? `data:${img.mediaType};base64,${img.base64}` : img.preview} alt="Image attached to this message" className="sui-message-image" />
                         ))}
                       </div>
+                    )}
+                    {msg.role === 'ai' && typeof msg.generationTimeMs === 'number' && msg.generationTimeMs > 0 && (
+                      <div className="sui-message-meta">{(msg.generationTimeMs / 1000).toFixed(1)}s</div>
                     )}
                     {msg.role === 'ai' && msg.code && (
                       <details className="sui-message-code">
@@ -2780,8 +2811,8 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                 <span className="sui-image-preview-label">{Icons.image} {state.attachedImages.length} image{state.attachedImages.length > 1 ? 's' : ''}</span>
                 {state.attachedImages.map(img => (
                   <div key={img.id} className="sui-image-preview-item">
-                    <img src={img.preview} alt="preview" className="sui-image-preview-thumb" />
-                    <button className="sui-image-preview-remove" onClick={() => removeAttachedImage(img.id)} aria-label="Remove">{Icons.x}</button>
+                    <img src={img.preview} alt="Attached image preview" className="sui-image-preview-thumb" />
+                    <button className="sui-image-preview-remove" onClick={() => removeAttachedImage(img.id)} aria-label="Remove attached image">{Icons.x}</button>
                   </div>
                 ))}
               </div>

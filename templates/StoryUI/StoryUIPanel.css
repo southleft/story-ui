@@ -29,10 +29,12 @@
   --muted-foreground: 213 10% 40%;
   --accent: 212 100% 93%;
   --accent-foreground: 210 10% 20%;
-  --destructive: 16 100% 38%;
+  --destructive: 16 100% 34%;
   --destructive-foreground: 0 0% 100%;
   --border: 210 25% 89%;
   --input: 210 25% 89%;
+  /* Form-control boundaries need 3:1 (WCAG 1.4.11); decorative borders don't */
+  --input-strong: 210 16% 55%;
   --ring: 212 100% 42%;
 
   /* User Bubble - Storybook hover-blue tint */
@@ -48,7 +50,7 @@
   /* Semantic Colors */
   --success: 101 52% 32%;
   --success-foreground: 0 0% 100%;
-  --warning: 31 66% 35%;
+  --warning: 31 72% 30%;
   --warning-foreground: 0 0% 100%;
   --info: 212 100% 42%;
   --info-foreground: 0 0% 100%;
@@ -107,10 +109,11 @@
   --muted-foreground: 210 4% 60%;
   --accent: 212 40% 23%;
   --accent-foreground: 210 6% 85%;
-  --destructive: 16 100% 60%;
+  --destructive: 16 100% 65%;
   --destructive-foreground: 210 4% 11%;
   --border: 220 3% 23%;
   --input: 220 3% 23%;
+  --input-strong: 220 5% 48%;
   --ring: 212 100% 64%;
 
   /* User Bubble - Storybook hover-navy in dark mode */
@@ -146,10 +149,11 @@
     --muted-foreground: 210 4% 60%;
     --accent: 212 40% 23%;
     --accent-foreground: 210 6% 85%;
-    --destructive: 16 100% 60%;
+    --destructive: 16 100% 65%;
     --destructive-foreground: 210 4% 11%;
     --border: 220 3% 23%;
     --input: 220 3% 23%;
+    --input-strong: 220 5% 48%;
     --ring: 212 100% 64%;
 
     /* User Bubble - Storybook hover-navy in dark mode */
@@ -308,7 +312,7 @@
 .sui-rename-input {
   flex: 1;
   padding: var(--space-1) var(--space-2);
-  border: 1px solid hsl(var(--border));
+  border: 1px solid hsl(var(--input-strong));
   border-radius: var(--radius-sm);
   background: hsl(var(--background));
   color: hsl(var(--foreground));
@@ -386,7 +390,9 @@
   padding: var(--space-6);
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  /* Turn separation must clearly exceed intra-turn spacing (~10px) so a
+     response and its suggestion chips read as one group. */
+  gap: var(--space-6);
 }
 
 /* Input Area */
@@ -583,9 +589,11 @@
   border-color: hsl(var(--primary) / 0.4);
 }
 
-.sui-select-trigger:focus {
-  outline: none;
-  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.3);
+/* The visible trigger is a div; keyboard focus lands on the transparent
+   native select overlaid on it — indicate focus via :focus-within. */
+.sui-select:focus-within .sui-select-trigger {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 1px;
 }
 
 .sui-select-native {
@@ -678,8 +686,9 @@
   transform: translateX(14px);
 }
 
-.sui-toggle-switch input:focus + .sui-toggle-slider {
-  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.2);
+.sui-toggle-switch input:focus-visible + .sui-toggle-slider {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
 }
 
 .sui-toggle-label:hover .sui-toggle-slider {
@@ -699,7 +708,7 @@
   gap: var(--space-1);
   padding: 0.125rem var(--space-2);
   border-radius: var(--radius-full);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1;
   font-weight: 700;
   letter-spacing: 0.2px;
@@ -858,6 +867,8 @@
 }
 
 .sui-chat-item:hover .sui-chat-item-menu,
+.sui-chat-item:focus-within .sui-chat-item-menu,
+.sui-chat-item-menu:focus-visible,
 .sui-chat-item.menu-open .sui-chat-item-menu {
   opacity: 1;
 }
@@ -969,9 +980,11 @@
 .sui-message-bubble {
   max-width: 85%;
   padding: 10px 14px;
-  border-radius: var(--radius-lg);
-  font-size: 13px !important;
-  line-height: 1.6 !important;
+  /* Two radius tiers panel-wide: cards/containers 8px, controls 4px. */
+  border-radius: var(--radius-xl);
+  /* Chat prose is long-form reading content, not UI chrome — 14px floor. */
+  font-size: 14px !important;
+  line-height: 1.55 !important;
   border: 1px solid hsl(var(--border));
 }
 
@@ -988,6 +1001,9 @@
   background: hsl(var(--ai-bubble-bg)) !important;
   color: hsl(var(--ai-bubble-fg)) !important;
   border: 1px solid hsl(var(--ai-bubble-border)) !important;
+  /* The AI card is a multi-block document (header, prose, meta, code
+     disclosure) — it needs more breathing room than a chat bubble. */
+  padding: 14px 16px;
 }
 
 /*
@@ -996,25 +1012,21 @@
  * to beat Storybook's .css-xxx :where(p) selectors (0,1,x)
  */
 .sui-message-bubble .sui-markdown {
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 14px;
+  line-height: 1.55;
   font-family: var(--font-sans);
 }
 
 /* Paragraph styling - higher specificity beats Storybook */
 .sui-message-bubble .sui-markdown p {
-  font-size: 13px;
-  line-height: 1.6;
-  margin: 0;
-  padding: 6px 0 4px 0;
-}
-
-.sui-message-bubble .sui-markdown p:first-child {
-  padding-top: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  margin: 0 0 10px 0;
+  padding: 0;
 }
 
 .sui-message-bubble .sui-markdown p:last-child {
-  padding-bottom: 0;
+  margin-bottom: 0;
 }
 
 .sui-message-bubble strong {
@@ -1042,7 +1054,7 @@
 /* Inline code styling */
 .sui-message-bubble code {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: 13px;
   background: hsl(var(--muted)) !important;
   color: inherit !important;
   padding: 0.1em 0.35em;
@@ -1076,7 +1088,7 @@
   align-items: flex-end; /* Align buttons to bottom when textarea expands */
   gap: var(--space-2);
   background: hsl(var(--card));
-  border: 1px solid hsl(var(--input));
+  border: 1px solid hsl(var(--input-strong));
   border-radius: var(--radius-2xl);
   padding: 6px;
   min-height: 48px;
@@ -1118,27 +1130,29 @@
   border: none;
   background: transparent;
   color: hsl(var(--foreground));
-  font-size: 13px;
+  /* Input text is content, not chrome — 14px matches chat-product inputs. */
+  font-size: 14px;
   font-family: inherit;
-  padding: 8px 10px;
+  padding: 8px 8px 8px 6px;
   min-height: 32px;
   max-height: 200px;
   min-width: 0;
   resize: none;
   outline: none;
-  line-height: 1.5;
+  line-height: 1.45;
   overflow-y: auto;
   /* Auto-expands with content via JS, scrolls when max-height reached */
 }
 
 .sui-input-form-field::placeholder {
   color: hsl(var(--muted-foreground));
+  opacity: 1; /* Firefox dims placeholders by default */
 }
 
 .sui-input-form-send {
   width: 32px;
   height: 32px;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1212,18 +1226,20 @@
 /* ============================================
    Progress Indicator
    ============================================ */
+/* Same surface tokens as the AI bubble: the progress card morphs into the
+   response card on completion, and matching surfaces make that continuous. */
 .sui-progress {
-  background: hsl(var(--muted));
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius-lg);
-  padding: 12px 14px;
+  background: hsl(var(--ai-bubble-bg));
+  border: 1px solid hsl(var(--ai-bubble-border));
+  border-radius: var(--radius-xl);
+  padding: 14px 16px;
 }
 
 .sui-progress-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: var(--space-2);
+  margin-bottom: 10px;
 }
 
 .sui-progress-label {
@@ -1253,11 +1269,12 @@
 }
 
 .sui-progress-retry {
-  margin-top: var(--space-2);
-  padding: var(--space-1) var(--space-2);
+  margin-top: 10px;
+  padding: 4px 10px;
   background: hsl(var(--warning) / 0.12);
   color: hsl(var(--warning));
-  border-radius: 3px;
+  border: 1px solid hsl(var(--warning) / 0.3);
+  border-radius: var(--radius-md);
   font-size: 12px;
   display: inline-block;
 }
@@ -1304,10 +1321,10 @@
    ============================================ */
 .sui-completion {
   max-width: 85%;
-  padding: 10px 14px;
-  border-radius: var(--radius-lg);
-  font-size: 13px;
-  line-height: 1.6;
+  padding: 14px 16px;
+  border-radius: var(--radius-xl);
+  font-size: 14px;
+  line-height: 1.55;
   background: hsl(var(--ai-bubble-bg)) !important;
   color: hsl(var(--ai-bubble-fg)) !important;
   border: 1px solid hsl(var(--ai-bubble-border)) !important;
@@ -1343,6 +1360,14 @@
   margin-top: var(--space-3);
   font-size: 12px;
   color: hsl(var(--muted-foreground)) !important;
+}
+
+/* Generation-time stamp under the AI reply — metadata, not prose */
+.sui-message-meta {
+  margin-top: 10px;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground)) !important;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Fallback story styling (error placeholder was created) */
@@ -1554,7 +1579,9 @@
   align-items: center;
   justify-content: center;
   vertical-align: middle;
-  margin-right: 0.25rem;
+  margin-right: 6px;
+  position: relative;
+  top: -1px;
 }
 
 .sui-icon-success {
@@ -2081,7 +2108,7 @@
 }
 
 .sui-canvas-status-listening {
-  color: hsl(0 80% 60%);
+  color: hsl(var(--destructive));
   animation: sui-canvas-pulse-text 2s ease-in-out infinite;
 }
 
@@ -2430,13 +2457,15 @@
    Conversational chat additions (chatSummary era)
    ============================================ */
 
-/* Suggestion chips + retry actions under AI messages */
+/* Suggestion chips + retry actions under AI messages. Capped at the AI
+   bubble's max-width so the row reads as part of the response card. */
 .sui-message-suggestions,
 .sui-message-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 8px;
+  margin-top: 10px;
+  max-width: 85%;
 }
 
 .sui-chip-suggestion,
@@ -2450,6 +2479,17 @@
   white-space: normal;
 }
 
+/* Suggestions are secondary to the one true primary action ("Open in
+   Storybook") — regular weight + muted color creates the two-tier hierarchy. */
+.sui-chip-suggestion {
+  font-weight: 400;
+  color: hsl(var(--muted-foreground)) !important;
+}
+
+.sui-chip-suggestion:hover {
+  color: hsl(var(--primary)) !important;
+}
+
 .sui-chip-retry {
   border-color: hsl(var(--destructive) / 0.5) !important;
   color: hsl(var(--destructive)) !important;
@@ -2457,19 +2497,24 @@
 
 /* Collapsible generated-code view inside AI messages */
 .sui-message-code {
-  margin-top: 10px;
+  margin-top: 12px;
   border: 1px solid hsl(var(--border));
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 
 .sui-message-code summary {
   cursor: pointer;
-  padding: 6px 10px;
+  padding: 7px 12px;
   font-size: 12px;
   font-weight: 700;
   user-select: none;
-  background: hsl(var(--muted, 220 14% 96%));
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--muted));
+}
+
+.sui-message-code summary:hover {
+  color: hsl(var(--primary));
 }
 
 .sui-message-code[open] summary {
@@ -2478,18 +2523,23 @@
 
 .sui-message-code pre {
   margin: 0;
-  padding: 10px;
+  padding: 12px;
   max-height: 320px;
   overflow: auto;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
-/* Intent (plan) line inside the progress indicator */
+/* Intent (plan) line inside the progress indicator. Color tokens instead of
+   opacity — dimming the whole line washed out the bold "Plan:" label too. */
 .sui-progress-intent {
-  font-size: 12px;
-  margin-bottom: 8px;
-  opacity: 0.85;
+  font-size: 13px;
+  margin-bottom: 10px;
+  color: hsl(var(--muted-foreground));
+}
+
+.sui-progress-intent strong {
+  color: hsl(var(--foreground));
 }
 
 .sui-progress-intent-components {
@@ -2582,4 +2632,11 @@
 .sui-message-suggestions,
 .sui-message-actions {
   flex-basis: 100%;
+}
+
+
+/* Dark mode: lighter tint behind the primary-colored completion tags keeps
+   the #479DFF accent itself AA-compliant (4.64:1) without drifting its hue. */
+.sui-root.dark .sui-completion-tag {
+  background: hsl(var(--primary) / 0.06) !important;
 }
