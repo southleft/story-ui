@@ -1,6 +1,7 @@
 import * as ts from 'typescript';
 import fs from 'fs';
 import path from 'path';
+import { createRequire } from 'module';
 import { isBlacklistedComponent, validateImports } from './componentBlacklist.js';
 
 export interface ValidationResult {
@@ -29,6 +30,16 @@ export function validateStoryCode(code: string, fileName: string = 'story.tsx', 
   // is not valid TypeScript and will fail TS parsing. Instead, do basic Svelte validation.
   if (fileName.endsWith('.stories.svelte') || fileName.endsWith('.svelte')) {
     return validateSvelteStory(code, config);
+  }
+
+  // Vue SFC output (<template>/<script setup>) is not TypeScript — running it
+  // through the TSX parser throws or produces nonsense errors. Route real SFCs
+  // to the dedicated SFC validator. Detection checks only how the FILE begins:
+  // Vue CSF code legitimately contains `<template v-slot:...>` inside template
+  // strings, so any line-based match would misroute valid CSF stories.
+  const vueTrimmed = code.trimStart();
+  if (framework === 'vue' && (vueTrimmed.startsWith('<template') || vueTrimmed.startsWith('<script'))) {
+    return validateVueSfc(code);
   }
 
     try {
@@ -88,6 +99,11 @@ export function validateStoryCode(code: string, fileName: string = 'story.tsx', 
       const semanticErrors = performSemanticChecks(sourceFile, config);
       result.errors.push(...semanticErrors);
     }
+
+    // CSF structural checks (framework-neutral): duplicate story exports break
+    // Storybook's index with confusing errors, so catch them here.
+    const csfErrors = performCsfStructuralChecks(sourceFile);
+    result.errors.push(...csfErrors);
 
     // Check for React import - but only for React-based frameworks
     const isReactFramework = framework === 'react' || framework.includes('react');
@@ -957,6 +973,23 @@ function validateSvelteStory(code: string, config?: any): ValidationResult {
     warnings: []
   };
 
+  // Real compiler parse when the consumer project has svelte installed —
+  // catches genuine Svelte syntax errors the regex checks below cannot.
+  try {
+    const consumerRequire = createRequire(path.join(process.cwd(), 'package.json'));
+    const svelteCompiler = consumerRequire('svelte/compiler');
+    try {
+      // Svelte 5 exposes parse(); modern runes/CSF markup parses with modern: true
+      svelteCompiler.parse(code, { modern: true });
+    } catch (parseError: any) {
+      result.isValid = false;
+      const line = parseError?.start?.line ?? parseError?.position?.[0];
+      result.errors.push(`Svelte parse error${line ? ` (line ${line})` : ''}: ${parseError?.message || String(parseError)}`);
+    }
+  } catch {
+    // svelte not resolvable from the consumer project — regex checks only
+  }
+
   // ============================================================================
   // STRICT addon-svelte-csf v5+ VALIDATION
   // Only the NEW format is accepted. Old CSF v4 format will trigger errors
@@ -1095,5 +1128,103 @@ function validateSvelteStory(code: string, config?: any): ValidationResult {
     result.isValid = false;
   }
 
+  return result;
+}
+
+// ============================================================
+// CSF structural checks (framework-neutral)
+// ============================================================
+
+/**
+ * Detect CSF structural problems the syntax parser accepts but Storybook
+ * rejects — currently duplicate exported story names, which produce
+ * "Duplicate story" indexing errors that can break the whole Storybook.
+ */
+function performCsfStructuralChecks(sourceFile: ts.SourceFile): string[] {
+  const errors: string[] = [];
+  const exportedNames = new Map<string, number>();
+
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isVariableStatement(node) &&
+      node.modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword)
+    ) {
+      for (const decl of node.declarationList.declarations) {
+        if (ts.isIdentifier(decl.name)) {
+          const name = decl.name.text;
+          exportedNames.set(name, (exportedNames.get(name) || 0) + 1);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+
+  for (const [name, count] of exportedNames) {
+    if (count > 1) {
+      errors.push(`Duplicate exported story name "${name}" (${count} exports) - each story export must have a unique name`);
+    }
+  }
+  return errors;
+}
+
+// ============================================================
+// Vue SFC validation
+// ============================================================
+
+/**
+ * Validate a Vue single-file component. Uses @vue/compiler-sfc from the
+ * consumer project when available (real parse errors); otherwise falls back
+ * to structural checks so SFC output is never validated as TSX.
+ */
+export function validateVueSfc(code: string): ValidationResult {
+  const result: ValidationResult = {
+    isValid: true,
+    errors: [],
+    warnings: [],
+  };
+
+  // Try the consumer's own @vue/compiler-sfc for a real parse
+  try {
+    const consumerRequire = createRequire(path.join(process.cwd(), 'package.json'));
+    const compilerSfc = consumerRequire('@vue/compiler-sfc');
+    const parsed = compilerSfc.parse(code);
+    const parseErrors: Array<{ message: string; loc?: { start?: { line?: number } } }> =
+      parsed.errors || [];
+    if (parseErrors.length > 0) {
+      result.isValid = false;
+      for (const err of parseErrors) {
+        const line = err.loc?.start?.line;
+        result.errors.push(`${line ? `Line ${line}: ` : ''}${err.message}`);
+      }
+    }
+    return result;
+  } catch {
+    // @vue/compiler-sfc not installed — fall through to structural checks
+  }
+
+  // Structural fallback checks
+  const hasTemplate = /<template[\s>]/.test(code);
+  const hasScript = /<script[\s>]/.test(code);
+  if (!hasTemplate && !hasScript) {
+    result.isValid = false;
+    result.errors.push('Vue SFC must contain a <template> or <script> block');
+  }
+  const templateOpen = (code.match(/<template[\s>]/g) || []).length;
+  const templateClose = (code.match(/<\/template>/g) || []).length;
+  if (templateOpen !== templateClose) {
+    result.isValid = false;
+    result.errors.push('Unbalanced <template> tags in Vue SFC');
+  }
+  const scriptOpen = (code.match(/<script[\s>]/g) || []).length;
+  const scriptClose = (code.match(/<\/script>/g) || []).length;
+  if (scriptOpen !== scriptClose) {
+    result.isValid = false;
+    result.errors.push('Unbalanced <script> tags in Vue SFC');
+  }
+  if (code.includes("import React") || code.includes('className=')) {
+    result.isValid = false;
+    result.errors.push('Vue SFC must not contain React imports or JSX className attributes');
+  }
   return result;
 }

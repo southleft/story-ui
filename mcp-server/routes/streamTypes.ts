@@ -94,8 +94,23 @@ export interface CompletionFeedback {
     reason?: string;
   }[];
 
-  // Warnings or suggestions
+  // Warnings or suggestions (also rendered as clickable follow-up chips)
   suggestions?: string[];
+
+  // Conversational, model-authored reply describing what was built.
+  // Rendered as the assistant's chat message in the panel.
+  chatSummary?: string;
+
+  // Storybook component ID (prefix before `--<story>`) for client-side navigation
+  storybookId?: string;
+
+  // Runtime (in-Storybook) validation status, when enabled
+  runtimeValidation?: {
+    enabled: boolean;
+    success: boolean;
+    error?: string;
+    healedByRetry?: boolean;
+  };
 
   // Validation status
   validation: ValidationFeedback;
@@ -150,6 +165,7 @@ export interface StreamGenerateRequest {
   model?: string;     // Model ID
   considerations?: string;  // Design system considerations (passed from frontend for environment parity)
   useStorybookMcp?: boolean;  // Whether to use Storybook MCP context for enhanced generation
+  storybookUrl?: string;      // Storybook origin detected by the panel (zero-config MCP context)
 }
 
 // Helper to create SSE-formatted message

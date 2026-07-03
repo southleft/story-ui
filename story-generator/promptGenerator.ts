@@ -316,20 +316,20 @@ import React from 'react';
 
 CRITICAL IMPORT RULES - MUST FOLLOW EXACTLY:
 1. **LINE 1: import React from 'react';** (MANDATORY - NEVER SKIP THIS)
-2. **LINE 2: import type { StoryObj } from '${storybookFramework}';**
+2. **LINE 2: import type { Meta, StoryObj } from '${storybookFramework}';**
 3. **LINE 3: import { ComponentName } from '[your-import-path]';**
 
 ⚠️  WITHOUT "import React from 'react';" THE STORY WILL FAIL WITH "React is not defined" ERROR ⚠️`;
 
     frameworkExampleImports = `Example correct order:
 import React from 'react';
-import type { StoryObj } from '${storybookFramework}';
+import type { Meta, StoryObj } from '${storybookFramework}';
 import { ComponentName } from '[your-import-path]';
 
 REQUIRED STORY STRUCTURE:
 Every story MUST start with these three imports in this order:
 1. import React from 'react';
-2. import type { StoryObj } from '${storybookFramework}';
+2. import type { Meta, StoryObj } from '${storybookFramework}';
 3. import { ComponentName } from '[library-path]';`;
   } else if (framework === 'vue') {
     frameworkImportInstructions = `
@@ -1027,14 +1027,20 @@ export async function buildClaudePrompt(
     config.considerationsPath.replace(/\/story-ui-considerations\.(md|json)$/, '') :
     process.cwd();
 
+  // Project documentation and considerations are the design system's OWN
+  // rules — both sources load when present (they serve different purposes:
+  // story-ui-docs/ holds reference docs, story-ui-considerations.md holds
+  // generation rules), and both are marked authoritative for the model.
   const docLoader = new DocumentationLoader(projectRoot);
   let documentationAdded = false;
+  let considerationsAdded = false;
 
   if (docLoader.hasDocumentation()) {
     const docs = await docLoader.loadDocumentation();
     if (docs.sources.length > 0) {
       const docPrompt = docLoader.formatForPrompt(docs);
       if (docPrompt) {
+        promptParts.push('═══ PROJECT DOCUMENTATION (authoritative — follow these over general conventions) ═══');
         promptParts.push(docPrompt);
         promptParts.push('');
         documentationAdded = true;
@@ -1042,17 +1048,18 @@ export async function buildClaudePrompt(
     }
   }
 
-  // Fall back to legacy considerations file if no directory-based docs
-  if (!documentationAdded) {
-    const considerations = loadConsiderations(config.considerationsPath);
-    if (considerations) {
-      const considerationsPrompt = considerationsToPrompt(considerations);
-      if (considerationsPrompt) {
-        promptParts.push(considerationsPrompt);
-        promptParts.push('');
-      }
+  const considerations = loadConsiderations(config.considerationsPath);
+  if (considerations) {
+    const considerationsPrompt = considerationsToPrompt(considerations);
+    if (considerationsPrompt) {
+      promptParts.push('═══ AI CONSIDERATIONS (rules for how YOU must use this design system — these OVERRIDE any conflicting general guidance) ═══');
+      promptParts.push(considerationsPrompt);
+      promptParts.push('');
+      considerationsAdded = true;
     }
   }
+
+  console.log(`[Story UI] Prompt context: story-ui-docs ${documentationAdded ? 'loaded' : 'not found'}, considerations file ${considerationsAdded ? 'loaded' : 'not found'}`);
 
   promptParts.push(
     ...generated.layoutInstructions,
@@ -1152,9 +1159,11 @@ Follow the framework-specific import patterns shown above.`;
     '',
     'OTHER CRITICAL RULES:',
     ...importStyleRules,
+    '- FOLLOW the DESIGN SYSTEM DOCUMENTATION (what the system is) and AI CONSIDERATIONS (how you must use it) sections above — they define this design system\'s required patterns and override generic guidance',
     '- Story title MUST always start with "Generated/" (e.g., title: "Generated/Recipe Card")',
     '- Do NOT use prefixes like "Content/", "Components/", or any other section name',
     '- ONLY import components that are listed in the "Available components" section',
+    '- NEVER import any other npm package (no Tailwind, no other UI kits, no utility libraries) — imports outside the component library are rejected by validation unless the AI CONSIDERATIONS file explicitly permits them',
     '- ALWAYS use the exact import path shown in parentheses after each component',
     '- NEVER use main package imports when specific subpath imports are shown',
     '- Do NOT import story exports - these are NOT real components',
@@ -1238,14 +1247,20 @@ export async function buildFrameworkAwarePrompt(
     config.considerationsPath.replace(/\/story-ui-considerations\.(md|json)$/, '') :
     process.cwd();
 
+  // Project documentation and considerations are the design system's OWN
+  // rules — both sources load when present (they serve different purposes:
+  // story-ui-docs/ holds reference docs, story-ui-considerations.md holds
+  // generation rules), and both are marked authoritative for the model.
   const docLoader = new DocumentationLoader(projectRoot);
   let documentationAdded = false;
+  let considerationsAdded = false;
 
   if (docLoader.hasDocumentation()) {
     const docs = await docLoader.loadDocumentation();
     if (docs.sources.length > 0) {
       const docPrompt = docLoader.formatForPrompt(docs);
       if (docPrompt) {
+        promptParts.push('═══ PROJECT DOCUMENTATION (authoritative — follow these over general conventions) ═══');
         promptParts.push(docPrompt);
         promptParts.push('');
         documentationAdded = true;
@@ -1253,17 +1268,15 @@ export async function buildFrameworkAwarePrompt(
     }
   }
 
-  // Fall back to legacy considerations file if no directory-based docs
-  if (!documentationAdded) {
-    const considerations = loadConsiderations(config.considerationsPath);
-    if (considerations) {
-      const considerationsPrompt = considerationsToPrompt(considerations);
-      if (considerationsPrompt) {
-        promptParts.push(considerationsPrompt);
-        promptParts.push('');
-      }
-    }
-  }
+  // Considerations (the project's generation RULES) are injected LATE in the
+  // prompt — see below, right before the <rules> block — because instructions
+  // near the end of a long prompt are followed far more reliably than ones
+  // buried early. Load them here so the log line reports both sources together.
+  const considerations = loadConsiderations(config.considerationsPath);
+  const considerationsPrompt = considerations ? considerationsToPrompt(considerations) : '';
+  considerationsAdded = !!considerationsPrompt;
+
+  console.log(`[Story UI] Prompt context: story-ui-docs ${documentationAdded ? 'loaded' : 'not found'}, considerations file ${considerationsAdded ? 'loaded' : 'not found'}`);
 
   promptParts.push(
     ...generated.layoutInstructions,
@@ -1321,6 +1334,16 @@ export async function buildFrameworkAwarePrompt(
     );
   }
 
+  // Project rules land here — late in the prompt, adjacent to the final
+  // instructions — where the model follows them most reliably.
+  if (considerationsPrompt) {
+    promptParts.push(
+      '',
+      '═══ AI CONSIDERATIONS (rules for how YOU must use this design system — these OVERRIDE any conflicting general guidance above) ═══',
+      considerationsPrompt,
+    );
+  }
+
   promptParts.push(
     '',
     `Output a complete Storybook story file in TypeScript. Import components as shown in the sample template below. Use the following sample as a template. Respond ONLY with a single code block containing the full file, and nothing else.`,
@@ -1328,8 +1351,10 @@ export async function buildFrameworkAwarePrompt(
     '<rules>',
     'CRITICAL REMINDERS:',
     ...importStyleRulesFramework,
+    '- FOLLOW the DESIGN SYSTEM DOCUMENTATION (what the system is) and AI CONSIDERATIONS (how you must use it) sections — they define this design system\'s required patterns and override generic guidance',
     '- Story title MUST always start with "Generated/" (e.g., title: "Generated/Recipe Card")',
     '- ONLY import components that are listed in the "Available components" section',
+    '- NEVER import any other npm package (no Tailwind, no other UI kits, no utility libraries) — imports outside the component library are rejected by validation unless the AI CONSIDERATIONS file explicitly permits them',
     '- ALWAYS use the exact import path shown in parentheses after each component',
     '- NEVER use main package imports when specific subpath imports are shown',
     '- Do NOT import story exports - these are NOT real components',

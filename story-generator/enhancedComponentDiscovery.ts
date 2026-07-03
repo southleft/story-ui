@@ -238,10 +238,11 @@ export class EnhancedComponentDiscovery {
       const componentsPathExists = fs.existsSync(this.config.componentsPath);
       if (componentsPathExists) {
         logger.log(`✅ Found local components at: ${this.config.componentsPath}`);
+        // No explicit patterns: the framework adapter's file patterns apply,
+        // so Vue (.vue) and Svelte (.svelte) components are discovered too.
         sources.push({
           type: 'local',
-          path: this.config.componentsPath,
-          patterns: ['*.tsx', '*.jsx', '*.ts', '*.js']
+          path: this.config.componentsPath
         });
       } else {
         // Log warning for debugging - path was configured but doesn't exist
@@ -266,21 +267,22 @@ export class EnhancedComponentDiscovery {
     for (const dir of commonComponentDirs) {
       const fullPath = path.join(projectRoot, dir);
       if (fs.existsSync(fullPath) && fullPath !== this.config.componentsPath) {
+        // No explicit patterns: use the framework adapter's file patterns so
+        // .vue/.svelte local components are discovered, not just React files.
         sources.push({
           type: 'local',
-          path: fullPath,
-          patterns: ['*.tsx', '*.jsx', '*.ts', '*.js']
+          path: fullPath
         });
       }
     }
 
     // 3. Scan alongside stories in src/stories directory (co-located components)
+    // Story/test files are excluded downstream by isNonComponentFile().
     const storiesDir = path.join(projectRoot, 'src/stories');
     if (fs.existsSync(storiesDir)) {
       sources.push({
         type: 'local',
-        path: storiesDir,
-        patterns: ['*.tsx', '*.jsx'] // Only component files, not story files
+        path: storiesDir
       });
     }
 

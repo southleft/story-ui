@@ -1,6 +1,19 @@
 # Story UI AI Considerations
 
-This file contains specific instructions and considerations for the AI when generating stories for your component library. You can customize this file to match your design system's requirements.
+This file contains **rules for how the AI should treat your design system** when
+generating stories — its behavior, constraints, and permissions. It is not the
+place for design system documentation itself:
+
+- **`story-ui-docs/`** → what your design system IS (component docs, design
+  tokens, patterns, guidelines — Markdown, JSON, YAML, or XML files).
+- **`story-ui-considerations.md`** (this file) → how the AI must USE it
+  (do's and don'ts, approximation rules, and any explicit permissions).
+
+By default the AI is restricted to components importable from your configured
+library. If you want to permit an additional package (for example an icon or
+charting library), name its import path explicitly in this file — e.g.
+"Allowed additional imports: `@tabler/icons-react`". Packages not named here
+and not part of your configured library are rejected during validation.
 
 ## Component Library Details
 

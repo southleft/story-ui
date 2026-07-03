@@ -34,6 +34,11 @@ export interface SelfHealingOptions {
   framework: string;
   /** Import path for the component library */
   importPath: string;
+  /**
+   * Project-specific design guidance (story-ui-considerations.md / story-ui-docs)
+   * so corrections keep following the design system's own rules.
+   */
+  designGuidelines?: string;
 }
 
 /**
@@ -145,23 +150,15 @@ export function shouldContinueRetrying(
     return { shouldRetry: false, reason: 'Maximum retry attempts reached' };
   }
 
-  // If we have at least 2 attempts, check if errors are repeating
+  // If we have at least 2 attempts, check if errors are repeating.
+  // Errors are normalized (line/column numbers stripped) before comparison so
+  // that the "same" error shifting by a line still counts as being stuck.
   if (errorHistory.length >= 2) {
     const currentErrors = errorHistory[errorHistory.length - 1];
     const previousErrors = errorHistory[errorHistory.length - 2];
 
-    // Convert to sets for comparison
-    const currentSet = new Set([
-      ...currentErrors.syntaxErrors,
-      ...currentErrors.patternErrors,
-      ...currentErrors.importErrors,
-    ]);
-
-    const previousSet = new Set([
-      ...previousErrors.syntaxErrors,
-      ...previousErrors.patternErrors,
-      ...previousErrors.importErrors,
-    ]);
+    const currentSet = new Set(collectNormalizedErrors(currentErrors));
+    const previousSet = new Set(collectNormalizedErrors(previousErrors));
 
     // Check if same errors are repeating (LLM is stuck)
     if (currentSet.size === previousSet.size) {
@@ -182,6 +179,23 @@ export function shouldContinueRetrying(
   }
 
   return { shouldRetry: true, reason: '' };
+}
+
+/** Strip line/column locations so error identity survives code shifting. */
+function normalizeErrorMessage(error: string): string {
+  return error
+    .replace(/\bline\s+\d+/gi, 'line N')
+    .replace(/\(\d+,\d+\)/g, '(N,N)')
+    .replace(/:\d+(?::\d+)?/g, ':N')
+    .trim();
+}
+
+function collectNormalizedErrors(errors: ValidationErrors): string[] {
+  return [
+    ...errors.syntaxErrors,
+    ...errors.patternErrors,
+    ...errors.importErrors,
+  ].map(normalizeErrorMessage);
 }
 
 /**
@@ -280,6 +294,14 @@ export function buildSelfHealingPrompt(
   const frameworkInstructions = getFrameworkSpecificInstructions(options.framework, options.importPath);
   if (frameworkInstructions.length > 0) {
     sections.push(...frameworkInstructions);
+  }
+
+  // Project design guidelines — corrections must keep following the design
+  // system's own rules, not just fix syntax.
+  if (options.designGuidelines) {
+    sections.push('### Project Design Guidelines (still apply to the corrected code)');
+    sections.push(options.designGuidelines.slice(0, 4000));
+    sections.push('');
   }
 
   // Syntax errors section
@@ -442,21 +464,28 @@ export function createGenerationMetrics(
 }
 
 /**
- * Select the best code from multiple attempts based on error count
+ * Select the best code from multiple attempts using severity-weighted scoring:
+ * a fatal syntax or import error outweighs several cosmetic pattern warnings,
+ * so an attempt with one style nit beats an attempt that won't compile.
  */
 export function selectBestAttempt(
   attempts: Array<{ code: string; errors: ValidationErrors }>
 ): { code: string; errors: ValidationErrors } | null {
   if (attempts.length === 0) return null;
 
+  const score = (errors: ValidationErrors): number =>
+    errors.syntaxErrors.length * 10 +
+    errors.importErrors.length * 10 +
+    errors.patternErrors.length;
+
   let best = attempts[0];
-  let bestErrorCount = getTotalErrorCount(best.errors);
+  let bestScore = score(best.errors);
 
   for (const attempt of attempts) {
-    const errorCount = getTotalErrorCount(attempt.errors);
-    if (errorCount < bestErrorCount) {
+    const attemptScore = score(attempt.errors);
+    if (attemptScore < bestScore) {
       best = attempt;
-      bestErrorCount = errorCount;
+      bestScore = attemptScore;
     }
   }
 

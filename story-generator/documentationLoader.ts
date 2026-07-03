@@ -3,7 +3,7 @@ import path from 'path';
 import { glob } from 'glob';
 import { logger } from './logger.js';
 export interface DocumentationSource {
-  type: 'markdown' | 'json' | 'html' | 'txt';
+  type: string; // md, mdx, json, yaml, yml, xml, html, txt
   path: string;
   content: string;
   category?: string; // components, tokens, patterns, guidelines, etc.
@@ -48,9 +48,11 @@ export class DocumentationLoader {
       };
     }
 
-    // Check if cache is still valid
-    const stats = fs.statSync(this.docsDir);
-    if (this.cache && stats.mtimeMs <= this.lastModified) {
+    // Check if cache is still valid. The directory mtime only changes for
+    // direct children, so invalidation is based on the newest mtime across
+    // all nested documentation files.
+    const currentModified = this.computeLatestMtime();
+    if (this.cache && currentModified <= this.lastModified) {
       return this.cache;
     }
 
@@ -64,12 +66,17 @@ export class DocumentationLoader {
       components: {}
     };
 
-    // Find all documentation files
+    // Find all documentation files. Models read YAML/XML natively, so those
+    // formats are included verbatim rather than parsed.
     const patterns = [
       '**/*.md',
-      '**/*.json', 
+      '**/*.mdx',
+      '**/*.json',
+      '**/*.yaml',
+      '**/*.yml',
+      '**/*.xml',
       '**/*.html',
-      '**/*.txt'
+      '**/*.txt',
     ];
 
     // Use async glob for ESM compatibility
@@ -86,15 +93,21 @@ export class DocumentationLoader {
 
     logger.log(`📄 Found ${files.length} documentation files`);
 
-    // Process each file
+    // Process each file, with a per-file budget so one giant document can't
+    // crowd everything else out of the prompt.
+    const PER_FILE_CHAR_BUDGET = 8000;
     for (const file of files) {
       // Skip README files as they are instructional, not design system documentation
       if (path.basename(file).toLowerCase().startsWith('readme')) {
         continue;
       }
-      
+
       const filePath = path.join(this.docsDir, file);
-      const content = fs.readFileSync(filePath, 'utf-8');
+      let content = fs.readFileSync(filePath, 'utf-8');
+      if (content.length > PER_FILE_CHAR_BUDGET) {
+        logger.log(`⚠️ Documentation file ${file} truncated from ${content.length} to ${PER_FILE_CHAR_BUDGET} chars for the prompt`);
+        content = content.slice(0, PER_FILE_CHAR_BUDGET) + '\n…[truncated]';
+      }
       const ext = path.extname(file).toLowerCase();
       const category = this.categorizeFile(file);
 
@@ -113,11 +126,37 @@ export class DocumentationLoader {
 
     // Cache the results
     this.cache = documentation;
-    this.lastModified = stats.mtimeMs;
+    this.lastModified = currentModified;
 
     logger.log(`✅ Loaded documentation with ${documentation.guidelines.length} guidelines, ${Object.keys(documentation.tokens).length} token categories, ${Object.keys(documentation.patterns).length} patterns`);
 
     return documentation;
+  }
+
+  /**
+   * Newest mtime across all files under the docs dir (recursive) — used for
+   * cache invalidation, since the directory's own mtime misses nested edits.
+   */
+  private computeLatestMtime(): number {
+    let latest = 0;
+    const walk = (dir: string) => {
+      let entries: fs.Dirent[] = [];
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const entry of entries) {
+        if (entry.name === 'node_modules' || entry.name === '.git') continue;
+        const full = path.join(dir, entry.name);
+        try {
+          if (entry.isDirectory()) {
+            walk(full);
+          } else {
+            const mtime = fs.statSync(full).mtimeMs;
+            if (mtime > latest) latest = mtime;
+          }
+        } catch { /* unreadable entry */ }
+      }
+    };
+    walk(this.docsDir);
+    return latest;
   }
 
   /**
@@ -157,6 +196,9 @@ export class DocumentationLoader {
           } catch (e) {
             console.warn(`Failed to parse JSON tokens from ${source.path}`);
           }
+        } else if (source.type === 'yaml' || source.type === 'yml' || source.type === 'xml') {
+          // Include verbatim in a fenced block — the model reads these natively
+          docs.guidelines.push('\n## Tokens from ' + source.path + '\n```' + source.type + '\n' + source.content + '\n```');
         } else {
           // Extract token information from markdown/text
           docs.guidelines.push(`\n## Tokens from ${source.path}\n${source.content}`);
@@ -196,10 +238,16 @@ export class DocumentationLoader {
   formatForPrompt(docs: LoadedDocumentation): string {
     let prompt = '';
 
-    // Add guidelines
+    // Add guidelines — capped so a large docs folder can't blow up the prompt
+    const TOTAL_GUIDELINES_BUDGET = 24000;
     if (docs.guidelines.length > 0) {
-      prompt += '\n\n📚 DESIGN SYSTEM DOCUMENTATION:\n';
-      prompt += docs.guidelines.join('\n\n');
+      prompt += '\n\n📚 DESIGN SYSTEM DOCUMENTATION (what this design system IS — its components, tokens, and patterns):\n';
+      let joined = docs.guidelines.join('\n\n');
+      if (joined.length > TOTAL_GUIDELINES_BUDGET) {
+        logger.log(`⚠️ Design system documentation truncated from ${joined.length} to ${TOTAL_GUIDELINES_BUDGET} chars for the prompt`);
+        joined = joined.slice(0, TOTAL_GUIDELINES_BUDGET) + '\n…[documentation truncated — keep files focused]';
+      }
+      prompt += joined;
     }
 
     // Add tokens

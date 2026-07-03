@@ -254,7 +254,8 @@ export class StorybookMcpClient {
    */
   private async fetchUiBuildingInstructions(): Promise<string | undefined> {
     try {
-      const result = await this.callTool('get-ui-building-instructions', {});
+      // addon-mcp ≥0.5 tool name (was `get-ui-building-instructions` in earlier versions)
+      const result = await this.callTool('get-storybook-story-instructions', {});
       return result || undefined;
     } catch (error) {
       logger.log(`⚠️ Failed to fetch UI building instructions: ${error}`);
@@ -269,16 +270,19 @@ export class StorybookMcpClient {
     componentNames?: string[]
   ): Promise<Record<string, ComponentDocumentation> | undefined> {
     try {
-      // First try to fetch from component manifest (Storybook's experimentalComponentsManifest)
+      // The components manifest is the only real data source in addon-mcp ≥0.5
+      // (its documentation tools are themselves manifest-backed).
       const manifestDocs = await this.fetchFromManifest(componentNames);
       if (manifestDocs && Object.keys(manifestDocs).length > 0) {
         logger.log(`✅ Fetched ${Object.keys(manifestDocs).length} components from Storybook manifest`);
         return manifestDocs;
       }
 
-      // Fall back to MCP tools if manifest not available
-      logger.log('📡 Manifest not available, trying MCP tools...');
-      return await this.fetchFromMcpTools(componentNames);
+      logger.log(
+        '⚠️ Storybook components manifest not available — component docs/story snippets will be skipped. ' +
+        'Enable it in the consumer Storybook: add `features: { experimentalComponentsManifest: true }` to .storybook/main.ts'
+      );
+      return undefined;
     } catch (error) {
       logger.log(`⚠️ Failed to fetch component documentation: ${error}`);
       return undefined;
@@ -380,170 +384,6 @@ export class StorybookMcpClient {
       logger.log(`⚠️ Error fetching manifest: ${error}`);
       return undefined;
     }
-  }
-
-  /**
-   * Fetch component documentation from MCP tools (fallback)
-   */
-  private async fetchFromMcpTools(
-    componentNames?: string[]
-  ): Promise<Record<string, ComponentDocumentation> | undefined> {
-    try {
-      // List all components first
-      const listResult = await this.callTool('list-all-components', {});
-      if (!listResult) return undefined;
-
-      // Parse the XML response to extract component info
-      const components = this.parseComponentList(listResult);
-      if (components.length === 0) return undefined;
-
-      // Filter to requested components if specified
-      let targetComponents: ComponentInfo[];
-      if (componentNames && componentNames.length > 0) {
-        // Match by name (case-insensitive partial match)
-        const lowerNames = componentNames.map((n) => n.toLowerCase());
-        targetComponents = components.filter((c) =>
-          lowerNames.some(
-            (name) => c.name.toLowerCase().includes(name) || c.id.toLowerCase().includes(name)
-          )
-        );
-        // If no matches, use first 10 components
-        if (targetComponents.length === 0) {
-          targetComponents = components.slice(0, 10);
-        }
-      } else {
-        // Limit to 10 components to avoid overwhelming context
-        targetComponents = components.slice(0, 10);
-      }
-
-      // Fetch documentation for target components
-      const componentIds = targetComponents.map((c) => c.id);
-      if (componentIds.length === 0) return undefined;
-
-      const docResult = await this.callTool('get-component-documentation', {
-        componentIds,
-      });
-
-      if (!docResult) {
-        // Return basic info from list if detailed docs fail
-        const docs: Record<string, ComponentDocumentation> = {};
-        for (const comp of targetComponents) {
-          docs[comp.name] = {
-            id: comp.id,
-            name: comp.name,
-            summary: comp.summary,
-          };
-        }
-        return docs;
-      }
-
-      // Parse the detailed documentation
-      return this.parseComponentDocs(docResult);
-    } catch (error) {
-      logger.log(`⚠️ Failed to fetch from MCP tools: ${error}`);
-      return undefined;
-    }
-  }
-
-  /**
-   * Parse component list from XML response
-   */
-  private parseComponentList(xmlText: string): ComponentInfo[] {
-    const components: ComponentInfo[] = [];
-
-    // Extract component blocks
-    const componentMatches = xmlText.matchAll(/<component>([\s\S]*?)<\/component>/g);
-
-    for (const match of componentMatches) {
-      const block = match[1];
-
-      const idMatch = block.match(/<id>(.*?)<\/id>/);
-      const nameMatch = block.match(/<name>(.*?)<\/name>/);
-      const summaryMatch = block.match(/<summary>([\s\S]*?)<\/summary>/);
-
-      if (idMatch && nameMatch) {
-        components.push({
-          id: idMatch[1].trim(),
-          name: nameMatch[1].trim(),
-          summary: summaryMatch ? summaryMatch[1].trim() : undefined,
-        });
-      }
-    }
-
-    return components;
-  }
-
-  /**
-   * Parse component documentation from XML response
-   */
-  private parseComponentDocs(xmlText: string): Record<string, ComponentDocumentation> {
-    const docs: Record<string, ComponentDocumentation> = {};
-
-    // Extract component blocks
-    const componentMatches = xmlText.matchAll(/<component>([\s\S]*?)<\/component>/g);
-
-    for (const match of componentMatches) {
-      const block = match[1];
-
-      const idMatch = block.match(/<id>(.*?)<\/id>/);
-      const nameMatch = block.match(/<name>(.*?)<\/name>/);
-      const descMatch = block.match(/<description>([\s\S]*?)<\/description>/);
-
-      if (nameMatch) {
-        const name = nameMatch[1].trim();
-        const doc: ComponentDocumentation = {
-          id: idMatch ? idMatch[1].trim() : name.toLowerCase().replace(/\s+/g, '-'),
-          name,
-          description: descMatch ? descMatch[1].trim() : undefined,
-          examples: [],
-          props: {},
-        };
-
-        // Extract stories as examples
-        const storyMatches = block.matchAll(/<story>([\s\S]*?)<\/story>/g);
-        for (const storyMatch of storyMatches) {
-          const storyBlock = storyMatch[1];
-          const storyNameMatch = storyBlock.match(/<story_name>(.*?)<\/story_name>/);
-          const storyDescMatch = storyBlock.match(/<story_description>([\s\S]*?)<\/story_description>/);
-          const storyCodeMatch = storyBlock.match(/<story_code>([\s\S]*?)<\/story_code>/);
-
-          if (storyNameMatch && storyCodeMatch) {
-            doc.examples!.push({
-              title: storyNameMatch[1].trim(),
-              description: storyDescMatch ? storyDescMatch[1].trim() : undefined,
-              code: storyCodeMatch[1].trim(),
-            });
-          }
-        }
-
-        // Extract props
-        const propsMatch = block.match(/<props>([\s\S]*?)<\/props>/);
-        if (propsMatch) {
-          const propMatches = propsMatch[1].matchAll(/<prop>([\s\S]*?)<\/prop>/g);
-          for (const propMatch of propMatches) {
-            const propBlock = propMatch[1];
-            const propNameMatch = propBlock.match(/<prop_name>(.*?)<\/prop_name>/);
-            const propTypeMatch = propBlock.match(/<prop_type>(.*?)<\/prop_type>/);
-            const propDescMatch = propBlock.match(/<prop_description>([\s\S]*?)<\/prop_description>/);
-            const propRequiredMatch = propBlock.match(/<prop_required>(.*?)<\/prop_required>/);
-            const propDefaultMatch = propBlock.match(/<prop_default>(.*?)<\/prop_default>/);
-
-            if (propNameMatch) {
-              doc.props![propNameMatch[1].trim()] = {
-                type: propTypeMatch ? propTypeMatch[1].trim() : undefined,
-                description: propDescMatch ? propDescMatch[1].trim() : undefined,
-                required: propRequiredMatch ? propRequiredMatch[1].trim() === 'true' : false,
-                defaultValue: propDefaultMatch ? propDefaultMatch[1].trim() : undefined,
-              };
-            }
-          }
-        }
-
-        docs[name] = doc;
-      }
-    }
-
-    return docs;
   }
 
   /**

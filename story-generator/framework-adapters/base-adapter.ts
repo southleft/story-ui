@@ -338,19 +338,19 @@ MANDATORY SPACING & LAYOUT RULES (NON-NEGOTIABLE):
 ** CRITICAL: Every generated component MUST have professional-quality spacing. Components without proper spacing look broken and unprofessional. **
 
 1. STORY WRAPPER (REQUIRED for every story):
-   - The render function MUST return a wrapper div with padding
-   - Pattern: render: () => <div style={{ padding: "24px" }}>...content...</div>
+   - The rendered story MUST have a wrapper element with padding
+   - Pattern: ${this.getSpacingExample('wrapper')}
    - This ensures content has breathing room within the Storybook canvas
 
 2. FORM FIELD SPACING (CRITICAL):
    - ALWAYS wrap form fields in a container with vertical spacing
-   - Use flexbox column with gap: <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+   - Use flexbox column with gap: ${this.getSpacingExample('formGap')}
    - Or use design system spacing tokens if available
    - MINIMUM 16px gap between form fields
 
 3. BUTTON SPACING:
    - Submit/action buttons: 24px margin-top from form fields above
-   - Pattern: <div style={{ marginTop: "24px" }}><Button>Submit</Button></div>
+   - Pattern: ${this.getSpacingExample('buttonMargin')}
    - Button groups should be wrapped with margin-top from content
 
 4. SECTION SPACING:
@@ -360,11 +360,9 @@ MANDATORY SPACING & LAYOUT RULES (NON-NEGOTIABLE):
 
 5. HEADING SPACING:
    - More space ABOVE headings (24-32px) than below (8-16px)
-   - Pattern: <Heading style={{ marginTop: "32px", marginBottom: "12px" }}>
 
 6. CARD/CONTAINER PADDING:
    - Internal padding: minimum 16px, preferred 24px
-   - Pattern: <Card style={{ padding: "24px" }}>
 
 7. SPECIFIC VALUES TO USE:
    - Tight spacing (icons, inline): 4-8px
@@ -378,5 +376,45 @@ SPACING VALIDATION (Self-check before generating):
 Ask yourself: "Does every element have adequate breathing room from its neighbors?"
 If any elements appear cramped or touching, add appropriate spacing.
 `;
+  }
+
+  /**
+   * Framework-appropriate syntax for the spacing examples embedded in the
+   * common rules. JSX style objects only make sense for React; the other
+   * frameworks get examples in their own template syntax.
+   */
+  protected getSpacingExample(kind: 'wrapper' | 'formGap' | 'buttonMargin'): string {
+    switch (this.type) {
+      case 'vue':
+        return {
+          wrapper: `template: '<div style="padding: 24px">...content...</div>'`,
+          formGap: `<div style="display: flex; flex-direction: column; gap: 16px">`,
+          buttonMargin: `<div style="margin-top: 24px"><v-btn>Submit</v-btn></div>`,
+        }[kind];
+      case 'angular':
+        return {
+          wrapper: `template: \`<div style="padding: 24px">...content...</div>\``,
+          formGap: `<div style="display: flex; flex-direction: column; gap: 16px">`,
+          buttonMargin: `<div style="margin-top: 24px"><button mat-raised-button>Submit</button></div>`,
+        }[kind];
+      case 'svelte':
+        return {
+          wrapper: `<Story name="..."><div style="padding: 24px">...content...</div></Story>`,
+          formGap: `<div style="display: flex; flex-direction: column; gap: 16px">`,
+          buttonMargin: `<div style="margin-top: 24px"><Button>Submit</Button></div>`,
+        }[kind];
+      case 'web-components':
+        return {
+          wrapper: 'render: () => html`<div style="padding: 24px">...content...</div>`',
+          formGap: `<div style="display: flex; flex-direction: column; gap: 16px">`,
+          buttonMargin: `<div style="margin-top: 24px"><sl-button>Submit</sl-button></div>`,
+        }[kind];
+      default: // react
+        return {
+          wrapper: `render: () => <div style={{ padding: "24px" }}>...content...</div>`,
+          formGap: `<div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>`,
+          buttonMargin: `<div style={{ marginTop: "24px" }}><Button>Submit</Button></div>`,
+        }[kind];
+    }
   }
 }

@@ -1,0 +1,1762 @@
+/**
+ * Shared story-generation pipeline.
+ *
+ * Both HTTP transports delegate here:
+ *  - generateStoryStream.ts (SSE) forwards pipeline events to the client
+ *  - generateStory.ts (JSON) runs the same pipeline with no-op events
+ *
+ * Keeping the pipeline in one place guarantees the two routes cannot drift
+ * (runtime validation, barrel-import fixing, and post-processing re-validation
+ * previously existed on only one of the two paths).
+ */
+
+import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
+import { loadConsiderations, considerationsToPrompt } from '../../story-generator/considerationsLoader.js';
+import { generateStory } from '../../story-generator/generateStory.js';
+import { EnhancedComponentDiscovery } from '../../story-generator/enhancedComponentDiscovery.js';
+import {
+  buildFrameworkAwarePrompt,
+  detectProjectFramework,
+} from '../../story-generator/promptGenerator.js';
+import { FrameworkType, StoryGenerationOptions, getAdapter, FrameworkAdapter } from '../../story-generator/framework-adapters/index.js';
+import { loadUserConfig, validateConfig } from '../../story-generator/configLoader.js';
+import { extractAndValidateCodeBlock, validateStoryCode, ValidationResult } from '../../story-generator/validateStory.js';
+import { createFrameworkAwareFallbackStory } from './storyHelpers.js';
+import { isBlacklistedComponent, isBlacklistedIcon, getBlacklistErrorMessage, ICON_CORRECTIONS } from '../../story-generator/componentBlacklist.js';
+import { StoryTracker, StoryMapping } from '../../story-generator/storyTracker.js';
+import { getManifestManager } from '../../story-generator/manifestManager.js';
+import { getDocumentation } from '../../story-generator/documentation-sources.js';
+import { postProcessStory, fixBarrelImports } from '../../story-generator/postProcessStory.js';
+import { validateStory } from '../../story-generator/storyValidator.js';
+import {
+  ValidationErrors,
+  SelfHealingOptions,
+  aggregateValidationErrors,
+  shouldContinueRetrying,
+  buildSelfHealingPrompt,
+  hasNoErrors,
+  getTotalErrorCount,
+  createEmptyErrors,
+  formatErrorsForLog,
+  selectBestAttempt,
+} from '../../story-generator/selfHealingLoop.js';
+import {
+  validateStoryRuntime,
+  formatRuntimeErrorForHealing,
+  isRuntimeValidationEnabled,
+  RuntimeValidationResult,
+} from '../../story-generator/runtimeValidator.js';
+import { StoryHistoryManager } from '../../story-generator/storyHistory.js';
+import { logger } from '../../story-generator/logger.js';
+import { UrlRedirectService } from '../../story-generator/urlRedirectService.js';
+import {
+  chatCompletionDetailed,
+  generateTitle as llmGenerateTitle,
+  isProviderConfigured,
+  getProviderInfo,
+  chatCompletionWithImages,
+  buildMessageWithImages,
+} from '../../story-generator/llm-providers/story-llm-service.js';
+import { processImageInputs, ImageInput } from '../../story-generator/imageProcessor.js';
+import { VisionPromptType, buildVisionAwarePrompt } from '../../story-generator/visionPrompts.js';
+import { ImageContent } from '../../story-generator/llm-providers/types.js';
+import {
+  createStorybookMcpClient,
+  formatStorybookContext,
+  StorybookMcpContext,
+} from '../../story-generator/storybookMcpClient.js';
+import { IntentPreview, ValidationFeedback, CompletionFeedback } from './streamTypes.js';
+
+// ============================================================
+// Public interface
+// ============================================================
+
+export interface GenerationRequest {
+  prompt: string;
+  fileName?: string;
+  conversation?: Array<{ role: string; content: string }>;
+  isUpdate?: boolean;
+  originalTitle?: string;
+  storyId?: string;
+  framework?: string;
+  autoDetectFramework?: boolean;
+  images?: ImageInput[];
+  visionMode?: string;
+  designSystem?: string;
+  considerations?: string;
+  provider?: string;
+  model?: string;
+  useStorybookMcp?: boolean;
+  /**
+   * Storybook origin detected by the panel (it runs inside Storybook, so it
+   * knows). Lets the MCP-context toggle work with zero configuration; an
+   * explicit config.storybookMcpUrl still takes precedence.
+   */
+  storybookUrl?: string;
+  voiceMode?: boolean;
+}
+
+export interface GenerationEvents {
+  onProgress?(step: number, totalSteps: number, phase: string, message: string, details?: Record<string, unknown>): void;
+  onIntent?(intent: IntentPreview): void;
+  onValidation?(validation: ValidationFeedback): void;
+  onRetry?(attempt: number, maxAttempts: number, reason: string, errors: string[]): void;
+  onLLMCall?(): void;
+}
+
+/** Total steps reported through onProgress (kept for panel progress bars). */
+export const GENERATION_TOTAL_STEPS = 8;
+
+/**
+ * Error with transport metadata. Streaming maps it to an SSE error event;
+ * the JSON route maps httpStatus/code onto the response.
+ */
+export class GenerationError extends Error {
+  constructor(
+    public code: string,
+    message: string,
+    public options: {
+      httpStatus?: number;
+      details?: string;
+      recoverable?: boolean;
+      suggestion?: string;
+    } = {}
+  ) {
+    super(message);
+    this.name = 'GenerationError';
+  }
+}
+
+export interface GenerationOutcome {
+  success: boolean;
+  isFallbackStory: boolean;
+  title: string;
+  fileName: string;
+  storyId: string;
+  outPath: string;
+  code: string;
+  isUpdate: boolean;
+  analysis: {
+    componentsUsed: CompletionFeedback['componentsUsed'];
+    layoutChoices: CompletionFeedback['layoutChoices'];
+    styleChoices: CompletionFeedback['styleChoices'];
+  };
+  validation: {
+    hasWarnings: boolean;
+    errors: string[];
+    warnings: string[];
+    selfHealingUsed: boolean;
+    attempts: number;
+    autoFixApplied: boolean;
+    isFallback: boolean;
+  };
+  runtimeValidation: {
+    enabled: boolean;
+    success: boolean;
+    storyExists: boolean;
+    error?: string;
+    errorType?: string;
+    details?: unknown;
+    healedByRetry?: boolean;
+  };
+  /** Conversational, model-authored reply describing what was built. */
+  chatSummary?: string;
+  /** Short follow-up prompt ideas the user can click to refine. */
+  suggestions?: string[];
+  /**
+   * Storybook component ID (the `--<story>` prefix) for the generated story,
+   * so clients can navigate to it without guessing.
+   */
+  storybookId?: string;
+}
+
+// ============================================================
+// Main pipeline
+// ============================================================
+
+export async function runStoryGeneration(
+  request: GenerationRequest,
+  events: GenerationEvents = {}
+): Promise<GenerationOutcome> {
+  const {
+    prompt,
+    fileName,
+    conversation,
+    isUpdate,
+    originalTitle,
+    storyId: providedStoryId,
+    framework,
+    autoDetectFramework,
+    images,
+    visionMode,
+    designSystem,
+    considerations,
+    provider,
+    model,
+    useStorybookMcp,
+    storybookUrl,
+    voiceMode,
+  } = request;
+
+  const totalSteps = GENERATION_TOTAL_STEPS;
+
+  if (!prompt) {
+    throw new GenerationError('MISSING_PROMPT', 'No prompt provided', {
+      httpStatus: 400,
+      recoverable: false,
+      suggestion: 'Please provide a description of what you want to generate',
+    });
+  }
+
+  // Step 1: Load configuration
+  events.onProgress?.(1, totalSteps, 'config_loaded', 'Loading configuration...');
+  const config = loadUserConfig();
+  const configValidation = validateConfig(config);
+  if (!configValidation.isValid) {
+    throw new GenerationError('CONFIG_ERROR', 'Configuration validation failed', {
+      httpStatus: 400,
+      details: configValidation.errors.join('; '),
+      recoverable: false,
+      suggestion: 'Check your story-ui.config.js file',
+    });
+  }
+
+  // Early framework detection — detect once, use everywhere.
+  const detectedFramework = await resolveFramework(framework, config, autoDetectFramework);
+  const frameworkAdapter = getAdapter(detectedFramework);
+  if (!frameworkAdapter) {
+    throw new GenerationError('ADAPTER_NOT_FOUND', `No adapter found for framework: ${detectedFramework}`, {
+      httpStatus: 400,
+      recoverable: false,
+      suggestion: 'Check that the framework name is correct: react, vue, angular, svelte, or web-components',
+    });
+  }
+  logger.log(`🔧 Using framework adapter: ${frameworkAdapter.name}`);
+
+  // Process images if provided
+  let processedImages: ImageContent[] = [];
+  if (images && Array.isArray(images) && images.length > 0) {
+    try {
+      processedImages = await processImageInputs(images);
+    } catch (imageError) {
+      throw new GenerationError('IMAGE_PROCESSING_ERROR', 'Failed to process images', {
+        httpStatus: 400,
+        details: imageError instanceof Error ? imageError.message : String(imageError),
+        recoverable: true,
+        suggestion: 'Try again without images or use a different format',
+      });
+    }
+  }
+
+  // Step 2: Discover components
+  events.onProgress?.(2, totalSteps, 'components_discovered', 'Discovering available components...');
+  const discovery = new EnhancedComponentDiscovery(config);
+  const components = await discovery.discoverAll();
+  events.onProgress?.(2, totalSteps, 'components_discovered',
+    `Found ${components.length} components from ${config.importPath}`,
+    { componentCount: components.length });
+
+  // Optional Storybook MCP context
+  const componentNames = components.map((c: any) => c.name);
+  let storybookContext: StorybookMcpContext | undefined;
+  const shouldUseMcp = useStorybookMcp !== false;
+  // Explicit config wins; otherwise use the Storybook origin the panel
+  // detected, so the MCP-context toggle works with zero configuration.
+  const mcpUrl = config.storybookMcpUrl || storybookUrl;
+  if (mcpUrl && shouldUseMcp) {
+    const storybookClient = createStorybookMcpClient(mcpUrl, config.storybookMcpTimeout);
+    if (storybookClient) {
+      storybookContext = await storybookClient.fetchContext(componentNames);
+      logger.log(storybookContext.available
+        ? `✅ Storybook MCP context fetched in ${storybookContext.fetchTimeMs}ms`
+        : `⚠️ Storybook MCP not available: ${storybookContext.error}`);
+    }
+  }
+
+  // Persistence services
+  const storyTracker = new StoryTracker(config);
+  const historyManager = new StoryHistoryManager(process.cwd());
+  const redirectService = new UrlRedirectService(path.dirname(config.generatedStoriesPath));
+
+  // Refinement resolution — find the prior story when this is an update
+  const isActualUpdate = Boolean(isUpdate || (fileName && conversation && conversation.length > 2));
+  let previousCode: string | undefined;
+  let parentVersionId: string | undefined;
+  let oldTitle: string | undefined;
+  let oldStoryUrl: string | undefined;
+
+  if (isActualUpdate && fileName) {
+    const currentVersion = historyManager.getCurrentVersion(fileName);
+    if (currentVersion) {
+      previousCode = currentVersion.code;
+      parentVersionId = currentVersion.id;
+      const titleMatch = previousCode.match(/title:\s*["']([^"']+)['"]/);
+      if (titleMatch) {
+        oldTitle = titleMatch[1];
+        const cleanOldTitle = oldTitle.replace(config.storyPrefix || 'Generated/', '');
+        oldStoryUrl = `/story/${cleanOldTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-')}--primary`;
+      }
+    }
+  }
+
+  // Intent preview
+  const intent = analyzeIntent(prompt, config, conversation, previousCode, {
+    framework: detectedFramework,
+    designSystem,
+    hasImages: processedImages.length > 0,
+  });
+  events.onIntent?.(intent);
+
+  // Step 3: Build prompt
+  events.onProgress?.(3, totalSteps, 'prompt_built', 'Building generation prompt...', {
+    framework: intent.framework,
+    hasContext: intent.promptAnalysis.hasConversationContext,
+  });
+
+  let initialPrompt = await buildClaudePromptWithContext(
+    prompt, config, conversation, previousCode, components, {
+      framework: detectedFramework,
+      visionMode: visionMode as VisionPromptType | undefined,
+      designSystem,
+      considerations,
+      storybookContext,
+    }
+  );
+
+  if (voiceMode && conversation && conversation.length > 0) {
+    initialPrompt = VOICE_MODE_PREAMBLE + '\n\n' + initialPrompt;
+  }
+
+  const messages: { role: 'user' | 'assistant'; content: string }[] = [
+    { role: 'user', content: initialPrompt },
+  ];
+
+  // Step 4: Self-healing generation loop
+  events.onProgress?.(4, totalSteps, 'llm_thinking', 'AI is generating your story...');
+
+  // Combined AI-considerations text (request-provided + project file). Used
+  // both for healing-prompt guidance and as the isolation escape hatch: a
+  // package explicitly named here is permitted in generated imports.
+  let considerationsText = considerations || '';
+  try {
+    const fileConsiderations = loadConsiderations(config.considerationsPath);
+    if (fileConsiderations) {
+      const fileText = considerationsToPrompt(fileConsiderations);
+      if (fileText) considerationsText = [considerationsText, fileText].filter(Boolean).join('\n');
+    }
+  } catch { /* considerations file unreadable — request text only */ }
+
+  const selfHealingOptions: SelfHealingOptions = {
+    maxAttempts: 3,
+    availableComponents: componentNames,
+    framework: detectedFramework,
+    importPath: config.importPath,
+    // Corrections must keep following the project's own design rules.
+    designGuidelines: considerationsText || undefined,
+  };
+
+  let aiText = '';
+  let finalErrors: ValidationErrors = createEmptyErrors();
+  const errorHistory: ValidationErrors[] = [];
+  const allAttempts: Array<{ code: string; errors: ValidationErrors }> = [];
+  let attempts = 0;
+  let selfHealingUsed = false;
+  let lastAstResult: ValidationResult | null = null;
+
+  while (attempts < selfHealingOptions.maxAttempts) {
+    attempts++;
+    events.onLLMCall?.();
+
+    if (attempts > 1) {
+      selfHealingUsed = true;
+      const allErrors = [
+        ...finalErrors.syntaxErrors,
+        ...finalErrors.patternErrors,
+        ...finalErrors.importErrors,
+      ];
+      events.onRetry?.(attempts, selfHealingOptions.maxAttempts, 'AI self-healing: fixing validation errors', allErrors);
+      logger.log(`🔄 Self-healing attempt ${attempts}/${selfHealingOptions.maxAttempts}`);
+    }
+
+    const llmResult = await callLLM(messages, processedImages.length > 0 ? processedImages : undefined, { provider, model });
+    const claudeResponse = llmResult.content;
+
+    // Truncated responses can't validate — ask the model to complete the block.
+    if (llmResult.truncated && attempts < selfHealingOptions.maxAttempts) {
+      logger.warn('⚠️ LLM response was truncated at the token limit, requesting a complete block');
+      messages.push({ role: 'assistant', content: claudeResponse });
+      messages.push({
+        role: 'user',
+        content: 'Your previous response was cut off before the code block was complete. Regenerate the FULL story in a single complete code block, keeping the implementation as concise as possible.',
+      });
+      continue;
+    }
+
+    const extractedCode = extractCodeBlock(claudeResponse, detectedFramework);
+    if (!extractedCode) {
+      aiText = claudeResponse;
+      if (attempts < selfHealingOptions.maxAttempts) {
+        messages.push({ role: 'assistant', content: aiText });
+        messages.push({ role: 'user', content: 'You did not provide a code block. Please provide the complete story in a single `tsx` code block.' });
+        continue;
+      }
+      break;
+    }
+    aiText = extractedCode;
+
+    // Step 5: Validation (pattern + AST + imports)
+    events.onProgress?.(5, totalSteps, 'validating', 'Validating generated code...');
+
+    const patternErrors = validateStory(aiText);
+
+    const validationFileName = `story${frameworkAdapter.defaultExtension || '.stories.tsx'}`;
+    let astResult: ValidationResult | null = null;
+    try {
+      astResult = validateStoryCode(aiText, validationFileName, config);
+      if (astResult.fixedCode) {
+        aiText = astResult.fixedCode;
+        logger.log('🔧 Auto-fix applied for syntax issues');
+      }
+    } catch (astError) {
+      logger.error('AST validation error:', astError);
+    }
+    lastAstResult = astResult;
+
+    const importValidation = detectedFramework === 'web-components'
+      ? { isValid: true, errors: [] }
+      : await preValidateImports(aiText, config, discovery);
+    // Isolation runs for EVERY framework: generated code may only import from
+    // the configured library, framework runtime, and explicit allowances.
+    const isolationErrors = validateImportIsolation(aiText, config, detectedFramework, considerationsText);
+    const importErrors = [
+      ...(importValidation.isValid ? [] : importValidation.errors),
+      ...isolationErrors,
+    ];
+
+    const currentErrors = aggregateValidationErrors(astResult, patternErrors, importErrors);
+    errorHistory.push(currentErrors);
+    allAttempts.push({ code: aiText, errors: currentErrors });
+
+    if (hasNoErrors(currentErrors)) {
+      logger.log('✅ Validation passed on attempt', attempts);
+      events.onValidation?.({
+        isValid: true,
+        errors: [],
+        warnings: [],
+        autoFixApplied: !!astResult?.fixedCode,
+      });
+      finalErrors = currentErrors;
+      break;
+    }
+
+    logger.log(`⚠️ Attempt ${attempts} validation errors: ${formatErrorsForLog(currentErrors)}`);
+    events.onValidation?.({
+      isValid: false,
+      errors: [
+        ...currentErrors.syntaxErrors,
+        ...currentErrors.patternErrors,
+        ...currentErrors.importErrors,
+      ],
+      warnings: [],
+      autoFixApplied: !!astResult?.fixedCode,
+    });
+
+    finalErrors = currentErrors;
+
+    const retryDecision = shouldContinueRetrying(attempts, selfHealingOptions.maxAttempts, errorHistory);
+    if (!retryDecision.shouldRetry) {
+      logger.log(`🛑 Stopping retries: ${retryDecision.reason}`);
+      break;
+    }
+
+    const healingPrompt = buildSelfHealingPrompt(aiText, currentErrors, attempts, selfHealingOptions);
+    messages.push({ role: 'assistant', content: claudeResponse });
+    messages.push({ role: 'user', content: healingPrompt });
+  }
+
+  // Select best attempt if we still have errors
+  if (!hasNoErrors(finalErrors) && allAttempts.length > 0) {
+    const bestAttempt = selectBestAttempt(allAttempts);
+    if (bestAttempt) {
+      aiText = bestAttempt.code;
+      finalErrors = bestAttempt.errors;
+      logger.log(`📌 Selected best attempt with ${getTotalErrorCount(finalErrors)} errors`);
+    }
+  }
+  if (selfHealingUsed) {
+    logger.log(`🔄 Self-healing summary: ${attempts} attempts, final errors: ${formatErrorsForLog(finalErrors)}`);
+  }
+
+  // Step 6: Code extraction and final processing
+  events.onProgress?.(6, totalSteps, 'code_extracted', 'Processing generated code...');
+
+  if (finalErrors.importErrors.length > 0) {
+    logger.log(`❌ Import validation failed. Invalid components: ${finalErrors.importErrors.join(', ')}`);
+    throw new GenerationError('INVALID_IMPORTS', 'Generated code contains invalid imports', {
+      httpStatus: 422,
+      details: finalErrors.importErrors.join('; '),
+      recoverable: true,
+      suggestion: buildComponentSuggestion(components),
+    });
+  }
+
+  const validationResult = extractAndValidateCodeBlock(aiText, config);
+  let fileContents: string;
+  let hasValidationWarnings = false;
+  let isFallbackStory = false;
+
+  if (!validationResult.isValid && !validationResult.fixedCode) {
+    fileContents = createFrameworkAwareFallbackStory(prompt, cleanPromptForTitle(prompt), config, detectedFramework);
+    hasValidationWarnings = true;
+    isFallbackStory = true;
+    events.onValidation?.({
+      isValid: false,
+      errors: validationResult.errors || [],
+      warnings: ['Using fallback template due to validation failures'],
+      autoFixApplied: false,
+    });
+  } else if (validationResult.fixedCode) {
+    fileContents = validationResult.fixedCode;
+    hasValidationWarnings = true;
+    events.onValidation?.({
+      isValid: true,
+      errors: [],
+      warnings: validationResult.warnings || [],
+      autoFixApplied: true,
+      fixDetails: ['Applied automatic corrections to fix validation errors'],
+    });
+  } else {
+    fileContents = extractCodeBlock(aiText, detectedFramework) || aiText.trim();
+    if (validationResult.warnings?.length) {
+      hasValidationWarnings = true;
+    }
+  }
+
+  // Step 7: Post-processing
+  events.onProgress?.(7, totalSteps, 'post_processing', 'Applying finishing touches...');
+
+  // Title generation
+  let aiTitle: string;
+  if (isActualUpdate && originalTitle) {
+    aiTitle = originalTitle;
+  } else if (isActualUpdate && conversation) {
+    const originalPrompt = conversation.find((msg) => msg.role === 'user')?.content || prompt;
+    aiTitle = await getLLMTitle(originalPrompt);
+    events.onLLMCall?.();
+  } else {
+    aiTitle = await getLLMTitle(prompt);
+    events.onLLMCall?.();
+  }
+  if (!aiTitle || aiTitle.length < 2) {
+    aiTitle = cleanPromptForTitle(prompt);
+  }
+
+  // IDs
+  const fileExtension = frameworkAdapter.defaultExtension || '.stories.tsx';
+  let hash: string;
+  let finalFileName: string;
+  let storyId: string;
+
+  if (isActualUpdate && (fileName || providedStoryId)) {
+    if (providedStoryId) {
+      storyId = providedStoryId;
+      const hashMatch = providedStoryId.match(/^story-([a-f0-9]{8})$/);
+      hash = hashMatch ? hashMatch[1] : crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 8);
+    } else {
+      const hashMatch = fileName?.match(/-([a-f0-9]{8})(?:\.stories\.\w+)?$/);
+      hash = hashMatch ? hashMatch[1] : crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 8);
+      storyId = `story-${hash}`;
+    }
+    finalFileName = fileName || fileNameFromTitle(aiTitle, hash, fileExtension);
+  } else {
+    const timestamp = Date.now();
+    hash = crypto.createHash('sha1').update(prompt + timestamp).digest('hex').slice(0, 8);
+    finalFileName = fileName || fileNameFromTitle(aiTitle, hash, fileExtension);
+    storyId = `story-${hash}`;
+  }
+
+  const prettyPrompt = escapeTitleForTS(aiTitle);
+  const cleanTitle = isActualUpdate ? prettyPrompt : storyTracker.getNextVersionTitle(prettyPrompt);
+  if (cleanTitle !== prettyPrompt) {
+    logger.log(`📋 Title "${prettyPrompt}" already exists, using "${cleanTitle}" instead`);
+  }
+  const storyIdSlug = `${cleanTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${hash}`;
+
+  // Finalizer applied to the initial code AND any runtime-healed regeneration,
+  // so both go through identical title/prefix/id/import treatment.
+  const finalizeStoryCode = (code: string): { code: string; finalValidationErrors: string[] } => {
+    let fixed = postProcessStory(code, config.importPath);
+    fixed = frameworkAdapter.postProcess(fixed);
+    fixed = applyTitleAndId(fixed, cleanTitle, storyIdSlug, config.storyPrefix);
+
+    // Final validation after ALL post-processing — catches syntax errors
+    // introduced by regex-based transforms.
+    const finalValidation = validateStoryCode(fixed, finalFileName, config);
+    if (finalValidation.fixedCode) {
+      fixed = finalValidation.fixedCode;
+    }
+
+    // Barrel → individual imports when configured (must run after validation,
+    // which can rewrite the code).
+    if (config.importPath && (config as any).importStyle === 'individual') {
+      fixed = fixBarrelImports(
+        fixed,
+        config.importPath,
+        (config as any).importStyle,
+        (config as any).componentsPath,
+        components
+      );
+    }
+
+    return {
+      code: fixed,
+      finalValidationErrors: finalValidation.isValid || finalValidation.fixedCode ? [] : (finalValidation.errors || []),
+    };
+  };
+
+  if (finalFileName && !finalFileName.endsWith(fileExtension)) {
+    finalFileName = finalFileName + fileExtension;
+  }
+
+  const finalized = finalizeStoryCode(fileContents);
+  let fixedFileContents = finalized.code;
+  if (finalized.finalValidationErrors.length > 0) {
+    logger.log('⚠️ Post-processing introduced syntax errors:', finalized.finalValidationErrors);
+    throw new GenerationError('POST_PROCESSING_ERROR', 'Story generation failed due to post-processing errors', {
+      httpStatus: 500,
+      details: finalized.finalValidationErrors.join('; '),
+      recoverable: false,
+      suggestion: 'This is a bug in Story UI. Please report this issue with your prompt.',
+    });
+  }
+
+  // Step 8: Save story
+  events.onProgress?.(8, totalSteps, 'saving', 'Saving your story...');
+
+  const writeStory = (code: string): string => generateStory({
+    fileContents: code,
+    fileName: finalFileName,
+    config,
+  });
+
+  let outPath = writeStory(fixedFileContents);
+
+  // --- Runtime validation, wired into the healing loop ---
+  // Requires the file on disk (Storybook must rebuild it), so it runs after
+  // the first write; a failure triggers one bounded regeneration attempt.
+  const runtimeEnabled = isRuntimeValidationEnabled();
+  let runtimeResult: RuntimeValidationResult = { success: true, storyExists: true } as RuntimeValidationResult;
+  let runtimeHealed = false;
+
+  if (runtimeEnabled && !isFallbackStory) {
+    try {
+      runtimeResult = await validateStoryRuntime(fixedFileContents, aiTitle, config.storyPrefix);
+      // Only spend a healing LLM call on genuine in-Storybook failures.
+      // Infrastructure problems (Storybook not running, story not indexed
+      // yet, timeouts) are not code errors and can't be healed.
+      const isCodeFailure = !runtimeResult.success &&
+        (runtimeResult.errorType === 'module_error' || runtimeResult.errorType === 'render_error');
+      if (!runtimeResult.success && !isCodeFailure) {
+        logger.warn(`⚠️ Runtime validation inconclusive (${runtimeResult.errorType}): ${runtimeResult.renderError} — skipping healing`);
+      }
+      if (isCodeFailure) {
+        logger.error(`❌ Runtime validation failed: ${runtimeResult.renderError}`);
+        events.onRetry?.(attempts + 1, selfHealingOptions.maxAttempts + 1,
+          'Story crashed in Storybook — regenerating with the runtime error', [runtimeResult.renderError || 'runtime error']);
+
+        const healed = await attemptRuntimeHealing({
+          runtimeResult,
+          messages,
+          images: processedImages,
+          provider,
+          model,
+          framework: detectedFramework,
+          adapter: frameworkAdapter,
+          config,
+          discovery,
+          considerationsText,
+          finalizeStoryCode,
+          events,
+        });
+
+        if (healed) {
+          fixedFileContents = healed;
+          outPath = writeStory(fixedFileContents);
+          selfHealingUsed = true;
+          try {
+            runtimeResult = await validateStoryRuntime(fixedFileContents, aiTitle, config.storyPrefix);
+            runtimeHealed = runtimeResult.success;
+          } catch {
+            // Leave the last known result in place.
+          }
+          logger.log(runtimeHealed
+            ? '✅ Runtime healing succeeded — story now loads in Storybook'
+            : '⚠️ Runtime healing attempt did not resolve the error');
+        }
+        if (!runtimeResult.success) {
+          hasValidationWarnings = true;
+        }
+      } else if (runtimeResult.success) {
+        logger.info('✅ Runtime validation passed - story loads correctly in Storybook');
+      }
+    } catch (runtimeErr: any) {
+      logger.warn(`⚠️ Runtime validation could not complete: ${runtimeErr.message}`);
+    }
+  }
+
+  // Register with tracker
+  const mapping: StoryMapping = {
+    title: cleanTitle,
+    fileName: finalFileName,
+    storyId,
+    hash,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    prompt,
+  };
+  storyTracker.registerStory(mapping);
+
+  const analysis = analyzeGeneratedCode(fixedFileContents, prompt, config);
+
+  // Conversational reply + follow-up suggestions (model-authored). Computed
+  // BEFORE the manifest upsert so the assistant's reply is persisted
+  // server-side — the panel lives in Storybook's preview iframe, which can
+  // reload when the new story file lands, killing the in-flight SSE stream.
+  let chatSummary: string | undefined;
+  let suggestions: string[] | undefined;
+  if (!isFallbackStory) {
+    const conversational = await generateChatSummary({
+      prompt,
+      isUpdate: isActualUpdate,
+      title: cleanTitle,
+      componentsUsed: analysis.componentsUsed.map(c => c.name),
+      framework: detectedFramework,
+      provider,
+      model,
+    });
+    chatSummary = conversational?.summary;
+    suggestions = conversational?.suggestions;
+    if (chatSummary) events.onLLMCall?.();
+  }
+  if (!suggestions?.length) {
+    suggestions = isFallbackStory
+      ? ['Story generation failed. Please try rephrasing your request.']
+      : hasValidationWarnings
+        ? ['Some automatic fixes were applied. Review the generated code.']
+        : undefined;
+  }
+
+  // Manifest upsert — links the story file to its chat conversation. The
+  // assistant reply is appended server-side so the conversation survives even
+  // if the panel never receives the completion event.
+  try {
+    const manifestConversation = (conversation ?? [])
+      .filter((m) => (m.role === 'user' || m.role === 'ai') && typeof m.content === 'string' && m.content.trim())
+      .map((m) => ({ role: m.role as 'user' | 'ai', content: m.content }));
+    if (manifestConversation.length > 0 && !isFallbackStory) {
+      const replyHeader = `[SUCCESS] **${isActualUpdate ? 'Updated' : 'Created'}: "${cleanTitle}"**`;
+      const replyBody = chatSummary
+        || `${isActualUpdate ? 'Updated' : 'Created'} this story based on your request.`;
+      manifestConversation.push({ role: 'ai', content: `${replyHeader}\n\n${replyBody}` });
+    }
+    getManifestManager().upsert(finalFileName, {
+      id: storyIdSlug,
+      title: cleanTitle,
+      source: manifestConversation.length > 0 ? 'panel' : 'mcp-external',
+      conversation: manifestConversation,
+      metadata: { provider: provider ?? undefined, model: model ?? undefined, prompt },
+    });
+  } catch (manifestErr) {
+    logger.warn('[manifest] upsert error (non-fatal):', manifestErr);
+  }
+
+  // History
+  historyManager.addVersion(finalFileName, prompt, fixedFileContents, parentVersionId);
+
+  // URL redirect when an update renamed the story
+  if (isActualUpdate && oldTitle && oldStoryUrl) {
+    const newTitleMatch = fixedFileContents.match(/title:\s*["']([^"']+)['"]/);
+    if (newTitleMatch) {
+      const newTitle = newTitleMatch[1];
+      const cleanNewTitle = newTitle.replace(config.storyPrefix, '');
+      const cleanOldTitle = oldTitle.replace(config.storyPrefix, '');
+      const newStoryUrl = `/story/${cleanNewTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-')}--primary`;
+      if (oldStoryUrl !== newStoryUrl) {
+        redirectService.addRedirect(oldStoryUrl, newStoryUrl, cleanOldTitle, cleanNewTitle, storyId);
+      }
+    }
+  }
+
+  return {
+    success: !isFallbackStory,
+    isFallbackStory,
+    title: cleanTitle,
+    fileName: finalFileName,
+    storyId,
+    outPath,
+    code: fixedFileContents,
+    isUpdate: isActualUpdate,
+    analysis,
+    validation: {
+      hasWarnings: hasValidationWarnings,
+      errors: [
+        ...finalErrors.syntaxErrors,
+        ...finalErrors.patternErrors,
+        ...finalErrors.importErrors,
+        ...(validationResult?.errors || []),
+      ],
+      warnings: validationResult?.warnings || [],
+      selfHealingUsed,
+      attempts,
+      autoFixApplied: !!validationResult?.fixedCode || !!lastAstResult?.fixedCode,
+      isFallback: isFallbackStory,
+    },
+    runtimeValidation: {
+      enabled: runtimeEnabled,
+      success: runtimeResult.success,
+      storyExists: runtimeResult.storyExists,
+      error: runtimeResult.renderError,
+      errorType: runtimeResult.errorType,
+      details: runtimeResult.details,
+      healedByRetry: runtimeHealed || undefined,
+    },
+    chatSummary,
+    suggestions,
+    storybookId: computeStorybookId(fixedFileContents, storyIdSlug),
+  };
+}
+
+/**
+ * Compute the Storybook component ID for the generated story. When we injected
+ * a meta `id:` it is authoritative; otherwise (e.g. Svelte defineMeta) the ID
+ * derives from the title the same way Storybook sanitizes it.
+ */
+function computeStorybookId(code: string, storyIdSlug: string): string {
+  const escapedSlug = storyIdSlug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (new RegExp(`id:\\s*['"]${escapedSlug}['"]`).test(code)) {
+    return storyIdSlug;
+  }
+  const titleMatch = code.match(/title:\s*["']([^"']+)["']/);
+  if (!titleMatch) return storyIdSlug;
+  return titleMatch[1]
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+// ============================================================
+// Framework resolution
+// ============================================================
+
+async function resolveFramework(
+  requested: string | undefined,
+  config: any,
+  autoDetect: boolean | undefined
+): Promise<FrameworkType> {
+  if (requested) {
+    logger.log(`🎯 Using explicit framework from request: ${requested}`);
+    return requested as FrameworkType;
+  }
+  if (config.componentFramework) {
+    logger.log(`🎯 Using framework from config.componentFramework: ${config.componentFramework}`);
+    return config.componentFramework as FrameworkType;
+  }
+  if (config.framework) {
+    logger.log(`🎯 Using framework from config.framework: ${config.framework}`);
+    return config.framework as FrameworkType;
+  }
+  if (autoDetect) {
+    try {
+      const detected = await detectProjectFramework(process.cwd());
+      logger.log(`🎯 Auto-detected framework: ${detected}`);
+      return detected;
+    } catch (error) {
+      logger.error('Failed to auto-detect framework and no framework configured', { error });
+      throw new GenerationError('FRAMEWORK_DETECTION_FAILED', 'Could not auto-detect framework', {
+        httpStatus: 400,
+        details: 'Please set componentFramework in story-ui.config.js or pass framework in the request.',
+        recoverable: false,
+        suggestion: 'Add componentFramework: "react" (or vue, angular, svelte, web-components) to your story-ui.config.js',
+      });
+    }
+  }
+  logger.warn('⚠️ No framework configured, defaulting to React. Consider setting componentFramework in story-ui.config.js');
+  return 'react';
+}
+
+// ============================================================
+// Prompt assembly
+// ============================================================
+
+const VOICE_MODE_PREAMBLE = `
+VOICE MODE CONTEXT:
+The user is dictating UI changes by voice. They are building or modifying an interface incrementally through speech.
+
+CRITICAL VOICE MODE RULES:
+- When updating an existing story, modify ONLY what the user asked for and preserve everything else.
+- Respond to spatial/structural commands like "move X above Y", "put X next to Y", "swap X and Y".
+- Respond to property changes like "make the button red", "change the title to Welcome", "make it bigger".
+- Respond to additions like "add a sidebar", "put a search bar at the top", "add three cards below the header".
+- Respond to removals like "remove the footer", "delete the second card", "get rid of the image".
+- Keep all existing components, imports, and structure intact unless the user explicitly asks to change them.
+- Maintain the existing story title and metadata — only modify the rendered JSX/template.
+`;
+
+/**
+ * Insert a context section immediately before the final "User request:" line.
+ * Uses lastIndexOf (the actual request section is always last) and appends as
+ * a fallback, so a "User request:" string appearing inside component docs or
+ * the user's own prompt can no longer hijack the injection point.
+ */
+function injectBeforeUserRequest(prompt: string, section: string): string {
+  const marker = 'User request:';
+  const idx = prompt.lastIndexOf(marker);
+  if (idx === -1) {
+    logger.warn('Prompt has no "User request:" marker — appending context section at the end');
+    return `${prompt}\n\n${section}`;
+  }
+  return `${prompt.slice(0, idx)}${section}\n\n${prompt.slice(idx)}`;
+}
+
+async function buildClaudePromptWithContext(
+  userPrompt: string,
+  config: any,
+  conversation: Array<{ role: string; content: string }> | undefined,
+  previousCode: string | undefined,
+  components: any[],
+  options: {
+    framework: FrameworkType;
+    visionMode?: VisionPromptType;
+    designSystem?: string;
+    considerations?: string;
+    storybookContext?: StorybookMcpContext;
+  }
+): Promise<string> {
+  const frameworkOptions: StoryGenerationOptions = { framework: options.framework };
+  let prompt = await buildFrameworkAwarePrompt(userPrompt, config, components, frameworkOptions);
+
+  if (options.visionMode) {
+    const visionPrompts = buildVisionAwarePrompt({
+      promptType: options.visionMode,
+      userDescription: userPrompt,
+      availableComponents: components.map((c: any) => c.name),
+      framework: options.framework,
+      designSystem: options.designSystem,
+    });
+    prompt = `${visionPrompts.systemPrompt}\n\n---\n\n${prompt}\n\n---\n\n${visionPrompts.userPrompt}`;
+  }
+
+  // Design-system considerations passed by the client take priority placement —
+  // these are the project's own rules and must shape the output.
+  if (options.considerations) {
+    logger.log('📋 Injecting client-provided design system considerations into prompt');
+    prompt = injectBeforeUserRequest(prompt,
+      `📋 DESIGN SYSTEM CONSIDERATIONS (project-specific rules — these OVERRIDE any conflicting general guidance):\n${options.considerations}`);
+  }
+
+  const documentation = getDocumentation(config.importPath);
+  if (documentation) {
+    const bundledEnhancement = `📚 BUNDLED DOCUMENTATION:\n${Object.entries(documentation.components || {}).map(([name, info]: [string, any]) => {
+      if (components.some((c: any) => c.name === name)) {
+        return `- ${name}: ${info.description || 'Component available'}`;
+      }
+      return null;
+    }).filter(Boolean).join('\n')}`;
+    prompt = injectBeforeUserRequest(prompt, bundledEnhancement);
+  }
+
+  if (options.storybookContext?.available) {
+    const storybookContextStr = formatStorybookContext(options.storybookContext);
+    if (storybookContextStr) {
+      logger.log('📚 Injecting Storybook MCP context into prompt');
+      prompt = injectBeforeUserRequest(prompt, storybookContextStr);
+    }
+  }
+
+  if (!conversation || conversation.length <= 1) {
+    return prompt;
+  }
+
+  const conversationContext = conversation
+    .slice(0, -1)
+    .map((msg) => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
+    .join('\n\n');
+
+  let contextSection = `CONVERSATION CONTEXT (for modifications/updates):\n${conversationContext}`;
+  if (previousCode) {
+    contextSection += `\n\nPREVIOUS GENERATED CODE (this is what you're modifying):\n\`\`\`tsx\n${previousCode}\n\`\`\`\n\nCRITICAL INSTRUCTIONS FOR MODIFICATIONS:\n1. DO NOT regenerate the entire story from scratch\n2. PRESERVE all existing styling, components, and structure\n3. ONLY change what the user specifically requests`;
+  }
+
+  const marker = 'User request:';
+  const idx = prompt.lastIndexOf(marker);
+  if (idx === -1) {
+    return `${prompt}\n\n${contextSection}\n\nIMPORTANT: The user is asking to modify/update the story based on the above conversation.\n\nCurrent modification request:\n${userPrompt}`;
+  }
+  return `${prompt.slice(0, idx)}${contextSection}\n\nIMPORTANT: The user is asking to modify/update the story based on the above conversation.\n\nCurrent modification request:${prompt.slice(idx + marker.length)}`;
+}
+
+// ============================================================
+// LLM interaction
+// ============================================================
+
+async function callLLM(
+  messages: { role: 'user' | 'assistant'; content: string }[],
+  images?: ImageContent[],
+  options?: { provider?: string; model?: string }
+): Promise<{ content: string; truncated: boolean }> {
+  if (!isProviderConfigured()) {
+    throw new Error('No LLM provider configured');
+  }
+
+  if (options?.provider) {
+    logger.log(`🎯 Explicit provider requested: ${options.provider} (model: ${options.model || 'default'})`);
+  }
+
+  const llmOptions: { provider?: any; model?: string; maxTokens: number } = {
+    maxTokens: 8192,
+    provider: options?.provider,
+    model: options?.model,
+  };
+
+  if (images && images.length > 0) {
+    const providerInfo = getProviderInfo();
+    if (!providerInfo.supportsVision) {
+      throw new Error(`${providerInfo.currentProvider} does not support vision`);
+    }
+    const messagesWithImages = messages.map((msg, index) => {
+      if (msg.role === 'user' && index === 0) {
+        return {
+          role: msg.role,
+          content: buildMessageWithImages(msg.content, images),
+        };
+      }
+      return msg;
+    });
+    const content = await chatCompletionWithImages(messagesWithImages as any, llmOptions);
+    return { content, truncated: false };
+  }
+
+  const result = await chatCompletionDetailed(messages, llmOptions);
+  return { content: result.content, truncated: result.truncated };
+}
+
+/**
+ * One bounded regeneration attempt driven by a runtime (in-Storybook) error.
+ */
+async function attemptRuntimeHealing(args: {
+  runtimeResult: RuntimeValidationResult;
+  messages: { role: 'user' | 'assistant'; content: string }[];
+  images: ImageContent[];
+  provider?: string;
+  model?: string;
+  framework: FrameworkType;
+  adapter: FrameworkAdapter;
+  config: any;
+  discovery: EnhancedComponentDiscovery;
+  considerationsText: string;
+  finalizeStoryCode: (code: string) => { code: string; finalValidationErrors: string[] };
+  events: GenerationEvents;
+}): Promise<string | null> {
+  const { runtimeResult, messages, images, provider, model, framework, adapter, config, discovery, considerationsText, finalizeStoryCode, events } = args;
+
+  try {
+    const healingMessage = formatRuntimeErrorForHealing(runtimeResult);
+    messages.push({
+      role: 'user',
+      content: `The story you generated passed static validation but CRASHES when Storybook renders it.\n\n${healingMessage}\n\nFix the runtime error and respond with the complete corrected story in a single code block. Change only what is needed to fix the crash.`,
+    });
+    events.onLLMCall?.();
+
+    const llmResult = await callLLM(messages, images.length > 0 ? images : undefined, { provider, model });
+    const extracted = extractCodeBlock(llmResult.content, framework);
+    if (!extracted) return null;
+
+    // Static re-validation of the healed code
+    const patternErrors = validateStory(extracted);
+    const astResult = validateStoryCode(extracted, `story${adapter.defaultExtension || '.stories.tsx'}`, config);
+    const code = astResult.fixedCode || extracted;
+    const importValidation = framework === 'web-components'
+      ? { isValid: true, errors: [] }
+      : await preValidateImports(code, config, discovery);
+    const isolationErrors = validateImportIsolation(code, config, framework, considerationsText);
+    const errors = aggregateValidationErrors(astResult, patternErrors, [
+      ...(importValidation.isValid ? [] : importValidation.errors),
+      ...isolationErrors,
+    ]);
+    if (!hasNoErrors(errors)) {
+      logger.warn(`⚠️ Runtime-healed code failed static validation: ${formatErrorsForLog(errors)}`);
+      return null;
+    }
+
+    const finalized = finalizeStoryCode(code);
+    if (finalized.finalValidationErrors.length > 0) return null;
+    return finalized.code;
+  } catch (error) {
+    logger.warn('Runtime healing attempt failed', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+/**
+ * Model-authored conversational reply about what was generated, plus
+ * follow-up suggestions the panel renders as clickable chips.
+ */
+async function generateChatSummary(args: {
+  prompt: string;
+  isUpdate: boolean;
+  title: string;
+  componentsUsed: string[];
+  framework: string;
+  provider?: string;
+  model?: string;
+}): Promise<{ summary: string; suggestions: string[] } | null> {
+  try {
+    const { prompt, isUpdate, title, componentsUsed, framework, provider, model } = args;
+    const result = await chatCompletionDetailed([
+      {
+        role: 'user',
+        content: [
+          `You are Story UI, an assistant that just ${isUpdate ? 'updated' : 'created'} a Storybook story called "${title}" for a ${framework} design system.`,
+          `The user asked: "${prompt.slice(0, 400)}"`,
+          componentsUsed.length > 0 ? `Components used: ${componentsUsed.slice(0, 12).join(', ')}` : '',
+          '',
+          'Write a short, friendly reply to the user (2-3 sentences, first person) describing what you built and any notable layout or component decisions. Do not include code.',
+          'Then on a new line write exactly "SUGGESTIONS:" followed by 3 short follow-up refinement prompts the user might click next, one per line, each under 10 words, phrased as instructions (e.g. "Make the header sticky").',
+        ].filter(Boolean).join('\n'),
+      },
+    ], { provider: provider as any, model, maxTokens: 400 });
+
+    const text = result.content.trim();
+    const suggestionIdx = text.indexOf('SUGGESTIONS:');
+    if (suggestionIdx === -1) {
+      return { summary: text, suggestions: [] };
+    }
+    const summary = text.slice(0, suggestionIdx).trim();
+    const suggestions = text.slice(suggestionIdx + 'SUGGESTIONS:'.length)
+      .split('\n')
+      .map(s => s.replace(/^[-*\d.)\s]+/, '').trim())
+      .filter(s => s.length > 0 && s.length < 80)
+      .slice(0, 3);
+    return { summary: summary || text, suggestions };
+  } catch (error) {
+    logger.warn('Chat summary generation failed (non-fatal)', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+// ============================================================
+// Code / title helpers
+// ============================================================
+
+export function extractCodeBlock(text: string, framework?: string): string | null {
+  const codeBlock = text.match(/```(?:tsx|jsx|typescript|ts|js|javascript|svelte|html|vue)?\s*([\s\S]*?)\s*```/i);
+  if (codeBlock) {
+    return codeBlock[1].trim();
+  }
+
+  if (framework === 'svelte') {
+    const scriptModuleIndex = text.indexOf('<script module>');
+    if (scriptModuleIndex !== -1) {
+      return text.slice(scriptModuleIndex).trim();
+    }
+    const scriptContextIndex = text.indexOf('<script context="module">');
+    if (scriptContextIndex !== -1) {
+      return text.slice(scriptContextIndex).trim();
+    }
+  } else if (framework === 'vue') {
+    const scriptSetupIndex = text.indexOf('<script setup');
+    if (scriptSetupIndex !== -1) {
+      return text.slice(scriptSetupIndex).trim();
+    }
+  }
+
+  const importIndex = text.indexOf('import');
+  if (importIndex !== -1) {
+    return text.slice(importIndex).trim();
+  }
+  return null;
+}
+
+/** Inject storyPrefix into the title and a unique id after it. */
+function applyTitleAndId(code: string, cleanTitle: string, storyIdSlug: string, storyPrefix: string): string {
+  let fixed = code;
+  const titleToUse = cleanTitle.startsWith(storyPrefix) ? cleanTitle : storyPrefix + cleanTitle;
+
+  // Pattern 1: CSF format - const meta = { title: "..." }
+  fixed = fixed.replace(
+    /(const\s+meta\s*(?::\s*\w+(?:<[^>]+>)?)?\s*=\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
+    (_m, p1, _old, p3) => p1 + titleToUse + p3
+  );
+
+  // Pattern 2: export default { title: "..." }
+  if (!fixed.includes(storyPrefix)) {
+    fixed = fixed.replace(
+      /(export\s+default\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
+      (_m, p1, _old, p3) => p1 + titleToUse + p3
+    );
+  }
+
+  // Pattern 3: Svelte native format - defineMeta({ title: "..." })
+  if (!fixed.includes(storyPrefix)) {
+    fixed = fixed.replace(
+      /(defineMeta\s*\(\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
+      (_m, p1, _old, p3) => p1 + titleToUse + p3
+    );
+  }
+
+  // Unique story id after the title line. Anchor on the *title line* rather
+  // than a bare includes("id:") check, which any `id:` in the user's JSX trips.
+  // Skip for Svelte defineMeta: addon-svelte-csf's indexer derives IDs from the
+  // title and ignores a custom `id`, so injecting one desyncs index vs runtime
+  // ("Couldn't find story matching id ... after importing a CSF file").
+  const isDefineMetaFormat = fixed.includes('defineMeta');
+  const hasMetaId = /title:\s*["'][^"']+["'],\s*\n\s*id:/.test(fixed);
+  if (!hasMetaId && !isDefineMetaFormat) {
+    fixed = fixed.replace(
+      /(title:\s*["'][^"']+["'])(,?\s*\n)/,
+      `$1,\n  id: '${storyIdSlug}'$2`
+    );
+  }
+  return fixed;
+}
+
+export function cleanPromptForTitle(prompt: string): string {
+  if (!prompt || typeof prompt !== 'string') {
+    return 'Untitled Story';
+  }
+  const leadingPhrases = [
+    /^generate (a|an|the)? /i,
+    /^build (a|an|the)? /i,
+    /^create (a|an|the)? /i,
+    /^make (a|an|the)? /i,
+    /^design (a|an|the)? /i,
+    /^show (me )?(a|an|the)? /i,
+    /^add (a|an|the)? /i,
+    /^i (want|need|would like) (a|an|the)? /i,
+    /^please /i,
+    /^can you /i,
+  ];
+  let cleaned = prompt.trim();
+  for (const regex of leadingPhrases) {
+    cleaned = cleaned.replace(regex, '');
+  }
+  return cleaned
+    .replace(/[^\w\s'"?!-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, c => c.toUpperCase())
+    .slice(0, 60);
+}
+
+async function getLLMTitle(userPrompt: string): Promise<string> {
+  try {
+    return await llmGenerateTitle(userPrompt);
+  } catch {
+    return '';
+  }
+}
+
+function escapeTitleForTS(title: string): string {
+  return title
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/'/g, "\\'")
+    .replace(/`/g, '\\`')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t');
+}
+
+function fileNameFromTitle(title: string, hash: string, extension: string = '.stories.tsx'): string {
+  if (!title || typeof title !== 'string') {
+    title = 'untitled';
+  }
+  if (!hash || typeof hash !== 'string') {
+    hash = 'default';
+  }
+  const base = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/"|'/g, '')
+    .slice(0, 60);
+  return `${base}-${hash}${extension}`;
+}
+
+// ============================================================
+// Import validation
+// ============================================================
+
+function extractImportsFromCode(code: string, importPath: string): string[] {
+  const imports: string[] = [];
+  const escapedPath = importPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  // Named imports: import { A, B } from 'lib'
+  const namedRegex = new RegExp(`import\\s*{([^}]+)}\\s*from\\s*['"]${escapedPath}['"]`, 'g');
+  let match;
+  while ((match = namedRegex.exec(code)) !== null) {
+    const components = match[1].split(',').map(comp => comp.trim()).filter(Boolean);
+    imports.push(...components);
+  }
+
+  // Default imports of component-looking (capitalized) names:
+  // import Button from 'lib' / import Button, { Card } from 'lib'
+  const defaultRegex = new RegExp(`import\\s+([A-Z][\\w]*)\\s*(?:,\\s*{[^}]*})?\\s*from\\s*['"]${escapedPath}['"]`, 'g');
+  while ((match = defaultRegex.exec(code)) !== null) {
+    imports.push(match[1]);
+  }
+
+  // Normalize "X as Y" aliases to the exported name X
+  return imports.map(name => name.split(/\s+as\s+/)[0].trim()).filter(Boolean);
+}
+
+// ============================================================
+// Component-library isolation
+// ============================================================
+
+/** Root package of an import specifier: '@scope/pkg/sub' → '@scope/pkg', 'pkg/sub' → 'pkg'. */
+function importSpecifierRoot(specifier: string): string {
+  const parts = specifier.split('/');
+  return specifier.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
+}
+
+/** Per-framework runtime packages that generated stories legitimately need. */
+const FRAMEWORK_RUNTIME_ALLOWLIST: Record<string, string[]> = {
+  react: ['react', 'react-dom'],
+  vue: ['vue'],
+  angular: ['@angular/core', '@angular/common', '@angular/forms', '@angular/animations', '@angular/cdk', '@angular/material', 'rxjs'],
+  svelte: ['svelte', '@storybook/addon-svelte-csf'],
+  'web-components': ['lit', 'lit-html', '@lit/reactive-element'],
+};
+
+let _consumerDepsCache: { deps: Set<string>; timestamp: number } | null = null;
+function getConsumerDependencies(): Set<string> {
+  const now = Date.now();
+  if (_consumerDepsCache && now - _consumerDepsCache.timestamp < 60_000) {
+    return _consumerDepsCache.deps;
+  }
+  const deps = new Set<string>();
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf-8'));
+    for (const key of Object.keys({ ...pkg.dependencies, ...pkg.devDependencies })) {
+      deps.add(key);
+    }
+  } catch { /* no package.json — no extra info */ }
+  _consumerDepsCache = { deps, timestamp: now };
+  return deps;
+}
+
+/**
+ * Deterministic isolation: every import in generated code must come from the
+ * configured component library, the framework runtime, Storybook, configured
+ * icon/additional imports, or a package explicitly named in the project's
+ * considerations file (the sole escape hatch). Everything else — Tailwind,
+ * other UI kits, random npm packages — is rejected and fed to self-healing.
+ */
+export function validateImportIsolation(
+  code: string,
+  config: any,
+  framework: FrameworkType,
+  considerationsText: string
+): string[] {
+  const errors: string[] = [];
+
+  const allowedRoots = new Set<string>();
+  const allow = (specifier?: string) => {
+    if (specifier) allowedRoots.add(importSpecifierRoot(specifier));
+  };
+
+  allow(config.importPath);
+  allow(config.iconImports?.package);
+  for (const extra of config.additionalImports || []) allow(extra.path);
+  for (const extra of (config.allowedImports || [])) allow(extra);
+  for (const pkg of FRAMEWORK_RUNTIME_ALLOWLIST[framework] || []) allowedRoots.add(pkg);
+
+  // Same-scope packages ship as one design system family (@mantine/core →
+  // @mantine/hooks, @angular/material → @angular/cdk, ...).
+  const importScope = config.importPath?.startsWith('@') ? config.importPath.split('/')[0] : null;
+
+  // Collect every static import specifier (named, default, namespace, side-effect).
+  const specifiers = new Set<string>();
+  const importRegex = /import\s+(?:[\s\S]*?from\s+)?['"]([^'"]+)['"]/g;
+  let match;
+  while ((match = importRegex.exec(code)) !== null) {
+    specifiers.add(match[1]);
+  }
+
+  const consumerDeps = getConsumerDependencies();
+
+  for (const specifier of specifiers) {
+    // Relative imports can't smuggle in foreign packages.
+    if (specifier.startsWith('.') || specifier.startsWith('/')) continue;
+    const root = importSpecifierRoot(specifier);
+
+    if (allowedRoots.has(root)) continue;
+    if (importScope && root.startsWith(importScope + '/')) continue;
+    if (root === 'storybook' || root.startsWith('@storybook/')) continue;
+    if (root === 'react' && framework === 'react') continue; // react/jsx-runtime etc.
+    // Explicitly named in the considerations file → permitted by the project.
+    if (considerationsText && considerationsText.includes(root)) continue;
+
+    errors.push(
+      `Forbidden import "${specifier}": generated stories may only use components from "${config.importPath}" ` +
+      `(plus the framework runtime and configured icon packages). Rebuild this UI using ONLY available components. ` +
+      `If "${root}" should be permitted for this project, name it in story-ui-considerations.md.`
+    );
+  }
+
+  // Tailwind utility-class guard: catches styling hallucinated from another
+  // ecosystem, which silently renders as unstyled markup. Skipped when the
+  // project actually uses Tailwind (dependency present or library built on it).
+  const projectUsesTailwind =
+    consumerDeps.has('tailwindcss') ||
+    (config.importPath || '').includes('flowbite') ||
+    considerationsText.toLowerCase().includes('tailwind');
+  if (!projectUsesTailwind) {
+    const classAttrs = code.match(/(?:className|class)\s*=\s*["'`]([^"'`]+)["'`]/g) || [];
+    const TW_TOKEN = /(?:^|\s)(?:flex|grid|items-center|justify-(?:center|between|start|end)|(?:p|m)[trblxy]?-\d+|gap-\d+|space-[xy]-\d+|text-(?:xs|sm|base|lg|\dxl)|font-(?:bold|semibold|medium)|bg-\w+-\d{2,3}|text-\w+-\d{2,3}|rounded(?:-\w+)?|shadow(?:-\w+)?|w-(?:full|\d+)|h-(?:full|\d+)|border-\w+-\d{2,3})(?=\s|$)/;
+    for (const attr of classAttrs) {
+      const value = attr.replace(/^(?:className|class)\s*=\s*["'`]/, '').replace(/["'`]$/, '');
+      const tokens = value.split(/\s+/);
+      const twHits = tokens.filter(t => TW_TOKEN.test(' ' + t)).length;
+      if (twHits >= 3) {
+        errors.push(
+          `Tailwind utility classes detected ("${value.slice(0, 60)}...") but Tailwind is not part of this project — ` +
+          `use the design system's own styling props/components instead of utility classes.`
+        );
+        break;
+      }
+    }
+  }
+
+  return errors;
+}
+
+/** Extract PascalCase component tags used in markup/JSX (e.g. <Button ...). */
+function extractComponentsFromContent(content: string): string[] {
+  const componentMatches = content.match(/<([A-Z][A-Za-z0-9]*)[\s/>]/g);
+  if (!componentMatches) return [];
+  return Array.from(new Set(componentMatches.map(match => match.replace(/[<\s/>]/g, ''))));
+}
+
+export async function preValidateImports(
+  code: string,
+  config: any,
+  discovery: EnhancedComponentDiscovery
+): Promise<{ isValid: boolean; errors: string[] }> {
+  const errors: string[] = [];
+  const componentImports = extractImportsFromCode(code, config.importPath);
+  const validation = await discovery.validateComponentNames(componentImports);
+  const allowedComponents = new Set<string>(discovery.getAvailableComponentNames());
+
+  for (const importName of componentImports) {
+    if (isBlacklistedComponent(importName, allowedComponents, config.importPath)) {
+      const errorMsg = getBlacklistErrorMessage(importName, config.importPath);
+      errors.push(`Blacklisted component detected: ${errorMsg}`);
+    }
+  }
+
+  for (const invalidComponent of validation.invalid) {
+    const suggestion = validation.suggestions.get(invalidComponent);
+    if (suggestion) {
+      errors.push(`Invalid component: "${invalidComponent}" does not exist. Did you mean "${suggestion}"?`);
+    } else {
+      errors.push(`Invalid component: "${invalidComponent}" does not exist.`);
+    }
+  }
+
+  // Svelte: components used in markup MUST be imported in the script block —
+  // an unimported PascalCase tag is a guaranteed runtime crash. (Vue/Angular/Lit
+  // templates use kebab-case/global registration, so this check stays inert there.)
+  const framework = config.componentFramework || config.framework;
+  if (framework === 'svelte') {
+    const usedComponents = extractComponentsFromContent(code);
+    const importedNames = new Set<string>();
+    const anyImportRegex = /import\s+(?:(\w+)\s*,?\s*)?(?:{([^}]+)})?\s*from\s*['"][^'"]+['"]/g;
+    let importMatch;
+    while ((importMatch = anyImportRegex.exec(code)) !== null) {
+      if (importMatch[1]) importedNames.add(importMatch[1]);
+      if (importMatch[2]) {
+        importMatch[2].split(',').forEach(name => {
+          const cleaned = name.split(/\s+as\s+/).pop()?.trim();
+          if (cleaned) importedNames.add(cleaned);
+        });
+      }
+    }
+    const addonProvided = new Set(['Story', 'Template']);
+    for (const comp of usedComponents) {
+      if (!addonProvided.has(comp) && !importedNames.has(comp)) {
+        errors.push(`Component "${comp}" is used in the markup but never imported - add it to the <script module> imports.`);
+      }
+    }
+  }
+
+  if (config.iconImports?.package) {
+    const iconImports = extractImportsFromCode(code, config.iconImports.package);
+    if (!config.iconImports.allowAllIcons) {
+      const allowedIcons = new Set<string>(config.iconImports?.commonIcons || []);
+      for (const iconName of iconImports) {
+        if (isBlacklistedIcon(iconName, allowedIcons)) {
+          const correction = ICON_CORRECTIONS[iconName];
+          if (correction) {
+            errors.push(`Invalid icon: "${iconName}" does not exist. Did you mean "${correction}"?`);
+          } else {
+            errors.push(`Invalid icon: "${iconName}" is not available.`);
+          }
+        }
+      }
+    }
+  }
+
+  return { isValid: errors.length === 0, errors };
+}
+
+// ============================================================
+// Intent + generated-code analysis (used for completion feedback)
+// ============================================================
+
+function buildComponentSuggestion(components: Array<{ name: string }> | null): string {
+  if (!components?.length) {
+    return 'Check your story-ui.config.js to ensure components are properly configured.';
+  }
+  const sampleComponents = components.slice(0, 5).map(c => c.name).join(', ');
+  const moreCount = components.length > 5 ? ` and ${components.length - 5} more` : '';
+  return `Your available components include: ${sampleComponents}${moreCount}. Check story-ui.config.js if expected components are missing.`;
+}
+
+function analyzeIntent(
+  prompt: string,
+  config: any,
+  conversation: Array<{ role: string; content: string }> | undefined,
+  previousCode: string | undefined,
+  options: {
+    framework: FrameworkType;
+    designSystem?: string;
+    hasImages?: boolean;
+  }
+): IntentPreview {
+  const componentKeywords: Record<string, string[]> = {
+    button: ['button', 'click', 'submit', 'action', 'cta'],
+    card: ['card', 'panel', 'tile', 'box'],
+    form: ['form', 'input', 'field', 'submit', 'login', 'signup', 'register'],
+    table: ['table', 'list', 'data', 'grid', 'rows'],
+    modal: ['modal', 'dialog', 'popup', 'overlay'],
+    navigation: ['nav', 'menu', 'header', 'sidebar', 'footer'],
+    layout: ['layout', 'page', 'section', 'container', 'grid', 'stack'],
+    pricing: ['pricing', 'price', 'plan', 'subscription', 'tier'],
+    dashboard: ['dashboard', 'analytics', 'stats', 'metrics', 'chart'],
+    profile: ['profile', 'user', 'avatar', 'account'],
+  };
+
+  const promptLower = prompt.toLowerCase();
+  const estimatedComponents: string[] = [];
+  for (const [component, keywords] of Object.entries(componentKeywords)) {
+    if (keywords.some(kw => promptLower.includes(kw))) {
+      estimatedComponents.push(component);
+    }
+  }
+
+  let strategy = 'Creating new component story';
+  if (previousCode) {
+    strategy = 'Modifying existing story - preserving structure';
+  } else if (options.hasImages) {
+    strategy = 'Analyzing visual reference to generate matching component';
+  } else if (estimatedComponents.includes('dashboard')) {
+    strategy = 'Creating multi-section dashboard layout';
+  } else if (estimatedComponents.includes('form')) {
+    strategy = 'Building form with validation-ready structure';
+  }
+
+  return {
+    requestType: previousCode ? 'modification' : 'new',
+    framework: options.framework,
+    detectedDesignSystem: options.designSystem || (config.importPath?.includes('mantine') ? 'mantine' :
+      config.importPath?.includes('chakra') ? 'chakra-ui' :
+      config.importPath?.includes('mui') ? 'material-ui' : null),
+    strategy,
+    estimatedComponents,
+    promptAnalysis: {
+      hasVisionInput: !!options.hasImages,
+      hasConversationContext: !!(conversation && conversation.length > 1),
+      hasPreviousCode: !!previousCode,
+    },
+  };
+}
+
+// Component insights - contextual reasons based on component role
+const COMPONENT_INSIGHTS: Record<string, string> = {
+  Box: 'base container for custom layouts',
+  Container: 'centered content with max-width',
+  Stack: 'vertical flow with consistent spacing',
+  HStack: 'horizontal alignment',
+  VStack: 'vertical alignment',
+  Flex: 'flexible positioning',
+  Grid: 'multi-column responsive layout',
+  SimpleGrid: 'auto-sizing grid columns',
+  Group: 'inline element grouping',
+  Center: 'centered content',
+  Space: 'controlled whitespace',
+  Divider: 'visual section separation',
+  Text: 'text with theme styling',
+  Title: 'semantic heading',
+  Heading: 'hierarchical heading',
+  Typography: 'styled text content',
+  Alert: 'contextual user notifications',
+  AlertTitle: 'alert heading',
+  Badge: 'status indicators',
+  Chip: 'compact info tags',
+  Progress: 'task completion feedback',
+  CircularProgress: 'loading state indicator',
+  LinearProgress: 'progress visualization',
+  Skeleton: 'loading placeholder',
+  Spinner: 'loading animation',
+  Loader: 'async state feedback',
+  Button: 'primary user actions',
+  IconButton: 'icon-only actions',
+  ActionIcon: 'compact icon actions',
+  Menu: 'contextual options',
+  Tooltip: 'hover information',
+  Input: 'text input field',
+  TextInput: 'text entry',
+  Textarea: 'multi-line text',
+  Select: 'dropdown selection',
+  Checkbox: 'binary toggle',
+  Switch: 'on/off toggle',
+  Radio: 'single selection',
+  Slider: 'range selection',
+  NumberInput: 'numeric entry',
+  Card: 'content container with elevation',
+  Paper: 'surface elevation',
+  Table: 'tabular data display',
+  List: 'sequential items',
+  Avatar: 'user representation',
+  Image: 'visual content',
+  Tabs: 'content organization',
+  Breadcrumb: 'navigation hierarchy',
+  Pagination: 'paged navigation',
+  Stepper: 'multi-step progress',
+  NavLink: 'navigation item',
+  Modal: 'focused interaction',
+  Dialog: 'user confirmation',
+  Drawer: 'side panel content',
+  Popover: 'contextual overlay',
+  Sheet: 'bottom panel (mobile-friendly)',
+};
+
+export function analyzeGeneratedCode(
+  code: string,
+  prompt: string,
+  config: any
+): {
+  componentsUsed: CompletionFeedback['componentsUsed'];
+  layoutChoices: CompletionFeedback['layoutChoices'];
+  styleChoices: CompletionFeedback['styleChoices'];
+} {
+  const componentsUsed: CompletionFeedback['componentsUsed'] = [];
+  const layoutChoices: CompletionFeedback['layoutChoices'] = [];
+  const styleChoices: CompletionFeedback['styleChoices'] = [];
+
+  const importMatch = code.match(/import\s*{([^}]+)}\s*from\s*['"][^'"]+['"]/g);
+  if (importMatch) {
+    for (const imp of importMatch) {
+      const components = imp.match(/{([^}]+)}/);
+      if (components) {
+        const names = components[1].split(',').map(n => n.trim());
+        for (const name of names) {
+          if (name && /^[A-Z]/.test(name)) {
+            const insight = COMPONENT_INSIGHTS[name];
+            componentsUsed.push({ name, reason: insight || undefined });
+          }
+        }
+      }
+    }
+  }
+
+  const hasGrid = code.includes('Grid') || code.includes('SimpleGrid');
+  const hasStack = code.includes('Stack') || code.includes('VStack') || code.includes('HStack');
+  const hasFlex = code.includes('Flex') || /display:\s*['"]?flex/i.test(code);
+  const hasContainer = code.includes('Container');
+
+  if (hasGrid) {
+    const colMatch = code.match(/columns?[=:]\s*[{]?\s*(\d+|[{][^}]+[}])/i);
+    const cols = colMatch ? 'responsive columns' : 'auto columns';
+    layoutChoices.push({ pattern: 'Grid', reason: `${cols} for organized content arrangement` });
+  }
+  if (hasStack && !hasGrid) {
+    const isHorizontal = code.includes('HStack') || code.includes('direction="row"') || code.includes("direction='row'");
+    layoutChoices.push({
+      pattern: isHorizontal ? 'Horizontal Stack' : 'Vertical Stack',
+      reason: isHorizontal
+        ? 'inline element alignment with automatic spacing'
+        : 'stacked sections with consistent gaps',
+    });
+  }
+  if (hasFlex && !hasStack && !hasGrid) {
+    const hasJustify = /justify/i.test(code);
+    const hasAlign = /align/i.test(code);
+    layoutChoices.push({
+      pattern: 'Flexbox',
+      reason: hasJustify && hasAlign
+        ? 'precise control over element distribution and alignment'
+        : 'flexible element positioning',
+    });
+  }
+  if (hasContainer) {
+    layoutChoices.push({ pattern: 'Container', reason: 'centered content with readable max-width' });
+  }
+
+  const variantMatch = code.match(/variant[=:]\s*["']([^"']+)["']/gi);
+  if (variantMatch) {
+    const variants = new Set(variantMatch.map(m => m.split(/[=:]/)[1]?.trim().replace(/["']/g, '')).filter(Boolean));
+    const variantReasons: Record<string, string> = {
+      filled: 'high visual emphasis',
+      outlined: 'secondary emphasis',
+      subtle: 'minimal visual weight',
+      light: 'soft background emphasis',
+      gradient: 'eye-catching visual treatment',
+      contained: 'solid button style',
+      text: 'inline text action',
+    };
+    for (const variant of Array.from(variants).slice(0, 2)) {
+      if (variant && variantReasons[variant]) {
+        styleChoices.push({ property: 'variant', value: variant, reason: variantReasons[variant] });
+      }
+    }
+  }
+
+  const colorMatch = code.match(/color[=:]\s*["']([^"']+)["']/gi);
+  if (colorMatch) {
+    const colors = new Set(colorMatch.map(m => m.split(/[=:]/)[1]?.trim().replace(/["']/g, '')).filter(Boolean));
+    const semanticColors: Record<string, string> = {
+      primary: 'brand identity emphasis',
+      secondary: 'supporting visual accent',
+      success: 'positive outcome indication',
+      error: 'error state signaling',
+      warning: 'caution indication',
+      info: 'informational context',
+      green: 'success/positive state',
+      red: 'error/danger state',
+      blue: 'informational emphasis',
+      yellow: 'warning indication',
+      orange: 'attention drawing',
+    };
+    for (const color of Array.from(colors).slice(0, 2)) {
+      if (!color) continue;
+      const colorLower = color.toLowerCase();
+      for (const [key, reason] of Object.entries(semanticColors)) {
+        if (colorLower.includes(key)) {
+          styleChoices.push({ property: 'color', value: color, reason });
+          break;
+        }
+      }
+    }
+  }
+
+  return { componentsUsed, layoutChoices, styleChoices };
+}
