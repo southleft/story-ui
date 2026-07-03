@@ -559,8 +559,20 @@ SPACING AND LAYOUT RULES:
 function generateComponentReference(components: DiscoveredComponent[], config: StoryUIConfig): string {
   let reference = '';
 
+  // Custom in-project components first — they are part of the allowed set and
+  // easily drowned out by a large npm library, so they get their own section.
+  const customComponents = components.filter(c => getLocalComponentImportPath(c, config));
+  if (customComponents.length > 0) {
+    reference += 'CUSTOM PROJECT COMPONENTS (in-repo components — fully allowed; import each from the EXACT relative path shown):\n';
+    for (const component of customComponents) {
+      reference += formatComponentReference(component, config);
+    }
+    reference += '\n';
+  }
+  const packageComponents = components.filter(c => !getLocalComponentImportPath(c, config));
+
   // Group components by category
-  const componentsByCategory = components.reduce((acc, component) => {
+  const componentsByCategory = packageComponents.reduce((acc, component) => {
     if (!acc[component.category]) {
       acc[component.category] = [];
     }
@@ -590,6 +602,25 @@ function generateComponentReference(components: DiscoveredComponent[], config: S
   }
 
   return reference;
+}
+
+/**
+ * For components discovered from local project files (custom, non-npm
+ * component libraries), compute the relative import path from the generated
+ * stories directory to the component source file. Returns null for npm
+ * package components.
+ */
+function getLocalComponentImportPath(component: DiscoveredComponent, config: StoryUIConfig): string | null {
+  const filePath = component.filePath;
+  if (!filePath || filePath.includes('node_modules')) return null;
+  // Only real project source files (absolute paths from local discovery)
+  if (!path.isAbsolute(filePath) || !fs.existsSync(filePath)) return null;
+
+  const generatedDir = path.resolve(process.cwd(), config.generatedStoriesPath || './src/stories/generated/');
+  let relative = path.relative(generatedDir, filePath).split(path.sep).join('/');
+  relative = relative.replace(/\.(tsx|jsx|ts|js|vue|svelte)$/, '');
+  if (!relative.startsWith('.')) relative = './' + relative;
+  return relative;
 }
 
 /**
@@ -652,8 +683,13 @@ function formatComponentReference(component: DiscoveredComponent, config: StoryU
 
   // Add import path information
   let importPath: string;
+  const localImportPath = getLocalComponentImportPath(component, config);
   if (component.__componentPath) {
     importPath = component.__componentPath;
+  } else if (localImportPath) {
+    // Custom in-project component (not an npm package): the model must
+    // import it via its real relative path, not the library import path.
+    importPath = localImportPath;
   } else if (config.importStyle === 'individual') {
     // Generate individual import path based on component name
     const basePath = config.importPath || 'unknown';
@@ -1164,6 +1200,7 @@ Follow the framework-specific import patterns shown above.`;
     '- Do NOT use prefixes like "Content/", "Components/", or any other section name',
     '- ONLY import components that are listed in the "Available components" section',
     '- NEVER import any other npm package (no Tailwind, no other UI kits, no utility libraries) — imports outside the component library are rejected by validation unless the AI CONSIDERATIONS file explicitly permits them',
+    '- CUSTOM PROJECT COMPONENTS listed in the component reference ARE allowed — import them from the exact relative path shown next to each one',
     '- ALWAYS use the exact import path shown in parentheses after each component',
     '- NEVER use main package imports when specific subpath imports are shown',
     '- Do NOT import story exports - these are NOT real components',
@@ -1355,6 +1392,7 @@ export async function buildFrameworkAwarePrompt(
     '- Story title MUST always start with "Generated/" (e.g., title: "Generated/Recipe Card")',
     '- ONLY import components that are listed in the "Available components" section',
     '- NEVER import any other npm package (no Tailwind, no other UI kits, no utility libraries) — imports outside the component library are rejected by validation unless the AI CONSIDERATIONS file explicitly permits them',
+    '- CUSTOM PROJECT COMPONENTS listed in the component reference ARE allowed — import them from the exact relative path shown next to each one',
     '- ALWAYS use the exact import path shown in parentheses after each component',
     '- NEVER use main package imports when specific subpath imports are shown',
     '- Do NOT import story exports - these are NOT real components',

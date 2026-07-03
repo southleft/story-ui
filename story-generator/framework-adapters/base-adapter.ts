@@ -12,6 +12,8 @@ import {
   FrameworkAdapter,
   StoryGenerationOptions,
 } from './types.js';
+import * as fs from 'fs';
+import * as nodePath from 'path';
 import { StoryUIConfig } from '../../story-ui.config.js';
 import { DiscoveredComponent } from '../componentDiscovery.js';
 import { logger } from '../logger.js';
@@ -71,6 +73,25 @@ export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
   }
 
   /**
+   * Relative import path for components discovered from local project files
+   * (custom, non-npm component libraries). Null for npm package components.
+   */
+  protected getLocalImportPath(
+    component: DiscoveredComponent,
+    config: StoryUIConfig
+  ): string | null {
+    const filePath = component.filePath;
+    if (!filePath || filePath.includes('node_modules')) return null;
+    if (!nodePath.isAbsolute(filePath) || !fs.existsSync(filePath)) return null;
+
+    const generatedDir = nodePath.resolve(process.cwd(), config.generatedStoriesPath || './src/stories/generated/');
+    let relative = nodePath.relative(generatedDir, filePath).split(nodePath.sep).join('/');
+    relative = relative.replace(/\.(tsx|jsx|ts|js|vue|svelte)$/, '');
+    if (!relative.startsWith('.')) relative = './' + relative;
+    return relative;
+  }
+
+  /**
    * Format a single component entry
    */
   protected formatComponentEntry(
@@ -78,7 +99,8 @@ export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
     config: StoryUIConfig
   ): string {
     const importPath = this.getImportPath(component, config);
-    let entry = `- **${component.name}** (import from '${importPath}')`;
+    const isLocal = !!this.getLocalImportPath(component, config);
+    let entry = `- **${component.name}** (import from '${importPath}')${isLocal ? ' — CUSTOM PROJECT COMPONENT, fully allowed; use this exact relative import' : ''}`;
 
     if (component.props && component.props.length > 0) {
       const propsList = component.props
@@ -104,6 +126,14 @@ export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
     // Use component's __componentPath if available
     if (component.__componentPath) {
       return component.__componentPath;
+    }
+
+    // Custom in-project components (discovered from local source files, not an
+    // npm package) must be imported via their real relative path from the
+    // generated-stories directory — never via the library import path.
+    const localPath = this.getLocalImportPath(component, config);
+    if (localPath) {
+      return localPath;
     }
 
     const basePath = config.importPath || 'unknown';
