@@ -420,21 +420,41 @@ export async function generateTitle(description: string): Promise<string> {
 }
 
 /**
- * Get provider information for UI display
+ * Get provider information for UI display.
+ *
+ * Pass the provider/model the request actually asked for — otherwise the
+ * answer describes the *default* provider, which is a different question.
+ * Vision capability is per-model, so a capability check against the default
+ * model can both wrongly reject a vision request and wrongly allow one.
  */
-export function getProviderInfo(): {
+export function getProviderInfo(requested?: {
+  provider?: ProviderType;
+  model?: string;
+}): {
   currentProvider: string;
   currentModel: string;
   supportsVision: boolean;
   supportsStreaming: boolean;
 } {
   try {
-    const provider = getStoryProvider();
+    let provider: LLMProvider | undefined;
+
+    if (requested?.provider) {
+      const candidate = getProviderRegistry().get(requested.provider);
+      if (candidate?.isConfigured()) provider = candidate;
+    }
+    if (!provider) provider = getStoryProvider();
+
+    // Resolve capabilities against the requested model when one was named,
+    // falling back to whatever the provider is configured with.
+    const modelId = requested?.model || provider.getConfig().model;
+    const modelInfo = provider.supportedModels.find(m => m.id === modelId);
+
     return {
       currentProvider: provider.name,
-      currentModel: provider.getConfig().model,
-      supportsVision: provider.supportsVision(),
-      supportsStreaming: provider.supportsStreaming(),
+      currentModel: modelId,
+      supportsVision: modelInfo ? modelInfo.supportsVision : provider.supportsVision(),
+      supportsStreaming: modelInfo ? modelInfo.supportsStreaming : provider.supportsStreaming(),
     };
   } catch {
     return {

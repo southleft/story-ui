@@ -8,14 +8,17 @@
  * - Preparation of images for LLM provider consumption
  *
  * Supports: PNG, JPEG, GIF, WebP formats
- * Max size: 20MB for base64 encoded images
  */
 
 import { logger } from './logger.js';
 import { ImageContent } from './llm-providers/types.js';
 
-// Maximum image size in bytes (20MB)
-const MAX_IMAGE_SIZE_BYTES = 20 * 1024 * 1024;
+// Providers cap the *base64* payload per image (Anthropic: 10MB). Base64 is
+// 4/3 the size of the raw bytes, so the decoded ceiling is ~7.5MB. Validating
+// here turns an opaque provider 400 into an actionable message. The panel
+// downscales before upload, so this mainly guards direct API callers.
+const MAX_BASE64_BYTES_PER_IMAGE = 10 * 1024 * 1024;
+const MAX_IMAGE_SIZE_BYTES = Math.floor(MAX_BASE64_BYTES_PER_IMAGE * 3 / 4);
 
 // Size warning threshold (5MB)
 const SIZE_WARNING_THRESHOLD = 5 * 1024 * 1024;
@@ -241,7 +244,9 @@ export function validateImage(image: ImageInput): ImageValidationResult {
       if (sizeBytes > MAX_IMAGE_SIZE_BYTES) {
         return {
           valid: false,
-          error: `Image "${name}" exceeds maximum size of ${MAX_IMAGE_SIZE_BYTES / 1024 / 1024}MB (size: ${(sizeBytes / 1024 / 1024).toFixed(2)}MB)`,
+          error: `Image "${name}" is ${(sizeBytes / 1024 / 1024).toFixed(2)}MB, which exceeds the ` +
+            `${(MAX_IMAGE_SIZE_BYTES / 1024 / 1024).toFixed(1)}MB per-image limit that vision models accept. ` +
+            `Resize it (1568px on the long edge is plenty) or save it as JPEG and try again.`,
         };
       }
 

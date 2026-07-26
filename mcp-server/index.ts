@@ -13,6 +13,13 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 import express from 'express';
 import cors from 'cors';
 import { getComponents, getProps } from './routes/components.js';
+import {
+  getDesignContext,
+  getDesignContextFile,
+  putDesignContextFile,
+  deleteDesignContextFile,
+  scaffoldDesignContext,
+} from './routes/designContext.js';
 import { claudeProxy } from './routes/claude.js';
 import { generateStoryFromPrompt } from './routes/generateStory.js';
 import { generateStoryFromPromptStream } from './routes/generateStoryStream.js';
@@ -132,7 +139,25 @@ const corsOptions = {
   credentials: true,
 };
 app.use(cors(corsOptions));
-app.use(express.json({ limit: '10mb' })); // Increased limit for file uploads
+// Vision requests carry base64 image payloads. The panel downscales before
+// upload, but keep headroom above the per-image ceiling (4 images x 20MB raw,
+// ~33% base64 inflation) so an oversized attachment produces a clear error
+// from the image validator rather than an opaque 413 from body-parser.
+app.use(express.json({ limit: process.env.STORY_UI_MAX_BODY || '120mb' }));
+
+// Turn body-parser's 413 into a JSON error the panel can actually display.
+// Without this the panel sees a non-OK response, assumes the stream failed,
+// and silently retries without the images.
+app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err?.type === 'entity.too.large' || err?.status === 413) {
+    return res.status(413).json({
+      success: false,
+      error: 'Image payload too large',
+      suggestion: 'Attach a smaller or lower-resolution image, or fewer images.',
+    });
+  }
+  return next(err);
+});
 
 // Component discovery routes
 app.get('/mcp/components', getComponents);
@@ -389,6 +414,15 @@ app.post('/story-ui/generate-stream', generateStoryFromPromptStream);
 app.post('/story-ui/claude', claudeProxy);
 app.get('/story-ui/components', getComponents);
 app.get('/story-ui/props', getProps);
+
+// Design context authoring — story-ui-docs/ is the high-authority channel
+// (verbatim, code fences preserved, injected closest to the user request), so
+// the panel edits it directly rather than the lossy single-file considerations.
+app.get('/story-ui/design-context', getDesignContext);
+app.post('/story-ui/design-context/scaffold', scaffoldDesignContext);
+app.get('/story-ui/design-context/:name', getDesignContextFile);
+app.put('/story-ui/design-context/:name', putDesignContextFile);
+app.delete('/story-ui/design-context/:name', deleteDesignContextFile);
 
 // Design system considerations endpoint - serves considerations for environment parity
 app.get('/story-ui/considerations', async (req, res) => {
@@ -971,6 +1005,11 @@ app.get('/story-ui/redirects.js', (req, res) => {
 
 // Load user config and initialize services
 const config = loadUserConfig();
+
+// Expose the configured design system so routes can pick sensible defaults
+// (e.g. which starter design-context document to scaffold) without the client
+// having to know or send it.
+app.set('storyUiImportPath', config.importPath);
 
 // Initialize URL redirect service
 const redirectService = new UrlRedirectService(process.cwd());

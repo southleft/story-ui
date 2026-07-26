@@ -111,14 +111,31 @@ function getTypeSpecificSystemInstructions(type: VisionPromptType): string {
     case VisionPromptType.SCREENSHOT_TO_STORY:
       return `## Screenshot-to-Story Mode
 
-You are analyzing a screenshot of an existing UI implementation. Your goal is to recreate it as a Storybook story.
+You are analyzing a screenshot of an existing UI implementation. Your goal is to
+recreate **everything visible in the screenshot** as a single Storybook story.
+
+### Scope: reproduce the whole screen, not one piece of it
+
+This is the most common failure mode — read it carefully:
+
+- Reproduce **every region** you can see: app/nav bars, sidebars, rails, headers,
+  footers, toolbars, feeds, cards, and the relationships between them.
+- If the screenshot shows a full page or a multi-column layout, generate the
+  **full-page composition**. Do NOT pick the most prominent element and generate
+  that alone. A screenshot of a home page must produce a home page, not a card.
+- Repeated units (feed posts, list rows, grid tiles) should appear **multiple
+  times**, driven by an array of sample data — matching the count in the image.
+- Only narrow the scope to a single component when the screenshot genuinely shows
+  a single isolated component on an empty background.
+- Preserve the **spatial arrangement**: column order, relative widths, and which
+  regions are fixed vs. scrolling.
 
 ### Analysis Checklist
 
-1. **Component Identification**
-   - What is the primary component being displayed?
-   - Are there nested child components?
-   - What are the component boundaries?
+1. **Region Inventory**
+   - List every distinct region of the screen before writing any code.
+   - For each region: what is it, where does it sit, how wide is it?
+   - Which regions repeat, and how many times?
 
 2. **Props and Configuration**
    - What props are being used? (text content, icons, images, etc.)
@@ -146,9 +163,13 @@ You are analyzing a screenshot of an existing UI implementation. Your goal is to
 Generate a complete .stories.tsx file with:
 1. Imports (React, component, types)
 2. Meta export with title, component, tags, and argTypes
-3. Default story showing the exact screenshot state
+3. Default story reproducing the **entire** screenshot — every region, in the
+   same arrangement, with repeated units repeated
 4. Additional stories for variants/states if they're inferable
-5. Inline comments explaining non-obvious decisions`;
+5. Inline comments explaining non-obvious decisions
+
+For a full-page or multi-region screenshot, set \`parameters: { layout: 'fullscreen' }\`
+so the composition isn't centered inside a narrow canvas.`;
 
     case VisionPromptType.DESIGN_TO_STORY:
       return `## Design-to-Story Mode
@@ -324,13 +345,18 @@ export function getVisionUserPrompt(
       return `Please analyze the attached screenshot and generate a complete Storybook story that recreates this UI exactly.
 
 **Your Task:**
-1. Identify the main component and all sub-components visible
-2. Determine the props and configuration used
+1. Inventory every region visible in the screenshot (nav, sidebars, main content,
+   rails, footers) — not just the most eye-catching element
+2. Determine the props and configuration used for each
 3. Generate a complete .stories.tsx file in CSF 3.0 format
-4. Include the default story matching the screenshot
+4. Include a default story reproducing the **whole** screenshot, with repeated
+   units (posts, rows, tiles) repeated as many times as the image shows
 5. Add variant stories if you can infer other states
 
 **Important:**
+- Reproduce the full composition. If the image is a page, build the page — do not
+  extract a single card or section and stop there.
+- Preserve column order, relative widths, and spatial arrangement
 - Be precise about spacing, colors, and typography
 - If you can't determine exact values, use reasonable defaults and add a comment
 - If the screenshot is partial or unclear, note your assumptions
