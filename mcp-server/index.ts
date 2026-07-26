@@ -14,6 +14,7 @@ import express from 'express';
 import cors from 'cors';
 import { getComponents, getProps } from './routes/components.js';
 import { makeHandoff, makeHandoffStatus } from './routes/handoff.js';
+import { makeListVersions, makeRestoreVersion } from './routes/storyVersions.js';
 import {
   getDesignContext,
   getDesignContextFile,
@@ -1015,6 +1016,12 @@ app.set('storyUiImportPath', config.importPath);
 // Handoff — prototype to branch/PR. Registered here because it needs the loaded
 // config. Every mutating step is opt-in and driven by an explicit user action in
 // the panel; see routes/handoff.ts for the guardrails.
+// Version history. The storage has always existed (StoryHistoryManager); these
+// are the reader and the restore that were never built, so a damaging edit was
+// unrecoverable. See routes/storyVersions.ts.
+app.get('/story-ui/versions/:fileName', makeListVersions({ generatedStoriesPath: config.generatedStoriesPath }));
+app.post('/story-ui/versions/:fileName/restore', makeRestoreVersion({ generatedStoriesPath: config.generatedStoriesPath }));
+
 app.get('/story-ui/handoff/status', makeHandoffStatus({ generatedStoriesPath: config.generatedStoriesPath }));
 app.post('/story-ui/handoff', makeHandoff({ generatedStoriesPath: config.generatedStoriesPath }));
 

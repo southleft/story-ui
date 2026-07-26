@@ -40,6 +40,7 @@ import { HandoffDialog } from './HandoffDialog';
 import { useGeneration, waitForStory, type Verification } from './useGeneration';
 import { useSessions, takeEditRequest, cleanReply, type SessionSummary } from './useSessions';
 import { describeTarget, targetLabel, type ElementTarget } from './elementTargeting';
+import { VersionHistory, type StoryVersionSummary } from './VersionHistory';
 
 interface Turn {
   id: string;
@@ -778,6 +779,26 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
           </div>
 
           <PreviewCanvas
+            historySlot={
+              <VersionHistory
+                apiBase={apiBase}
+                fileName={activeFile?.fileName}
+                refreshToken={reloadToken}
+                disabled={busy}
+                onRestored={(v: StoryVersionSummary) => {
+                  // The file on disk changed underneath the canvas, so force a
+                  // reload and note it in the thread — a preview that silently
+                  // becomes a different composition is disorienting.
+                  setReloadToken(t => t + 1);
+                  setTurns(prev => [...prev, {
+                    id: uid(), role: 'assistant',
+                    text: `Restored the version from before "${v.prompt}".`,
+                    fileName: activeFile?.fileName, title: activeFile?.title,
+                  }]);
+                  reloadSessions();
+                }}
+              />
+            }
             onSelectElement={setSelection}
             hasSelection={!!selection}
             storyId={activeStory?.id}

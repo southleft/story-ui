@@ -42,6 +42,8 @@ interface PreviewCanvasProps {
   onSelectElement?: (target: ElementTarget | null) => void;
   /** True while an element is already selected, so the toggle reads correctly. */
   hasSelection?: boolean;
+  /** Version history control, owned by the workspace which knows the file. */
+  historySlot?: React.ReactNode;
 }
 
 export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
@@ -56,6 +58,7 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
   onRecheck,
   onSelectElement,
   hasSelection = false,
+  historySlot,
 }) => {
   const [picking, setPicking] = useState(false);
   const [viewport, setViewport] = useState<Viewport>('desktop');
@@ -194,6 +197,8 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
             {picking ? 'Click an element…' : hasSelection ? 'Selected' : 'Select'}
           </Button>
         )}
+
+        {historySlot}
 
         <Button size="1" variant="ghost" color="gray" disabled={!storyId} onClick={onOpenInStorybook}>
           Open in Storybook
