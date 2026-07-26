@@ -15,6 +15,7 @@ import { logger } from '../logger.js';
 import { resolveHostTooling, canLaunchBrowser } from './hostTooling.js';
 import { renderStory, waitForStoryIndexed } from './renderHarness.js';
 import { runDomCensus } from './probes/domCensus.js';
+import { runA11yProbe, isGenerationDefect, isDesignSystemConcern } from './probes/a11y.js';
 import type { Finding, VerifyReport } from './findings.js';
 import { blockers, summarize } from './findings.js';
 
@@ -158,6 +159,32 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
     const census = await runDomCensus(render.page);
     findings.push(...censusFindings(census.problems));
 
+    // Accessibility. Only rules that indicate the GENERATOR produced wrong
+    // markup can block; palette and document-structure rules describe the design
+    // system itself and would push the model into overriding it.
+    const a11y = await runA11yProbe(render.page, tooling);
+    if (a11y.ran) {
+      for (const v of a11y.violations) {
+        const generationDefect = isGenerationDefect(v.id);
+        const severe = v.impact === 'critical' || v.impact === 'serious';
+        findings.push({
+          id: `axe-${v.id}`,
+          severity: generationDefect && severe ? 'blocker' : 'warning',
+          class: 'a11y',
+          message: v.help,
+          evidence: [
+            `axe rule "${v.id}"`,
+            v.impact ? `${v.impact} impact` : null,
+            `${v.nodeCount} element${v.nodeCount === 1 ? '' : 's'}`,
+            isDesignSystemConcern(v.id) ? 'design-system level, not a composition defect' : null,
+          ].filter(Boolean).join(' · '),
+          selector: v.selector,
+          // Only a generation defect is worth asking the model to fix.
+          repairable: generationDefect,
+        });
+      }
+    }
+
     const outcome = blockers(findings).length > 0 ? 'issues' : 'verified';
     logger.log(
       `🔍 Verification (${indexed.storyId}): ${outcome} — ${summarize(findings)} ` +
@@ -167,7 +194,13 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
     return {
       outcome,
       findings,
-      metrics: { ...census.metrics, navMs: render.navMs },
+      metrics: {
+        ...census.metrics,
+        navMs: render.navMs,
+        axeRan: a11y.ran,
+        axeViolations: a11y.violations.length,
+        axePasses: a11y.passCount,
+      },
       durationMs: Date.now() - started,
       storyId: indexed.storyId,
     };
