@@ -90,6 +90,13 @@ export interface GenerationRequest {
   fileName?: string;
   conversation?: Array<{ role: string; content: string }>;
   isUpdate?: boolean;
+  /**
+   * A prose description of the element the user pointed at in the preview,
+   * e.g. `a ThemeIcon containing the text "Deployment completed" inside
+   * Timeline > Card`. Prose rather than a selector because the model edits
+   * SOURCE, and the rendered class hashes appear nowhere in it.
+   */
+  selection?: string;
   originalTitle?: string;
   storyId?: string;
   framework?: string;
@@ -210,6 +217,7 @@ export async function runStoryGeneration(
     visionMode,
     designSystem,
     considerations,
+    selection,
     provider,
     model,
     useStorybookMcp,
@@ -379,6 +387,7 @@ export async function runStoryGeneration(
       designSystem,
       considerations,
       storybookContext,
+      selection,
     }
   );
 
@@ -1121,6 +1130,8 @@ async function buildClaudePromptWithContext(
     designSystem?: string;
     considerations?: string;
     storybookContext?: StorybookMcpContext;
+    /** Prose description of the element the user pointed at, if any. */
+    selection?: string;
   }
 ): Promise<string> {
   const frameworkOptions: StoryGenerationOptions = { framework: options.framework };
@@ -1176,6 +1187,29 @@ async function buildClaudePromptWithContext(
       logger.log('📚 Injecting Storybook MCP context into prompt');
       prompt = injectBeforeUserRequest(prompt, storybookContextStr);
     }
+  }
+
+  // A pointed-at element, injected just above the considerations so the
+  // project's own rules still win, but below everything generic.
+  //
+  // The scoping instruction matters as much as the target. An update rewrites
+  // the whole story file, so without it a request to recolour one icon can
+  // quietly restructure a dashboard that was already correct — observed: an
+  // edit introduced a verification blocker into a composition that had none.
+  if (options.selection) {
+    logger.log(`🎯 Scoping the edit to: ${options.selection}`);
+    prompt = injectBeforeUserRequest(prompt, [
+      '🎯 TARGETED EDIT — the user selected a specific element in the rendered preview:',
+      `  ${options.selection}`,
+      '',
+      'The request below applies to THAT element. Find it in the code using the',
+      'component name and the quoted text, which appear verbatim in the source.',
+      'Change only what the request asks for on that element.',
+      'Reproduce the ENTIRE rest of the file byte-for-byte: same components, same',
+      'props, same layout, same copy, same order. Do not "improve" anything you',
+      'were not asked about, and do not drop code to save space.',
+      'If the element cannot be found, say so in your summary rather than guessing.',
+    ].join('\n'));
   }
 
   // Injected LAST so it sits directly above the user request — the project's own

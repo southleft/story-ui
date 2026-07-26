@@ -12,6 +12,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, Button, Callout, Flex, SegmentedControl, Text } from '@radix-ui/themes';
+import { attachElementPicker, type ElementTarget } from './elementTargeting';
 
 export type Viewport = 'desktop' | 'tablet' | 'mobile';
 
@@ -37,6 +38,10 @@ interface PreviewCanvasProps {
   /** Set when the story was written but Storybook never indexed it. */
   notIndexed?: { fileName?: string; title?: string } | null;
   onRecheck?: () => void;
+  /** Called when the user points at an element, or null when they cancel. */
+  onSelectElement?: (target: ElementTarget | null) => void;
+  /** True while an element is already selected, so the toggle reads correctly. */
+  hasSelection?: boolean;
 }
 
 export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
@@ -49,7 +54,10 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
   canHandoff = true,
   notIndexed,
   onRecheck,
+  onSelectElement,
+  hasSelection = false,
 }) => {
+  const [picking, setPicking] = useState(false);
   const [viewport, setViewport] = useState<Viewport>('desktop');
   const [zoom, setZoom] = useState(1);
   const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
@@ -99,6 +107,51 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
     lastSrc.current = src;
   }, [src, reloadToken]);
 
+  /**
+   * Click-to-select, attached directly to the preview document.
+   *
+   * Possible because Storybook's iframe is same-origin with the workspace —
+   * v0 and Lovable have to bridge a sandbox to do the same thing. Re-attached
+   * on every navigation, since replacing the location swaps the document out
+   * from under the listeners.
+   */
+  useEffect(() => {
+    if (!picking) return;
+    const frame = frameRef.current;
+    if (!frame) return;
+
+    let detach: (() => void) | null = null;
+    const attach = () => {
+      detach?.();
+      detach = null;
+      try {
+        const doc = frame.contentDocument;
+        if (!doc?.body) return;
+        detach = attachElementPicker(doc, target => {
+          onSelectElement?.(target);
+          // One pick per activation: staying armed would swallow the next click
+          // on a story the user is trying to actually use.
+          setPicking(false);
+        });
+      } catch {
+        // Cross-origin only happens if the preview is proxied from elsewhere;
+        // selection is an enhancement, so fail quiet rather than break the pane.
+        setPicking(false);
+      }
+    };
+
+    attach();
+    frame.addEventListener('load', attach);
+    return () => {
+      frame.removeEventListener('load', attach);
+      detach?.();
+    };
+  }, [picking, onSelectElement]);
+
+  // A rebuild replaces the document; leaving the picker armed across it would
+  // attach to a document that no longer exists.
+  useEffect(() => { if (busy) setPicking(false); }, [busy]);
+
   const cycleZoom = useCallback(() => {
     setZoom(z => (z >= 1 ? 0.5 : z >= 0.75 ? 1 : z + 0.25));
   }, []);
@@ -121,6 +174,26 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
         <Flex flexGrow="1" minWidth="0" justify="center">
           {title && <Text size="1" color="gray" className="suiw-ellipsis">{title}</Text>}
         </Flex>
+
+        {onSelectElement && (
+          <Button
+            size="1"
+            variant={picking ? 'solid' : hasSelection ? 'soft' : 'ghost'}
+            color={picking || hasSelection ? undefined : 'gray'}
+            highContrast={picking}
+            disabled={!storyId || busy}
+            onClick={() => {
+              if (picking) { setPicking(false); return; }
+              // Starting a new pick clears the old one, so the chip in the
+              // composer never disagrees with what is highlighted.
+              onSelectElement(null);
+              setPicking(true);
+            }}
+            title="Point at an element to describe a change to just that element"
+          >
+            {picking ? 'Click an element…' : hasSelection ? 'Selected' : 'Select'}
+          </Button>
+        )}
 
         <Button size="1" variant="ghost" color="gray" disabled={!storyId} onClick={onOpenInStorybook}>
           Open in Storybook

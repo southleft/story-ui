@@ -163,6 +163,12 @@ export interface StreamEvent {
 
 // Request body for streaming endpoint
 export interface StreamGenerateRequest {
+  /**
+   * Prose description of an element the user selected in the preview, used to
+   * scope the edit. Prose rather than a selector: the model edits source, where
+   * rendered class hashes do not appear.
+   */
+  selection?: string;
   prompt: string;
   fileName?: string;
   conversation?: Array<{ role: 'user' | 'assistant'; content: string }>;

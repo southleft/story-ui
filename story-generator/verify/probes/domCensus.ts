@@ -26,6 +26,15 @@ export interface CensusMetrics {
   fakeFields: number;
   clickableNonButtons: number;
   iconsWithoutAccessibleName: number;
+  /**
+   * TOTAL invisible icons, not the number reported.
+   *
+   * Findings are capped at 5 to keep a repair prompt readable, which made the
+   * reported list length useless for telling "fixed one of six" from "fixed
+   * none" — a distinction that matters when checking whether a targeted edit
+   * landed. The metric carries the true count.
+   */
+  invisibleIcons: number;
 }
 
 export interface CensusResult {
@@ -380,6 +389,7 @@ export async function runDomCensus(page: any): Promise<CensusResult> {
         buttons: buttons.length,
         inlineStyleNodes: inlineStyleNodes.length,
         orphanIcons,
+        invisibleIcons,
         fakeFields: problems.filter(p => p.kind === 'fake_field').length,
         clickableNonButtons,
         iconsWithoutAccessibleName,

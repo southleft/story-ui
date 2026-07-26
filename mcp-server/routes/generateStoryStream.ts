@@ -127,6 +127,7 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
         visionMode: body.visionMode,
         designSystem: body.designSystem,
         considerations: body.considerations,
+        selection: body.selection,
         provider: body.provider,
         model: body.model,
         useStorybookMcp: body.useStorybookMcp,

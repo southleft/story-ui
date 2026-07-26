@@ -62,7 +62,19 @@ export interface GenerationRequest {
   considerations?: string;
   fileName?: string;
   isUpdate?: boolean;
+  /**
+   * The title of the story being edited. Without it the server re-derives a
+   * title from the conversation, so pointing at one icon renamed a whole
+   * dashboard — and spent an extra LLM call doing it.
+   */
+  originalTitle?: string;
   conversation?: Array<{ role: 'user' | 'ai'; content: string }>;
+  /**
+   * A description of the element the instruction points at, when the user
+   * selected one in the preview. Prose rather than a selector: the model edits
+   * source, and a compiled class hash appears nowhere in it.
+   */
+  selection?: string;
 }
 
 const PENDING_KEY = 'story-ui-v2-pending';

@@ -39,6 +39,7 @@ import { PreviewCanvas } from './PreviewCanvas';
 import { HandoffDialog } from './HandoffDialog';
 import { useGeneration, waitForStory, type Verification } from './useGeneration';
 import { useSessions, takeEditRequest, cleanReply, type SessionSummary } from './useSessions';
+import { describeTarget, targetLabel, type ElementTarget } from './elementTargeting';
 
 interface Turn {
   id: string;
@@ -47,6 +48,8 @@ interface Turn {
   thumbnails?: string[];
   elapsedMs?: number;
   suggestions?: string[];
+  /** What this instruction was pointed at, when the user selected an element. */
+  target?: string;
   verification?: Verification;
   storyId?: string;
   fileName?: string;
@@ -182,6 +185,14 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
    */
   const [activeFile, setActiveFile] = useState<{ fileName: string; title: string } | null>(null);
   /**
+   * The element the next instruction applies to.
+   *
+   * Without this the user has to describe WHICH thing they mean in prose, and
+   * the model guesses — then rewrites the whole composition to be safe, which
+   * is how a good dashboard picks up new problems while fixing a small one.
+   */
+  const [selection, setSelection] = useState<ElementTarget | null>(null);
+  /**
    * The story the handoff dialog is acting on.
    *
    * Owned here rather than driven by the `onHandoff` prop, because that prop was
@@ -291,7 +302,13 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     if (!prompt || busy) return;
 
     setInput('');
-    const userTurn: Turn = { id: uid(), role: 'user', text: prompt };
+    // Shown on the turn so the transcript records what the instruction was
+    // pointed at — six months later "make it bigger" means nothing on its own.
+    const userTurn: Turn = {
+      id: uid(), role: 'user', text: prompt,
+      target: selection ? targetLabel(selection) : undefined,
+    };
+    setSelection(null);
     setTurns(prev => [...prev, userTurn]);
 
     const conversation = [...turns, userTurn].map(t => ({
@@ -309,6 +326,8 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       // these two the server treated every follow-up as a brand new story.
       fileName: activeFile?.fileName,
       isUpdate: !!activeFile,
+      originalTitle: activeFile?.title,
+      selection: selection ? describeTarget(selection) : undefined,
     });
 
     if (!result) return;
@@ -347,7 +366,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     ]);
     if (result.fileName) setActiveFile({ fileName: result.fileName, title: result.title || 'Story' });
     reloadSessions();
-  }, [input, busy, turns, provider, model, considerations, activeFile, generate, reloadSessions]);
+  }, [input, busy, turns, provider, model, considerations, activeFile, selection, generate, reloadSessions]);
 
   const recheckIndex = useCallback(async () => {
     if (!notIndexed) return;
@@ -392,11 +411,37 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder={started ? 'Describe a change, or ask for something new' : 'Describe the interface you want to build'}
+          placeholder={
+            selection
+              ? `Describe a change to that ${selection.component || 'element'}`
+              : started
+                ? 'Describe a change, or ask for something new'
+                : 'Describe the interface you want to build'
+          }
           aria-label="Describe what to build"
           rows={started ? 2 : 3}
           style={{ background: 'transparent', boxShadow: 'none' }}
         />
+
+        {/* The chip is the contract: whatever it names is what the next
+            instruction applies to. Without it the user cannot tell whether a
+            selection is still armed. */}
+        {selection && (
+          <Flex align="center" gap="2" mb="2">
+            <Badge color="jade" variant="soft" className="suiw-ellipsis">
+              {targetLabel(selection)}
+            </Badge>
+            <Button
+              size="1"
+              variant="ghost"
+              color="gray"
+              onClick={() => setSelection(null)}
+              title="Apply the next instruction to the whole story instead"
+            >
+              Clear
+            </Button>
+          </Flex>
+        )}
 
         <Flex align="center" gap="2" mt="2" wrap="nowrap">
           {/* Only on home. In the workspace the rail is 400px, and badge + two
@@ -637,6 +682,11 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                   >
                     {turn.role === 'user' ? (
                       <Card size="1" variant="surface" style={{ maxWidth: '85%' }}>
+                        {turn.target && (
+                          <Badge color="jade" variant="soft" mb="1" className="suiw-ellipsis">
+                            {turn.target}
+                          </Badge>
+                        )}
                         <Text as="div" size="2" className="suiw-turn-body">{turn.text}</Text>
                       </Card>
                     ) : (
@@ -728,6 +778,8 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
           </div>
 
           <PreviewCanvas
+            onSelectElement={setSelection}
+            hasSelection={!!selection}
             storyId={activeStory?.id}
             title={activeStory?.title}
             reloadToken={reloadToken}
