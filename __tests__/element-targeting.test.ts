@@ -36,11 +36,26 @@ describe('componentFromMarkup', () => {
       .toEqual({ name: 'ActionIcon', via: 'mantine', slot: 'root' });
   });
 
-  it('recovers MUI, Chakra, Ant and Vuetify components', () => {
+  it('returns the name each system actually uses in SOURCE, not a stripped stem', () => {
+    // Stripping the prefix yields the real component name for Mantine and MUI,
+    // and that coincidence nearly generalised into a Mantine-shaped rule.
     expect(componentFromMarkup('button', cls('MuiButton-root MuiButton-contained'))?.name).toBe('Button');
-    expect(componentFromMarkup('button', cls('chakra-button'))?.name).toBe('button');
-    expect(componentFromMarkup('button', cls('ant-btn ant-btn-primary'))?.name).toBe('btn');
-    expect(componentFromMarkup('button', cls('v-btn v-btn--elevated'))?.name).toBe('btn');
+    // Chakra's class is lowercase; its component is PascalCase.
+    expect(componentFromMarkup('button', cls('chakra-button'))?.name).toBe('Button');
+    // For Vuetify the class IS the template tag — `<v-btn>`. Stripping it to
+    // "btn" would discard the exact string the Vue source contains. Verified
+    // against real rendered Vuetify markup, which emits `v-alert`, `v-btn`.
+    expect(componentFromMarkup('button', cls('v-btn v-btn--elevated'))?.name).toBe('v-btn');
+    // Ant abbreviates, so neither form is the source name; keep the token and
+    // let the system label bridge it.
+    expect(componentFromMarkup('button', cls('ant-btn ant-btn-primary'))?.name).toBe('ant-btn');
+  });
+
+  it('rejects Vuetify modifier and slot classes', () => {
+    // Real Vuetify markup is full of `v-alert--border`, `v-alert__underlay`
+    // and `v-theme--light`; none of them is a component.
+    expect(componentFromMarkup('div', cls('v-alert--border v-theme--light'))).toBeNull();
+    expect(componentFromMarkup('div', cls('v-alert__underlay'))).toBeNull();
   });
 
   it('uses the tag name for web components, which is the strongest signal', () => {
@@ -64,7 +79,7 @@ describe('describeTarget', () => {
 
   it('names the component, its text and its container', () => {
     expect(describeTarget(base)).toBe(
-      'a ThemeIcon containing the text "Deployment completed" inside Timeline > Card',
+      'a Mantine ThemeIcon containing the text "Deployment completed" inside Timeline > Card',
     );
   });
 

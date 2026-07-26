@@ -72,21 +72,43 @@ export function componentFromMarkup(
       return { name: m[1], via: 'mantine', slot: m[2] };
     if ((m = c.match(/^Mui([A-Z][A-Za-z0-9]*)-([a-zA-Z]+)$/)))
       return { name: m[1], via: 'mui', slot: m[2] };
-    if ((m = c.match(/^chakra-([a-z][a-z0-9-]*)$/)))
-      return { name: m[1], via: 'chakra' };
-    if ((m = c.match(/^ant-([a-z][a-z0-9]*)$/)))
-      return { name: m[1], via: 'ant' };
+    // Chakra's class is lowercase; the source component is PascalCase.
+    if ((m = c.match(/^chakra-([a-z][a-z0-9]*)$/)))
+      return { name: m[1][0].toUpperCase() + m[1].slice(1), via: 'chakra' };
+
+    // Vuetify and Shoelace keep the FULL token, because for them the class IS
+    // the template tag: `<v-alert>`, `<sl-button>`. Stripping the prefix to
+    // "alert" — which is what a Mantine-shaped rule does, since stripping
+    // happens to yield Mantine's real component name — throws away the exact
+    // string the source contains and leaves the model guessing.
     if ((m = c.match(/^v-([a-z][a-z0-9]*)$/)))
-      return { name: m[1], via: 'vuetify' };
+      return { name: c, via: 'vuetify' };
+
+    // Ant abbreviates (`ant-btn` is `<Button>`), so neither form is the source
+    // name. Keep the token and let the design system name carry the bridge
+    // rather than inventing a btn -> Button mapping table.
+    if ((m = c.match(/^ant-([a-z][a-z0-9]*)$/)))
+      return { name: c, via: 'ant' };
+
     if ((m = c.match(/^sl-([a-z][a-z0-9-]*)$/)))
-      return { name: m[1], via: 'shoelace' };
+      return { name: c, via: 'shoelace' };
   }
   return null;
 }
 
 /** Render a target as the sentence the model actually receives. */
+const SYSTEM_LABEL: Record<string, string> = {
+  vuetify: 'Vuetify', ant: 'Ant Design', chakra: 'Chakra',
+  mui: 'MUI', mantine: 'Mantine', shoelace: 'Shoelace',
+};
+
 export function describeTarget(t: ElementTarget): string {
-  const what = t.component ? `a ${t.component}` : `a <${t.tag}>`;
+  // Naming the system lets the model bridge an abbreviated class to the real
+  // component — "an Ant Design ant-btn" is findable, "a ant-btn" is not.
+  const system = SYSTEM_LABEL[t.via];
+  const what = t.component
+    ? `a ${system ? `${system} ` : ''}${t.component}`
+    : `a <${t.tag}>`;
   const anchor = (t.anchor || '').replace(/\s+/g, ' ').trim();
   const where = anchor ? ` containing the text "${anchor}"` : '';
   const which = t.index && t.siblings ? ` (item ${t.index} of ${t.siblings})` : '';
