@@ -44,6 +44,7 @@ import {
 } from '../../story-generator/selfHealingLoop.js';
 import {
   validateStoryRuntime,
+  getStorybookUrl,
   formatRuntimeErrorForHealing,
   isRuntimeValidationEnabled,
   RuntimeValidationResult,
@@ -68,6 +69,8 @@ import {
   StorybookMcpContext,
 } from '../../story-generator/storybookMcpClient.js';
 import { IntentPreview, ValidationFeedback, CompletionFeedback } from './streamTypes.js';
+import { verifyStory } from '../../story-generator/verify/verifyStory.js';
+import type { VerifyReport } from '../../story-generator/verify/findings.js';
 
 // ============================================================
 // Public interface
@@ -267,7 +270,16 @@ export async function runStoryGeneration(
   // detected, so the MCP-context toggle works with zero configuration.
   const mcpUrl = config.storybookMcpUrl || storybookUrl;
   if (mcpUrl && shouldUseMcp) {
-    const storybookClient = createStorybookMcpClient(mcpUrl, config.storybookMcpTimeout);
+    // Pass the generated-stories directory so our own prior output is kept out
+    // of the exemplar pool it sends back as the house style.
+    const generatedDirFragment = (config.generatedStoriesPath || '')
+      .replace(/^\.\//, '')
+      .replace(/\/+$/, '');
+    const storybookClient = createStorybookMcpClient(
+      mcpUrl,
+      config.storybookMcpTimeout,
+      generatedDirFragment || undefined,
+    );
     if (storybookClient) {
       storybookContext = await storybookClient.fetchContext(componentNames);
       logger.log(storybookContext.available
@@ -591,6 +603,7 @@ export async function runStoryGeneration(
     let fixed = postProcessStory(code, config.importPath);
     fixed = frameworkAdapter.postProcess(fixed);
     fixed = applyTitleAndId(fixed, cleanTitle, storyIdSlug, config.storyPrefix);
+    fixed = alignStorybookTypesImport(fixed, config.storybookFramework);
 
     // Final validation after ALL post-processing — catches syntax errors
     // introduced by regex-based transforms.
@@ -704,6 +717,36 @@ export async function runStoryGeneration(
       }
     } catch (runtimeErr: any) {
       logger.warn(`⚠️ Runtime validation could not complete: ${runtimeErr.message}`);
+    }
+  }
+
+  // --- Browser verification (report-only) ---
+  // The legacy check above fetches iframe.html as TEXT and regexes it. Storybook
+  // renders client-side, so that response is byte-identical for a real story, a
+  // bogus id, and no id at all (verified by md5) — it cannot observe anything.
+  // This actually renders the story in the host project's own Playwright, walks
+  // the DOM, and reports what it finds.
+  //
+  // Deliberately does NOT trigger repair yet: the probes must be shown
+  // trustworthy before they are allowed to spend an LLM call. Producing a false
+  // blocker here would make the model damage correct code.
+  let verification: VerifyReport | undefined;
+  if (!isFallbackStory) {
+    try {
+      const verifyUrl = config.storybookMcpUrl || storybookUrl || getStorybookUrl();
+      if (verifyUrl) {
+        verification = await verifyStory({
+          storybookUrl: verifyUrl,
+          storyIdPrefix: storyIdSlug,
+          projectRoot: process.cwd(),
+        });
+        if (verification.outcome === 'issues') {
+          hasValidationWarnings = true;
+        }
+      }
+    } catch (verifyErr: any) {
+      // Verification is observational; never let it fail a generation.
+      logger.warn(`⚠️ Verification could not complete: ${verifyErr?.message ?? verifyErr}`);
     }
   }
 
@@ -963,14 +1006,12 @@ async function buildClaudePromptWithContext(
     prompt = `${visionPrompts.systemPrompt}\n\n---\n\n${prompt}\n\n---\n\n${visionPrompts.userPrompt}`;
   }
 
-  // Design-system considerations passed by the client take priority placement —
-  // these are the project's own rules and must shape the output.
-  if (options.considerations) {
-    logger.log('📋 Injecting client-provided design system considerations into prompt');
-    prompt = injectBeforeUserRequest(prompt,
-      `📋 DESIGN SYSTEM CONSIDERATIONS (project-specific rules — these OVERRIDE any conflicting general guidance):\n${options.considerations}`);
-  }
-
+  // NOTE ON ORDERING: injectBeforeUserRequest splices each block in immediately
+  // above "User request:", so the LAST block injected ends up CLOSEST to the
+  // request — the strongest position. Background material (bundled docs, the
+  // Storybook exemplar pool) is injected first; the project's own considerations
+  // go last so they can out-argue anything above them. Previously considerations
+  // went first and the exemplar pool sat closest, which inverted the priority.
   const documentation = getDocumentation(config.importPath);
   if (documentation) {
     const bundledEnhancement = `📚 BUNDLED DOCUMENTATION:\n${Object.entries(documentation.components || {}).map(([name, info]: [string, any]) => {
@@ -988,6 +1029,14 @@ async function buildClaudePromptWithContext(
       logger.log('📚 Injecting Storybook MCP context into prompt');
       prompt = injectBeforeUserRequest(prompt, storybookContextStr);
     }
+  }
+
+  // Injected LAST so it sits directly above the user request — the project's own
+  // rules must be able to override every generic instruction above them.
+  if (options.considerations) {
+    logger.log('📋 Injecting client-provided design system considerations into prompt');
+    prompt = injectBeforeUserRequest(prompt,
+      `📋 DESIGN SYSTEM CONSIDERATIONS (project-specific rules — these OVERRIDE any conflicting general guidance, including any example code shown above):\n${options.considerations}`);
   }
 
   if (!conversation || conversation.length <= 1) {
@@ -1036,12 +1085,23 @@ async function callLLM(
   };
 
   if (images && images.length > 0) {
-    const providerInfo = getProviderInfo();
+    // Check the provider/model the request actually asked for, not the default.
+    const providerInfo = getProviderInfo({ provider: options?.provider as any, model: options?.model });
     if (!providerInfo.supportsVision) {
-      throw new Error(`${providerInfo.currentProvider} does not support vision`);
+      throw new Error(
+        `${providerInfo.currentProvider} (${providerInfo.currentModel}) does not support vision. ` +
+        `Choose a vision-capable model to generate from an image.`
+      );
+    }
+    // Attach to the FIRST user message — that's the one carrying the built
+    // prompt. Resolve it by position rather than assuming index 0, so a future
+    // system/preamble message can't silently detach the images.
+    const targetIndex = messages.findIndex(m => m.role === 'user');
+    if (targetIndex === -1) {
+      throw new Error('Cannot attach images: no user message in the request');
     }
     const messagesWithImages = messages.map((msg, index) => {
-      if (msg.role === 'user' && index === 0) {
+      if (index === targetIndex) {
         return {
           role: msg.role,
           content: buildMessageWithImages(msg.content, images),
@@ -1049,6 +1109,7 @@ async function callLLM(
       }
       return msg;
     });
+    logger.log(`🖼️ Attached ${images.length} image(s) to message ${targetIndex} for ${providerInfo.currentProvider}/${providerInfo.currentModel}`);
     const content = await chatCompletionWithImages(messagesWithImages as any, llmOptions);
     return { content, truncated: false };
   }
@@ -1196,6 +1257,38 @@ export function extractCodeBlock(text: string, framework?: string): string | nul
     return text.slice(importIndex).trim();
   }
   return null;
+}
+
+/**
+ * Point the Storybook type-only import at the framework package the project
+ * actually depends on.
+ *
+ * Prompt examples teach `@storybook/react`, but a Vite project only declares
+ * `@storybook/react-vite` — the bare package resolves transitively inside
+ * Storybook and then fails the moment an engineer lifts the file into the app,
+ * which is exactly the workflow this tool exists to serve.
+ */
+export function alignStorybookTypesImport(code: string, storybookFramework?: string): string {
+  // Only these re-export Meta/StoryObj. Anything else (e.g. @storybook/nextjs
+  // variants we don't recognise) is left alone rather than guessed at.
+  const KNOWN = new Set([
+    '@storybook/react-vite',
+    '@storybook/react-webpack5',
+    '@storybook/nextjs',
+    '@storybook/nextjs-vite',
+    '@storybook/vue3-vite',
+    '@storybook/angular',
+    '@storybook/svelte-vite',
+    '@storybook/sveltekit',
+    '@storybook/web-components-vite',
+  ]);
+  if (!storybookFramework || !KNOWN.has(storybookFramework)) return code;
+
+  // Rewrite only the generic framework package, never an already-specific one.
+  const generic = /(from\s+['"])@storybook\/(react|vue3|svelte|web-components)(['"])/g;
+  return code.replace(generic, (match, pre, _fw, post) => {
+    return `${pre}${storybookFramework}${post}`;
+  });
 }
 
 /** Inject storyPrefix into the title and a unique id after it. */

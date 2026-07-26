@@ -6,14 +6,9 @@
 
 import { logger } from '../../story-generator/logger.js';
 import {
-  chatCompletion,
   generateTitle as llmGenerateTitle,
   isProviderConfigured,
-  getProviderInfo,
-  chatCompletionWithImages,
-  buildMessageWithImages
 } from '../../story-generator/llm-providers/story-llm-service.js';
-import { ImageContent } from '../../story-generator/llm-providers/types.js';
 
 /**
  * Slugify a string for use in filenames and identifiers.
@@ -70,43 +65,10 @@ export function extractCodeBlock(text: string, framework?: string): string | nul
   return null;
 }
 
-/**
- * Call the LLM service with optional vision support.
- * Automatically handles provider configuration and image attachment.
- */
-export async function callLLM(
-  messages: { role: 'user' | 'assistant'; content: string }[],
-  images?: ImageContent[]
-): Promise<string> {
-  if (!isProviderConfigured()) {
-    throw new Error('No LLM provider configured. Please set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY.');
-  }
-
-  const providerInfo = getProviderInfo();
-  logger.debug(`Using ${providerInfo.currentProvider} (${providerInfo.currentModel}) for story generation`);
-
-  if (images && images.length > 0) {
-    if (!providerInfo.supportsVision) {
-      throw new Error(`${providerInfo.currentProvider} does not support vision. Please configure a vision-capable provider.`);
-    }
-
-    logger.log(`🖼️ Using vision-capable chat with ${images.length} image(s)`);
-
-    const messagesWithImages = messages.map((msg, index) => {
-      if (msg.role === 'user' && index === 0) {
-        return {
-          role: msg.role as 'user' | 'assistant',
-          content: buildMessageWithImages(msg.content, images)
-        };
-      }
-      return msg;
-    });
-
-    return await chatCompletionWithImages(messagesWithImages, { maxTokens: 8192 });
-  }
-
-  return await chatCompletion(messages, { maxTokens: 8192 });
-}
+// NOTE: a second callLLM lived here and was never imported by anything. It
+// carried its own copies of the "check the default provider" and "attach
+// images at index 0" bugs. The single live implementation is callLLM in
+// generationCore.ts — keep it that way rather than reviving a parallel copy.
 
 /**
  * Clean a user prompt to create a readable title.
