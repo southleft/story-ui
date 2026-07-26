@@ -70,6 +70,7 @@ import {
 } from '../../story-generator/storybookMcpClient.js';
 import { IntentPreview, ValidationFeedback, CompletionFeedback } from './streamTypes.js';
 import { verifyStory } from '../../story-generator/verify/verifyStory.js';
+import { reflectDesignSystem, formatCompoundReference } from '../../story-generator/knowledge/runtimeReflect.js';
 import { attemptVerificationRepair } from './verifyRepair.js';
 import type { VerifyReport } from '../../story-generator/verify/findings.js';
 
@@ -1094,6 +1095,22 @@ async function buildClaudePromptWithContext(
       return null;
     }).filter(Boolean).join('\n')}`;
     prompt = injectBeforeUserRequest(prompt, bundledEnhancement);
+  }
+
+  // Compound structure reflected from the installed package. The flat component
+  // catalog cannot express that MenuTarget/MenuDropdown are Menu.Target and
+  // Menu.Dropdown, so the model was relying on recollection of the library —
+  // precisely the knowledge that is wrong for a private or updated design system.
+  try {
+    const reflected = await reflectDesignSystem(config.importPath, process.cwd(), {
+      framework: options.framework,
+    });
+    if (reflected) {
+      const compoundRef = formatCompoundReference(reflected);
+      if (compoundRef) prompt = injectBeforeUserRequest(prompt, compoundRef);
+    }
+  } catch {
+    // Reflection is an enhancement; generation proceeds without it.
   }
 
   if (options.storybookContext?.available) {
