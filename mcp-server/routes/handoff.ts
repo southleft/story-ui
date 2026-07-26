@@ -23,6 +23,7 @@ import { promisify } from 'util';
 import path from 'path';
 import fs from 'fs';
 import { logger } from '../../story-generator/logger.js';
+import { stylesheetNameFor } from '../../story-generator/storyArtifacts.js';
 
 const run = promisify(execFile);
 
@@ -188,7 +189,18 @@ export function makeHandoff(deps: HandoffDeps) {
         // exactly the named file is what that act means. Once committed the
         // file is tracked, so it behaves normally on the branch from then on —
         // .gitignore only ever applies to untracked files.
-        await git(['add', '-f', '--', relPath], cwd);
+        // The story AND its sibling stylesheet.
+        //
+        // writeStoryArtifacts emits an optional `<base>.module.css` next to the
+        // story, and handoff staged only the story — so any composition with a
+        // generated stylesheet handed off BROKEN: the engineer received a file
+        // importing CSS that was not in the commit.
+        const staged = [relPath];
+        const cssName = stylesheetNameFor(path.basename(storyPath));
+        const cssPath = path.join(path.dirname(storyPath), cssName);
+        if (fs.existsSync(cssPath)) staged.push(path.relative(cwd, cssPath));
+
+        await git(['add', '-f', '--', ...staged], cwd);
 
         const subject = `feat(story): ${storyTitle}`;
         const body = [
@@ -196,6 +208,7 @@ export function makeHandoff(deps: HandoffDeps) {
           'so the composition uses the real components and styling methods.',
           '',
           `Story: ${relPath}`,
+          ...(staged.length > 1 ? [`Stylesheet: ${staged[1]}`] : []),
         ].join('\n');
         await git(['commit', '-m', subject, '-m', body], cwd);
 
@@ -255,6 +268,7 @@ export function makeHandoff(deps: HandoffDeps) {
           returnedTo,
           commit: sha.trim(),
           file: relPath,
+          files: staged,
           pushed,
           prUrl,
         });

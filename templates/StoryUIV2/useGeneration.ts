@@ -8,9 +8,18 @@
  *
  * Known failure mode this must survive: writing the story file makes Vite reload
  * the Storybook preview iframe, and because the panel lives INSIDE that iframe,
- * the reload kills the in-flight SSE connection mid-generation. So progress is
- * mirrored to sessionStorage and the server persists the final reply; on remount
- * we recover rather than showing the user an empty chat.
+ * the reload kills the in-flight SSE connection mid-generation.
+ *
+ * HALF-BUILT, AND SAYING SO. The in-flight prompt is written to sessionStorage
+ * under PENDING_KEY below, and nothing reads it back — so a reload during a
+ * generation still leaves an empty chat. This comment previously claimed the
+ * recovery worked, which is worse than no comment: it stops anyone from
+ * building the missing half.
+ *
+ * The pieces needed already exist. The server persists the completed reply to
+ * the manifest, and `/story-ui/manifest/poll?since=<t>` is live. Recovery is:
+ * on mount, read PENDING_KEY; if set, poll for an entry newer than its
+ * startedAt and rebuild the turn from `metadata.lastCompletion`.
  */
 
 import { useCallback, useRef, useState } from 'react';
