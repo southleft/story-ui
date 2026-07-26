@@ -1065,7 +1065,16 @@ Material UI (MUI) is a React component library implementing Material Design.
 
   // Copy component files
   const templatesDir = path.resolve(__dirname, '../../templates/StoryUI');
-  const componentFiles = ['StoryUIPanel.tsx', 'StoryUIPanel.mdx', 'StoryUIPanel.css', 'manager.tsx'];
+  // NOTE: StoryUIPanel.tsx imports its siblings by relative path, so every module
+  // it pulls in must be copied alongside it — a missing entry here breaks the
+  // panel at import time in the consuming project, not at build time here.
+  const componentFiles = [
+    'StoryUIPanel.tsx',
+    'StoryUIPanel.mdx',
+    'StoryUIPanel.css',
+    'DesignContextPanel.tsx',
+    'manager.tsx',
+  ];
 
   // Voice Canvas files (subdirectory)
   const voiceFiles = ['VoiceCanvas.tsx', 'VoiceControls.tsx', 'useVoiceInput.ts', 'voiceCommands.ts', 'types.ts'];
