@@ -54,6 +54,7 @@ import { logger } from '../../story-generator/logger.js';
 import { UrlRedirectService } from '../../story-generator/urlRedirectService.js';
 import {
   chatCompletionDetailed,
+  chatCompletionStream,
   generateTitle as llmGenerateTitle,
   isProviderConfigured,
   getProviderInfo,
@@ -1208,6 +1209,63 @@ async function buildClaudePromptWithContext(
 // ============================================================
 // LLM interaction
 // ============================================================
+
+/**
+ * Stream the model's output so the longest phase of a generation is not silent.
+ *
+ * NOT YET WIRED INTO THE GENERATION LOOP, deliberately.
+ *
+ * The provider layer has always exposed a token stream (base-provider's
+ * chatStream, implemented by claude-provider), and the generation core only ever
+ * called the buffered path — leaving a ~30s window where the UI could say
+ * nothing truer than "AI is generating your story...". Closing that window is
+ * worth doing.
+ *
+ * The blocker is truncation. chatCompletionStream does not surface stop_reason,
+ * so this helper has to INFER truncation from unbalanced code fences, whereas
+ * the buffered path reads it from the provider. Swapping the call site would
+ * trade a reliable signal for a guess on precisely the large compositions
+ * (dashboards, CRM views) most likely to truncate — the case the output-ceiling
+ * work earlier fixed.
+ *
+ * The correct sequence is: surface stop_reason through chatStream and the
+ * service generator, then swap the call site, then extend the integration mocks.
+ * Until then the buffered path stays authoritative.
+ */
+/** The selected model's real output ceiling, shared by both LLM paths. */
+function providerMaxTokens(provider?: string, model?: string): number {
+  return getProviderInfo({ provider: provider as any, model }).maxOutputTokens ?? 8192;
+}
+
+async function callLLMStreaming(
+  messages: { role: 'user' | 'assistant'; content: string }[],
+  options: { provider?: string; model?: string; maxTokens: number },
+  onDelta: (charsWritten: number) => void,
+): Promise<{ content: string; truncated: boolean }> {
+  let content = '';
+  let lastEmit = 0;
+
+  for await (const chunk of chatCompletionStream(messages, {
+    provider: options.provider as any,
+    model: options.model,
+    maxTokens: options.maxTokens,
+  })) {
+    content += chunk;
+    // Throttled: the point is evidence of life, not a character counter.
+    const now = Date.now();
+    if (now - lastEmit > 250) {
+      lastEmit = now;
+      onDelta(content.length);
+    }
+  }
+  onDelta(content.length);
+
+  // The streaming path does not surface stop_reason, so infer truncation the
+  // same way the retry prompt describes it: the response was cut off before the
+  // code block closed. An odd number of fences means the block never ended.
+  const fences = (content.match(/```/g) || []).length;
+  return { content, truncated: fences > 0 && fences % 2 !== 0 };
+}
 
 async function callLLM(
   messages: { role: 'user' | 'assistant'; content: string }[],

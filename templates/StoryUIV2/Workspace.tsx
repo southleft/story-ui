@@ -7,11 +7,33 @@
  *   WORKSPACE  conversation rail on the left, the real Storybook preview on the
  *              right, the way every tool in this category works.
  *
- * The shell stays thin on purpose. Transport lives in useGeneration, the canvas
- * owns its own viewport state, and this file only decides what is on screen.
+ * Everything visual is Radix Themes. The hand-rolled layer this replaced kept
+ * producing the same class of defect — a reset that outranked its own button
+ * classes, a 3.90:1 primary CTA, a composer row that clipped its own Build
+ * button — none of which are problems worth solving twice. Radix owns surfaces,
+ * type scale, spacing, focus rings and contrast; workspace.css owns only the
+ * two-pane frame and the preview stage, which Radix has no opinion about.
+ *
+ * The `suiw-*` class names that remain are layout hooks and test selectors, not
+ * styling.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Badge,
+  Box,
+  Button,
+  Callout,
+  Card,
+  Flex,
+  Heading,
+  Select,
+  Separator,
+  Text,
+  TextArea,
+  Theme,
+} from '@radix-ui/themes';
+import '@radix-ui/themes/styles.css';
 import './workspace.css';
 import { PreviewCanvas } from './PreviewCanvas';
 import { useGeneration, waitForStory, type Verification } from './useGeneration';
@@ -68,7 +90,11 @@ const StepClock: React.FC<{ since: number }> = ({ since }) => {
   const secs = Math.max(0, Math.floor((now - since) / 1000));
   if (secs < 2) return null; // no clock on steps that flash past
   const m = Math.floor(secs / 60);
-  return <span className="suiw-step-meta">{m ? `${m}:${String(secs % 60).padStart(2, '0')}` : `${secs}s`}</span>;
+  return (
+    <Text size="1" color="gray" className="suiw-step-meta">
+      {m ? `${m}:${String(secs % 60).padStart(2, '0')}` : `${secs}s`}
+    </Text>
+  );
 };
 
 /**
@@ -97,7 +123,7 @@ const LazyThumb: React.FC<{ storyId: string; title: string }> = ({ storyId, titl
   }, [visible]);
 
   return (
-    <span ref={ref} className={`suiw-recent-thumb${visible ? '' : ' suiw-recent-thumb--idle'}`}>
+    <span ref={ref} className={`suiw-thumb${visible ? '' : ' suiw-thumb--idle'}`}>
       {visible ? (
         <iframe
           src={`/iframe.html?id=${encodeURIComponent(storyId)}&viewMode=story`}
@@ -105,9 +131,17 @@ const LazyThumb: React.FC<{ storyId: string; title: string }> = ({ storyId, titl
           loading="lazy"
           tabIndex={-1}
         />
-      ) : null}
+      ) : (
+        <Text size="1" color="gray">Preview</Text>
+      )}
     </span>
   );
+};
+
+const VERIFY_TONE: Record<Verification['outcome'], 'green' | 'amber' | 'gray'> = {
+  verified: 'green',
+  issues: 'amber',
+  not_verified: 'gray',
 };
 
 export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHandoff }) => {
@@ -121,6 +155,13 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
   const [connected, setConnected] = useState<boolean | null>(null);
   const [recent, setRecent] = useState<RecentStory[]>([]);
   const [activeStory, setActiveStory] = useState<{ id: string; title: string } | null>(null);
+  /**
+   * Set when a story was written to disk but Storybook never indexed it.
+   * Storybook's dev-server watcher stops delivering events after a while, and
+   * when that happens the generation succeeded — saying nothing made it look
+   * like the tool had failed.
+   */
+  const [notIndexed, setNotIndexed] = useState<{ fileName?: string; title?: string } | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
 
   const threadRef = useRef<HTMLDivElement>(null);
@@ -224,7 +265,11 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       if (resolved) {
         setActiveStory({ id: resolved, title: result.title || 'Untitled' });
         setReloadToken(t => t + 1);
+        setNotIndexed(null);
         storyId = resolved;
+      } else {
+        // The file is on disk; Storybook simply has not noticed it.
+        setNotIndexed({ fileName: result.fileName, title: result.title });
       }
     }
 
@@ -245,6 +290,16 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     loadRecent();
   }, [input, busy, turns, provider, model, considerations, generate, loadRecent]);
 
+  const recheckIndex = useCallback(async () => {
+    if (!notIndexed) return;
+    const found = await waitForStory('', notIndexed.title, 4000);
+    if (found) {
+      setActiveStory({ id: found, title: notIndexed.title || 'Untitled' });
+      setReloadToken(t => t + 1);
+      setNotIndexed(null);
+    }
+  }, [notIndexed]);
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -260,123 +315,223 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
   /* ---- composer, shared by both states -------------------------------- */
 
   const composer = (
-    <div className="suiw-composer">
-      <div className="suiw-composer-box">
-        <textarea
+    <Box p="3" className="suiw-composer">
+      <Card size="1">
+        <TextArea
+          size="2"
+          variant="soft"
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={onKeyDown}
           placeholder={started ? 'Describe a change, or ask for something new' : 'Describe the interface you want to build'}
           aria-label="Describe what to build"
           rows={started ? 2 : 3}
+          style={{ background: 'transparent', boxShadow: 'none' }}
         />
-        <div className="suiw-composer-row">
-          {designSystem && (
-            <span className="suiw-chip" title="Generated using the design system installed in this project">
+
+        <Flex align="center" gap="2" mt="2" wrap="nowrap">
+          {/* Only on home. In the workspace the rail is 400px, and badge + two
+              selects + Build does not fit — the Build button was being pushed
+              clean out of the row. The header already names the active story,
+              so the badge has nothing to add here. */}
+          {designSystem && !started && (
+            <Badge
+              color="gray"
+              variant="soft"
+              className="suiw-ellipsis"
+              title="Generated using the design system installed in this project"
+            >
               {designSystem}
-            </span>
+            </Badge>
           )}
-          <span className="suiw-composer-spacer" />
+
+          {/* Pushes the primary action to the trailing edge. */}
+          <Box flexGrow="1" minWidth="0" />
+
           {providers.length > 0 && (
             <>
-              <span className="suiw-select">
-                <select value={provider} onChange={e => setProvider(e.target.value)} aria-label="Provider">
+              <Select.Root value={provider} onValueChange={setProvider} size="1">
+                <Select.Trigger
+                  variant="soft"
+                  color="gray"
+                  aria-label="Provider"
+                  className="suiw-ellipsis"
+                  style={{ maxWidth: 108 }}
+                />
+                <Select.Content>
                   {providers.map(p => (
-                    <option key={p.type} value={p.type}>{p.name}</option>
+                    <Select.Item key={p.type} value={p.type}>{p.name}</Select.Item>
                   ))}
-                </select>
-              </span>
-              <span className="suiw-select">
-                <select value={model} onChange={e => setModel(e.target.value)} aria-label="Model">
-                  {models.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-              </span>
+                </Select.Content>
+              </Select.Root>
+
+              {/* Model ids run long (`gemini-3.1-flash-lite`), so this one is
+                  capped and truncates rather than eating the row. */}
+              <Select.Root value={model} onValueChange={setModel} size="1">
+                <Select.Trigger
+                  variant="soft"
+                  color="gray"
+                  aria-label="Model"
+                  className="suiw-ellipsis"
+                  style={{ maxWidth: 148 }}
+                />
+                <Select.Content>
+                  {models.map(m => <Select.Item key={m} value={m}>{m}</Select.Item>)}
+                </Select.Content>
+              </Select.Root>
             </>
           )}
+
           {busy ? (
-            <button type="button" className="suiw-btn suiw-btn--outline" onClick={cancel}>Stop</button>
+            <Button
+              size="2"
+              variant="soft"
+              color="gray"
+              onClick={cancel}
+              className="suiw-btn-stop"
+              style={{ flexShrink: 0 }}
+            >
+              Stop
+            </Button>
           ) : (
-            <button
-              type="button"
-              className="suiw-btn suiw-btn--primary"
+            /* highContrast, because Radix's solid variant puts white text on
+               accent-9 and jade-9 only reaches 3.15:1 — under AA for a 14px
+               label. highContrast swaps to accent-12 on accent-1 and measures
+               14.5:1. Every non-purple accent has this problem, so changing
+               hue would only have hidden it. */
+            <Button
+              size="2"
+              highContrast
               onClick={() => send()}
               disabled={!input.trim()}
+              className="suiw-btn-build"
+              style={{ flexShrink: 0 }}
             >
               Build
-            </button>
+            </Button>
           )}
-        </div>
-      </div>
-    </div>
+        </Flex>
+      </Card>
+    </Box>
+  );
+
+  const header = (
+    <Flex
+      align="center"
+      gap="3"
+      px="3"
+      py="2"
+      style={{ borderBottom: '1px solid var(--gray-a5)', flex: '0 0 auto' }}
+    >
+      <Flex align="center" gap="2">
+        {/* Soft rather than solid for the same reason as the Build button:
+            `--accent-contrast` on `--accent-9` is only 3.15:1 for jade. The
+            a4/11 pair is the one Radix guarantees for text. */}
+        <Flex
+          align="center"
+          justify="center"
+          width="20px"
+          height="20px"
+          style={{ background: 'var(--accent-a4)', borderRadius: 'var(--radius-2)' }}
+        >
+          <Text size="1" weight="bold" style={{ color: 'var(--accent-11)' }}>S</Text>
+        </Flex>
+        <Text size="2" weight="medium">Story UI</Text>
+      </Flex>
+
+      {started && (
+        <>
+          <Separator orientation="vertical" size="1" />
+          <Text size="2" color="gray" className="suiw-ellipsis">
+            {activeStory?.title ?? 'Untitled'}
+          </Text>
+        </>
+      )}
+
+      <Box flexGrow="1" minWidth="0" />
+
+      {started ? (
+        <Button
+          size="1"
+          variant="soft"
+          color="gray"
+          onClick={() => { setTurns([]); setActiveStory(null); setNotIndexed(null); loadRecent(); }}
+        >
+          New
+        </Button>
+      ) : (
+        <Badge color={connected === false ? 'red' : 'green'} variant="soft">
+          {connected === false ? 'Server unreachable' : 'Connected'}
+        </Badge>
+      )}
+    </Flex>
   );
 
   /* ---- home ------------------------------------------------------------ */
 
   if (!started) {
     return (
-      <div className="suiw">
-        <header className="suiw-top">
-          <span className="suiw-brand">
-            <span className="suiw-brand-mark">S</span>
-            Story UI
-          </span>
-          <span className="suiw-top-spacer" />
-          <span className={`suiw-status ${connected === false ? 'suiw-status--off' : ''}`}>
-            <span className="suiw-status-dot" />
-            {connected === false ? 'Server unreachable' : 'Connected'}
-          </span>
-        </header>
+      <div className="suiw-root suiw sb-unstyled">
+        <Theme appearance="dark" accentColor="jade" radius="medium">
+          {header}
 
-        <div className="suiw-home">
-          <div className="suiw-home-inner">
-            <h1>What should we build?</h1>
-            <p className="suiw-home-sub">
-              {designSystem
-                ? `Composed from ${designSystem}, the design system installed in this project.`
-                : 'Composed from the design system installed in this project.'}
-            </p>
+          <Box className="suiw-scroll suiw-home">
+            <Box px="5" py="8" style={{ maxWidth: 820, marginInline: 'auto' }}>
+              <Heading size="7" weight="medium" align="center">What should we build?</Heading>
+              <Text as="p" size="2" color="gray" align="center" mt="2" className="suiw-home-sub">
+                {designSystem
+                  ? `Composed from ${designSystem}, the design system installed in this project.`
+                  : 'Composed from the design system installed in this project.'}
+              </Text>
 
-            {composer}
+              <Box mt="4">{composer}</Box>
 
-            <div className="suiw-home-suggestions">
-              {SUGGESTIONS.map(s => (
-                <button key={s} type="button" className="suiw-chip" onClick={() => send(s)}>
-                  {s}
-                </button>
-              ))}
-            </div>
+              <Flex gap="2" wrap="wrap" justify="center" px="3">
+                {SUGGESTIONS.map(s => (
+                  <Button key={s} size="1" variant="surface" color="gray" onClick={() => send(s)}>
+                    {s}
+                  </Button>
+                ))}
+              </Flex>
 
-            {recent.length > 0 && (
-              <section className="suiw-home-section">
-                <div className="suiw-home-section-head">
-                  <h2>Recent work</h2>
-                  <span>{recent.length} in this project</span>
-                </div>
-                <div className="suiw-recent">
-                  {recent.map(r => (
-                    <button
-                      key={r.id}
-                      type="button"
-                      className="suiw-recent-card"
-                      onClick={() => {
-                        setActiveStory({ id: r.id, title: r.title });
-                        setTurns([{ id: uid(), role: 'assistant', text: `Opened ${r.title}.`, storyId: r.id, title: r.title }]);
-                      }}
-                    >
-                      {/* A real render, not a screenshot — the thumbnail is the
-                          story itself at half scale, mounted only when seen. */}
-                      <LazyThumb storyId={r.id} title={r.title} />
-                      <span className="suiw-recent-meta">
-                        <span className="suiw-recent-name">{r.title}</span>
-                        <span className="suiw-recent-time">{r.name}</span>
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </section>
-            )}
-          </div>
-        </div>
+              {recent.length > 0 && (
+                <Box mt="8">
+                  <Flex align="baseline" justify="between" mb="3">
+                    {/* Radix Heading renders h1 unless told otherwise, which
+                        gave the page two competing h1s. */}
+                    <Heading as="h2" size="3" weight="medium">Recent work</Heading>
+                    <Text size="1" color="gray">{recent.length} in this project</Text>
+                  </Flex>
+
+                  <div className="suiw-recent-grid">
+                    {recent.map(r => (
+                      <Card key={r.id} asChild size="1" style={{ padding: 0, overflow: 'hidden' }}>
+                        <button
+                          type="button"
+                          className="suiw-recent-card"
+                          style={{ cursor: 'pointer', textAlign: 'left', display: 'block', width: '100%' }}
+                          onClick={() => {
+                            setActiveStory({ id: r.id, title: r.title });
+                            setTurns([{ id: uid(), role: 'assistant', text: `Opened ${r.title}.`, storyId: r.id, title: r.title }]);
+                          }}
+                        >
+                          {/* A real render, not a screenshot — the thumbnail is
+                              the story itself at half scale, mounted only when
+                              scrolled into view. */}
+                          <LazyThumb storyId={r.id} title={r.title} />
+                          <Box p="2">
+                            <Text as="div" size="2" weight="medium" truncate>{r.title}</Text>
+                            <Text as="div" size="1" color="gray" truncate>{r.name}</Text>
+                          </Box>
+                        </button>
+                      </Card>
+                    ))}
+                  </div>
+                </Box>
+              )}
+            </Box>
+          </Box>
+        </Theme>
       </div>
     );
   }
@@ -384,97 +539,118 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
   /* ---- workspace -------------------------------------------------------- */
 
   return (
-    <div className="suiw">
-      <header className="suiw-top">
-        <span className="suiw-brand">
-          <span className="suiw-brand-mark">S</span>
-          Story UI
-        </span>
-        <span className="suiw-top-title">{activeStory?.title ?? 'Untitled'}</span>
-        <span className="suiw-top-spacer" />
-        <button
-          type="button"
-          className="suiw-btn"
-          onClick={() => { setTurns([]); setActiveStory(null); loadRecent(); }}
-        >
-          New
-        </button>
-      </header>
+    <div className="suiw-root suiw">
+      <Theme appearance="dark" accentColor="jade" radius="medium">
+        {header}
 
-      <div className="suiw-body">
-        <div className="suiw-rail">
-          <div className="suiw-thread" ref={threadRef}>
-            {turns.map(turn => (
-              <div key={turn.id} className={`suiw-turn suiw-turn--${turn.role}`}>
-                <div className="suiw-turn-body">{turn.text}</div>
-
-                {turn.verification && (
-                  <div className={`suiw-verify suiw-verify--${turn.verification.outcome}`}>
-                    <span>
-                      {turn.verification.outcome === 'verified' && 'Verified in browser'}
-                      {turn.verification.outcome === 'issues' && `${turn.verification.findings.filter(f => f.severity === 'blocker').length} issue(s) found`}
-                      {turn.verification.outcome === 'not_verified' && 'Not verified'}
-                    </span>
-                    {typeof turn.verification.metrics?.focusables === 'number' && (
-                      <span className="suiw-verify-metrics">
-                        {turn.verification.metrics.focusables} focusable
-                      </span>
+        <div className="suiw-body">
+          <div className="suiw-rail">
+            <Box className="suiw-scroll" p="3" ref={threadRef as any}>
+              <Flex direction="column" gap="3">
+                {turns.map(turn => (
+                  <Flex
+                    key={turn.id}
+                    direction="column"
+                    gap="2"
+                    align={turn.role === 'user' ? 'end' : 'start'}
+                    className={`suiw-turn suiw-turn--${turn.role}`}
+                  >
+                    {turn.role === 'user' ? (
+                      <Card size="1" variant="surface" style={{ maxWidth: '85%' }}>
+                        <Text as="div" size="2" className="suiw-turn-body">{turn.text}</Text>
+                      </Card>
+                    ) : (
+                      <Text as="div" size="2" color="gray" className="suiw-turn-body">{turn.text}</Text>
                     )}
-                  </div>
-                )}
 
-                {turn.elapsedMs != null && (
-                  <div className="suiw-turn-meta">
-                    <span>{(turn.elapsedMs / 1000).toFixed(1)}s</span>
-                  </div>
-                )}
+                    {turn.verification && (
+                      <Flex align="center" gap="2" className="suiw-verify">
+                        <Badge color={VERIFY_TONE[turn.verification.outcome]} variant="soft">
+                          {turn.verification.outcome === 'verified' && 'Verified in browser'}
+                          {turn.verification.outcome === 'issues' &&
+                            `${turn.verification.findings.filter(f => f.severity === 'blocker').length} issue(s) found`}
+                          {turn.verification.outcome === 'not_verified' && 'Not verified'}
+                        </Badge>
+                        {typeof turn.verification.metrics?.focusables === 'number' && (
+                          <Text size="1" color="gray">
+                            {turn.verification.metrics.focusables} focusable
+                          </Text>
+                        )}
+                        {turn.elapsedMs != null && (
+                          <Text size="1" color="gray">{(turn.elapsedMs / 1000).toFixed(1)}s</Text>
+                        )}
+                      </Flex>
+                    )}
 
-                {turn.suggestions && turn.suggestions.length > 0 && (
-                  <div className="suiw-turn-actions">
-                    {turn.suggestions.slice(0, 3).map(s => (
-                      <button key={s} type="button" className="suiw-chip" onClick={() => send(s)}>
-                        {s}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
+                    {turn.verification == null && turn.elapsedMs != null && (
+                      <Text size="1" color="gray">{(turn.elapsedMs / 1000).toFixed(1)}s</Text>
+                    )}
 
-            {steps.length > 0 && busy && (
-              <div className="suiw-steps">
-                {steps.map(s => (
-                  <div key={s.id} className={`suiw-step suiw-step--${s.state}`}>
-                    <span className="suiw-step-dot" />
-                    <span className="suiw-step-label">{s.label}</span>
-                    {s.state === 'active' && <StepClock since={s.startedAt} />}
-                  </div>
+                    {turn.suggestions && turn.suggestions.length > 0 && (
+                      <Flex gap="2" wrap="wrap" className="suiw-turn-actions">
+                        {turn.suggestions.slice(0, 3).map(s => (
+                          <Button key={s} size="1" variant="surface" color="gray" onClick={() => send(s)}>
+                            {s}
+                          </Button>
+                        ))}
+                      </Flex>
+                    )}
+                  </Flex>
                 ))}
-              </div>
-            )}
 
-            {error && (
-              <div className="suiw-verify suiw-verify--issues" role="alert">
-                <span>{error}</span>
-              </div>
-            )}
+                {steps.length > 0 && busy && (
+                  <Flex direction="column" gap="1" className="suiw-steps">
+                    {steps.map(s => (
+                      <Flex key={s.id} align="center" gap="2" className={`suiw-step suiw-step--${s.state}`}>
+                        <Box
+                          width="6px"
+                          height="6px"
+                          className={s.state === 'active' ? 'suiw-pulse' : undefined}
+                          style={{
+                            borderRadius: '50%',
+                            background: s.state === 'active' ? 'var(--accent-9)' : 'var(--gray-a7)',
+                            flex: '0 0 auto',
+                          }}
+                        />
+                        <Text
+                          size="1"
+                          color={s.state === 'active' ? undefined : 'gray'}
+                          className="suiw-step-label"
+                        >
+                          {s.label}
+                        </Text>
+                        {s.state === 'active' && <StepClock since={s.startedAt} />}
+                      </Flex>
+                    ))}
+                  </Flex>
+                )}
+
+                {error && (
+                  <Callout.Root color="red" size="1" role="alert">
+                    <Callout.Text>{error}</Callout.Text>
+                  </Callout.Root>
+                )}
+              </Flex>
+            </Box>
+
+            {composer}
           </div>
 
-          {composer}
+          <PreviewCanvas
+            storyId={activeStory?.id}
+            title={activeStory?.title}
+            reloadToken={reloadToken}
+            busy={busy}
+            notIndexed={notIndexed}
+            onRecheck={recheckIndex}
+            onOpenInStorybook={() => activeStory && onOpenStory?.(activeStory.id)}
+            onHandoff={() => {
+              const last = [...turns].reverse().find(t => t.fileName);
+              if (last?.fileName) onHandoff?.(last.fileName, last.title || 'Story');
+            }}
+          />
         </div>
-
-        <PreviewCanvas
-          storyId={activeStory?.id}
-          title={activeStory?.title}
-          reloadToken={reloadToken}
-          busy={busy}
-          onOpenInStorybook={() => activeStory && onOpenStory?.(activeStory.id)}
-          onHandoff={() => {
-            const last = [...turns].reverse().find(t => t.fileName);
-            if (last?.fileName) onHandoff?.(last.fileName, last.title || 'Story');
-          }}
-        />
-      </div>
+      </Theme>
     </div>
   );
 };

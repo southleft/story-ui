@@ -11,6 +11,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Badge, Button, Callout, Flex, SegmentedControl, Text } from '@radix-ui/themes';
 
 export type Viewport = 'desktop' | 'tablet' | 'mobile';
 
@@ -21,16 +22,16 @@ const VIEWPORTS: Record<Viewport, { w: number; h: number; label: string }> = {
 };
 
 interface PreviewCanvasProps {
-  /** Storybook story id to render, e.g. "generated-pricing-card--default". */
   storyId?: string;
-  /** Human title for the bar. */
   title?: string;
   /** Bumped by the caller to force a reload after a regeneration. */
   reloadToken?: number;
-  /** Shown while a generation is in flight and no story exists yet. */
   busy?: boolean;
   onOpenInStorybook?: () => void;
   onHandoff?: () => void;
+  /** Set when the story was written but Storybook never indexed it. */
+  notIndexed?: { fileName?: string; title?: string } | null;
+  onRecheck?: () => void;
 }
 
 export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
@@ -40,13 +41,16 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
   busy = false,
   onOpenInStorybook,
   onHandoff,
+  notIndexed,
+  onRecheck,
 }) => {
   const [viewport, setViewport] = useState<Viewport>('desktop');
   const [zoom, setZoom] = useState(1);
   const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
   const stageRef = useRef<HTMLDivElement>(null);
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const lastSrc = useRef<string | null>(null);
 
-  // Measure the stage so the frame can fit-to-width rather than overflow.
   useEffect(() => {
     const el = stageRef.current;
     if (!el) return;
@@ -64,35 +68,23 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
   // frame blown up to fill 1200px would misrepresent the design.
   const fitScale = useMemo(() => {
     if (!stageSize.w || !stageSize.h) return 1;
-    const pad = 40;
+    const pad = 48;
     return Math.min(1, (stageSize.w - pad) / spec.w, (stageSize.h - pad) / spec.h);
   }, [stageSize, spec]);
 
   const scale = fitScale * zoom;
+  const src = storyId ? `/iframe.html?id=${encodeURIComponent(storyId)}&viewMode=story` : undefined;
 
-  const src = storyId
-    ? `/iframe.html?id=${encodeURIComponent(storyId)}&viewMode=story`
-    : undefined;
-
-  // Navigate the SAME iframe rather than remounting it.
-  //
-  // Keying the frame on a reload counter forced a fresh mount per generation,
-  // which means a cold Storybook boot every time (hundreds of ms of white) and
-  // makes a cross-fade impossible because the old document is destroyed before
-  // the new one paints. Instead the frame is mounted once and its location is
-  // driven imperatively, so the previous composition stays on screen —
-  // dimmed — until the new one is ready.
-  const frameRef = useRef<HTMLIFrameElement>(null);
-  const lastSrc = useRef<string | null>(null);
-
-  // Drive the frame's location imperatively so the element is never torn down.
+  // Navigate the SAME iframe rather than remounting it. Keying the frame on a
+  // reload counter forced a cold Storybook boot per generation and made a
+  // cross-fade impossible, because the old document dies before the new paints.
   useEffect(() => {
     const frame = frameRef.current;
     if (!frame || !src) return;
     if (lastSrc.current === src && reloadToken === 0) return;
-    // location.replace keeps the workspace out of the iframe's history, so the
-    // browser Back button never walks the user through old previews.
     try {
+      // location.replace keeps the workspace out of the iframe's history, so
+      // Back never walks the user through old previews.
       if (frame.contentWindow) frame.contentWindow.location.replace(src);
       else frame.src = src;
     } catch {
@@ -107,62 +99,42 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
 
   return (
     <div className="suiw-canvas">
-      <div className="suiw-canvas-bar">
-        <div className="suiw-top-group" role="group" aria-label="Viewport">
+      <Flex align="center" gap="3" px="3" py="2" style={{ borderBottom: '1px solid var(--gray-a5)' }}>
+        <SegmentedControl.Root size="1" value={viewport} onValueChange={v => setViewport(v as Viewport)}>
           {(Object.keys(VIEWPORTS) as Viewport[]).map(v => (
-            <button
-              key={v}
-              type="button"
-              className="suiw-btn"
-              aria-pressed={viewport === v}
-              onClick={() => setViewport(v)}
-              title={`${VIEWPORTS[v].label} (${VIEWPORTS[v].w}px)`}
-            >
+            <SegmentedControl.Item key={v} value={v}>
               {VIEWPORTS[v].label}
-            </button>
+            </SegmentedControl.Item>
           ))}
-        </div>
+        </SegmentedControl.Root>
 
-        <button type="button" className="suiw-btn" onClick={cycleZoom} title="Zoom">
+        <Button size="1" variant="ghost" color="gray" onClick={cycleZoom} title="Zoom">
           {Math.round(scale * 100)}%
-        </button>
+        </Button>
 
-        <span className="suiw-top-spacer" />
+        <Flex flexGrow="1" minWidth="0" justify="center">
+          {title && <Text size="1" color="gray" className="suiw-ellipsis">{title}</Text>}
+        </Flex>
 
-        {title && <span className="suiw-top-title">{title}</span>}
-
-        <button
-          type="button"
-          className="suiw-btn"
-          onClick={onOpenInStorybook}
-          disabled={!storyId}
-          title="Open this story in Storybook"
-        >
+        <Button size="1" variant="ghost" color="gray" disabled={!storyId} onClick={onOpenInStorybook}>
           Open in Storybook
-        </button>
-        <button
-          type="button"
-          className="suiw-btn suiw-btn--primary"
-          onClick={onHandoff}
-          disabled={!storyId}
-          title="Commit to a branch for a product engineer"
-        >
+        </Button>
+        {/* highContrast: solid-on-accent-9 measures 3.15:1 for this accent,
+            under AA. See the Build button in Workspace.tsx. */}
+        <Button size="1" highContrast disabled={!storyId} onClick={onHandoff}>
           Hand off
-        </button>
-      </div>
+        </Button>
+      </Flex>
 
-      <div className="suiw-canvas-stage" ref={stageRef}>
+      <div className="suiw-stage" ref={stageRef}>
         {src ? (
           <div
             className={`suiw-frame${busy ? ' suiw-frame--stale' : ''}`}
-            style={{
-              width: spec.w * scale,
-              height: spec.h * scale,
-            }}
+            style={{ width: spec.w * scale, height: spec.h * scale }}
           >
-            {/* The iframe renders at true viewport size and is scaled down, so
-                the story sees the media queries it would see at that width —
-                scaling the container instead would lie about breakpoints. */}
+            {/* Rendered at true viewport size and scaled down, so the story sees
+                the media queries it would see at that width. Scaling the
+                container instead would lie about breakpoints. */}
             <iframe
               ref={frameRef}
               title={title || 'Generated story preview'}
@@ -174,24 +146,41 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
               }}
             />
           </div>
-        ) : (
-          <div className="suiw-canvas-empty">
-            {busy ? (
-              <>
-                <span>Building your composition</span>
-                <span style={{ fontSize: 12 }}>
-                  It will appear here as soon as the story is written and indexed.
-                </span>
-              </>
-            ) : (
-              <>
-                <span>Nothing to preview yet</span>
-                <span style={{ fontSize: 12 }}>
-                  Describe what you want on the left, and it renders here using your own components.
-                </span>
-              </>
+        ) : busy ? (
+          <Flex direction="column" align="center" gap="2">
+            <Badge color="orange" variant="soft">
+              <span className="suiw-pulse">Building</span>
+            </Badge>
+            <Text size="2" color="gray">
+              It appears here as soon as the story is written and indexed.
+            </Text>
+          </Flex>
+        ) : notIndexed ? (
+          // The generation SUCCEEDED. Saying "nothing to preview" here read as
+          // failure and sent the user hunting for a bug in the wrong place.
+          <Callout.Root color="amber" size="1" style={{ maxWidth: 520 }}>
+            <Callout.Text>
+              <Text weight="medium">Your story was created, but Storybook has not picked it up.</Text>
+              <br />
+              {notIndexed.fileName ? `${notIndexed.fileName} is on disk. ` : 'The file is on disk. '}
+              Storybook&rsquo;s file watcher stops delivering events after a while, and when that
+              happens new stories never enter its index. Restarting Storybook picks it up.
+            </Callout.Text>
+            {onRecheck && (
+              <Flex mt="2">
+                <Button size="1" variant="soft" color="amber" onClick={onRecheck}>
+                  Check again
+                </Button>
+              </Flex>
             )}
-          </div>
+          </Callout.Root>
+        ) : (
+          <Flex direction="column" align="center" gap="1" style={{ maxWidth: '44ch' }}>
+            <Text size="2" color="gray">Nothing to preview yet</Text>
+            <Text size="1" color="gray" align="center">
+              Describe what you want on the left, and it renders here using your own components.
+            </Text>
+          </Flex>
         )}
       </div>
     </div>
