@@ -564,20 +564,31 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                     )}
 
                     {turn.verification && (
-                      <Flex align="center" gap="2" className="suiw-verify">
-                        <Badge color={VERIFY_TONE[turn.verification.outcome]} variant="soft">
-                          {turn.verification.outcome === 'verified' && 'Verified in browser'}
-                          {turn.verification.outcome === 'issues' &&
-                            `${turn.verification.findings.filter(f => f.severity === 'blocker').length} issue(s) found`}
-                          {turn.verification.outcome === 'not_verified' && 'Not verified'}
-                        </Badge>
-                        {typeof turn.verification.metrics?.focusables === 'number' && (
-                          <Text size="1" color="gray">
-                            {turn.verification.metrics.focusables} focusable
-                          </Text>
-                        )}
-                        {turn.elapsedMs != null && (
-                          <Text size="1" color="gray">{(turn.elapsedMs / 1000).toFixed(1)}s</Text>
+                      <Flex direction="column" gap="1" className="suiw-verify">
+                        <Flex align="center" gap="2">
+                          <Badge color={VERIFY_TONE[turn.verification.outcome]} variant="soft">
+                            {turn.verification.outcome === 'verified' && 'Verified in browser'}
+                            {turn.verification.outcome === 'issues' &&
+                              `${turn.verification.findings.filter(f => f.severity === 'blocker').length} issue(s) found`}
+                            {turn.verification.outcome === 'not_verified' && 'Not verified'}
+                          </Badge>
+                          {typeof turn.verification.metrics?.focusables === 'number' && (
+                            <Text size="1" color="gray">
+                              {turn.verification.metrics.focusables} focusable
+                            </Text>
+                          )}
+                          {turn.elapsedMs != null && (
+                            <Text size="1" color="gray">{(turn.elapsedMs / 1000).toFixed(1)}s</Text>
+                          )}
+                        </Flex>
+
+                        {/* "Not verified" on its own reads as "your story is
+                            bad", when it usually means we could not check —
+                            Playwright missing, Storybook unreachable, the story
+                            not indexed yet. The server always sends a reason;
+                            withholding it just moved the confusion downstream. */}
+                        {turn.verification.outcome === 'not_verified' && turn.verification.reason && (
+                          <Text size="1" color="gray">{turn.verification.reason}</Text>
                         )}
                       </Flex>
                     )}

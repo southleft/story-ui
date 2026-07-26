@@ -817,6 +817,7 @@ export async function runStoryGeneration(
         verification = await verifyStory({
           storybookUrl: verifyUrl,
           storyIdPrefix: storyIdSlug,
+          title: cleanTitle,
           projectRoot: process.cwd(),
         });
         // Enforce mode: repair what the browser observed.
@@ -848,6 +849,7 @@ export async function runStoryGeneration(
               return verifyStory({
                 storybookUrl: verifyUrl,
                 storyIdPrefix: storyIdSlug,
+                title: cleanTitle,
                 projectRoot: process.cwd(),
               });
             },

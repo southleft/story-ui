@@ -24,6 +24,12 @@ export interface VerifyStoryOptions {
   storybookUrl?: string;
   /** Story id prefix derived from the generated title, e.g. "generated-menu-bar". */
   storyIdPrefix: string;
+  /**
+   * The story's title. Storybook derives ids from the title when the meta does
+   * not declare one, so the prefix alone can fail to resolve a story that
+   * rendered fine. See waitForStoryIndexed.
+   */
+  title?: string;
   /** Project root to resolve host tooling from. */
   projectRoot?: string;
   /** Total budget. Verification must never dominate generation latency. */
@@ -84,7 +90,7 @@ function censusFindings(problems: Awaited<ReturnType<typeof runDomCensus>>['prob
 
 export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyReport> {
   const started = Date.now();
-  const { storybookUrl, storyIdPrefix, projectRoot = process.cwd(), timeoutMs = 20000 } = options;
+  const { storybookUrl, storyIdPrefix, title, projectRoot = process.cwd(), timeoutMs = 20000 } = options;
 
   if (!storybookUrl) {
     return notVerified('No Storybook URL available to verify against', started);
@@ -102,7 +108,7 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
 
   // The story has to be in the index before it can be rendered by id. This also
   // separates "generated badly" from "Storybook never noticed the file".
-  const indexed = await waitForStoryIndexed(storybookUrl, storyIdPrefix, Math.min(10000, timeoutMs));
+  const indexed = await waitForStoryIndexed(storybookUrl, storyIdPrefix, Math.min(10000, timeoutMs), 250, title);
   if (!indexed.indexed || !indexed.storyId) {
     return notVerified(
       `Story did not appear in Storybook's index — it may not have been picked up yet`,

@@ -130,9 +130,27 @@ export async function waitForStoryIndexed(
   storyIdPrefix: string,
   timeoutMs = 10000,
   intervalMs = 250,
+  /**
+   * The story's title, which is authoritative when the id is not.
+   *
+   * Generated stories only sometimes declare an explicit `id:` in their meta.
+   * When they don't, Storybook derives the id from the title instead, so a file
+   * written as `notification-settings-panel-addff419.stories.tsx` indexes as
+   * `generated-notification-settings-panel`. Matching the filename slug alone
+   * then never resolves, and verification reported `not_verified` for stories
+   * that had rendered perfectly well.
+   *
+   * This mirrors waitForStory in templates/StoryUIV2/useGeneration.ts, where the
+   * same mismatch left the canvas empty. Both resolvers have to agree.
+   */
+  title?: string,
 ): Promise<{ indexed: boolean; storyId?: string }> {
   const deadline = Date.now() + timeoutMs;
   const base = storybookUrl.replace(/\/+$/, '');
+  const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+  const candidates = [storyIdPrefix];
+  if (title) candidates.push(`generated-${slug(title)}`, slug(title));
 
   while (Date.now() < deadline) {
     try {
@@ -142,10 +160,26 @@ export async function waitForStoryIndexed(
       if (res.ok) {
         const index: any = await res.json();
         const entries = index?.entries ?? {};
-        const match =
-          Object.keys(entries).find(id => id.startsWith(`${storyIdPrefix}--`) && entries[id].type === 'story') ||
-          Object.keys(entries).find(id => id.startsWith(`${storyIdPrefix}--`));
-        if (match) return { indexed: true, storyId: match };
+        const ids = Object.keys(entries);
+
+        for (const prefix of candidates) {
+          if (!prefix) continue;
+          const match =
+            ids.find(id => id.startsWith(`${prefix}--`) && entries[id].type === 'story') ||
+            ids.find(id => id.startsWith(`${prefix}--`));
+          if (match) return { indexed: true, storyId: match };
+        }
+
+        // Last resort: the entry's own title, which no id-derivation rule can
+        // distort.
+        if (title) {
+          const byTitle = ids.find(
+            id => entries[id].type === 'story' &&
+              typeof entries[id].title === 'string' &&
+              entries[id].title.replace(/^Generated\//, '').toLowerCase() === title.toLowerCase(),
+          );
+          if (byTitle) return { indexed: true, storyId: byTitle };
+        }
       }
     } catch {
       // Storybook may not be up yet; keep polling until the deadline.
