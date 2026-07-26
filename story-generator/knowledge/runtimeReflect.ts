@@ -17,6 +17,7 @@
  */
 
 import { createRequire } from 'module';
+import { pathToFileURL } from 'url';
 import path from 'path';
 import fs from 'fs';
 import { logger } from '../logger.js';
@@ -122,7 +123,9 @@ export async function reflectDesignSystem(
   try {
     // Resolve from the HOST project so we reflect the installed copy.
     const entry = req.resolve(importPath);
-    mod = await import(`file://${entry}`);
+    // pathToFileURL rather than string concatenation: `file://${abs}` is
+    // malformed on Windows and for paths with spaces or unicode.
+    mod = await import(pathToFileURL(entry).href);
   } catch (error) {
     logger.log(`ℹ️ Could not import ${importPath} for reflection: ${error instanceof Error ? error.message : String(error)}`);
     return null;
