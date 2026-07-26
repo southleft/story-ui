@@ -71,6 +71,7 @@ import {
 import { IntentPreview, ValidationFeedback, CompletionFeedback } from './streamTypes.js';
 import { verifyStory } from '../../story-generator/verify/verifyStory.js';
 import { reflectDesignSystem, formatCompoundReference } from '../../story-generator/knowledge/runtimeReflect.js';
+import { extractProps, rankProps } from '../../story-generator/knowledge/propExtractor.js';
 import {
   writeStoryArtifacts,
   extractStylesheet,
@@ -270,6 +271,36 @@ export async function runStoryGeneration(
   events.onProgress?.(2, totalSteps, 'components_discovered', 'Discovering available components...');
   const discovery = new EnhancedComponentDiscovery(config);
   const components = await discovery.discoverAll();
+
+  // Enrich the catalog with real prop signatures read from the installed
+  // package's type declarations. Discovery yields names only for npm packages,
+  // so without this the model infers every component's API — fine for a library
+  // it has memorised, guesswork for a private design system.
+  try {
+    const extracted = await extractProps(config.importPath, process.cwd());
+    if (extracted) {
+      let enriched = 0;
+      for (const component of components as any[]) {
+        const facts = extracted.components[component.name];
+        if (!facts) continue;
+        if (!component.props || component.props.length === 0) {
+          component.props = rankProps(facts.props).map(p =>
+            `${p.name}${p.required ? '' : '?'}${p.type ? `: ${p.type}` : ''}`,
+          );
+          enriched++;
+        }
+        if (facts.variants?.length) {
+          const variantNote = `variants: ${facts.variants.join(' | ')}`;
+          component.description = component.description
+            ? `${component.description} — ${variantNote}`
+            : variantNote;
+        }
+      }
+      logger.log(`🧠 Enriched ${enriched} components with extracted prop signatures`);
+    }
+  } catch {
+    // Enrichment is additive; generation proceeds with names alone.
+  }
   events.onProgress?.(2, totalSteps, 'components_discovered',
     `Found ${components.length} components from ${config.importPath}`,
     { componentCount: components.length });
