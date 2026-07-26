@@ -7,6 +7,11 @@
  * with the preview iframe) and navigates to the Story UI panel, which picks
  * up the stash and opens that story's chat conversation.
  *
+ * Targets the V2 workspace when the project has one, falling back to the V1
+ * panel otherwise. It used to be hardcoded to V1, so on a V2 project this
+ * button silently threw the user back into the old generator with none of
+ * their conversation — the single most visible leftover of V1.
+ *
  * Wired up from .storybook/manager.ts(x):
  *   import '../src/stories/StoryUI/manager';
  *
@@ -16,21 +21,55 @@ import React from 'react';
 import { addons, types, useStorybookApi, useStorybookState } from 'storybook/manager-api';
 
 const EDIT_REQUEST_KEY = 'story-ui-edit-request';
+const WORKSPACE_DOCS_ID = 'story-ui-workspace--docs';
 const PANEL_DOCS_ID = 'story-ui-story-generator--docs';
+/** V2 first; V1 is the fallback for projects that never adopted the workspace. */
+const TARGET_IDS = [WORKSPACE_DOCS_ID, PANEL_DOCS_ID];
 const GENERATED_PREFIX = 'Generated/';
+
+/**
+ * Which Story UI surface this project actually has.
+ *
+ * Read from Storybook's own index rather than the manager API: `api.getData`
+ * varies across Storybook versions and returned nothing here, so a V2 project
+ * silently fell back to the V1 panel — the button threw the user into the old
+ * generator with none of their conversation. /index.json is same-origin,
+ * version-proof, and the check every other part of Story UI already uses.
+ */
+function useStoryUiTarget(): string {
+  const [target, setTarget] = React.useState(PANEL_DOCS_ID);
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('index.json');
+        if (!res.ok) return;
+        const entries = (await res.json())?.entries ?? {};
+        const found = TARGET_IDS.find(id => entries[id]);
+        if (found && !cancelled) setTarget(found);
+      } catch {
+        /* keep the V1 default, which every project has */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  return target;
+}
 
 const EditInStoryUITool: React.FC = () => {
   const api = useStorybookApi();
   // Subscribing to manager state re-renders the tool on story navigation.
   useStorybookState();
+  const target = useStoryUiTarget();
 
   const current = api.getCurrentStoryData?.();
   const title: string = (current as any)?.title ?? '';
   const storyId: string = (current as any)?.id ?? '';
 
-  if (!storyId || storyId === PANEL_DOCS_ID || !title.startsWith(GENERATED_PREFIX)) {
+  if (!storyId || TARGET_IDS.includes(storyId) || !title.startsWith(GENERATED_PREFIX)) {
     return null;
   }
+
 
   const openInPanel = () => {
     try {
@@ -42,9 +81,9 @@ const EditInStoryUITool: React.FC = () => {
       /* sessionStorage unavailable — panel just opens without preselection */
     }
     try {
-      api.selectStory(PANEL_DOCS_ID);
+      api.selectStory(target);
     } catch {
-      window.location.search = `?path=/docs/${PANEL_DOCS_ID.replace('--docs', '')}--docs`;
+      window.location.search = `?path=/docs/${target.replace('--docs', '')}--docs`;
     }
   };
 

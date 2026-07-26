@@ -38,6 +38,7 @@ import './workspace.css';
 import { PreviewCanvas } from './PreviewCanvas';
 import { HandoffDialog } from './HandoffDialog';
 import { useGeneration, waitForStory, type Verification } from './useGeneration';
+import { useSessions, takeEditRequest, cleanReply, type SessionSummary } from './useSessions';
 
 interface Turn {
   id: string;
@@ -52,12 +53,6 @@ interface Turn {
   title?: string;
 }
 
-interface RecentStory {
-  id: string;
-  title: string;
-  name: string;
-}
-
 interface WorkspaceProps {
   apiBase: string;
   onOpenStory?: (storyId: string) => void;
@@ -70,6 +65,19 @@ const SUGGESTIONS = [
   'A settings page with tabbed sections',
   'A dashboard with stat tiles and a recent activity feed',
 ];
+
+/** "3 minutes ago" beats an ISO string when you are looking for where you left off. */
+const relativeTime = (iso: string): string => {
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return '';
+  const mins = Math.floor((Date.now() - then) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return days < 30 ? `${days}d ago` : new Date(then).toLocaleDateString();
+};
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -154,7 +162,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
   const [model, setModel] = useState('');
   const [considerations, setConsiderations] = useState('');
   const [connected, setConnected] = useState<boolean | null>(null);
-  const [recent, setRecent] = useState<RecentStory[]>([]);
+  const { sessions, loaded: sessionsLoaded, reload: reloadSessions, byStoryId } = useSessions(apiBase);
   const [activeStory, setActiveStory] = useState<{ id: string; title: string } | null>(null);
   /**
    * Set when a story was written to disk but Storybook never indexed it.
@@ -164,6 +172,15 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
    */
   const [notIndexed, setNotIndexed] = useState<{ fileName?: string; title?: string } | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
+  /**
+   * The story the conversation is currently editing.
+   *
+   * Without this every follow-up produced a NEW story — the sidebar filled with
+   * "… v2", "… v3", "… v4" clones of one idea, and "adjust the icons" could not
+   * mean "in the thing we are looking at". Set whenever a story is generated or
+   * reopened, cleared by New.
+   */
+  const [activeFile, setActiveFile] = useState<{ fileName: string; title: string } | null>(null);
   /**
    * The story the handoff dialog is acting on.
    *
@@ -212,28 +229,54 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     return () => { cancelled = true; };
   }, [apiBase]);
 
-  /* ---- recent work, straight from Storybook's own index --------------- */
+  /* ---- past work, from the manifest ----------------------------------- */
 
-  const loadRecent = useCallback(async () => {
-    try {
-      const res = await fetch(`/index.json?t=${Date.now()}`, { cache: 'no-store' });
-      if (!res.ok) return;
-      const entries = (await res.json())?.entries ?? {};
-      const seen = new Set<string>();
-      const items: RecentStory[] = [];
-      for (const [id, entry] of Object.entries<any>(entries)) {
-        if (!entry.title?.startsWith('Generated/')) continue;
-        if (entry.type !== 'story') continue;
-        const base = id.split('--')[0];
-        if (seen.has(base)) continue;
-        seen.add(base);
-        items.push({ id, title: entry.title.replace(/^Generated\//, ''), name: entry.name });
-      }
-      setRecent(items.reverse().slice(0, 8));
-    } catch { /* index unavailable */ }
+  /**
+   * Restore a past conversation.
+   *
+   * The manifest has always held the chat behind every story; V2 just never
+   * read it, so reopening work showed a single "Opened X." line and there was
+   * no way to continue. Rebuilding the turns from it means a story can be
+   * picked back up days later — which is the whole point of the workspace.
+   */
+  const openSession = useCallback((session: SessionSummary) => {
+    const restored: Turn[] = (session.entry.conversation ?? []).map((m, i, all) => ({
+      id: `${session.fileName}-${i}`,
+      role: m.role === 'user' ? 'user' : 'assistant',
+      text: m.role === 'ai' ? cleanReply(m.content) : m.content,
+      thumbnails: m.thumbnails,
+      // The last assistant turn carries the file, so handoff and follow-up
+      // edits act on this story rather than starting a new one.
+      ...(m.role === 'ai' && i === all.length - 1
+        ? { fileName: session.fileName, title: session.title, storyId: session.storyId ?? undefined }
+        : {}),
+    }));
+
+    setTurns(
+      restored.length
+        ? restored
+        : [{ id: uid(), role: 'assistant', text: `Opened ${session.title}.`, fileName: session.fileName, title: session.title }],
+    );
+    setActiveStory(session.storyId ? { id: session.storyId, title: session.title } : null);
+    setActiveFile({ fileName: session.fileName, title: session.title });
+    setNotIndexed(session.storyId ? null : { fileName: session.fileName, title: session.title });
+    setReloadToken(t => t + 1);
   }, []);
 
-  useEffect(() => { loadRecent(); }, [loadRecent]);
+  /**
+   * The "Edit in Story UI" toolbar button hands us a story id and expects its
+   * conversation to open. Runs once sessions are loaded, since resolving the id
+   * to a session needs the manifest.
+   */
+  const editRequestHandled = useRef(false);
+  useEffect(() => {
+    if (!sessionsLoaded || editRequestHandled.current) return;
+    editRequestHandled.current = true;
+    const request = takeEditRequest();
+    if (!request) return;
+    const session = byStoryId(request.componentId);
+    if (session) openSession(session);
+  }, [sessionsLoaded, byStoryId, openSession]);
 
   /* ---- autoscroll ----------------------------------------------------- */
 
@@ -262,6 +305,10 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       model: model || undefined,
       considerations: considerations || undefined,
       conversation,
+      // Edit the story in front of us rather than spawning a sibling. Without
+      // these two the server treated every follow-up as a brand new story.
+      fileName: activeFile?.fileName,
+      isUpdate: !!activeFile,
     });
 
     if (!result) return;
@@ -298,8 +345,9 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
         title: result.title,
       },
     ]);
-    loadRecent();
-  }, [input, busy, turns, provider, model, considerations, generate, loadRecent]);
+    if (result.fileName) setActiveFile({ fileName: result.fileName, title: result.title || 'Story' });
+    reloadSessions();
+  }, [input, busy, turns, provider, model, considerations, activeFile, generate, reloadSessions]);
 
   const recheckIndex = useCallback(async () => {
     if (!notIndexed) return;
@@ -476,7 +524,13 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
           size="1"
           variant="soft"
           color="gray"
-          onClick={() => { setTurns([]); setActiveStory(null); setNotIndexed(null); loadRecent(); }}
+          onClick={() => {
+            setTurns([]);
+            setActiveStory(null);
+            setActiveFile(null);
+            setNotIndexed(null);
+            reloadSessions();
+          }}
         >
           New
         </Button>
@@ -515,34 +569,39 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                 ))}
               </Flex>
 
-              {recent.length > 0 && (
+              {sessions.length > 0 && (
                 <Box mt="8">
                   <Flex align="baseline" justify="between" mb="3">
                     {/* Radix Heading renders h1 unless told otherwise, which
                         gave the page two competing h1s. */}
                     <Heading as="h2" size="3" weight="medium">Recent work</Heading>
-                    <Text size="1" color="gray">{recent.length} in this project</Text>
+                    <Text size="1" color="gray">{sessions.length} in this project</Text>
                   </Flex>
 
                   <div className="suiw-recent-grid">
-                    {recent.map(r => (
-                      <Card key={r.id} asChild size="1" style={{ padding: 0, overflow: 'hidden' }}>
+                    {sessions.slice(0, 12).map(session => (
+                      <Card key={session.fileName} asChild size="1" style={{ padding: 0, overflow: 'hidden' }}>
                         <button
                           type="button"
                           className="suiw-recent-card"
                           style={{ cursor: 'pointer', textAlign: 'left', display: 'block', width: '100%' }}
-                          onClick={() => {
-                            setActiveStory({ id: r.id, title: r.title });
-                            setTurns([{ id: uid(), role: 'assistant', text: `Opened ${r.title}.`, storyId: r.id, title: r.title }]);
-                          }}
+                          onClick={() => openSession(session)}
                         >
                           {/* A real render, not a screenshot — the thumbnail is
                               the story itself at half scale, mounted only when
                               scrolled into view. */}
-                          <LazyThumb storyId={r.id} title={r.title} />
+                          {session.storyId
+                            ? <LazyThumb storyId={session.storyId} title={session.title} />
+                            : <span className="suiw-thumb suiw-thumb--idle">
+                                <Text size="1" color="gray">Not indexed</Text>
+                              </span>}
                           <Box p="2">
-                            <Text as="div" size="2" weight="medium" truncate>{r.title}</Text>
-                            <Text as="div" size="1" color="gray" truncate>{r.name}</Text>
+                            <Text as="div" size="2" weight="medium" truncate>{session.title}</Text>
+                            <Text as="div" size="1" color="gray" truncate>
+                              {session.messageCount > 0
+                                ? `${session.messageCount} message${session.messageCount === 1 ? '' : 's'} · ${relativeTime(session.updatedAt)}`
+                                : relativeTime(session.updatedAt)}
+                            </Text>
                           </Box>
                         </button>
                       </Card>

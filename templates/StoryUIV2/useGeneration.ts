@@ -263,49 +263,76 @@ export function useGeneration(apiBase: string) {
  * Returns null rather than hanging when Storybook's watcher has stopped
  * delivering events, so the caller can say so instead of blaming the story.
  */
+/**
+ * Resolve a generated story to the id Storybook actually indexed it under.
+ *
+ * Matching on the server's storyId alone is not enough. Generated stories only
+ * SOMETIMES declare an explicit `id:` in their meta; when they don't, Storybook
+ * derives the id from the title instead. So a file named
+ * `notifications-list-ce0528fd.stories.tsx` can index as
+ * `generated-notifications-list`. Title is authoritative, so it is tried too.
+ *
+ * Shared by the canvas (which needs the id to render) and the recent-work list
+ * (which needs it to open a story), so the two can never disagree.
+ */
+export function resolveIndexedStoryId(
+  entries: Record<string, any>,
+  storyIdPrefix?: string,
+  title?: string,
+): string | null {
+  const ids = Object.keys(entries);
+  const candidates = [storyIdPrefix];
+  if (title) candidates.push(`generated-${slugify(title)}`, slugify(title));
+
+  for (const prefix of candidates) {
+    if (!prefix) continue;
+    const story = ids.find(id => id.startsWith(`${prefix}--`) && entries[id].type === 'story');
+    if (story) return story;
+    const any = ids.find(id => id.startsWith(`${prefix}--`));
+    if (any) return any;
+  }
+
+  // Last resort: the entry's own title, which no id-derivation rule can distort.
+  if (title) {
+    const byTitle = ids.find(
+      id => entries[id].type === 'story' &&
+        typeof entries[id].title === 'string' &&
+        entries[id].title.replace(/^Generated\//, '').toLowerCase() === title.toLowerCase(),
+    );
+    if (byTitle) return byTitle;
+  }
+  return null;
+}
+
+export const slugify = (s: string) =>
+  s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+/** Fetch Storybook's index, or an empty map when it is unreachable. */
+export async function fetchStoryIndex(): Promise<Record<string, any>> {
+  try {
+    const res = await fetch(`/index.json?t=${Date.now()}`, { cache: 'no-store' });
+    if (!res.ok) return {};
+    return (await res.json())?.entries ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Wait for a story to appear in Storybook's index and return its real entry id.
+ *
+ * Returns null rather than hanging when Storybook's watcher has stopped
+ * delivering events, so the caller can say so instead of blaming the story.
+ */
 export async function waitForStory(
   storyIdPrefix: string,
   title?: string,
   timeoutMs = 20000,
 ): Promise<string | null> {
-  const slug = (s: string) =>
-    s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-
-  // Storybook prefixes derived ids with the (slugified) title path, and
-  // generated stories live under "Generated/".
-  const candidates = [storyIdPrefix];
-  if (title) {
-    candidates.push(`generated-${slug(title)}`, slug(title));
-  }
-
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    try {
-      const res = await fetch(`/index.json?t=${Date.now()}`, { cache: 'no-store' });
-      if (res.ok) {
-        const entries: Record<string, any> = (await res.json())?.entries ?? {};
-        const ids = Object.keys(entries);
-
-        for (const prefix of candidates) {
-          if (!prefix) continue;
-          const story = ids.find(id => id.startsWith(`${prefix}--`) && entries[id].type === 'story');
-          if (story) return story;
-          const any = ids.find(id => id.startsWith(`${prefix}--`));
-          if (any) return any;
-        }
-
-        // Last resort: match the entry's own title, which the server gave us
-        // verbatim and which no id-derivation rule can distort.
-        if (title) {
-          const byTitle = ids.find(
-            id => entries[id].type === 'story' &&
-              typeof entries[id].title === 'string' &&
-              entries[id].title.replace(/^Generated\//, '').toLowerCase() === title.toLowerCase(),
-          );
-          if (byTitle) return byTitle;
-        }
-      }
-    } catch { /* keep polling */ }
+    const found = resolveIndexedStoryId(await fetchStoryIndex(), storyIdPrefix, title);
+    if (found) return found;
     await new Promise(r => setTimeout(r, 300));
   }
   return null;
