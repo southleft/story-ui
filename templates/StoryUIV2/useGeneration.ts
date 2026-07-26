@@ -22,6 +22,8 @@ export interface GenStep {
   label: string;
   state: StepState;
   detail?: string;
+  /** When this step became active, so the UI can show elapsed time. */
+  startedAt: number;
 }
 
 export interface VerificationFinding {
@@ -65,13 +67,22 @@ export interface GenerationRequest {
 
 const PENDING_KEY = 'story-ui-v2-pending';
 
-/** Human labels for the server's progress phases. */
+/**
+ * Human labels for every phase the server emits.
+ *
+ * Must cover all of them: an unmapped phase falls through to the raw server
+ * message, and those carry trailing ellipses ("Processing generated code...")
+ * which read as a different voice sitting next to these. Verified against
+ * generationCore's onProgress calls.
+ */
 const PHASE_LABEL: Record<string, string> = {
-  config_loaded: 'Reading your project configuration',
+  config_loaded: 'Reading your project',
   components_discovered: 'Reading your design system',
   prompt_built: 'Planning the composition',
   llm_thinking: 'Writing the story',
+  code_extracted: 'Reading the result',
   validating: 'Checking the code',
+  post_processing: 'Tidying imports and titles',
   saving: 'Saving',
   verifying: 'Rendering it in the browser',
 };
@@ -98,7 +109,7 @@ export function useGeneration(apiBase: string) {
         next[existing] = { ...next[existing], label, detail, state: 'active' };
         return next;
       }
-      return [...closed, { id, label, detail, state: 'active' }];
+      return [...closed, { id, label, detail, state: 'active', startedAt: Date.now() }];
     });
   }, []);
 
@@ -237,23 +248,62 @@ export function useGeneration(apiBase: string) {
 }
 
 /**
- * Wait for a story to appear in Storybook's index.
+ * Wait for a story to appear in Storybook's index and return its real entry id.
  *
- * Storybook's watcher can stop delivering events entirely, so this resolves
- * false rather than hanging — the caller reports that honestly instead of
- * leaving the canvas blank with no explanation.
+ * Matching on the server's storyId alone is not enough. Generated stories only
+ * SOMETIMES declare an explicit `id:` in their meta; when they don't, Storybook
+ * derives the id from the title instead. So a file named
+ * `notifications-list-ce0528fd.stories.tsx` can index as
+ * `generated-notifications-list`, and polling for the filename slug never
+ * resolves — the canvas stays empty and verification reports "not verified"
+ * for a story that rendered perfectly well.
+ *
+ * Title is authoritative, so it is tried as well.
+ *
+ * Returns null rather than hanging when Storybook's watcher has stopped
+ * delivering events, so the caller can say so instead of blaming the story.
  */
-export async function waitForStory(storyIdPrefix: string, timeoutMs = 20000): Promise<string | null> {
+export async function waitForStory(
+  storyIdPrefix: string,
+  title?: string,
+  timeoutMs = 20000,
+): Promise<string | null> {
+  const slug = (s: string) =>
+    s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+  // Storybook prefixes derived ids with the (slugified) title path, and
+  // generated stories live under "Generated/".
+  const candidates = [storyIdPrefix];
+  if (title) {
+    candidates.push(`generated-${slug(title)}`, slug(title));
+  }
+
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
       const res = await fetch(`/index.json?t=${Date.now()}`, { cache: 'no-store' });
       if (res.ok) {
-        const entries = (await res.json())?.entries ?? {};
-        const match =
-          Object.keys(entries).find(id => id.startsWith(`${storyIdPrefix}--`) && entries[id].type === 'story') ||
-          Object.keys(entries).find(id => id.startsWith(`${storyIdPrefix}--`));
-        if (match) return match;
+        const entries: Record<string, any> = (await res.json())?.entries ?? {};
+        const ids = Object.keys(entries);
+
+        for (const prefix of candidates) {
+          if (!prefix) continue;
+          const story = ids.find(id => id.startsWith(`${prefix}--`) && entries[id].type === 'story');
+          if (story) return story;
+          const any = ids.find(id => id.startsWith(`${prefix}--`));
+          if (any) return any;
+        }
+
+        // Last resort: match the entry's own title, which the server gave us
+        // verbatim and which no id-derivation rule can distort.
+        if (title) {
+          const byTitle = ids.find(
+            id => entries[id].type === 'story' &&
+              typeof entries[id].title === 'string' &&
+              entries[id].title.replace(/^Generated\//, '').toLowerCase() === title.toLowerCase(),
+          );
+          if (byTitle) return byTitle;
+        }
       }
     } catch { /* keep polling */ }
     await new Promise(r => setTimeout(r, 300));

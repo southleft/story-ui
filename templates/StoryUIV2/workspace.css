@@ -74,7 +74,11 @@
 .suiw *::before,
 .suiw *::after { box-sizing: border-box; }
 
-.suiw button { font: inherit; color: inherit; }
+/* :where() so the reset carries ZERO specificity. Written as `.suiw button` it
+   scored (0,1,1) and beat every (0,1,0) button class, which meant `color:
+   inherit` silently won and the whole button colour system was dead — the
+   primary CTA rendered light-on-clay at 3.34:1 instead of the intended 4.85:1. */
+.suiw :where(button) { font: inherit; color: inherit; }
 
 /* Storybook's docs wrapper pads content by 64px/20px and centres it. A
    workspace has to escape that or it renders as a page inside a page. */

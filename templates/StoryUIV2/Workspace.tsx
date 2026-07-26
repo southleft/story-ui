@@ -51,6 +51,27 @@ const SUGGESTIONS = [
 const uid = () => Math.random().toString(36).slice(2, 10);
 
 /**
+ * Elapsed time on the step that is currently running.
+ *
+ * The writing phase takes ~20-30s and, without this, nothing on screen changed
+ * for that whole stretch — the difference between "working" and "hung" was
+ * invisible. A counter is honest: it claims only that time is passing, which is
+ * the one thing we actually know. Real token progress needs the provider to
+ * surface stop_reason first (see callLLMStreaming in generationCore).
+ */
+const StepClock: React.FC<{ since: number }> = ({ since }) => {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const secs = Math.max(0, Math.floor((now - since) / 1000));
+  if (secs < 2) return null; // no clock on steps that flash past
+  const m = Math.floor(secs / 60);
+  return <span className="suiw-step-meta">{m ? `${m}:${String(secs % 60).padStart(2, '0')}` : `${secs}s`}</span>;
+};
+
+/**
  * A recent-work thumbnail is a real story, which means a real Storybook runtime.
  * Mounting eight at once boots eight of them and stalls the home screen, so the
  * frame is only created once the card is actually scrolled into view.
@@ -197,7 +218,9 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     // story id before pointing the canvas at it.
     let storyId = result.storybookId;
     if (storyId) {
-      const resolved = await waitForStory(storyId);
+      // Pass the title too: the id Storybook assigns may be derived from it
+      // rather than from the filename slug the server reports.
+      const resolved = await waitForStory(storyId, result.title);
       if (resolved) {
         setActiveStory({ id: resolved, title: result.title || 'Untitled' });
         setReloadToken(t => t + 1);
@@ -424,6 +447,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                   <div key={s.id} className={`suiw-step suiw-step--${s.state}`}>
                     <span className="suiw-step-dot" />
                     <span className="suiw-step-label">{s.label}</span>
+                    {s.state === 'active' && <StepClock since={s.startedAt} />}
                   </div>
                 ))}
               </div>
