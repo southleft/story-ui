@@ -108,13 +108,22 @@ export function validateStoryCode(code: string, fileName: string = 'story.tsx', 
     // Check for React import - but only for React-based frameworks
     const isReactFramework = framework === 'react' || framework.includes('react');
     const hasJSX = code.includes('<') || code.includes('/>');
-    const hasReactImport = code.includes('import React from \'react\';');
+    const hasReactImport = hasReactDefaultImport(code);
     const hasLitHtml = code.includes('import { html }') || code.includes('from \'lit\'');
 
-    // Only require React import for React frameworks, and skip for web-components/angular/vue/svelte
+    // A missing React import is mechanically fixable, so fix it and move on.
+    //
+    // It used to be reported as a blocking error, which was doubly wrong: the
+    // detection was an exact string match for `import React from 'react';`, so
+    // the extremely common `import React, { useState } from 'react';` read as
+    // missing — and the auto-fixer used a looser test, saw the import, and
+    // changed nothing. The model was then asked, up to three times, to add an
+    // import it already had, and the repair budget died on a phantom defect.
+    // Nothing that can be fixed deterministically should ever cost a retry.
     if (hasJSX && !hasReactImport && isReactFramework && !hasLitHtml) {
-      result.errors.push('Missing React import - add "import React from \'react\';" at the top of the file');
-      result.isValid = false;
+      code = fixMissingReactImport(code);
+      result.fixedCode = code;
+      result.warnings.push('Added missing React import');
     }
 
     // CRITICAL: For non-React frameworks, REMOVE any React imports that the LLM incorrectly generated
@@ -150,6 +159,22 @@ export function validateStoryCode(code: string, fileName: string = 'story.tsx', 
 }
 
 /**
+ * Collect every identifier introduced by a binding name, including nested
+ * object/array destructuring (const { a, b: { c } } = x, ({ Slot }) => ...).
+ */
+function collectBoundNames(name: ts.BindingName, out: Set<string>): void {
+  if (ts.isIdentifier(name)) {
+    out.add(name.text);
+    return;
+  }
+  if (ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name)) {
+    name.elements.forEach(el => {
+      if (ts.isBindingElement(el)) collectBoundNames(el.name, out);
+    });
+  }
+}
+
+/**
  * Performs additional semantic checks on the AST
  */
 function performSemanticChecks(sourceFile: ts.SourceFile, config?: any): string[] {
@@ -157,6 +182,10 @@ function performSemanticChecks(sourceFile: ts.SourceFile, config?: any): string[
   const availableComponents = new Set<string>();
   const importedComponents = new Set<string>();
   const usedJsxComponents = new Set<string>();
+  // Components declared in the file itself. Multi-region compositions routinely
+  // factor sections into local helpers (const TopNav = () => ...); those are
+  // defined, not missing, and must not be reported as absent imports.
+  const locallyDeclared = new Set<string>();
 
   // If config is provided, collect available components
   if (config && config.componentsToImport) {
@@ -232,6 +261,28 @@ function performSemanticChecks(sourceFile: ts.SourceFile, config?: any): string[
       importedComponents.add(node.importClause.name.text);
     }
 
+    // Track namespace imports (e.g., import * as Icons from '...')
+    if (
+      ts.isImportDeclaration(node) &&
+      node.importClause?.namedBindings &&
+      ts.isNamespaceImport(node.importClause.namedBindings)
+    ) {
+      importedComponents.add(node.importClause.namedBindings.name.text);
+    }
+
+    // Track components/values declared in this file so they aren't mistaken
+    // for missing imports: const Foo = ..., function Foo() {}, class Foo {},
+    // destructured locals, and parameters (render props / component-as-prop).
+    if (ts.isVariableDeclaration(node) || ts.isParameter(node)) {
+      collectBoundNames(node.name, locallyDeclared);
+    }
+    if (ts.isFunctionDeclaration(node) && node.name) {
+      locallyDeclared.add(node.name.text);
+    }
+    if (ts.isClassDeclaration(node) && node.name) {
+      locallyDeclared.add(node.name.text);
+    }
+
     // Track JSX element names - CRITICAL: Catch undefined components
     if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
       const tagName = node.tagName;
@@ -265,11 +316,11 @@ function performSemanticChecks(sourceFile: ts.SourceFile, config?: any): string[
   // This catches bugs where a component is used but never imported
   // This is framework-agnostic - works for any JSX-based framework
   for (const componentName of usedJsxComponents) {
-    if (!importedComponents.has(componentName)) {
+    if (!importedComponents.has(componentName) && !locallyDeclared.has(componentName)) {
       errors.push(
-        `JSX error: "${componentName}" is used but was never imported. ` +
-        `Either add it to your imports, or if you intended to use a sub-component, ` +
-        `use the correct syntax (e.g., Parent.Child instead of ParentChild).`
+        `JSX error: "${componentName}" is used but was never imported or defined. ` +
+        `Either add it to your imports, define it in this file, or if you intended ` +
+        `to use a sub-component, use the correct syntax (e.g., Parent.Child instead of ParentChild).`
       );
     }
   }
@@ -608,10 +659,24 @@ function fixUnterminatedStrings(code: string): string {
 /**
  * Fixes missing React import for JSX
  */
+/**
+ * True when the file already brings React into scope as a value binding.
+ *
+ * Covers every shape the model actually emits:
+ *   import React from 'react';
+ *   import React, { useState } from "react";
+ *   import * as React from 'react';
+ * Deliberately does NOT match `import { useState } from 'react'` — that binds
+ * hooks but not the React identifier itself.
+ */
+export function hasReactDefaultImport(code: string): boolean {
+  return /import\s+(?:\*\s+as\s+)?React\b[^;'"]*from\s*['"]react['"]/.test(code);
+}
+
 function fixMissingReactImport(code: string): string {
   // Check if code has JSX but no React import
   const hasJSX = code.includes('<') || code.includes('/>');
-  const hasReactImport = code.includes('import React') || code.includes('* as React');
+  const hasReactImport = hasReactDefaultImport(code);
 
   if (hasJSX && !hasReactImport) {
     // Find the first import statement or the beginning of the file
