@@ -494,6 +494,12 @@ export async function buildFrameworkAwarePrompt(
     '- The story MUST be operable, not a mockup: anything a user would click, type into, toggle or select MUST be the real interactive component from the design system, with real state and real handlers',
     '- NEVER render a visual stand-in for an interactive element (no text styled to look like an input, no bare icon standing in for a button, no static row standing in for tabs or a menu)',
     '- Prefer completeness of behavior over brevity — these stories are lifted directly into product code',
+    // Observed: a Timeline whose `active` prop painted every bullet solid blue,
+    // with a "light"-variant icon wrapper inside. The wrapper's 10%-alpha
+    // background never covered the blue, and its foreground colour was tuned for
+    // a plain surface — so teal and indigo icons sat on blue and vanished. The
+    // code read as correct in isolation; only the composition was wrong.
+    '- When a parent component paints its own background (a timeline bullet, a selected tab, a filled avatar, a status chip), any icon or text placed inside it MUST be given an explicitly contrasting colour. Do NOT nest a "light"/"subtle"/"outline" variant inside a filled parent: its translucent background will not cover the parent fill, and its foreground colour is chosen for a plain surface, so the content becomes invisible',
     '- Ensure all tags are properly closed and syntax is valid',
     '- Story must be complete and syntactically valid',
     '</rules>',

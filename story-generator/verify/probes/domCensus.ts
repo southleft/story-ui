@@ -32,7 +32,7 @@ export interface CensusResult {
   metrics: CensusMetrics;
   /** Serializable descriptions of each problem, turned into Findings by the caller. */
   problems: Array<{
-    kind: 'fake_field' | 'orphan_icon' | 'clickable_non_button' | 'unnamed_icon_control' | 'no_focusables' | 'static_only';
+    kind: 'fake_field' | 'orphan_icon' | 'clickable_non_button' | 'unnamed_icon_control' | 'no_focusables' | 'static_only' | 'invisible_icon';
     message: string;
     evidence: string;
     selector?: string;
@@ -196,6 +196,92 @@ export async function runDomCensus(page: any): Promise<CensusResult> {
           message: 'Icon is not inside any focusable control and is not marked decorative',
           evidence: 'If it is interactive it needs a button wrapper; if decorative it needs aria-hidden="true"',
           selector: cssPath(svg),
+        });
+      }
+    }
+
+    // ── 2b. Icons that cannot be seen ────────────────────────────────────────
+    //
+    // A real defect that read as correct code: a Timeline whose `active` prop
+    // painted every bullet solid blue, wrapping a "light"-variant icon holder.
+    // The holder's 10%-alpha background never covered the blue, and its
+    // foreground colour was picked for a plain surface — so teal and indigo
+    // icons sat on blue and disappeared. Nothing in the source looked wrong;
+    // only the rendered composition did.
+    //
+    // Both sides must be composited to an opaque base first: in a token-based
+    // design system almost every colour is an alpha, and comparing two
+    // translucent values reports nonsense.
+    const parseRgba = (value: string): [number, number, number, number] => {
+      const n = (value.match(/[\d.]+/g) || []).map(Number);
+      return [n[0] || 0, n[1] || 0, n[2] || 0, n.length > 3 ? n[3] : 1];
+    };
+    const flatten = (el: Element): [number, number, number] => {
+      const layers: Array<[number, number, number, number]> = [];
+      let node: Element | null = el;
+      while (node) {
+        const c = parseRgba(getComputedStyle(node).backgroundColor);
+        if (c[3] > 0) { layers.push(c); if (c[3] >= 0.999) break; }
+        node = node.parentElement;
+      }
+      // Storybook's canvas is white unless a decorator says otherwise.
+      let base: [number, number, number] =
+        layers.length && layers[layers.length - 1][3] >= 0.999
+          ? (layers.pop()!.slice(0, 3) as [number, number, number])
+          : [255, 255, 255];
+      for (let i = layers.length - 1; i >= 0; i--) {
+        const [r, g, b, a] = layers[i];
+        base = [r * a + base[0] * (1 - a), g * a + base[1] * (1 - a), b * a + base[2] * (1 - a)];
+      }
+      return base;
+    };
+    const luminance = ([r, g, b]: [number, number, number]): number => {
+      const ch = (v: number) => {
+        const s = v / 255;
+        return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+      };
+      return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b);
+    };
+    const contrast = (fg: [number, number, number], bg: [number, number, number]): number => {
+      const [hi, lo] = luminance(fg) > luminance(bg)
+        ? [luminance(fg), luminance(bg)]
+        : [luminance(bg), luminance(fg)];
+      return (hi + 0.05) / (lo + 0.05);
+    };
+
+    let invisibleIcons = 0;
+    for (const svg of Array.from(root.querySelectorAll('svg')) as unknown as Element[]) {
+      const rect = (svg as HTMLElement).getBoundingClientRect();
+      if (rect.width < 6 || rect.height < 6) continue;
+
+      const style = getComputedStyle(svg as Element);
+      // Icon libraries draw with either stroke or fill; currentColor resolves
+      // to the computed colour, so that is the reliable read.
+      const paint = [style.stroke, style.fill, style.color]
+        .find(v => v && v !== 'none' && !v.startsWith('url(')) || style.color;
+      const fgRaw = parseRgba(paint);
+      // An icon that is transparent or hidden is a different problem.
+      if (fgRaw[3] === 0) continue;
+
+      const bg = flatten((svg as Element).parentElement || (svg as Element));
+      const fg = fgRaw[3] >= 0.999
+        ? (fgRaw.slice(0, 3) as [number, number, number])
+        : ([0, 1, 2].map(i => fgRaw[i] * fgRaw[3] + bg[i] * (1 - fgRaw[3])) as [number, number, number]);
+
+      // 1.5:1 rather than a WCAG threshold on purpose. This reports icons that
+      // are effectively INVISIBLE, not ones that are merely low contrast —
+      // plenty of legitimate decorative icons sit below 3:1, and flagging those
+      // would spend repair attempts on taste.
+      const ratio = contrast(fg, bg);
+      if (ratio >= 1.5) continue;
+
+      invisibleIcons++;
+      if (invisibleIcons <= 5) {
+        problems.push({
+          kind: 'invisible_icon',
+          message: 'Icon is not visible against the background it sits on',
+          evidence: `contrast ${ratio.toFixed(2)}:1 — icon rgb(${fg.map(Math.round).join(',')}) on rgb(${bg.map(Math.round).join(',')}). A filled parent (timeline bullet, selected tab, status chip) usually means the icon needs an explicit contrasting colour rather than a light/subtle variant.`,
+          selector: cssPath(svg as Element),
         });
       }
     }

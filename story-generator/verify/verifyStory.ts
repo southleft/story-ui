@@ -68,6 +68,13 @@ function censusFindings(problems: Awaited<ReturnType<typeof runDomCensus>>['prob
           id: `unnamed-icon-${i}`, severity: 'blocker', class: 'a11y',
           message: p.message, evidence: p.evidence, selector: p.selector, repairable: true,
         } as Finding;
+      case 'invisible_icon':
+        // Blocker: an icon nobody can see is not a style preference, it is
+        // missing content. Repairable, and the evidence names the fix.
+        return {
+          id: `invisible-icon-${i}`, severity: 'blocker', class: 'a11y',
+          message: p.message, evidence: p.evidence, selector: p.selector, repairable: true,
+        } as Finding;
       case 'static_only':
         // Informational by design: a presentational component with no focusable
         // elements is a legitimate result, not a defect to repair.
