@@ -486,7 +486,14 @@ export async function buildFrameworkAwarePrompt(
     '- All images MUST have a src attribute with placeholder URLs (use https://picsum.photos/)',
     '- MUST use ES modules syntax: "export default meta;" NOT "module.exports = meta;"',
     '- The file MUST have a default export for the meta object',
-    '- Keep the story concise and focused - avoid overly complex layouts',
+    // Previously: "Keep the story concise and focused - avoid overly complex
+    // layouts". That rule sat in the highest-adherence position in the prompt and
+    // rewarded stopping at the visual shape — a real nav bar with state, menus and
+    // a search field IS the "complex layout" it forbade. Measured result: stories
+    // with zero inputs, zero links and no interactive states.
+    '- The story MUST be operable, not a mockup: anything a user would click, type into, toggle or select MUST be the real interactive component from the design system, with real state and real handlers',
+    '- NEVER render a visual stand-in for an interactive element (no text styled to look like an input, no bare icon standing in for a button, no static row standing in for tabs or a menu)',
+    '- Prefer completeness of behavior over brevity — these stories are lifted directly into product code',
     '- Ensure all tags are properly closed and syntax is valid',
     '- Story must be complete and syntactically valid',
     '</rules>',

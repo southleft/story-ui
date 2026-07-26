@@ -21,6 +21,34 @@ import { logger } from '../logger.js';
 /**
  * Abstract Base Framework Adapter
  */
+/** How many props to show per component in the prompt catalog. */
+const MAX_PROPS_IN_CATALOG = 12;
+
+/**
+ * Order props so the ones that determine BEHAVIOR come first.
+ *
+ * The catalog is the model's only description of a component, and it is
+ * truncated. Alphabetical or declaration order buries the props that decide
+ * whether something is interactive — which is precisely the judgement we need
+ * it to make. Handlers, state, and content-slot props rank above styling.
+ */
+function rankPropsByRelevance(props: string[]): string[] {
+  const tier = (raw: string): number => {
+    // Entries can be "name" or "name: type"; rank on the name.
+    const p = String(raw).split(':')[0].trim();
+    if (/^on[A-Z]/.test(p)) return 0;                                   // onClick, onChange
+    if (/^(value|defaultValue|checked|active|selected|open|opened|disabled|loading|error)$/i.test(p)) return 1;
+    if (/(section|icon|adornment|prefix|suffix|slot)/i.test(p)) return 2; // leftSection, rightSection
+    if (/^(label|placeholder|title|description|children|href|name|type|id)$/i.test(p)) return 3;
+    if (/^(variant|size|color|radius|shadow|position|orientation)$/i.test(p)) return 4;
+    return 5;
+  };
+  return [...props].sort((a, b) => {
+    const d = tier(a) - tier(b);
+    return d !== 0 ? d : String(a).localeCompare(String(b));
+  });
+}
+
 export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
   abstract readonly type: FrameworkType;
   abstract readonly name: string;
@@ -103,10 +131,14 @@ export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
     let entry = `- **${component.name}** (import from '${importPath}')${isLocal ? ' — CUSTOM PROJECT COMPONENT, fully allowed; use this exact relative import' : ''}`;
 
     if (component.props && component.props.length > 0) {
-      const propsList = component.props
-        .slice(0, 5) // Limit to first 5 props
-        .join(', ');
-      entry += `\n  Props: ${propsList}${component.props.length > 5 ? '...' : ''}`;
+      // Props are the only signal the model has for what a component can
+      // actually do, so surface the ones that decide behavior first. Truncating
+      // at an arbitrary 5 routinely cut exactly the props that distinguish an
+      // interactive component from a presentational one (active, onChange,
+      // leftSection, value), which is the choice we most need it to get right.
+      const ranked = rankPropsByRelevance(component.props);
+      const shown = ranked.slice(0, MAX_PROPS_IN_CATALOG);
+      entry += `\n  Props: ${shown.join(', ')}${ranked.length > shown.length ? `, …${ranked.length - shown.length} more` : ''}`;
     }
 
     if (component.description) {
@@ -359,6 +391,43 @@ GENERAL RULES:
 - Ensure accessibility by using proper ARIA attributes
 - Use realistic placeholder content
 
+INTERACTION FIDELITY (NON-NEGOTIABLE):
+These stories are lifted directly into product code by engineers. A mockup that merely
+looks right is a defect. Rules are written in terms of AFFORDANCES — map each one to the
+component in THIS design system that owns that behavior (see the available components list
+and any design-system considerations provided below).
+
+1. NEVER fake an affordance. If a user would click it, type in it, toggle it, or select it,
+   it MUST be the real interactive component, with a handler and an accessible name:
+   - a search or text entry field -> the library's text input component, NEVER text or a
+     box styled to look like an input
+   - an icon-only control -> the library's icon-button component wrapping the icon, NEVER a
+     bare icon element
+   - a dropdown, chevron, overflow or "more" affordance -> the library's menu component with
+     its trigger and content sub-components, NEVER a chevron glyph beside a label
+   - a navigation item that can be current -> the library's nav/link component with its
+     active or selected state, NEVER static text with a color applied
+   - a tabbed region -> the library's tabs component, NEVER a row of labels with a border
+   - any other clickable surface -> a real button element or the library's unstyled-button
+     primitive, NEVER a div or box with an onClick
+
+2. Decorative icons are fine. An icon is EITHER decorative, OR the leading/trailing slot of a
+   real control, OR the child of an icon-button. It is never interactive on its own.
+
+3. Icons must be aligned by the owning component. Use the component's built-in icon/section
+   slot when one exists; otherwise use the library's inline flex primitive. Never place an
+   icon as a bare child of a block-level element — it will sit on the text baseline and
+   drift out of alignment.
+
+4. State must be real and driven. When a composition renders several items and one is
+   current/selected/open, drive it from a variable (component state), not a hardcoded
+   literal, and wire the handler that changes it. Single-component variant stories that
+   demonstrate one state in isolation should use story args instead.
+
+5. Before emitting, self-check every element: is anything that looks interactive actually
+   inert? is any icon unaligned or standing in for a button? is any hover/active appearance
+   being faked with a static style? Fix all three before you output.
+
 IMAGE RULES:
 - Use Lorem Picsum for placeholder images: https://picsum.photos/[width]/[height]
 - Always include alt text for images
@@ -366,6 +435,18 @@ IMAGE RULES:
 
 MANDATORY SPACING & LAYOUT RULES (NON-NEGOTIABLE):
 ** CRITICAL: Every generated component MUST have professional-quality spacing. Components without proper spacing look broken and unprofessional. **
+
+** SCOPE LIMIT — READ BEFORE COPYING THE EXAMPLES BELOW **
+The inline style objects shown in this section are for STATIC LAYOUT SPACING ONLY.
+An inline style object cannot express :hover, :focus-visible, :active, [data-active],
+[aria-current] or any other state — it is structurally incapable of it.
+Therefore: any element whose appearance CHANGES on hover, focus, selection, or because it
+is the current item MUST get that appearance from the design system itself:
+  1. a component prop that owns the state (active, selected, variant, color, disabled), or
+  2. the component's documented state mechanism (data attributes, styles API, CSS variables).
+If you cannot express a state with a prop, you have chosen the wrong component — pick the
+component that owns that behavior. NEVER hand-roll a hover or active state inline, and never
+substitute a styled static element for a component that already has the state built in.
 
 1. STORY WRAPPER (REQUIRED for every story):
    - The rendered story MUST have a wrapper element with padding

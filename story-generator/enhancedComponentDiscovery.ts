@@ -796,6 +796,19 @@ export class EnhancedComponentDiscovery {
    * Check if a file should be skipped (stories, tests, etc.)
    */
   private isNonComponentFile(filePath: string): boolean {
+    // Story UI's own panel is vendored into the consuming project (usually
+    // src/stories/StoryUI/), which sits inside a directory we also scan for
+    // co-located components. Without this, our chat panel's internals get
+    // advertised to the model as part of the user's design system — and because
+    // they are local files they carry real extracted props, so they became the
+    // richest entries in an otherwise propless catalog. Exclude by PATH: a name
+    // prefix check misses VoiceCanvas, VoiceControls, DesignContextPanel, and
+    // anything else added to the panel later.
+    const normalized = filePath.split(path.sep).join('/');
+    if (/\/(StoryUI|story-ui)\//i.test(normalized)) {
+      return true;
+    }
+
     const fileName = path.basename(filePath);
     const skipPatterns = [
       /\.stories?\.(tsx?|jsx?)$/i,    // Story files
@@ -814,8 +827,16 @@ export class EnhancedComponentDiscovery {
    * Check if a component should be skipped based on name or content
    */
   private shouldSkipComponent(componentName: string, content: string): boolean {
-    // Skip Story UI components
-    if (componentName === 'StoryUIPanel' || componentName.startsWith('StoryUI')) {
+    // Skip Story UI's own components. The path check in isNonComponentFile is
+    // the primary guard; this covers a panel file that has been moved or
+    // renamed out of the expected directory.
+    const STORY_UI_OWN = new Set([
+      'StoryUIPanel',
+      'DesignContextPanel',
+      'VoiceCanvas',
+      'VoiceControls',
+    ]);
+    if (STORY_UI_OWN.has(componentName) || componentName.startsWith('StoryUI')) {
       return true;
     }
 

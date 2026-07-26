@@ -166,11 +166,27 @@ export class StorybookMcpClient {
   private baseUrl: string;
   private timeout: number;
   private requestId: number = 0;
+  /**
+   * Path fragment identifying Story UI's own generated output. Those stories are
+   * excluded from the exemplar pool: feeding the model its previous generations
+   * as "reference for consistent code style" turns any defect into a house style.
+   */
+  private excludePathFragment?: string;
 
-  constructor(storybookUrl: string, timeout: number = 5000) {
+  constructor(storybookUrl: string, timeout: number = 5000, excludePathFragment?: string) {
     // Normalize URL - remove trailing slash
     this.baseUrl = storybookUrl.replace(/\/+$/, '');
     this.timeout = timeout;
+    this.excludePathFragment = excludePathFragment;
+  }
+
+  /** True when a manifest entry is one of our own generated stories. */
+  private isSelfGenerated(comp: { id?: string; path?: string; import?: string }): boolean {
+    if (!this.excludePathFragment) return false;
+    const frag = this.excludePathFragment.toLowerCase();
+    return [comp.id, comp.path, comp.import]
+      .filter((v): v is string => typeof v === 'string')
+      .some(v => v.toLowerCase().includes(frag));
   }
 
   /**
@@ -315,6 +331,14 @@ export class StorybookMcpClient {
 
       const docs: Record<string, ComponentDocumentation> = {};
       let componentEntries = Object.values(manifest.components);
+
+      // Drop our own generated stories before selection, so the exemplars shown
+      // to the model are the project's hand-written components.
+      const beforeSelfFilter = componentEntries.length;
+      componentEntries = componentEntries.filter(c => !this.isSelfGenerated(c));
+      if (componentEntries.length !== beforeSelfFilter) {
+        logger.log(`\u{1F9F9} Excluded ${beforeSelfFilter - componentEntries.length} Story UI-generated stories from the exemplar pool`);
+      }
 
       // Filter to requested components if specified
       if (componentNames && componentNames.length > 0) {
@@ -605,11 +629,12 @@ ${sections.join('\n\n')}
  */
 export function createStorybookMcpClient(
   storybookMcpUrl?: string,
-  timeout?: number
+  timeout?: number,
+  excludePathFragment?: string
 ): StorybookMcpClient | null {
   if (!storybookMcpUrl) {
     return null;
   }
 
-  return new StorybookMcpClient(storybookMcpUrl, timeout || 5000);
+  return new StorybookMcpClient(storybookMcpUrl, timeout || 5000, excludePathFragment);
 }
