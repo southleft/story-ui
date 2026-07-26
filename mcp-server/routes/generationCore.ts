@@ -70,6 +70,7 @@ import {
 } from '../../story-generator/storybookMcpClient.js';
 import { IntentPreview, ValidationFeedback, CompletionFeedback } from './streamTypes.js';
 import { verifyStory } from '../../story-generator/verify/verifyStory.js';
+import { attemptVerificationRepair } from './verifyRepair.js';
 import type { VerifyReport } from '../../story-generator/verify/findings.js';
 
 // ============================================================
@@ -762,6 +763,55 @@ export async function runStoryGeneration(
           storyIdPrefix: storyIdSlug,
           projectRoot: process.cwd(),
         });
+        // Enforce mode: repair what the browser observed.
+        //
+        // Gated on STORY_UI_VERIFY_ENFORCE because it spends an extra LLM call
+        // and, unlike report-only, can change the user's story. The repair
+        // helper refuses to ship anything that does not strictly reduce
+        // blockers, so the worst case is a wasted call rather than a damaged
+        // composition.
+        const enforce = process.env.STORY_UI_VERIFY_ENFORCE === 'true';
+        if (enforce && verification.outcome === 'issues') {
+          const repair = await attemptVerificationRepair({
+            code: fixedFileContents,
+            report: verification,
+            staticallyValid: (candidate) => {
+              const patternErrors = validateStory(candidate);
+              const ast = validateStoryCode(candidate, finalFileName, config);
+              return patternErrors.length === 0 && ast.isValid;
+            },
+            callModel: async (prompt) => {
+              events.onLLMCall?.();
+              // Fresh, minimal context — not the growing generate transcript.
+              const result = await callLLM([{ role: 'user', content: prompt }], undefined, { provider, model });
+              return extractCodeBlock(result.content, detectedFramework);
+            },
+            writeAndVerify: async (candidate) => {
+              const { code: finalized } = finalizeStoryCode(candidate);
+              writeStory(finalized);
+              return verifyStory({
+                storybookUrl: verifyUrl,
+                storyIdPrefix: storyIdSlug,
+                projectRoot: process.cwd(),
+              });
+            },
+          });
+
+          if (repair.code) {
+            const { code: finalized } = finalizeStoryCode(repair.code);
+            fixedFileContents = finalized;
+            outPath = writeStory(fixedFileContents);
+            verification = repair.report;
+            selfHealingUsed = true;
+            logger.log(`✅ Verification repair applied after ${repair.attempts} attempt(s)`);
+          } else {
+            // Restore the original on disk — writeAndVerify may have left a
+            // rejected candidate there.
+            writeStory(fixedFileContents);
+            if (repair.note) logger.log(`ℹ️ No verification repair applied: ${repair.note}`);
+          }
+        }
+
         if (verification.outcome === 'issues') {
           hasValidationWarnings = true;
         }

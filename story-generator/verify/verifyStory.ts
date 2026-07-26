@@ -15,7 +15,7 @@ import { logger } from '../logger.js';
 import { resolveHostTooling, canLaunchBrowser } from './hostTooling.js';
 import { renderStory, waitForStoryIndexed } from './renderHarness.js';
 import { runDomCensus } from './probes/domCensus.js';
-import { runA11yProbe, isGenerationDefect, isDesignSystemConcern } from './probes/a11y.js';
+import { runA11yProbe, isGenerationDefect, isDesignSystemConcern, isDesignSystemInternal } from './probes/a11y.js';
 import type { Finding, VerifyReport } from './findings.js';
 import { blockers, summarize } from './findings.js';
 
@@ -165,7 +165,10 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
     const a11y = await runA11yProbe(render.page, tooling);
     if (a11y.ran) {
       for (const v of a11y.violations) {
-        const generationDefect = isGenerationDefect(v.id);
+        // A violation on markup the library renders is not something the story
+        // can fix, however severe the rule.
+        const libraryInternal = isDesignSystemInternal(v.selector);
+        const generationDefect = isGenerationDefect(v.id) && !libraryInternal;
         const severe = v.impact === 'critical' || v.impact === 'serious';
         findings.push({
           id: `axe-${v.id}`,
@@ -177,6 +180,7 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
             v.impact ? `${v.impact} impact` : null,
             `${v.nodeCount} element${v.nodeCount === 1 ? '' : 's'}`,
             isDesignSystemConcern(v.id) ? 'design-system level, not a composition defect' : null,
+            libraryInternal ? 'fails on markup the component library renders — not fixable from the story' : null,
           ].filter(Boolean).join(' · '),
           selector: v.selector,
           // Only a generation defect is worth asking the model to fix.

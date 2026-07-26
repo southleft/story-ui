@@ -61,6 +61,9 @@ export async function generateStoryFromPrompt(req: Request, res: Response) {
       isFallback: outcome.isFallbackStory,
       fileName: outcome.fileName,
       storyId: outcome.storyId,
+      // Browser verification — the JSON transport must report it too,
+      // otherwise non-streaming clients silently lose the quality signal.
+      verification: outcome.verification,
       outPath: outcome.outPath,
       title: outcome.title,
       story: outcome.code,

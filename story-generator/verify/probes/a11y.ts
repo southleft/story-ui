@@ -87,6 +87,37 @@ export function isGenerationDefect(ruleId: string): boolean {
   return GENERATION_DEFECT_RULES.has(ruleId);
 }
 
+/**
+ * True when the offending element was rendered by the design system's own
+ * internals rather than authored in the story.
+ *
+ * Motivating case: a story sets `aria-label` on a Mantine `Slider`, but axe
+ * fails `aria-input-field-name` on `.mantine-Slider-thumb[role="slider"]` —
+ * markup the library emits and the story cannot reach. Asking the model to fix
+ * it produces either no change or a hack that fights the design system, so
+ * these are reported but never repaired.
+ *
+ * Detected structurally, not per-library: component-part class names are
+ * namespaced across every major design system —
+ *   Mantine  .mantine-Slider-thumb
+ *   MUI      .MuiSlider-thumb
+ *   Vuetify  .v-slider__thumb
+ *   Shoelace .sl-range__thumb
+ */
+export function isDesignSystemInternal(selector?: string): boolean {
+  if (!selector) return false;
+  const classes = selector.match(/\.[A-Za-z][\w-]*(?:__[\w-]+)?/g) || [];
+  return classes.some(cls => {
+    const name = cls.slice(1);
+    // Namespace-Component-part  (mantine-Slider-thumb, MuiSlider-thumb)
+    if (/^[A-Za-z][\w]*-[A-Z][\w]*-[\w-]+$/.test(name)) return true;
+    if (/^Mui[A-Z][\w]*-[\w-]+$/.test(name)) return true;
+    // BEM element on a namespaced block (v-slider__thumb, sl-range__thumb)
+    if (/^[a-z][\w-]*__[\w-]+$/.test(name)) return true;
+    return false;
+  });
+}
+
 export function isDesignSystemConcern(ruleId: string): boolean {
   return DESIGN_SYSTEM_RULES.has(ruleId);
 }
