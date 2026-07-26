@@ -26,6 +26,12 @@ export type ManifestSource = 'panel' | 'voice-canvas' | 'voice-save' | 'mcp-exte
 export interface ManifestMessage {
   role: 'user' | 'ai';
   content: string;
+  /**
+   * Small data-URL previews of images attached to this message. Bounded on
+   * purpose — full-size base64 must never land in the manifest, but without
+   * something here a reopened chat loses the reference image entirely.
+   */
+  thumbnails?: string[];
 }
 
 export interface ManifestEntry {
@@ -99,6 +105,24 @@ function isStoryFileIncludingCanvas(name: string): boolean {
 
 function truncateConversation(conv: ManifestMessage[]): ManifestMessage[] {
   return conv.slice(-MAX_CONVERSATION);
+}
+
+/** Hard ceilings so persisted previews can't grow into full-size payloads. */
+const MAX_THUMBNAILS_PER_MESSAGE = 4;
+const MAX_THUMBNAIL_CHARS = 96 * 1024;
+
+/**
+ * Keep only small, well-formed image data URLs. Anything oversized is dropped
+ * rather than truncated — a half-written data URL renders as a broken image.
+ */
+export function sanitizeThumbnails(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const safe = value
+    .filter((t): t is string => typeof t === 'string')
+    .filter(t => t.startsWith('data:image/'))
+    .filter(t => t.length <= MAX_THUMBNAIL_CHARS)
+    .slice(0, MAX_THUMBNAILS_PER_MESSAGE);
+  return safe.length > 0 ? safe : undefined;
 }
 
 // ── ManifestManager ────────────────────────────────────────────────────────
@@ -180,10 +204,18 @@ export class ManifestManager {
     const existing = this.manifest.stories[fileName];
     const now = new Date().toISOString();
 
-    // Strip base64 images from any message content that accidentally got through
+    // Strip base64 images from any message content that accidentally got through,
+    // but keep bounded thumbnails so reopened chats still show their reference image.
     const safeConversation = (data.conversation ?? existing?.conversation ?? [])
-      .map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : '' }))
-      .filter(m => m.content.length > 0);
+      .map(m => {
+        const thumbnails = sanitizeThumbnails((m as ManifestMessage).thumbnails);
+        return {
+          role: m.role,
+          content: typeof m.content === 'string' ? m.content : '',
+          ...(thumbnails ? { thumbnails } : {}),
+        };
+      })
+      .filter(m => m.content.length > 0 || (m as ManifestMessage).thumbnails);
 
     const entry: ManifestEntry = {
       id: data.id ?? existing?.id ?? fileName.replace(/\.stories\.[a-z]+$/, ''),
@@ -213,7 +245,10 @@ export class ManifestManager {
     const existing = this.manifest.stories[fileName];
     if (!existing) return;
     existing.conversation = truncateConversation(
-      conversation.map(m => ({ role: m.role, content: m.content })),
+      conversation.map(m => {
+        const thumbnails = sanitizeThumbnails(m.thumbnails);
+        return { role: m.role, content: m.content, ...(thumbnails ? { thumbnails } : {}) };
+      }),
     );
     existing.updatedAt = new Date().toISOString();
     this.scheduleFlush();

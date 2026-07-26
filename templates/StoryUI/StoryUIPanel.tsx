@@ -10,6 +10,7 @@ import React, { useState, useEffect, useRef, useCallback, useReducer } from 'rea
 import './StoryUIPanel.css';
 import { VoiceControls } from './voice/VoiceControls';
 import { VoiceCanvas, type VoiceCanvasHandle } from './voice/VoiceCanvas';
+import { DesignContextPanel } from './DesignContextPanel';
 import type { VoiceCommand } from './voice/types';
 
 // ============================================
@@ -22,6 +23,13 @@ interface Message {
   isStreaming?: boolean;
   streamingData?: StreamingState;
   attachedImages?: AttachedImage[];
+  /**
+   * Persisted thumbnails for images attached to this message. attachedImages
+   * holds File objects and blob: URLs, neither of which survives being written
+   * to localStorage or the manifest — without these, reopening a chat lost the
+   * reference image entirely.
+   */
+  thumbnails?: string[];
   /** Follow-up refinement prompts rendered as clickable chips (AI messages). */
   suggestions?: string[];
   /** Generated story code, shown behind a "View code" toggle (AI messages). */
@@ -32,6 +40,12 @@ interface Message {
   retryInput?: string;
   /** Storybook entry ID once the new story is indexed — enables "Open story". */
   storyEntryId?: string;
+  /**
+   * Set when the story file was written but never showed up in Storybook's
+   * index. Storybook's dev-server watcher can stop noticing new files, and
+   * silently rendering no action left the story unreachable.
+   */
+  storyIndexStalled?: { storybookId: string; fileName?: string };
   /** Generation duration — rendered as a muted metadata stamp, not prose. */
   generationTimeMs?: number;
   /** Storybook component id (persisted) — resolved to a full entry id on chat open. */
@@ -53,6 +67,8 @@ interface AttachedImage {
   preview: string;
   base64: string;
   mediaType: string;
+  /** Small data-URL copy that survives persistence (blob URLs and File do not). */
+  thumbnail?: string;
 }
 
 interface IntentPreview {
@@ -350,6 +366,18 @@ const PROVIDER_PREFS_KEY = 'story-ui-provider-prefs';
 const PENDING_GEN_KEY = 'story-ui-pending-generation';
 const MAX_IMAGES = 4;
 const MAX_IMAGE_SIZE_MB = 20;
+// Vision models downsample anything larger than ~1568px on the long edge, so
+// sending a raw retina screenshot just burns bytes and tokens for no extra
+// detail. Downscaling client-side is what makes big screenshots work at all.
+const MAX_IMAGE_DIMENSION = 1568;
+// Above this, re-encode as JPEG — full-page screenshots are far smaller as JPEG
+// and the fidelity loss is irrelevant for layout recognition.
+const JPEG_FALLBACK_BYTES = 1.5 * 1024 * 1024;
+const JPEG_QUALITY = 0.85;
+// Persisted chat thumbnails. Small enough that a few of them per chat stay well
+// inside the localStorage quota.
+const THUMB_MAX_DIMENSION = 240;
+const THUMB_QUALITY = 0.6;
 
 // ============================================
 // Helper Functions
@@ -599,7 +627,7 @@ async function syncWithActualStories(): Promise<ChatSession[]> {
     const sessions: ChatSession[] = Object.values(entries)
       .filter((e: any) => e.source !== 'voice-canvas') // scratchpad excluded from chat list
       .map((e: any) => {
-        const serverConv = (e.conversation ?? []).map((m: any) => ({ role: m.role as 'user' | 'ai', content: m.content }));
+        const serverConv = (e.conversation ?? []).map((m: any) => ({ role: m.role as 'user' | 'ai', content: m.content, thumbnails: m.thumbnails }));
         // If no conversation history but the original prompt is known, synthesize one so
         // users can open the story and immediately continue iterating with full context.
         const conversation: Message[] = serverConv.length > 0
@@ -664,7 +692,7 @@ async function migrateLocalStorageToManifest(
         if (!chat.conversation?.length) continue;
         const conversation = chat.conversation
           .filter(m => (m.role === 'user' || m.role === 'ai') && m.content)
-          .map(m => ({ role: m.role as 'user' | 'ai', content: m.content }));
+          .map(m => ({ role: m.role as 'user' | 'ai', content: m.content, thumbnails: m.thumbnails }));
         await fetch(`${MANIFEST_API()}/${encodeURIComponent(chat.fileName)}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -684,7 +712,7 @@ async function migrateLocalStorageToManifest(
         if (!entry || entry.source !== 'mcp-external' || (entry.conversation?.length ?? 0) > 0) continue;
         const conversation = chat.conversation
           .filter(m => (m.role === 'user' || m.role === 'ai') && m.content)
-          .map(m => ({ role: m.role as 'user' | 'ai', content: m.content }));
+          .map(m => ({ role: m.role as 'user' | 'ai', content: m.content, thumbnails: m.thumbnails }));
         await fetch(`${MANIFEST_API()}/${encodeURIComponent(chat.fileName)}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -739,7 +767,7 @@ async function persistChatToManifest(session: ChatSession): Promise<void> {
   try {
     const conversation = session.conversation
       .filter(m => (m.role === 'user' || m.role === 'ai') && m.content)
-      .map(m => ({ role: m.role as 'user' | 'ai', content: m.content }));
+      .map(m => ({ role: m.role as 'user' | 'ai', content: m.content, thumbnails: m.thumbnails }));
     await fetch(`${MANIFEST_API()}/${encodeURIComponent(session.fileName)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -1178,8 +1206,11 @@ interface StoryUIPanelProps {
 
 function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   const [state, dispatch] = useReducer(panelReducer, initialState);
-  const [panelMode, setPanelMode] = useState<'chat' | 'canvas'>(() => {
-    try { return localStorage.getItem('__sui_panel_mode__') === 'canvas' ? 'canvas' : 'chat'; } catch { return 'chat'; }
+  const [panelMode, setPanelMode] = useState<'chat' | 'canvas' | 'context'>(() => {
+    try {
+      const stored = localStorage.getItem('__sui_panel_mode__');
+      return stored === 'canvas' ? 'canvas' : stored === 'context' ? 'context' : 'chat';
+    } catch { return 'chat'; }
   });
   // Tracks whether Voice Canvas is available (React-only feature). Defaults true to
   // avoid flashing the tab away on initial render; corrected after canvas-config loads.
@@ -1378,7 +1409,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     }
 
     // Restore the conversation and show a resuming state
-    dispatch({ type: 'SET_CONVERSATION', payload: pending.conversation.map(m => ({ role: m.role, content: m.content })) });
+    dispatch({ type: 'SET_CONVERSATION', payload: pending.conversation.map(m => ({ role: m.role, content: m.content, thumbnails: (m as any).thumbnails })) });
     if (pending.chatId) {
       dispatch({ type: 'SET_ACTIVE_CHAT', payload: { id: pending.chatId, title: pending.title || '' } });
     }
@@ -1411,7 +1442,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
             if (entry && last?.role === 'ai') {
               if (cancelled) return;
               finishRecovery();
-              const restored: Message[] = conv.map((m: any) => ({ role: m.role, content: m.content }));
+              const restored: Message[] = conv.map((m: any) => ({ role: m.role, content: m.content, thumbnails: m.thumbnails }));
               const lastCompletion = entry.metadata?.lastCompletion;
               const restoredLast = restored[restored.length - 1];
               if (lastCompletion && restoredLast?.role === 'ai') {
@@ -1690,6 +1721,89 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     });
   };
 
+  // Decode a File into an <img> we can draw to a canvas.
+  const loadImageElement = (file: File): Promise<HTMLImageElement> =>
+    new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not decode image')); };
+      img.src = url;
+    });
+
+  /** Build a small, persistable data-URL preview of an attachment. */
+  const makeThumbnail = async (file: File): Promise<string | undefined> => {
+    try {
+      const img = await loadImageElement(file);
+      const longEdge = Math.max(img.width, img.height);
+      const scale = Math.min(1, THUMB_MAX_DIMENSION / longEdge);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return undefined;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL('image/jpeg', THUMB_QUALITY);
+    } catch {
+      return undefined;
+    }
+  };
+
+  /**
+   * Prepare an attachment for upload: downscale to the vision model's effective
+   * resolution ceiling and re-encode large images as JPEG.
+   *
+   * Returns raw base64 (no data: prefix) plus the media type that actually
+   * matches the encoded bytes — these must agree or the provider rejects it.
+   * Falls back to the original bytes if canvas encoding is unavailable.
+   */
+  const prepareImageForUpload = async (
+    file: File
+  ): Promise<{ base64: string; mediaType: string }> => {
+    try {
+      const img = await loadImageElement(file);
+      const longEdge = Math.max(img.width, img.height);
+      const scale = longEdge > MAX_IMAGE_DIMENSION ? MAX_IMAGE_DIMENSION / longEdge : 1;
+      const needsResize = scale < 1;
+      const needsRecompress = file.size > JPEG_FALLBACK_BYTES;
+
+      if (!needsResize && !needsRecompress) {
+        return { base64: await fileToBase64(file), mediaType: file.type || 'image/png' };
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        return { base64: await fileToBase64(file), mediaType: file.type || 'image/png' };
+      }
+      // White matte: JPEG has no alpha, and transparent screenshot regions
+      // would otherwise composite to black.
+      const asJpeg = needsRecompress || file.type === 'image/jpeg';
+      if (asJpeg) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      const mediaType = asJpeg ? 'image/jpeg' : 'image/png';
+      const dataUrl = canvas.toDataURL(mediaType, asJpeg ? JPEG_QUALITY : undefined);
+      const base64 = dataUrl.split(',')[1];
+      if (!base64) {
+        return { base64: await fileToBase64(file), mediaType: file.type || 'image/png' };
+      }
+      return { base64, mediaType };
+    } catch {
+      // Canvas path failed (tainted, decode error, headless) — send as-is.
+      return { base64: await fileToBase64(file), mediaType: file.type || 'image/png' };
+    }
+  };
+
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
@@ -1705,11 +1819,12 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
         continue;
       }
       try {
-        const base64 = await fileToBase64(file);
+        const { base64, mediaType } = await prepareImageForUpload(file);
+        const thumbnail = await makeThumbnail(file);
         const preview = URL.createObjectURL(file);
         dispatch({
           type: 'ADD_ATTACHED_IMAGE',
-          payload: { id: `${Date.now()}-${i}`, file, preview, base64, mediaType: file.type || 'image/png' },
+          payload: { id: `${Date.now()}-${i}`, file, preview, base64, mediaType, thumbnail },
         });
       } catch {
         errors.push(`${file.name}: Failed to process`);
@@ -1766,11 +1881,12 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
         continue;
       }
       try {
-        const base64 = await fileToBase64(file);
+        const { base64, mediaType } = await prepareImageForUpload(file);
+        const thumbnail = await makeThumbnail(file);
         const preview = URL.createObjectURL(file);
         dispatch({
           type: 'ADD_ATTACHED_IMAGE',
-          payload: { id: `${Date.now()}-${i}`, file, preview, base64, mediaType: file.type || 'image/png' },
+          payload: { id: `${Date.now()}-${i}`, file, preview, base64, mediaType, thumbnail },
         });
       } catch {
         errors.push(`${file.name}: Failed to process`);
@@ -1797,17 +1913,20 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
       const file = imageItems[i].getAsFile();
       if (!file) continue;
       try {
-        const base64 = await fileToBase64(file);
+        const { base64, mediaType } = await prepareImageForUpload(file);
+        const thumbnail = await makeThumbnail(file);
         const preview = URL.createObjectURL(file);
         const timestamp = new Date().toISOString().slice(11, 19).replace(/:/g, '-');
+        const ext = mediaType === 'image/jpeg' ? 'jpg' : 'png';
         dispatch({
           type: 'ADD_ATTACHED_IMAGE',
           payload: {
             id: `paste-${Date.now()}-${i}`,
-            file: new File([file], `pasted-image-${timestamp}.png`, { type: file.type }),
+            file: new File([file], `pasted-image-${timestamp}.${ext}`, { type: file.type }),
             preview,
             base64,
-            mediaType: file.type || 'image/png',
+            mediaType,
+            thumbnail,
           },
         });
       } catch {
@@ -1871,9 +1990,11 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
    * client-side via the addons channel. Replaces the old full-page reload
    * workaround for storybookjs/storybook#30431, which is fixed upstream.
    */
-  const awaitStoryIndexed = useCallback((storybookId: string) => {
+  const awaitStoryIndexed = useCallback((storybookId: string, fileName?: string) => {
     let cancelled = false;
-    const maxAttempts = 15;
+    // ~45s. Large compositions can take a moment to be picked up; the previous
+    // 22s window expired before slower indexes caught up.
+    const maxAttempts = 30;
     let attempt = 0;
 
     const poll = async () => {
@@ -1890,7 +2011,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
               Object.keys(entries).find(id => id.startsWith(`${storybookId}--`));
             if (entryId) {
               if (!cancelled) {
-                dispatch({ type: 'PATCH_LAST_AI_MESSAGE', payload: { storyEntryId: entryId } });
+                dispatch({ type: 'PATCH_LAST_AI_MESSAGE', payload: { storyEntryId: entryId, storyIndexStalled: undefined } });
               }
               return;
             }
@@ -1901,7 +2022,13 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
         await new Promise(resolve => setTimeout(resolve, 1500));
       }
       if (!cancelled) {
+        // The file is on disk but Storybook never indexed it. Say so in the UI:
+        // failing silently here is what left generated stories unreachable.
         console.warn(`[Story UI] Story "${storybookId}" did not appear in the index after ${maxAttempts} polls`);
+        dispatch({
+          type: 'PATCH_LAST_AI_MESSAGE',
+          payload: { storyIndexStalled: { storybookId, fileName } },
+        });
       }
     };
 
@@ -1909,23 +2036,70 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     return () => { cancelled = true; };
   }, []);
 
+  /**
+   * Re-check the index on demand. Storybook rebuilds its index on restart, so
+   * this turns the stalled notice into a working button without a full reload.
+   */
+  const recheckStoryIndex = useCallback(async (storybookId: string) => {
+    try {
+      const res = await fetch('/index.json', { cache: 'no-store' });
+      if (!res.ok) return false;
+      const entries = (await res.json()).entries || {};
+      const entryId =
+        Object.keys(entries).find(id => id.startsWith(`${storybookId}--`) && entries[id].type === 'story') ||
+        Object.keys(entries).find(id => id.startsWith(`${storybookId}--`));
+      if (entryId) {
+        dispatch({ type: 'PATCH_LAST_AI_MESSAGE', payload: { storyEntryId: entryId, storyIndexStalled: undefined } });
+        return true;
+      }
+    } catch { /* still unreachable */ }
+    return false;
+  }, []);
+
   /** Navigate the Storybook manager to a story without a page reload. */
   const openStoryInStorybook = useCallback((entryId: string) => {
+    // The panel lives in the preview iframe, so the channel here is the
+    // preview's. Emitting selectStory usually reaches the manager — but when it
+    // doesn't, the old code had already returned and the button did nothing.
+    // Emit, then verify the manager actually navigated and fall back to a URL.
+    const navigateByUrl = () => {
+      try {
+        const target = window.top ?? window;
+        target.location.href = `${target.location.pathname}?path=/story/${entryId}`;
+      } catch {
+        window.open(`/?path=/story/${entryId}`, '_blank');
+      }
+    };
+
+    let emitted = false;
     try {
       const channel = (window as any).__STORYBOOK_ADDONS_CHANNEL__;
       if (channel?.emit) {
+        // Storybook has used both event names across versions; emitting the
+        // one the running manager doesn't know is harmless.
         channel.emit('selectStory', { storyId: entryId });
-        return;
+        channel.emit('setCurrentStory', { storyId: entryId });
+        emitted = true;
       }
     } catch {
       // fall through to URL navigation
     }
-    try {
-      const target = window.top ?? window;
-      target.location.href = `${target.location.pathname}?path=/story/${entryId}`;
-    } catch {
-      window.open(`/?path=/story/${entryId}`, '_blank');
+
+    if (!emitted) {
+      navigateByUrl();
+      return;
     }
+
+    // If the manager didn't move to the story shortly after the emit, navigate
+    // directly rather than leaving the click with no visible effect.
+    window.setTimeout(() => {
+      try {
+        const search = (window.top ?? window).location.search || '';
+        if (!search.includes(entryId)) navigateByUrl();
+      } catch {
+        navigateByUrl();
+      }
+    }, 400);
   }, []);
 
   // Finalize streaming
@@ -1994,7 +2168,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     // Watch the story index and attach an "Open story" link when the new
     // story is ready — no page reload needed (Storybook ≥9 indexes live).
     if (completion.success && completion.storybookId) {
-      awaitStoryIndexed(completion.storybookId);
+      awaitStoryIndexed(completion.storybookId, completion.fileName);
     }
   }, [state.activeChatId, state.activeTitle, state.conversation.length, awaitStoryIndexed]);
 
@@ -2003,7 +2177,12 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   const handleSend = async (e?: React.FormEvent, overrideInput?: string) => {
     if (e) e.preventDefault();
     if (!overrideInput && !state.input.trim() && state.attachedImages.length === 0) return;
-    const userInput = overrideInput?.trim() || state.input.trim() || (state.attachedImages.length > 0 ? 'Create a component that matches this design' : '');
+    // Default prompt for a bare image upload. Phrased as a composition on
+    // purpose: "a component" biased the model toward extracting one card out
+    // of a full-page screenshot.
+    const userInput = overrideInput?.trim() || state.input.trim() || (state.attachedImages.length > 0
+      ? 'Recreate this design. Reproduce every region visible in the image, in the same layout.'
+      : '');
     dispatch({ type: 'SET_ERROR', payload: null });
     dispatch({ type: 'SET_LOADING', payload: true });
     dispatch({ type: 'SET_STREAMING_STATE', payload: null });
@@ -2020,6 +2199,11 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
       role: 'user',
       content: userInput,
       attachedImages: hasImages ? imagesToSend : undefined,
+      // Kept separately so the reference image is still visible after the chat
+      // is reloaded from storage.
+      thumbnails: hasImages
+        ? imagesToSend.map(img => img.thumbnail).filter((t): t is string => !!t)
+        : undefined,
     };
     const newConversation: Message[] = [...state.conversation, userMessage];
     dispatch({ type: 'SET_CONVERSATION', payload: newConversation });
@@ -2045,7 +2229,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
         try {
           sessionStorage.setItem(PENDING_GEN_KEY, JSON.stringify({
             userInput,
-            conversation: newConversation.map(m => ({ role: m.role, content: m.content })),
+            conversation: newConversation.map(m => ({ role: m.role, content: m.content, thumbnails: m.thumbnails })),
             fileName: activeFileName || null,
             chatId: state.activeChatId || null,
             title: state.activeTitle || null,
@@ -2060,8 +2244,10 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           isUpdate: !!(state.activeChatId && activeFileName),
           originalTitle: state.activeTitle || undefined,
           storyId: state.activeChatId || undefined,
+          // mediaType must describe the bytes we actually encoded — after
+          // downscaling that can differ from the original file's type.
           images: hasImages
-            ? imagesToSend.map(img => ({ type: 'base64' as const, data: img.base64, mediaType: img.file.type }))
+            ? imagesToSend.map(img => ({ type: 'base64' as const, data: img.base64, mediaType: img.mediaType }))
             : undefined,
           visionMode: hasImages ? 'screenshot_to_story' : undefined,
           provider: state.selectedProvider || undefined,
@@ -2079,7 +2265,11 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           body: JSON.stringify(requestBody),
           signal: abortControllerRef.current.signal,
         });
-        if (!response.ok) throw new Error(`Streaming request failed: ${response.status}`);
+        if (!response.ok) {
+          const streamErr = new Error(`Streaming request failed: ${response.status}`);
+          (streamErr as any).status = response.status;
+          throw streamErr;
+        }
         const reader = response.body?.getReader();
         if (!reader) throw new Error('No response body');
         const decoder = new TextDecoder();
@@ -2144,6 +2334,22 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
         }
       } catch (err: unknown) {
         if ((err as Error).name === 'AbortError') return;
+
+        // A rejected payload will be rejected again by the fallback, and
+        // retrying without the images would silently produce a story that
+        // ignores the design the user attached. Surface it instead.
+        if ((err as any)?.status === 413) {
+          try { sessionStorage.removeItem(PENDING_GEN_KEY); } catch {}
+          dispatch({ type: 'SET_STREAMING_STATE', payload: null });
+          dispatch({ type: 'SET_LOADING', payload: false });
+          const msg = 'The attached image is too large for the server to accept. Try a smaller or lower-resolution image, or attach fewer images.';
+          dispatch({ type: 'SET_ERROR', payload: msg });
+          dispatch({ type: 'SET_CONVERSATION', payload: [...newConversation, {
+            role: 'ai' as const, content: `Error: ${msg}`, isError: true, retryInput: userInput,
+          }] });
+          return;
+        }
+
         console.warn('Streaming failed, falling back to non-streaming:', err);
         try { sessionStorage.removeItem(PENDING_GEN_KEY); } catch {}
         dispatch({ type: 'SET_STREAMING_STATE', payload: null });
@@ -2158,6 +2364,12 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
               isUpdate: !!(state.activeChatId && activeFileName),
               originalTitle: state.activeTitle || undefined,
               storyId: state.activeChatId || undefined,
+              // Vision inputs must survive the fallback. Dropping them here is
+              // what made image uploads look like they were being ignored.
+              images: hasImages
+                ? imagesToSend.map(img => ({ type: 'base64' as const, data: img.base64, mediaType: img.mediaType }))
+                : undefined,
+              visionMode: hasImages ? 'screenshot_to_story' : undefined,
               provider: state.selectedProvider || undefined,
               model: state.selectedModel || undefined,
               considerations: state.considerations || undefined,
@@ -2634,6 +2846,15 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                   onClick={() => { canvasModeRef.current = true; setPanelMode('canvas'); try { localStorage.setItem('__sui_panel_mode__', 'canvas'); } catch {} }}
                 >Voice Canvas</button>
               )}
+              {/* Design context is the highest-authority input to generation, so
+                  it gets a first-class home rather than living only on disk. */}
+              <button
+                type="button"
+                className={`sui-mode-toggle-btn ${panelMode === 'context' ? 'sui-mode-toggle-btn--active' : ''}`}
+                aria-pressed={panelMode === 'context'}
+                title="Teach the generator how your design system works"
+                onClick={() => { canvasModeRef.current = false; setPanelMode('context'); try { localStorage.setItem('__sui_panel_mode__', 'context'); } catch {} }}
+              >Design Context</button>
             </div>
           </div>
           <div className="sui-header-right">
@@ -2700,7 +2921,24 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           </div>
         </header>
 
-        {panelMode === 'canvas' ? (
+        {panelMode === 'context' ? (
+          <DesignContextPanel
+            apiBase={getApiBase()}
+            onContextChanged={() => {
+              // Re-pull considerations so the very next generation uses the
+              // edits the user just made, without a reload.
+              (async () => {
+                try {
+                  const res = await fetch(CONSIDERATIONS_API());
+                  if (res.ok) {
+                    const data = await res.json();
+                    dispatch({ type: 'SET_CONSIDERATIONS', payload: data.considerations || '' });
+                  }
+                } catch { /* keep the previous considerations */ }
+              })();
+            }}
+          />
+        ) : panelMode === 'canvas' ? (
           <VoiceCanvas
             ref={voiceCanvasRef}
             apiBase={getApiBase()}
@@ -2772,6 +3010,15 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                         ))}
                       </div>
                     )}
+                    {/* Reloaded from storage: the live attachments are gone, but
+                        the persisted thumbnails still show what was referenced. */}
+                    {msg.role === 'user' && !msg.attachedImages?.length && !!msg.thumbnails?.length && (
+                      <div className="sui-message-images">
+                        {msg.thumbnails.map((src, ti) => (
+                          <img key={ti} src={src} alt="Image attached to this message" className="sui-message-image" />
+                        ))}
+                      </div>
+                    )}
                     {msg.role === 'ai' && typeof msg.generationTimeMs === 'number' && msg.generationTimeMs > 0 && (
                       <div className="sui-message-meta">{(msg.generationTimeMs / 1000).toFixed(1)}s</div>
                     )}
@@ -2803,6 +3050,31 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                         onClick={() => openStoryInStorybook(msg.storyEntryId!)}
                       >
                         Open in Storybook {Icons.openExternal}
+                      </button>
+                    </div>
+                  )}
+                  {/* The story exists on disk but Storybook's watcher never
+                      indexed it. Tell the user plainly and give them a way out
+                      instead of rendering nothing. */}
+                  {msg.role === 'ai' && !msg.isError && !msg.storyEntryId && msg.storyIndexStalled && !state.loading && (
+                    <div className="sui-message-actions sui-index-stalled" aria-label="Story indexing notice">
+                      <div className="sui-index-stalled-text">
+                        Storybook hasn’t picked this story up yet. The file was written
+                        {msg.storyIndexStalled.fileName ? ` to ${msg.storyIndexStalled.fileName}` : ''}, but
+                        it isn’t in the story index — this usually means Storybook’s file watcher stopped.
+                        Restart Storybook, then check again.
+                      </div>
+                      <button
+                        type="button"
+                        className="sui-chip"
+                        onClick={async () => {
+                          const found = await recheckStoryIndex(msg.storyIndexStalled!.storybookId);
+                          if (!found) {
+                            dispatch({ type: 'SET_ERROR', payload: 'Still not in the story index. Restart Storybook to pick up newly generated stories.' });
+                          }
+                        }}
+                      >
+                        Check again
                       </button>
                     </div>
                   )}
