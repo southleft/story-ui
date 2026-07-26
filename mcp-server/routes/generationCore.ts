@@ -397,12 +397,29 @@ export async function runStoryGeneration(
     const claudeResponse = llmResult.content;
 
     // Truncated responses can't validate — ask the model to complete the block.
+    //
+    // The retry used to say "keeping the implementation as concise as possible",
+    // which is exactly backwards for the compositions most likely to truncate.
+    // A dashboard or CRM view gets cut off precisely because it is large, and
+    // telling the model to shrink it trades a truncated good answer for a
+    // complete lesser one — the user asked for the dashboard. Instruct it to
+    // economise on repetition instead, and preserve every region.
     if (llmResult.truncated && attempts < selfHealingOptions.maxAttempts) {
       logger.warn('⚠️ LLM response was truncated at the token limit, requesting a complete block');
       messages.push({ role: 'assistant', content: claudeResponse });
       messages.push({
         role: 'user',
-        content: 'Your previous response was cut off before the code block was complete. Regenerate the FULL story in a single complete code block, keeping the implementation as concise as possible.',
+        content: [
+          'Your previous response was cut off before the code block was complete.',
+          'Regenerate the FULL story in a single complete code block.',
+          '',
+          'Keep every region and feature that was requested — do NOT drop sections or',
+          'simplify the composition to fit. Save space by removing repetition instead:',
+          '- lift repeated markup into a small local sub-component or a .map() over a data array',
+          '- move long literal content into a const array above the story',
+          '- keep sample data short (3-5 rows is enough to show the pattern)',
+          '- omit redundant comments',
+        ].join('\n'),
       });
       continue;
     }
@@ -1078,8 +1095,14 @@ async function callLLM(
     logger.log(`🎯 Explicit provider requested: ${options.provider} (model: ${options.model || 'default'})`);
   }
 
+  // Use the selected model's real output ceiling rather than a hardcoded 8192.
+  // Sonnet 5 supports 16000, so half its capacity was being discarded — and the
+  // compositions the tool most needs to get right (dashboards, CRM views,
+  // monitoring layouts) are exactly the ones that truncate, burn a repair
+  // attempt, and come back smaller than the user asked for.
+  const providerInfo = getProviderInfo({ provider: options?.provider as any, model: options?.model });
   const llmOptions: { provider?: any; model?: string; maxTokens: number } = {
-    maxTokens: 8192,
+    maxTokens: providerInfo.maxOutputTokens ?? 8192,
     provider: options?.provider,
     model: options?.model,
   };

@@ -435,6 +435,8 @@ export function getProviderInfo(requested?: {
   currentModel: string;
   supportsVision: boolean;
   supportsStreaming: boolean;
+  /** The model's real output ceiling, so callers stop hardcoding one. */
+  maxOutputTokens?: number;
 } {
   try {
     let provider: LLMProvider | undefined;
@@ -455,6 +457,7 @@ export function getProviderInfo(requested?: {
       currentModel: modelId,
       supportsVision: modelInfo ? modelInfo.supportsVision : provider.supportsVision(),
       supportsStreaming: modelInfo ? modelInfo.supportsStreaming : provider.supportsStreaming(),
+      maxOutputTokens: modelInfo?.maxOutputTokens,
     };
   } catch {
     return {

@@ -79,6 +79,28 @@ export async function runDomCensus(page: any): Promise<CensusResult> {
       'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +
       'textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), [contenteditable="true"]';
 
+    /**
+     * Ancestor test for "is this already inside something interactive".
+     *
+     * Deliberately WIDER than FOCUSABLE. Design systems routinely render an
+     * <a> without href (Mantine's NavLink does), and an anchor is still the
+     * control even when it is not tab-reachable by that selector. Using the
+     * strict list here flagged spans, svgs and even <path> nodes inside a
+     * perfectly good link as "clickable but not keyboard reachable".
+     */
+    const INTERACTIVE_ANCESTOR =
+      'a, button, input, select, textarea, label, summary, ' +
+      '[role="button"], [role="link"], [role="menuitem"], [role="tab"], [role="option"], ' +
+      '[role="checkbox"], [role="radio"], [role="switch"], [role="combobox"], ' +
+      '[tabindex], [contenteditable="true"]';
+
+    /** SVG internals are never independently interactive; never evaluate them. */
+    const isSvgInternal = (el: Element): boolean => {
+      const tag = el.tagName.toLowerCase();
+      if (tag === 'svg') return false;
+      return !!el.closest('svg');
+    };
+
     const focusables = (Array.from(root.querySelectorAll(FOCUSABLE)) as HTMLElement[]).filter(isVisible);
     const links = Array.from(root.querySelectorAll('a[href]'));
     const realInputs = Array.from(root.querySelectorAll('input, textarea, select'));
@@ -160,8 +182,8 @@ export async function runDomCensus(page: any): Promise<CensusResult> {
     const svgs = (Array.from(root.querySelectorAll('svg')) as unknown as HTMLElement[]).filter(isVisible);
     let orphanIcons = 0;
     for (const svg of svgs) {
-      const inControl = svg.closest(FOCUSABLE);
-      if (inControl) continue;
+      // Any interactive ancestor counts, including an <a> without href.
+      if (svg.closest(INTERACTIVE_ANCESTOR)) continue;
       // Icons inside a labelled non-interactive region are usually decorative.
       const looksDecorative =
         svg.getAttribute('aria-hidden') === 'true' ||
@@ -183,6 +205,8 @@ export async function runDomCensus(page: any): Promise<CensusResult> {
     let clickableNonButtons = 0;
     for (const el of all) {
       if (!isVisible(el)) continue;
+      // <path>, <g>, <circle> etc. are painting instructions, not controls.
+      if (isSvgInternal(el)) continue;
       const tag = el.tagName.toLowerCase();
       if (tag === 'button' || tag === 'a' || tag === 'input' || tag === 'select' || tag === 'textarea') continue;
       if (el.getAttribute('role') === 'button' && el.hasAttribute('tabindex')) continue;
@@ -190,8 +214,9 @@ export async function runDomCensus(page: any): Promise<CensusResult> {
       const hasRole = el.getAttribute('role') === 'button';
       const focusable = el.matches(FOCUSABLE);
       if ((hasRole || cursorPointer) && !focusable) {
-        // A pointer cursor inherited from a real control ancestor is fine.
-        if (el.closest(FOCUSABLE)) continue;
+        // cursor:pointer is inherited, so a child of a real control looks
+        // clickable without being a defect. Test the wider ancestor set.
+        if (el.closest(INTERACTIVE_ANCESTOR)) continue;
         clickableNonButtons++;
         if (clickableNonButtons <= 5) {
           problems.push({
