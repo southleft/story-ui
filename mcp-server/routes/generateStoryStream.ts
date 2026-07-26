@@ -163,6 +163,17 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
       suggestions: outcome.suggestions,
       chatSummary: outcome.chatSummary,
       storybookId: outcome.storybookId,
+      // Browser verification — forwarded verbatim so the panel can show what was
+      // actually observed, including an honest "not verified".
+      verification: outcome.verification ? {
+        outcome: outcome.verification.outcome,
+        reason: outcome.verification.reason,
+        findings: outcome.verification.findings.map(f => ({
+          id: f.id, severity: f.severity, class: f.class,
+          message: f.message, evidence: f.evidence, selector: f.selector,
+        })),
+        metrics: outcome.verification.metrics,
+      } : undefined,
       // Only surface runtime results the user should act on: a pass, or a
       // genuine in-Storybook crash. Inconclusive infra results (story not
       // indexed yet, Storybook unreachable) would show a false alarm.

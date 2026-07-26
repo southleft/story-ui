@@ -112,6 +112,25 @@ export interface CompletionFeedback {
     healedByRetry?: boolean;
   };
 
+  /**
+   * Browser verification result — the story was rendered and inspected, not
+   * merely written. Absent when verification could not run, which the panel
+   * reports honestly rather than as success.
+   */
+  verification?: {
+    outcome: 'verified' | 'issues' | 'not_verified';
+    reason?: string;
+    findings: Array<{
+      id: string;
+      severity: 'blocker' | 'warning' | 'info';
+      class: 'code' | 'a11y' | 'interaction' | 'infrastructure';
+      message: string;
+      evidence?: string;
+      selector?: string;
+    }>;
+    metrics?: Record<string, number | string | boolean>;
+  };
+
   // Validation status
   validation: ValidationFeedback;
 

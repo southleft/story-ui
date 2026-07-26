@@ -164,6 +164,11 @@ export interface GenerationOutcome {
     details?: unknown;
     healedByRetry?: boolean;
   };
+  /**
+   * Browser verification: the story was actually rendered and inspected.
+   * Absent when verification could not run (no Playwright, no Storybook URL).
+   */
+  verification?: VerifyReport;
   /** Conversational, model-authored reply describing what was built. */
   chatSummary?: string;
   /** Short follow-up prompt ideas the user can click to refine. */
@@ -900,6 +905,7 @@ export async function runStoryGeneration(
     chatSummary,
     suggestions,
     storybookId,
+    verification,
   };
 }
 

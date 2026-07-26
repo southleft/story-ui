@@ -11,6 +11,8 @@ import './StoryUIPanel.css';
 import { VoiceControls } from './voice/VoiceControls';
 import { VoiceCanvas, type VoiceCanvasHandle } from './voice/VoiceCanvas';
 import { DesignContextPanel } from './DesignContextPanel';
+import { VerificationBadge } from './VerificationBadge';
+import { HandoffDialog } from './HandoffDialog';
 import type { VoiceCommand } from './voice/types';
 
 // ============================================
@@ -40,6 +42,11 @@ interface Message {
   retryInput?: string;
   /** Storybook entry ID once the new story is indexed — enables "Open story". */
   storyEntryId?: string;
+  /** Browser verification for the story this message produced. */
+  verification?: VerificationResult;
+  /** File this message produced, so it can be handed off to a branch. */
+  storyFileName?: string;
+  storyTitle?: string;
   /**
    * Set when the story file was written but never showed up in Storybook's
    * index. Storybook's dev-server watcher can stop noticing new files, and
@@ -119,6 +126,22 @@ interface StyleChoice {
   reason?: string;
 }
 
+interface VerificationFinding {
+  id: string;
+  severity: 'blocker' | 'warning' | 'info';
+  class: 'code' | 'a11y' | 'interaction' | 'infrastructure';
+  message: string;
+  evidence?: string;
+  selector?: string;
+}
+
+interface VerificationResult {
+  outcome: 'verified' | 'issues' | 'not_verified';
+  reason?: string;
+  findings: VerificationFinding[];
+  metrics?: Record<string, number | string | boolean>;
+}
+
 interface CompletionFeedback {
   success: boolean;
   isFallback?: boolean; // True when a fallback error placeholder was created
@@ -126,6 +149,8 @@ interface CompletionFeedback {
   fileName?: string;
   title?: string;
   code?: string;
+  /** What the browser actually observed after rendering the story. */
+  verification?: VerificationResult;
   summary: { action: string; details: string };
   componentsUsed: ComponentUsage[];
   layoutChoices: LayoutChoice[];
@@ -1206,6 +1231,14 @@ interface StoryUIPanelProps {
 
 function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   const [state, dispatch] = useReducer(panelReducer, initialState);
+  // Handoff availability is a property of the repo, not the story, so it is
+  // fetched once and reused for every message's action row.
+  const [handoffStatus, setHandoffStatus] = useState<{
+    available: boolean; reason?: string; branch?: string; remote?: string | null;
+    canPush?: boolean; canOpenPr?: boolean; prUnavailableReason?: string;
+  } | null>(null);
+  const [handoffFor, setHandoffFor] = useState<{ fileName: string; title: string } | null>(null);
+
   const [panelMode, setPanelMode] = useState<'chat' | 'canvas' | 'context'>(() => {
     try {
       const stored = localStorage.getItem('__sui_panel_mode__');
@@ -1663,6 +1696,14 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           }
         } catch (e) {
           console.error('Failed to fetch considerations:', e);
+        }
+        try {
+          // Whether this project can accept a handoff at all (git repo, remote,
+          // gh auth). Fetched once; the action row reuses it per message.
+          const res = await fetch(`${getApiBase()}/story-ui/handoff/status`);
+          if (res.ok) setHandoffStatus(await res.json());
+        } catch {
+          // Handoff simply stays unavailable.
         }
         try {
           const canvasCfgRes = await fetch(`${getApiBase()}/mcp/canvas-config`);
@@ -2123,6 +2164,9 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
       isError: !completion.success,
       retryInput: !completion.success ? userInput : undefined,
       generationTimeMs: completion.metrics?.totalTimeMs,
+      verification: completion.verification,
+      storyFileName: completion.fileName,
+      storyTitle: completion.title,
     };
     const updatedConversation = [...newConversation, aiMsg];
     dispatch({ type: 'SET_CONVERSATION', payload: updatedConversation });
@@ -2921,6 +2965,15 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           </div>
         </header>
 
+        {handoffFor && handoffStatus?.available && (
+          <HandoffDialog
+            apiBase={getApiBase()}
+            status={handoffStatus}
+            fileName={handoffFor.fileName}
+            title={handoffFor.title}
+            onClose={() => setHandoffFor(null)}
+          />
+        )}
         {panelMode === 'context' ? (
           <DesignContextPanel
             apiBase={getApiBase()}
@@ -3042,6 +3095,12 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                   )}
                   {/* Primary action on its own row; suggestions grouped below —
                       mixing them in one wrapped row produced ragged layouts. */}
+                  {/* What the browser actually observed. "Not verified" is shown
+                      as plainly as a pass — claiming success we cannot prove is
+                      the failure mode this whole subsystem exists to end. */}
+                  {msg.role === 'ai' && !msg.isError && msg.verification && !state.loading && (
+                    <VerificationBadge verification={msg.verification} />
+                  )}
                   {msg.role === 'ai' && !msg.isError && msg.storyEntryId && !state.loading && (
                     <div className="sui-message-actions" aria-label="Story actions">
                       <button
@@ -3051,6 +3110,16 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                       >
                         Open in Storybook {Icons.openExternal}
                       </button>
+                      {handoffStatus?.available && msg.storyFileName && (
+                        <button
+                          type="button"
+                          className="sui-chip"
+                          title="Commit this story to a new branch for a product engineer"
+                          onClick={() => setHandoffFor({ fileName: msg.storyFileName!, title: msg.storyTitle || 'Story' })}
+                        >
+                          Hand off →
+                        </button>
+                      )}
                     </div>
                   )}
                   {/* The story exists on disk but Storybook's watcher never

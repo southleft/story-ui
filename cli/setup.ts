@@ -1073,6 +1073,8 @@ Material UI (MUI) is a React component library implementing Material Design.
     'StoryUIPanel.mdx',
     'StoryUIPanel.css',
     'DesignContextPanel.tsx',
+    'VerificationBadge.tsx',
+    'HandoffDialog.tsx',
     'manager.tsx',
   ];
 

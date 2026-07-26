@@ -13,6 +13,7 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 import express from 'express';
 import cors from 'cors';
 import { getComponents, getProps } from './routes/components.js';
+import { makeHandoff, makeHandoffStatus } from './routes/handoff.js';
 import {
   getDesignContext,
   getDesignContextFile,
@@ -1010,6 +1011,12 @@ const config = loadUserConfig();
 // (e.g. which starter design-context document to scaffold) without the client
 // having to know or send it.
 app.set('storyUiImportPath', config.importPath);
+
+// Handoff — prototype to branch/PR. Registered here because it needs the loaded
+// config. Every mutating step is opt-in and driven by an explicit user action in
+// the panel; see routes/handoff.ts for the guardrails.
+app.get('/story-ui/handoff/status', makeHandoffStatus({ generatedStoriesPath: config.generatedStoriesPath }));
+app.post('/story-ui/handoff', makeHandoff({ generatedStoriesPath: config.generatedStoriesPath }));
 
 // Initialize URL redirect service
 const redirectService = new UrlRedirectService(process.cwd());
