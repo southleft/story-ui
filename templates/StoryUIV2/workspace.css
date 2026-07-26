@@ -1,0 +1,671 @@
+/**
+ * Story UI V2 — workspace visual language.
+ *
+ * This is PRODUCT UI, not a marketing page: density is a feature, and a
+ * designer will sit in it for an hour. So the language is quiet — one accent,
+ * one radius scale, one elevation model — and everything loud is reserved for
+ * the thing being generated, which is the actual subject of the screen.
+ *
+ * Dark-first because every tool in this category is, and because a light chrome
+ * competing with a light preview makes the preview harder to judge.
+ */
+
+.suiw {
+  /* ---- surfaces: four steps, no more. Anything else is decoration. ---- */
+  --suiw-bg: #0c0c0e;
+  --suiw-surface: #131316;
+  --suiw-raised: #1a1a1f;
+  --suiw-hover: #212127;
+
+  /* ---- lines: two weights. hairline separates, edge contains. ---- */
+  --suiw-hairline: rgb(255 255 255 / 0.07);
+  --suiw-edge: rgb(255 255 255 / 0.12);
+
+  /* ---- text: three steps. more than three is a hierarchy failure. ---- */
+  --suiw-text: #ededf0;
+  --suiw-text-muted: #a1a1aa;
+  --suiw-text-faint: #6c6c76;
+
+  /* ---- one accent. A warm clay, deliberately not the AI-purple/blue default,
+         and desaturated enough to sit under a preview without competing. ---- */
+  --suiw-accent: #c96442;
+  --suiw-accent-hover: #d4735a;
+  /* Dark, not white. White on this clay measures 3.90:1 and fails WCAG AA on
+     the primary button; #14100e measures 4.85:1 and passes. */
+  --suiw-accent-text: #14100e;
+
+  /* ---- state colours, used only for real state ----
+     No success-green: a completed step is communicated by the row going quiet
+     and past-tense, not by a colour the tool has not earned. Green is reserved
+     for verification that actually ran in a browser. */
+  --suiw-done: #6c6c76;
+  --suiw-verified: #6ea87f;
+  --suiw-warn: #e0b341;
+  --suiw-bad: #f0716a;
+
+  /* ---- one radius scale ---- */
+  --suiw-r-sm: 6px;
+  --suiw-r-md: 10px;
+  --suiw-r-lg: 14px;
+  --suiw-r-pill: 999px;
+
+  /* ---- type ---- */
+  --suiw-font: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --suiw-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+
+  /* ---- layout ---- */
+  --suiw-rail: 400px;
+  --suiw-topbar: 52px;
+
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--suiw-bg);
+  color: var(--suiw-text);
+  font-family: var(--suiw-font);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+.suiw *,
+.suiw *::before,
+.suiw *::after { box-sizing: border-box; }
+
+.suiw button { font: inherit; color: inherit; }
+
+/* Storybook's docs wrapper pads content by 64px/20px and centres it. A
+   workspace has to escape that or it renders as a page inside a page. */
+.sbdocs-wrapper:has(.suiw),
+.sbdocs-content:has(.suiw) {
+  padding: 0 !important;
+  margin: 0 !important;
+  max-width: none !important;
+}
+
+/* ============================================================
+   Top bar
+   ============================================================ */
+
+.suiw-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: var(--suiw-topbar);
+  padding: 0 14px;
+  border-bottom: 1px solid var(--suiw-hairline);
+  background: var(--suiw-surface);
+  flex: 0 0 auto;
+}
+
+.suiw-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.suiw-brand-mark {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--suiw-r-sm);
+  background: var(--suiw-accent);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--suiw-accent-text);
+}
+
+.suiw-top-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--suiw-text-muted);
+  font-size: 13px;
+}
+
+.suiw-top-spacer { flex: 1 1 auto; }
+
+.suiw-top-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--suiw-hairline);
+  border-radius: var(--suiw-r-sm);
+  background: var(--suiw-bg);
+}
+
+/* ============================================================
+   Buttons — one shape system
+   ============================================================ */
+
+.suiw-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: var(--suiw-r-sm);
+  background: transparent;
+  color: var(--suiw-text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  white-space: nowrap;
+}
+
+.suiw-btn:hover:not(:disabled) { background: var(--suiw-hover); color: var(--suiw-text); }
+.suiw-btn:active:not(:disabled) { transform: translateY(0.5px); }
+.suiw-btn:disabled { opacity: 0.4; cursor: default; }
+.suiw-btn[aria-pressed='true'] { background: var(--suiw-raised); color: var(--suiw-text); }
+
+.suiw-btn--outline { border-color: var(--suiw-edge); }
+
+.suiw-btn--primary {
+  background: var(--suiw-accent);
+  color: var(--suiw-accent-text);
+  font-weight: 500;
+}
+.suiw-btn--primary:hover:not(:disabled) { background: var(--suiw-accent-hover); color: var(--suiw-accent-text); }
+
+.suiw-btn--icon { width: 30px; padding: 0; justify-content: center; }
+
+.suiw-btn:focus-visible {
+  outline: 2px solid var(--suiw-accent);
+  outline-offset: 1px;
+}
+
+/* ============================================================
+   Body: rail + canvas
+   ============================================================ */
+
+.suiw-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--suiw-rail) 1fr;
+}
+
+.suiw-rail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--suiw-hairline);
+  background: var(--suiw-surface);
+}
+
+.suiw-canvas {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--suiw-bg);
+}
+
+/* Below this the two panes stop being usable side by side. */
+@media (max-width: 1100px) {
+  .suiw-body { grid-template-columns: 1fr; }
+  .suiw-rail { border-right: 0; border-bottom: 1px solid var(--suiw-hairline); max-height: 45%; }
+}
+
+/* ============================================================
+   Conversation
+   ============================================================ */
+
+.suiw-thread {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 16px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--suiw-edge) transparent;
+}
+
+.suiw-thread::-webkit-scrollbar { width: 8px; }
+.suiw-thread::-webkit-scrollbar-thumb {
+  background: var(--suiw-edge);
+  border-radius: var(--suiw-r-pill);
+}
+
+.suiw-turn { display: flex; flex-direction: column; gap: 8px; }
+
+/* The user's own words read as an aside, not a chat bubble. Bubbles are a
+   messaging idiom; this is a work log. */
+.suiw-turn--user .suiw-turn-body {
+  padding-left: 10px;
+  border-left: 2px solid var(--suiw-edge);
+  color: var(--suiw-text-muted);
+}
+
+.suiw-turn-body { font-size: 14px; line-height: 1.6; }
+.suiw-turn-body p { margin: 0 0 8px; }
+.suiw-turn-body p:last-child { margin-bottom: 0; }
+.suiw-turn-body code {
+  font-family: var(--suiw-mono);
+  font-size: 12.5px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--suiw-raised);
+}
+
+.suiw-turn-images { display: flex; gap: 6px; flex-wrap: wrap; }
+.suiw-turn-images img {
+  width: 84px;
+  height: 60px;
+  object-fit: cover;
+  border-radius: var(--suiw-r-sm);
+  border: 1px solid var(--suiw-hairline);
+}
+
+/* ---- streaming steps: collapsible rows, the thing that makes waiting legible ---- */
+
+.suiw-steps { display: flex; flex-direction: column; gap: 4px; }
+
+.suiw-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--suiw-hairline);
+  border-radius: var(--suiw-r-sm);
+  background: var(--suiw-raised);
+  font-size: 13px;
+  color: var(--suiw-text-muted);
+}
+
+.suiw-step--active { color: var(--suiw-text); border-color: var(--suiw-edge); }
+.suiw-step--done .suiw-step-dot { background: var(--suiw-done); }
+
+.suiw-step-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--suiw-text-faint);
+  flex: 0 0 auto;
+}
+
+.suiw-step--active .suiw-step-dot {
+  background: var(--suiw-accent);
+  animation: suiw-pulse 1.4s ease-in-out infinite;
+}
+
+/* The only looping animation in the product, and it means "work in progress". */
+@keyframes suiw-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .suiw-step--active .suiw-step-dot { animation: none; }
+  .suiw * { transition-duration: 0.01ms !important; }
+}
+
+.suiw-step-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.suiw-step-meta { flex: 0 0 auto; font-size: 11px; color: var(--suiw-text-faint); font-variant-numeric: tabular-nums; }
+
+.suiw-turn-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11.5px;
+  color: var(--suiw-text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.suiw-turn-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.suiw-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--suiw-hairline);
+  border-radius: var(--suiw-r-pill);
+  background: var(--suiw-raised);
+  color: var(--suiw-text-muted);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+  text-align: left;
+}
+
+.suiw-chip:hover { background: var(--suiw-hover); color: var(--suiw-text); }
+
+/* ============================================================
+   Composer
+   ============================================================ */
+
+.suiw-composer {
+  flex: 0 0 auto;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--suiw-hairline);
+  background: var(--suiw-surface);
+}
+
+.suiw-composer-box {
+  border: 1px solid var(--suiw-edge);
+  border-radius: var(--suiw-r-md);
+  background: var(--suiw-bg);
+  transition: border-color 140ms ease;
+}
+
+.suiw-composer-box:focus-within { border-color: var(--suiw-accent); }
+
+.suiw-composer textarea {
+  display: block;
+  width: 100%;
+  min-height: 60px;
+  max-height: 200px;
+  padding: 11px 12px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--suiw-text);
+  font: inherit;
+  resize: none;
+  outline: none;
+}
+
+.suiw-composer textarea::placeholder { color: var(--suiw-text-faint); }
+
+.suiw-composer-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 6px 6px 8px;
+}
+
+.suiw-composer-spacer { flex: 1 1 auto; }
+
+.suiw-attachments {
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px 0;
+  flex-wrap: wrap;
+}
+
+.suiw-attachment {
+  position: relative;
+  width: 52px;
+  height: 40px;
+  border-radius: var(--suiw-r-sm);
+  overflow: hidden;
+  border: 1px solid var(--suiw-hairline);
+}
+
+.suiw-attachment img { width: 100%; height: 100%; object-fit: cover; }
+
+.suiw-attachment button {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  border: 0;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.7);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+/* ---- inline selects, the Claude-Design-style pill controls ---- */
+
+.suiw-select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.suiw-select select {
+  appearance: none;
+  height: 28px;
+  padding: 0 22px 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--suiw-r-sm);
+  background: transparent;
+  color: var(--suiw-text-muted);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.suiw-select select:hover { background: var(--suiw-hover); color: var(--suiw-text); }
+.suiw-select::after {
+  content: '';
+  position: absolute;
+  right: 8px;
+  width: 5px;
+  height: 5px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translate(-1px, -1px);
+  color: var(--suiw-text-faint);
+  pointer-events: none;
+}
+
+/* ============================================================
+   Preview canvas
+   ============================================================ */
+
+.suiw-canvas-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--suiw-hairline);
+  flex: 0 0 auto;
+}
+
+.suiw-canvas-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  overflow: auto;
+  /* A faint grid so a transparent or white composition reads as an artifact
+     sitting on a surface, rather than as the page itself. */
+  background-image:
+    linear-gradient(var(--suiw-hairline) 1px, transparent 1px),
+    linear-gradient(90deg, var(--suiw-hairline) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-position: -1px -1px;
+}
+
+.suiw-frame {
+  background: #fff;
+  border-radius: var(--suiw-r-md);
+  border: 1px solid var(--suiw-edge);
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgb(0 0 0 / 0.35);
+  transition: width 180ms ease, height 180ms ease;
+}
+
+.suiw-frame iframe { display: block; width: 100%; height: 100%; border: 0; }
+
+/* The canvas keeps showing the previous composition while a new one builds, so
+   the user can still read what they are iterating on. Dimming beats blanking. */
+.suiw-frame--stale { opacity: 0.55; }
+.suiw-frame { transition: opacity 180ms ease, width 180ms ease, height 180ms ease; }
+
+/* Recent-work thumbnails are real stories, so they are only mounted when
+   scrolled into view — every mounted frame is another Storybook runtime. */
+.suiw-recent-thumb--idle {
+  display: grid;
+  place-items: center;
+  color: var(--suiw-text-faint);
+  font-size: 11px;
+}
+
+.suiw-canvas-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  color: var(--suiw-text-faint);
+  font-size: 13px;
+  text-align: center;
+  max-width: 40ch;
+}
+
+/* ============================================================
+   Home state
+   ============================================================ */
+
+.suiw-home {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 88px 24px 48px;
+}
+
+.suiw-home-inner { width: 100%; max-width: 760px; }
+
+.suiw-home h1 {
+  margin: 0 0 22px;
+  font-size: 30px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  text-align: center;
+}
+
+.suiw-home-sub {
+  margin: -14px 0 24px;
+  text-align: center;
+  color: var(--suiw-text-muted);
+  font-size: 14px;
+}
+
+.suiw-home-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 14px;
+}
+
+.suiw-home-section {
+  margin-top: 44px;
+}
+
+.suiw-home-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.suiw-home-section-head h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--suiw-text-muted);
+}
+
+.suiw-home-section-head span { font-size: 12px; color: var(--suiw-text-faint); }
+
+/* Recent work as real cards with a live thumbnail, not a text list. */
+.suiw-recent {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 12px;
+}
+
+.suiw-recent-card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--suiw-hairline);
+  border-radius: var(--suiw-r-md);
+  background: var(--suiw-surface);
+  overflow: hidden;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.suiw-recent-card:hover { border-color: var(--suiw-edge); background: var(--suiw-raised); }
+
+.suiw-recent-thumb {
+  height: 118px;
+  background: var(--suiw-bg);
+  border-bottom: 1px solid var(--suiw-hairline);
+  position: relative;
+  overflow: hidden;
+}
+
+.suiw-recent-thumb iframe {
+  width: 200%;
+  height: 200%;
+  border: 0;
+  transform: scale(0.5);
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
+.suiw-recent-meta { padding: 9px 11px 11px; }
+
+.suiw-recent-name {
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.suiw-recent-time { font-size: 11.5px; color: var(--suiw-text-faint); margin-top: 2px; }
+
+/* ============================================================
+   Status
+   ============================================================ */
+
+.suiw-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--suiw-text-muted);
+}
+
+.suiw-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--suiw-ok);
+}
+
+.suiw-status--off .suiw-status-dot { background: var(--suiw-bad); }
+
+.suiw-verify {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--suiw-hairline);
+  border-left: 2px solid var(--suiw-verified);
+  border-radius: var(--suiw-r-sm);
+  background: var(--suiw-raised);
+  font-size: 12.5px;
+}
+
+.suiw-verify--issues { border-left-color: var(--suiw-warn); }
+.suiw-verify--not_verified { border-left-color: var(--suiw-text-faint); }
+.suiw-verify-metrics { color: var(--suiw-text-faint); font-variant-numeric: tabular-nums; margin-left: auto; }

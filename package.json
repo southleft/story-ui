@@ -21,13 +21,14 @@
   "files": [
     "dist",
     "templates/StoryUI",
+    "templates/StoryUIV2",
     ".env.sample",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "build": "tsc && npm run copy-templates",
-    "copy-templates": "node -e \"const fs=require('fs');const path=require('path');const src='templates/StoryUI';const dst='dist/templates/StoryUI';['.css','.mdx','.tsx','.ts'].forEach(ext=>{fs.readdirSync(src).filter(f=>f.endsWith(ext)).forEach(f=>fs.copyFileSync(path.join(src,f),path.join(dst,f)))});const vsrc=path.join(src,'voice');const vdst=path.join(dst,'voice');if(fs.existsSync(vsrc)){fs.mkdirSync(vdst,{recursive:true});fs.readdirSync(vsrc).filter(f=>f.endsWith('.tsx')||f.endsWith('.ts')).forEach(f=>fs.copyFileSync(path.join(vsrc,f),path.join(vdst,f)));const csrc=path.join(vsrc,'canvas');const cdst=path.join(vdst,'canvas');if(fs.existsSync(csrc)){fs.mkdirSync(cdst,{recursive:true});fs.readdirSync(csrc).filter(f=>f.endsWith('.tsx')||f.endsWith('.ts')).forEach(f=>fs.copyFileSync(path.join(csrc,f),path.join(cdst,f)))}}console.log('Template files copied to dist/')\"",
+    "copy-templates": "node -e \"const fs=require('fs');const path=require('path');const copyDir=(src,dst)=>{if(!fs.existsSync(src))return;fs.mkdirSync(dst,{recursive:true});for(const e of fs.readdirSync(src,{withFileTypes:true})){const s=path.join(src,e.name),t=path.join(dst,e.name);if(e.isDirectory())copyDir(s,t);else if(/\\\\.(css|mdx|tsx|ts)$/.test(e.name))fs.copyFileSync(s,t);}};copyDir('templates/StoryUI','dist/templates/StoryUI');copyDir('templates/StoryUIV2','dist/templates/StoryUIV2');console.log('Template files copied to dist/')\"",
     "start": "npm run build && node dist/mcp-server/index.js",
     "mcp": "npm run build && node dist/mcp-server/mcp-stdio-server.js",
     "dev": "tsc --watch",

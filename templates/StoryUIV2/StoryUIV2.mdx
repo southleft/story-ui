@@ -1,0 +1,56 @@
+{/*
+  Story UI V2 workspace.
+
+  Rendered through an MDX docs page for the same reason V1 was: addon-docs always
+  uses React, so this surface works even when the project itself is Vue, Angular,
+  Svelte or Web Components. The workspace then fills the frame and escapes the
+  docs padding via CSS, so it reads as an application rather than a page.
+*/}
+
+import { Meta } from '@storybook/addon-docs/blocks';
+import { useEffect, useState } from 'react';
+import { Workspace } from './Workspace';
+
+<Meta title="Story UI/Workspace" />
+
+export const Mount = () => {
+  const [apiBase, setApiBase] = useState(null);
+
+  useEffect(() => {
+    // Same resolution order V1 used: explicit env, runtime override, same-origin
+    // when deployed behind a proxy, then the local default.
+    const fromEnv =
+      (typeof import.meta !== 'undefined' && import.meta.env?.VITE_STORY_UI_EDGE_URL) || null;
+    const fromWindow =
+      (typeof window !== 'undefined' && window.__STORY_UI_EDGE_URL__) || null;
+    const port =
+      (typeof import.meta !== 'undefined' && import.meta.env?.VITE_STORY_UI_PORT) ||
+      (typeof window !== 'undefined' && window.__STORY_UI_PORT__) ||
+      '4001';
+    const isRailway =
+      typeof window !== 'undefined' && /up\.railway\.app$/.test(window.location.hostname);
+    setApiBase(fromEnv || fromWindow || (isRailway ? window.location.origin : `http://localhost:${port}`));
+  }, []);
+
+  if (!apiBase) return null;
+
+  return (
+    <Workspace
+      apiBase={apiBase}
+      onOpenStory={(storyId) => {
+        try {
+          const channel = window.__STORYBOOK_ADDONS_CHANNEL__;
+          if (channel?.emit) channel.emit('selectStory', { storyId });
+        } catch {}
+        const top = window.top ?? window;
+        window.setTimeout(() => {
+          if (!top.location.search.includes(storyId)) {
+            top.location.href = `${top.location.pathname}?path=/story/${storyId}`;
+          }
+        }, 400);
+      }}
+    />
+  );
+};
+
+<Mount />
