@@ -29,6 +29,11 @@ interface PreviewCanvasProps {
   busy?: boolean;
   onOpenInStorybook?: () => void;
   onHandoff?: () => void;
+  /**
+   * False when there is no generated file to commit — e.g. a story opened from
+   * Recent work. Disabled with a reason beats a button that does nothing.
+   */
+  canHandoff?: boolean;
   /** Set when the story was written but Storybook never indexed it. */
   notIndexed?: { fileName?: string; title?: string } | null;
   onRecheck?: () => void;
@@ -41,6 +46,7 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
   busy = false,
   onOpenInStorybook,
   onHandoff,
+  canHandoff = true,
   notIndexed,
   onRecheck,
 }) => {
@@ -121,7 +127,17 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
         </Button>
         {/* highContrast: solid-on-accent-9 measures 3.15:1 for this accent,
             under AA. See the Build button in Workspace.tsx. */}
-        <Button size="1" highContrast disabled={!storyId} onClick={onHandoff}>
+        <Button
+          size="1"
+          highContrast
+          disabled={!storyId || !canHandoff}
+          onClick={onHandoff}
+          title={
+            !canHandoff
+              ? 'Generate or update a story in this session to hand it off'
+              : 'Commit this story to a new branch'
+          }
+        >
           Hand off
         </Button>
       </Flex>

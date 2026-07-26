@@ -214,12 +214,33 @@ export function makeHandoff(deps: HandoffDeps) {
         }
 
         const { stdout: sha } = await git(['rev-parse', '--short', 'HEAD'], cwd);
+
+        // Return the user to the branch they were on.
+        //
+        // The failure path already did this; the success path did not, so a
+        // handoff silently left the working tree checked out on the handoff
+        // branch. The whole point of cutting a branch is that handing a story
+        // off does not disturb what the user was doing — leaving them somewhere
+        // else, without saying so, is the opposite. The commit is safe on
+        // branchName regardless.
+        //
+        // Reported rather than assumed: if checkout fails (say the user edited
+        // a file mid-handoff), the panel must not claim they are back.
+        let returnedTo: string | undefined;
+        try {
+          await git(['checkout', startedOn], cwd);
+          returnedTo = startedOn;
+        } catch (checkoutError) {
+          logger.log(`⚠️ Handoff could not return to ${startedOn}; still on ${branchName}`);
+        }
+
         logger.log(`🚀 Handoff: ${relPath} on ${branchName}${pushed ? ' (pushed)' : ''}${prUrl ? ` → ${prUrl}` : ''}`);
 
         res.json({
           success: true,
           branch: branchName,
           startedOn,
+          returnedTo,
           commit: sha.trim(),
           file: relPath,
           pushed,

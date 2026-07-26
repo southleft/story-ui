@@ -36,6 +36,7 @@ import {
 import '@radix-ui/themes/styles.css';
 import './workspace.css';
 import { PreviewCanvas } from './PreviewCanvas';
+import { HandoffDialog } from './HandoffDialog';
 import { useGeneration, waitForStory, type Verification } from './useGeneration';
 
 interface Turn {
@@ -163,6 +164,16 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
    */
   const [notIndexed, setNotIndexed] = useState<{ fileName?: string; title?: string } | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
+  /**
+   * The story the handoff dialog is acting on.
+   *
+   * Owned here rather than driven by the `onHandoff` prop, because that prop was
+   * never wired in StoryUIV2.mdx — the button that ends the whole workflow
+   * silently did nothing. A surface this important should not depend on a
+   * template remembering to connect it. The prop is still called, so a host can
+   * observe the handoff.
+   */
+  const [handoffTarget, setHandoffTarget] = useState<{ fileName: string; title: string } | null>(null);
 
   const threadRef = useRef<HTMLDivElement>(null);
   const { generate, cancel, steps, busy, error } = useGeneration(apiBase);
@@ -306,6 +317,16 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       send();
     }
   };
+
+  /**
+   * Only a generated turn carries a fileName. A story opened from Recent work
+   * has an id and a title but no file this session is entitled to commit, so
+   * handoff stays disabled rather than committing the wrong thing.
+   */
+  const handoffCandidate = useMemo(
+    () => [...turns].reverse().find(t => t.fileName),
+    [turns],
+  );
 
   const models = useMemo(
     () => providers.find(p => p.type === provider)?.models ?? [],
@@ -655,12 +676,21 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
             notIndexed={notIndexed}
             onRecheck={recheckIndex}
             onOpenInStorybook={() => activeStory && onOpenStory?.(activeStory.id)}
+            canHandoff={!!handoffCandidate}
             onHandoff={() => {
-              const last = [...turns].reverse().find(t => t.fileName);
-              if (last?.fileName) onHandoff?.(last.fileName, last.title || 'Story');
+              if (!handoffCandidate?.fileName) return;
+              const next = { fileName: handoffCandidate.fileName, title: handoffCandidate.title || 'Story' };
+              setHandoffTarget(next);
+              onHandoff?.(next.fileName, next.title);
             }}
           />
         </div>
+
+        <HandoffDialog
+          apiBase={apiBase}
+          target={handoffTarget}
+          onClose={() => setHandoffTarget(null)}
+        />
       </Theme>
     </div>
   );
