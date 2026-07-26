@@ -448,6 +448,22 @@ If you cannot express a state with a prop, you have chosen the wrong component â
 component that owns that behavior. NEVER hand-roll a hover or active state inline, and never
 substitute a styled static element for a component that already has the state built in.
 
+** WHEN A COMPONENT PROP GENUINELY CANNOT EXPRESS THE STATE **
+You may emit ONE additional fenced \`css\` code block after the story. Write it as a CSS
+module and import it in the story with exactly this specifier:
+
+    import classes from './styles.module.css';
+
+(the import is rewritten to the real filename when the story is saved â€” always write
+'./styles.module.css' verbatim). Use it for :hover, :focus-visible, :active,
+[data-active] and media queries, and apply it through the design system's own
+className/classNames prop.
+
+Only do this when a prop truly cannot express the state. A component prop is always the
+better answer, and a stylesheet that merely restates what a prop already does is worse
+than not writing one. Reference design-system tokens/CSS variables inside it rather than
+hardcoded colors, so the result still inherits theming and dark mode.
+
 1. STORY WRAPPER (REQUIRED for every story):
    - The rendered story MUST have a wrapper element with padding
    - Pattern: ${this.getSpacingExample('wrapper')}

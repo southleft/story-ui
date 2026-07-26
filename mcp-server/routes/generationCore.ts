@@ -71,6 +71,11 @@ import {
 import { IntentPreview, ValidationFeedback, CompletionFeedback } from './streamTypes.js';
 import { verifyStory } from '../../story-generator/verify/verifyStory.js';
 import { reflectDesignSystem, formatCompoundReference } from '../../story-generator/knowledge/runtimeReflect.js';
+import {
+  writeStoryArtifacts,
+  extractStylesheet,
+  sweepOrphanedArtifacts,
+} from '../../story-generator/storyArtifacts.js';
 import { attemptVerificationRepair } from './verifyRepair.js';
 import type { VerifyReport } from '../../story-generator/verify/findings.js';
 
@@ -378,6 +383,8 @@ export async function runStoryGeneration(
   };
 
   let aiText = '';
+  /** Stylesheet emitted alongside the story, when the model needed real states. */
+  let generatedStylesheet: string | null = null;
   let finalErrors: ValidationErrors = createEmptyErrors();
   const errorHistory: ValidationErrors[] = [];
   const allAttempts: Array<{ code: string; errors: ValidationErrors }> = [];
@@ -432,6 +439,11 @@ export async function runStoryGeneration(
     }
 
     const extractedCode = extractCodeBlock(claudeResponse, detectedFramework);
+    if (extractedCode) {
+      // Only kept when the story actually imports it — an unreferenced
+      // stylesheet is just litter in the user's repository.
+      generatedStylesheet = extractStylesheet(claudeResponse, extractedCode);
+    }
     if (!extractedCode) {
       aiText = claudeResponse;
       if (attempts < selfHealingOptions.maxAttempts) {
@@ -673,11 +685,22 @@ export async function runStoryGeneration(
   // Step 8: Save story
   events.onProgress?.(8, totalSteps, 'saving', 'Saving your story...');
 
-  const writeStory = (code: string): string => generateStory({
-    fileContents: code,
-    fileName: finalFileName,
-    config,
-  });
+  // A story may come with a stylesheet — inline style cannot express hover,
+  // focus-visible or active states, so anything with real interaction needs one.
+  // generatedStylesheet is captured from the model response below.
+  const writeStory = (code: string): string => {
+    const dir = path.resolve(process.cwd(), config.generatedStoriesPath || './src/stories/generated/');
+    const { storyPath } = writeStoryArtifacts({
+      dir,
+      fileName: finalFileName,
+      code,
+      css: generatedStylesheet,
+    });
+    // Collect stylesheets whose story was removed by any of the many delete
+    // paths that know nothing about them.
+    sweepOrphanedArtifacts(dir);
+    return storyPath;
+  };
 
   let outPath = writeStory(fixedFileContents);
 
