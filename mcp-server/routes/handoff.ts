@@ -176,7 +176,19 @@ export function makeHandoff(deps: HandoffDeps) {
 
       try {
         // ONLY this file. Never `git add -A`.
-        await git(['add', '--', relPath], cwd);
+        //
+        // `-f` because `story-ui init` adds the generated stories directory to
+        // .gitignore (cli/setup.ts), so a plain `git add` exits 1 and handoff
+        // failed on every project the CLI had ever set up. It passed in testing
+        // only because that project's .gitignore predated the entry.
+        //
+        // The two stances are both right and this reconciles them: generated
+        // stories are scratch by default, so fifty experiments never land in a
+        // `git add -A`; handing one off is an explicit act, and force-adding
+        // exactly the named file is what that act means. Once committed the
+        // file is tracked, so it behaves normally on the branch from then on —
+        // .gitignore only ever applies to untracked files.
+        await git(['add', '-f', '--', relPath], cwd);
 
         const subject = `feat(story): ${storyTitle}`;
         const body = [

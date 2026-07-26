@@ -59,7 +59,39 @@ export async function runDomCensus(page: any): Promise<CensusResult> {
       (document.querySelector('#root') as HTMLElement) ||
       document.body;
 
-    const all = Array.from(root.querySelectorAll('*')) as HTMLElement[];
+    /**
+     * Portalled content is part of the story and was invisible to every probe.
+     *
+     * Mantine Menu/Modal/Popover, Vuetify overlays and Shoelace dialogs render
+     * into `document.body`, OUTSIDE `#storybook-root`. Measured: opening one
+     * menu in a generated dashboard put a dropdown and four menu items entirely
+     * beyond the census scope — so an unnamed icon button or an unreadable icon
+     * inside any overlay passed verification by never being looked at. Since
+     * menus and modals are where interaction defects concentrate, this was the
+     * worst possible place to be blind.
+     *
+     * Storybook's own chrome lives in the same body, so it is excluded by name
+     * rather than by guessing: anything sb-* or #storybook-* belongs to the
+     * harness, not to the user's composition.
+     */
+    const isHarnessChrome = (el: Element): boolean => {
+      const id = el.id || '';
+      const cls = typeof el.className === 'string' ? el.className : '';
+      return id.startsWith('storybook-') || /(^|\s)sb-/.test(cls);
+    };
+
+    const roots: HTMLElement[] = [root];
+    if (root !== document.body) {
+      for (const child of Array.from(document.body.children) as HTMLElement[]) {
+        if (child === root) continue;
+        if (isHarnessChrome(child)) continue;
+        if (/^(script|style|link|template|noscript)$/i.test(child.tagName)) continue;
+        if (child.children.length === 0 && !(child.textContent || '').trim()) continue;
+        roots.push(child);
+      }
+    }
+
+    const all = roots.flatMap(r => Array.from(r.querySelectorAll('*'))) as HTMLElement[];
     const problems: CensusResult['problems'] = [];
 
     const cssPath = (el: Element): string => {
@@ -110,10 +142,10 @@ export async function runDomCensus(page: any): Promise<CensusResult> {
       return !!el.closest('svg');
     };
 
-    const focusables = (Array.from(root.querySelectorAll(FOCUSABLE)) as HTMLElement[]).filter(isVisible);
-    const links = Array.from(root.querySelectorAll('a[href]'));
-    const realInputs = Array.from(root.querySelectorAll('input, textarea, select'));
-    const buttons = Array.from(root.querySelectorAll('button, [role="button"]'));
+    const focusables = (roots.flatMap(r => Array.from(r.querySelectorAll(FOCUSABLE))) as HTMLElement[]).filter(isVisible);
+    const links = roots.flatMap(r => Array.from(r.querySelectorAll('a[href]')));
+    const realInputs = roots.flatMap(r => Array.from(r.querySelectorAll('input, textarea, select')));
+    const buttons = roots.flatMap(r => Array.from(r.querySelectorAll('button, [role="button"]')));
     const inlineStyleNodes = all.filter(el => el.getAttribute('style'));
 
     const accessibleName = (el: HTMLElement): string => {
@@ -188,7 +220,7 @@ export async function runDomCensus(page: any): Promise<CensusResult> {
     // ── 2. Orphan icons ──────────────────────────────────────────────────────
     // An SVG that is neither decorative-inside-a-control nor inside anything
     // focusable. Bare chevrons and utility glyphs land here.
-    const svgs = (Array.from(root.querySelectorAll('svg')) as unknown as HTMLElement[]).filter(isVisible);
+    const svgs = (roots.flatMap(r => Array.from(r.querySelectorAll('svg'))) as unknown as HTMLElement[]).filter(isVisible);
     let orphanIcons = 0;
     for (const svg of svgs) {
       // Any interactive ancestor counts, including an <a> without href.
@@ -259,7 +291,7 @@ export async function runDomCensus(page: any): Promise<CensusResult> {
     };
 
     let invisibleIcons = 0;
-    for (const svg of Array.from(root.querySelectorAll('svg')) as unknown as Element[]) {
+    for (const svg of roots.flatMap(r => Array.from(r.querySelectorAll('svg'))) as unknown as Element[]) {
       const rect = (svg as HTMLElement).getBoundingClientRect();
       if (rect.width < 6 || rect.height < 6) continue;
 
