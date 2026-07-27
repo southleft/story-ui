@@ -119,6 +119,30 @@ export class EnhancedComponentDiscovery {
       }
     }
 
+    // Components a per-component package exports by default, named from the
+    // package. Runs before manual config so a declaration can still correct it.
+    if (this.config.importPath?.startsWith('@') && !this.config.importPath.includes('/')) {
+      let added = 0;
+      for (const pkg of this.packagesInScope(this.config.importPath)) {
+        const found = this.defaultExportComponent(pkg);
+        if (!found || this.discoveredComponents.has(found.name)) continue;
+        this.discoveredComponents.set(found.name, {
+          name: found.name,
+          filePath: '',
+          source: { type: 'npm', path: pkg },
+          description: `${found.name} component`,
+          category: this.categorizeComponent(found.name, '') as any,
+          props: [],
+          slots: [],
+          examples: [],
+          __componentPath: found.importPath,
+        } as EnhancedComponent);
+        this.validateAvailableComponents.add(found.name);
+        added++;
+      }
+      if (added) logger.log(`📦 ${added} component(s) named from their own package (default export)`);
+    }
+
     // Step 2: Apply manual configurations as override/fallback
     this.applyManualConfigurations();
 
@@ -218,6 +242,79 @@ export class EnhancedComponentDiscovery {
   /**
    * Identify all potential component sources
    */
+  /**
+   * Packages published under an npm scope, when importPath names one.
+   *
+   * Returns [] for a normal package path so the single-package route is
+   * unchanged. Internal packages a design system depends on but does not
+   * present as components — analytics, tokens, build helpers — are excluded by
+   * name, because shipping them as composable components would put
+   * `<AnalyticsNext>` in front of the model as something to render.
+   */
+  private packagesInScope(importPath: string): string[] {
+    if (!importPath.startsWith('@') || importPath.includes('/')) return [];
+
+    const dir = path.join(this.getProjectRoot(), 'node_modules', importPath);
+    if (!fs.existsSync(dir)) return [];
+
+    const INFRASTRUCTURE = /^(analytics|tokens?|theme|css|primitives?-?internal|build|eslint|babel|docs?|icon-.*-internal|browser-apis|atlassian-context|app-provider|ds-lib|codemod|platform)/;
+
+    try {
+      return fs.readdirSync(dir, { withFileTypes: true })
+        .filter(e => e.isDirectory() && !e.name.startsWith('.'))
+        .filter(e => !INFRASTRUCTURE.test(e.name))
+        .map(e => `${importPath}/${e.name}`);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * The component a per-component package exports by default.
+   *
+   * Atlassian's `@atlaskit/button/dist/types/index.d.ts` reads
+   * `export { default } from './old-button/button'`. The component has no
+   * exported NAME to discover — the package name IS the name. Scraping named
+   * exports instead produced `AvatarContent`, `Layering` and `Reanimate` while
+   * Button, Badge, Textfield and Lozenge were missing entirely.
+   *
+   * Runtime reflection cannot rescue this: these packages fail to import in
+   * plain Node, so the type declarations are the only readable source.
+   *
+   * Returns null when a package has no default export, so a scope containing
+   * utility packages does not gain phantom components.
+   */
+  private defaultExportComponent(packageName: string): { name: string; importPath: string } | null {
+    const pkgDir = path.join(this.getProjectRoot(), 'node_modules', packageName);
+    let types: string | undefined;
+    try {
+      const meta = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf-8'));
+      types = meta.types || meta.typings;
+    } catch {
+      return null;
+    }
+    if (!types) return null;
+
+    let declaration: string;
+    try {
+      declaration = fs.readFileSync(path.join(pkgDir, types), 'utf-8');
+    } catch {
+      return null;
+    }
+    if (!/export\s*\{\s*default\s*[},]|export\s+default\b/.test(declaration)) return null;
+
+    // `@atlaskit/teams-avatar` -> `TeamsAvatar`
+    const leaf = packageName.split('/').pop() || packageName;
+    const name = leaf
+      .split(/[-_]/)
+      .filter(Boolean)
+      .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+      .join('');
+    if (!name) return null;
+
+    return { name, importPath: packageName };
+  }
+
   private identifySources(): ComponentSource[] {
     const sources: ComponentSource[] = [];
 
@@ -226,10 +323,33 @@ export class EnhancedComponentDiscovery {
     // Check for npm packages
     // Always run dynamic discovery for design systems
     if (this.config.importPath && !this.config.importPath.startsWith('.')) {
-      sources.push({
-        type: 'npm',
-        path: this.config.importPath
-      });
+      /**
+       * A SCOPE rather than a package — one npm package per component.
+       *
+       * Atlassian ships `@atlaskit/button`, `@atlaskit/badge`,
+       * `@atlaskit/textfield` and dozens more; there is no single module to
+       * point at. Pointing importPath at `@atlaskit` discovered 0 components,
+       * because `node_modules/@atlaskit` is a directory of packages and not a
+       * package. The same shape appears in Adobe Spectrum (`@react-spectrum/*`)
+       * and in most enterprise monorepo design systems.
+       *
+       * Naming the scope is an explicit statement — "my design system is
+       * @atlaskit" — so every package under it is a source. That needs no
+       * heuristic about which of a project's scopes is the design system, and
+       * no hand-listing of packages in config.
+       */
+      const scopePackages = this.packagesInScope(this.config.importPath);
+      if (scopePackages.length > 0) {
+        logger.log(`📦 ${this.config.importPath} is a scope: discovering ${scopePackages.length} package(s) under it`);
+        for (const pkg of scopePackages) {
+          sources.push({ type: 'npm', path: pkg });
+        }
+      } else {
+        sources.push({
+          type: 'npm',
+          path: this.config.importPath
+        });
+      }
     }
 
     // Also discover from layout components if specified

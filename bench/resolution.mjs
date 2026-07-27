@@ -43,6 +43,7 @@ const ENVIRONMENTS = [
   { name: 'react-mantine (npm barrel)', project: '/Users/tjpitre/Sites/test-storybooks/react-mantine', storybook: 'http://localhost:6101' },
   { name: 'college-town (Radix+Tailwind, local)', project: '/Users/tjpitre/Sites/college-town', storybook: 'http://localhost:6006' },
   { name: 'mui-material (subpath npm)', project: '/Users/tjpitre/Sites/test-storybooks/mui-material', storybook: 'http://localhost:6107' },
+  { name: 'atlaskit (package-per-component)', project: '/Users/tjpitre/Sites/test-storybooks/atlaskit', storybook: 'http://localhost:6108' },
 ];
 
 /**
@@ -274,6 +275,12 @@ const env = {
 try {
   const r = await measure(env);
   report(r);
+  // An empty catalog previously reported "All specifiers resolve" and exited 0
+  // — the atlaskit scope discovered nothing and the bench called it clean.
+  if (r.components === 0) {
+    console.log('\nNO COMPONENTS DISCOVERED — the engine knows nothing about this design system.');
+    process.exit(1);
+  }
   console.log(`\n${r.dead.length === 0 ? 'All specifiers resolve.' : `${r.dead.length} dead specifier(s).`}`);
   process.exit(r.dead.length > 0 ? 1 : 0);
 } catch (e) {

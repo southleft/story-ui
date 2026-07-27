@@ -196,6 +196,19 @@ export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
       return localPath;
     }
 
+    /**
+     * The package a component was actually discovered in.
+     *
+     * For a per-component-package design system the kebab guess below invents
+     * a package: `Layer`, re-exported from @atlaskit/popper, became
+     * `@atlaskit/layer`, which is not installed. Discovery already recorded
+     * where it found the component, and that is the answer.
+     */
+    const discoveredIn = (component as any).source;
+    if (discoveredIn?.type === 'npm' && discoveredIn.path && discoveredIn.path !== config.importPath) {
+      return discoveredIn.path;
+    }
+
     const basePath = config.importPath || 'unknown';
 
     // If using individual imports, convert component name to kebab-case file path
