@@ -144,6 +144,12 @@ async function measure(env) {
     }
   } catch { /* npm type declarations unavailable; local sources still counted */ }
 
+  // Source facts: variant maps and the team's own prose, same as the pipeline.
+  try {
+    const { enrichWithSourceFacts } = await import(pathToFileURL(`${DIST}/story-generator/knowledge/sourceFacts.js`).href);
+    enrichWithSourceFacts(components);
+  } catch { /* source facts unavailable */ }
+
   // Storybook's own component manifest is the pipeline's example source.
   try {
     const res = await fetch(`${env.storybook.replace(/\/+$/, '')}/manifests/components.json`, {

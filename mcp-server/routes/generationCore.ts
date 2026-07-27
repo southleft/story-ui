@@ -79,6 +79,7 @@ import { IntentPreview, ValidationFeedback, CompletionFeedback } from './streamT
 import { verifyStory } from '../../story-generator/verify/verifyStory.js';
 import { reflectDesignSystem, formatCompoundReference } from '../../story-generator/knowledge/runtimeReflect.js';
 import { extractProps, rankProps } from '../../story-generator/knowledge/propExtractor.js';
+import { enrichWithSourceFacts } from '../../story-generator/knowledge/sourceFacts.js';
 import {
   writeStoryArtifacts,
   extractStylesheet,
@@ -302,6 +303,26 @@ export async function runStoryGeneration(
     // Discovery still works from conventions; this only widens it.
   }
   const components = await discovery.discoverAll();
+
+  // Read what a LOCAL design system says about itself: the exact variant values
+  // its cva()/tv() maps declare, the prose its own stories use to explain each
+  // component, and its per-prop argTypes documentation.
+  //
+  // Measured before this: 7% of college-town's 246 components had a real
+  // description and none had its allowed variant values, while 51 of its
+  // stories carried a written explanation and 15 components declared their
+  // options in source. Without the variant values the model picks a
+  // plausible-sounding one — `variant="soft"` where the options are
+  // default | secondary | destructive — which renders as the default and
+  // silently drops the intent.
+  //
+  // Runs before npm prop extraction so a project's own words win over anything
+  // inferred from type declarations.
+  try {
+    enrichWithSourceFacts(components as any[]);
+  } catch (error) {
+    logger.log(`⚠️ Could not read local source facts: ${error}`);
+  }
 
   // Enrich the catalog with real prop signatures read from the installed
   // package's type declarations. Discovery yields names only for npm packages,
