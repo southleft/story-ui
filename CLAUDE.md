@@ -1,7 +1,7 @@
 # Story UI - AI Assistant Project Guide
 
-> **Last Updated**: July 3, 2026
-> **Current Version**: 4.16.12
+> **Last Updated**: July 27, 2026
+> **Current Version**: 4.17.0
 > **Production URL**: https://app-production-16de.up.railway.app (Vue/Vuetify example)
 > **Repository**: https://github.com/southleft/story-ui
 
@@ -424,10 +424,74 @@ npm run storybook
 5. **Don't forget Angular tsconfig for TSX** - Needs `"jsx": "react-jsx"`
 6. **Don't use --port flag** - Use `PORT=4101` environment variable instead
 7. **Don't expect changes without rebuild** - Always run `npm run build` after edits
+8. **Don't develop against react-mantine alone** - it is a barrel-exported npm package the model has memorised, and it hides bugs in discovery, import resolution and provider handling. Verify against `college-town` (Radix/Tailwind, local source) and `src/housekit` (unknown design system) before believing a result
+9. **Don't measure knowledge with an LLM bench** - dead imports, missing components and wrong names are deterministic. Use `bench/resolution.mjs`; it is free and catches in seconds what a generation bench cannot distinguish from noise
+10. **Don't pattern-match a name when the value is in hand** - judging exports by `/Provider$/` deleted Polaris's mandatory application root
 
 ---
 
+## The Governing Principle
+
+**Derive from the codebase; never infer from convention.**
+
+Every serious defect found on the `feat/v2-fidelity-and-verification` branch had
+one shape: the engine inferred a fact the project already stated. Every fix
+applied the same correction.
+
+| Was inferred from | Truth was in |
+|---|---|
+| a hardcoded list of 8 folder names | `.storybook/main.ts` `stories` globs, and Storybook's index |
+| CSS class patterns (`mantine-*`, `Mui*`) | React's fiber, which names the component the source used |
+| kebab-casing a component name | the file on disk, and `config.components[].importPath` |
+| npm `.d.ts` only | the component's own source: `cva()` maps, JSDoc, story prose |
+| an export's NAME (`/Provider$/`) | the imported runtime value |
+
+When adding knowledge, ask what file already states the answer. If the code is
+pattern-matching a name, it is probably wrong for some design system.
+
+### Testing discipline
+
+Two benches, deliberately separate — conflating them meant paying LLM prices to
+measure a filesystem property, badly:
+
+- **`bench/resolution.mjs`** — deterministic, free, seconds. Can we find the
+  components, does the import specifier resolve, do we know props/descriptions/
+  examples? Run on **every** change. Each environment runs in its own process:
+  config loading and discovery hold module state, and `process.chdir` undoes
+  neither, so a single-process run reported one project importing another's
+  components.
+- **`bench/componentSelection.mjs`** — LLM, slow, noisy. Judgement only. Run
+  rarely.
+
+### Test environments, and a warning
+
+**Never develop against react-mantine alone.** It is the least representative
+case available — an npm package, with types, with a barrel export, that the
+model has memorised. It makes four separate subsystems look correct:
+
+| Environment | Bug it exposed | Why Mantine cannot show it |
+|---|---|---|
+| vue-vuetify | prefix-stripping bias | stripping *happens* to yield Mantine's real names |
+| `src/housekit` (react-mantine) | discovery scanned only conventional dirs | Mantine is a package, not a directory |
+| college-town | import resolution; ~3/4 of stories rendered blank | Mantine is a barrel — one path, always right |
+
+`college-town` (Radix + Tailwind + local source, Storybook 10) is the most
+valuable environment. `src/housekit` is a synthetic design system the model has
+no training data for — the only way to test an unknown library.
+
 ## Issue History & Resolutions
+
+### July 2026 (fidelity and verification, V2 branch)
+
+| Issue | Root cause | Resolution |
+|-------|------------|------------|
+| ~3/4 of generated stories rendered blank on a Radix/Tailwind project | `applyManualConfigurations` merged every declared field EXCEPT `importPath`, and blanked `filePath` — destroying the field import rewriting needs | Declared specifiers honoured; `filePath` preserved; `buildComponentToImportMap` prefers a declared path |
+| A design system in `src/housekit` was invisible | discovery scanned 8 hardcoded folder names | Read `.storybook/main.ts` globs (no server needed) + Storybook's live index |
+| Polaris `AppProvider` and Radix `*.Provider` dropped from the catalog | exports rejected by name shape (`/Provider$/`), statics stripped as "plumbing" | Judge the imported runtime value, not the name |
+| Local design systems had 7% description coverage, no variant values | nothing read component source or story docs | `knowledge/sourceFacts.ts` reads `cva()`/`tv()` maps, story prose, `argTypes` docs → 100% |
+| Verification blind to menus, modals, popovers | census scoped to `#storybook-root`; overlays portal to `document.body` | Census covers portalled roots, excluding Storybook chrome by name |
+| Handoff failed on every CLI-initialised project | `init` gitignores the stories dir; handoff ran `git add` without `-f` | Force-add the one named file; stage the sibling stylesheet too |
+| Conversations, story versions, and the components manifest all existed but were never read | V2 was missing readers for working infrastructure — four separate times | Check what exists before building it |
 
 ### July 2026 (major modernization)
 
