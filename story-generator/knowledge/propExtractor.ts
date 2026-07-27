@@ -114,12 +114,31 @@ function collectFromFile(filePath: string, out: Record<string, ComponentFacts>, 
         if (!inheritedOnly.includes(componentName)) inheritedOnly.push(componentName);
         return;
       }
-      const existing = out[componentName];
-      out[componentName] = {
-        name: componentName,
-        props: existing ? mergeProps(existing.props, props) : props,
-        variants: existing?.variants,
+      const record = (key: string) => {
+        const existing = out[key];
+        out[key] = {
+          name: key,
+          props: existing ? mergeProps(existing.props, props) : props,
+          variants: existing?.variants,
+        };
       };
+      record(componentName);
+
+      /**
+       * Also register under the name with a structural qualifier removed.
+       *
+       * Libraries split a props type and name the halves: MUI declares
+       * `ButtonOwnProps`, which strips to `ButtonOwn` and matches no component,
+       * so its props were lost entirely. 71 of MUI's components use OwnProps
+       * against 69 using plain Props — half the library's prop knowledge went
+       * missing, which is what a measured 42% coverage was made of.
+       *
+       * These qualifiers are TypeScript structuring conventions rather than any
+       * library's vocabulary, and registering an ALIAS can only add: it never
+       * overwrites a component that genuinely carries the longer name.
+       */
+      const alias = componentName.replace(/(Own|Base|Root|Inner|Slot)$/, '');
+      if (alias && alias !== componentName && !out[alias]) record(alias);
     }
 
     // type <Name>Variant = 'a' | 'b'

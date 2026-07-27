@@ -42,6 +42,7 @@ const DIST = '/Users/tjpitre/Sites/story-ui/dist';
 const ENVIRONMENTS = [
   { name: 'react-mantine (npm barrel)', project: '/Users/tjpitre/Sites/test-storybooks/react-mantine', storybook: 'http://localhost:6101' },
   { name: 'college-town (Radix+Tailwind, local)', project: '/Users/tjpitre/Sites/college-town', storybook: 'http://localhost:6006' },
+  { name: 'mui-material (subpath npm)', project: '/Users/tjpitre/Sites/test-storybooks/mui-material', storybook: 'http://localhost:6107' },
 ];
 
 /**
@@ -188,7 +189,25 @@ async function measure(env) {
   }
 
   const withProps = components.filter(c => (c.props || []).length > 0).length;
-  const withDesc = components.filter(c => c.description && !/^\w+ component$/.test(c.description)).length;
+  /**
+   * A description counts only if it says something the component's NAME does not.
+   *
+   * `/^\w+ component$/` let `"Accordion component from Material UI"` through and
+   * reported 63% description coverage for a library whose real figure is near
+   * zero. Boilerplate that restates the name is not knowledge, and a metric
+   * that counts it hides exactly the gap this bench exists to expose.
+   */
+  const isGenericDescription = (name, text) => {
+    if (!text) return true;
+    const residue = text
+      .toLowerCase()
+      .replace(new RegExp(name.toLowerCase(), 'g'), '')
+      // Filler that appears in every generated boilerplate description.
+      .replace(/\b(component|from|the|a|an|for|of|and|ui|material|mantine|chakra|design|system|library)\b/g, '')
+      .replace(/[^a-z0-9]+/g, '');
+    return residue.length < 12;
+  };
+  const withDesc = components.filter(c => !isGenericDescription(c.name, c.description)).length;
   const withExamples = components.filter(c => (c.examples || []).length > 0).length;
 
   process.chdir(prevCwd);
