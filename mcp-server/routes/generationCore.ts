@@ -51,6 +51,11 @@ import {
 } from '../../story-generator/runtimeValidator.js';
 import { StoryHistoryManager } from '../../story-generator/storyHistory.js';
 import { logger } from '../../story-generator/logger.js';
+import {
+  fetchStorybookCatalog,
+  rankByRelevance,
+  formatCatalogForPrompt,
+} from '../../story-generator/knowledge/storybookCatalog.js';
 import { UrlRedirectService } from '../../story-generator/urlRedirectService.js';
 import {
   chatCompletionDetailed,
@@ -388,6 +393,7 @@ export async function runStoryGeneration(
       considerations,
       storybookContext,
       selection,
+      storybookUrl: config.storybookMcpUrl || storybookUrl || getStorybookUrl() || undefined,
     }
   );
 
@@ -1132,6 +1138,8 @@ async function buildClaudePromptWithContext(
     storybookContext?: StorybookMcpContext;
     /** Prose description of the element the user pointed at, if any. */
     selection?: string;
+    /** Where this project's Storybook is served, so its own stories can be read. */
+    storybookUrl?: string;
   }
 ): Promise<string> {
   const frameworkOptions: StoryGenerationOptions = { framework: options.framework };
@@ -1186,6 +1194,31 @@ async function buildClaudePromptWithContext(
     if (storybookContextStr) {
       logger.log('📚 Injecting Storybook MCP context into prompt');
       prompt = injectBeforeUserRequest(prompt, storybookContextStr);
+    }
+  }
+
+  // What the team's own Storybook says about their design system.
+  //
+  // Injected close to the user request, below the generic catalog, because it
+  // is far higher-signal: the flat catalog is 237 scraped export names with no
+  // props and no examples, while this is the team's real code for the
+  // components they actually document. Where the two disagree, this wins.
+  if (options.storybookUrl) {
+    try {
+      const catalog = await fetchStorybookCatalog({
+        storybookUrl: options.storybookUrl,
+        projectRoot: process.cwd(),
+      });
+      if (catalog.length) {
+        // Ranked, not dumped. Sending every example would reintroduce the
+        // problem the flat catalog already has: a wall of context in which the
+        // relevant component is no more prominent than the rest.
+        const relevant = rankByRelevance(catalog, userPrompt, 10);
+        const section = formatCatalogForPrompt(relevant, process.cwd());
+        if (section) prompt = injectBeforeUserRequest(prompt, section);
+      }
+    } catch {
+      // Prompt enhancement only — a generation must still work without it.
     }
   }
 
