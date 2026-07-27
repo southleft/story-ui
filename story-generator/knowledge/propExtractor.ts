@@ -88,7 +88,69 @@ function collectFromFile(filePath: string, out: Record<string, ComponentFacts>, 
 
   const source = ts.createSourceFile(filePath, text, ts.ScriptTarget.Latest, true);
 
+  /**
+   * Property signatures from a type's members.
+   *
+   * Shared by interfaces and type aliases: `interface XProps {}` and
+   * `type XProps = {}` describe the same thing, and only the former was read.
+   */
+  const readMembers = (members: readonly ts.TypeElement[]): PropFact[] => {
+    const found: PropFact[] = [];
+    for (const member of members) {
+      if (!ts.isPropertySignature(member) || !member.name) continue;
+      const name = member.name.getText(source);
+      if (!/^[a-zA-Z_$][\w$]*$/.test(name)) continue;
+      if (name.startsWith('_')) continue;
+      found.push({
+        name,
+        type: shortType(member.type, source),
+        required: !member.questionToken,
+        doc: firstDocLine(member, source),
+      });
+    }
+    return found;
+  };
+
   ts.forEachChild(source, node => {
+    /**
+     * type <Name>Props = { ... }  and  type <Name>Props = Base & { ... }
+     *
+     * Atlassian declares `type CheckboxProps`, `type HeadingProps` and
+     * `type ButtonProps` as aliases rather than interfaces, so Button, Avatar,
+     * Checkbox, Heading and Tag had NO props at all — 23% coverage on that
+     * design system. Type aliases are the modern default across React
+     * libraries; reading only interfaces silently halves what we know.
+     */
+    if (ts.isTypeAliasDeclaration(node) && node.name.text.endsWith('Props')) {
+      const componentName = node.name.text.replace(/Props$/, '');
+      if (!componentName) return;
+
+      // A literal, or the literal halves of an intersection with a base type.
+      const literals: ts.TypeLiteralNode[] = [];
+      if (ts.isTypeLiteralNode(node.type)) literals.push(node.type);
+      else if (ts.isIntersectionTypeNode(node.type)) {
+        for (const part of node.type.types) if (ts.isTypeLiteralNode(part)) literals.push(part);
+      }
+
+      const props = literals.flatMap(l => readMembers(l.members));
+      if (props.length > 0) {
+        const record = (key: string) => {
+          const existing = out[key];
+          out[key] = {
+            name: key,
+            props: existing ? mergeProps(existing.props, props) : props,
+            variants: existing?.variants,
+          };
+        };
+        record(componentName);
+        const alias = componentName.replace(/(Own|Base|Root|Inner|Slot)$/, '');
+        if (alias && alias !== componentName && !out[alias]) record(alias);
+      } else if (!inheritedOnly.includes(componentName)) {
+        inheritedOnly.push(componentName);
+      }
+      return;
+    }
+
     // interface <Name>Props { ... }
     if (ts.isInterfaceDeclaration(node) && node.name.text.endsWith('Props')) {
       const componentName = node.name.text.replace(/Props$/, '');

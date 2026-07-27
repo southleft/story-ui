@@ -149,6 +149,28 @@ export class EnhancedComponentDiscovery {
     // Step 3: Resolve component conflicts and apply prioritization
     this.resolveComponentConflicts();
 
+    /**
+     * Normalise names before anything downstream sees them.
+     *
+     * Some export parsers left trailing whitespace, so the catalog carried
+     * "AvatarContent ", "Grid " and "Manager ". A padded name matches no prop
+     * facts, no manifest entry and no declared import, and it reaches the model
+     * as an importable identifier that is not one. Trimming at the single point
+     * discovery returns is more reliable than auditing every parser that
+     * produces a name.
+     */
+    for (const [key, component] of [...this.discoveredComponents.entries()]) {
+      const trimmed = (component.name || '').trim();
+      if (trimmed === key && trimmed === component.name) continue;
+      this.discoveredComponents.delete(key);
+      if (!trimmed) continue;
+      if (!this.discoveredComponents.has(trimmed)) {
+        this.discoveredComponents.set(trimmed, { ...component, name: trimmed });
+      }
+      this.validateAvailableComponents.delete(key);
+      this.validateAvailableComponents.add(trimmed);
+    }
+
     const finalComponents = Array.from(this.discoveredComponents.values());
     logger.log(`✅ Discovery complete: ${finalComponents.length} components found`);
 
