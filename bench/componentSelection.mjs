@@ -359,6 +359,19 @@ function unresolvedImports(code, projectRoot, alias = '@/') {
   return [...new Set(bad)];
 }
 
+/**
+ * Raw pixel and hex values in generated output.
+ *
+ * The most visible tell to a design system owner: `padding: 24px` in a system
+ * with a spacing scale. Baseline before styling guidance was added — 48 stories
+ * in college-town carried 607 raw px and 103 raw hex, with zero token uses.
+ */
+function rawStyleValues(code) {
+  const px = code.match(/\b\d{1,4}px\b/g) || [];
+  const hex = code.match(/#[0-9a-fA-F]{3,8}\b/g) || [];
+  return { px: px.length, hex: hex.length };
+}
+
 /** Distinct top-level visual regions, as a crude density signal. */
 function regionCount(code) {
   const containers = (code.match(/<(Paper|Card|Section|Fieldset|Accordion|Tabs\.Panel|Slab)\b/g) || []).length;
@@ -410,6 +423,7 @@ async function main() {
       .filter(f => !/icons/i.test(f));
     const bogus = invalidProps(code, vocabulary, dsNames);
     const unresolved = unresolvedImports(code, PROJECT);
+    const raw = rawStyleValues(code);
     const regions = regionCount(code);
     const thin = regions < (c.minRegions || 0);
 
@@ -420,6 +434,7 @@ async function main() {
       id: c.id, ok, missing, handRolled, foreign,
       houseUsed: c.houseComponents ? `${house.length}/${c.houseComponents.length}` : undefined,
       invalidProps: bogus.slice(0, 6), unresolvedImports: unresolved.slice(0, 6), regions,
+      rawPx: raw.px, rawHex: raw.hex,
       verification: completion.verification?.outcome,
       blockers: completion.verification?.findings?.filter(f => f.severity === 'blocker').length ?? 0,
       lines: code.split('\n').length,
@@ -434,6 +449,7 @@ async function main() {
       thin ? `thin:${regions}regions` : '',
       c.houseComponents ? `house:${house.length}/${c.houseComponents.length}(${house.join(',') || 'none'})` : '',
       foreign.length ? `foreign:${foreign.join(',')}` : '',
+      (raw.px || raw.hex) ? `raw:${raw.px}px/${raw.hex}hex` : 'raw:0',
       `[${completion.verification?.outcome ?? '?'}]`,
     ].filter(Boolean).join(' '));
   }

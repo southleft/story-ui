@@ -80,6 +80,7 @@ import { verifyStory } from '../../story-generator/verify/verifyStory.js';
 import { reflectDesignSystem, formatCompoundReference } from '../../story-generator/knowledge/runtimeReflect.js';
 import { extractProps, rankProps } from '../../story-generator/knowledge/propExtractor.js';
 import { enrichWithSourceFacts } from '../../story-generator/knowledge/sourceFacts.js';
+import { readStylingFacts, formatStylingGuidance } from '../../story-generator/knowledge/stylingFacts.js';
 import { inheritCompoundExamples } from '../../story-generator/knowledge/storybookCatalog.js';
 import {
   writeStoryArtifacts,
@@ -1308,6 +1309,26 @@ async function buildClaudePromptWithContext(
     } catch {
       // Prompt enhancement only — a generation must still work without it.
     }
+  }
+
+  // How this project expresses spacing, colour and shape.
+  //
+  // Measured across 48 generated stories in a Tailwind project declaring 119
+  // tokens: 607 raw pixel values, 103 raw hex colours, zero token uses. Well
+  // built components carry their own styling, so this leaks in the connective
+  // tissue between them — page padding, grid gaps, max-widths — which is
+  // exactly where a hardcoded number marks a composition as foreign to the
+  // design system that owns it.
+  try {
+    const styling = readStylingFacts(process.cwd(), (config.generatedStoriesPath || '')
+      .replace(/^\.\//, '').replace(/\/+$/, '').split('/').pop() || 'generated');
+    const guidance = formatStylingGuidance(styling);
+    if (guidance) {
+      logger.log(`🎨 Injecting styling guidance: ${styling.idiom.attributes[0]?.name ?? 'no idiom'} idiom, ${styling.tokens.reduce((n, g) => n + g.names.length, 0)} token(s)`);
+      prompt = injectBeforeUserRequest(prompt, guidance);
+    }
+  } catch (error) {
+    logger.log(`⚠️ Could not read styling facts: ${error}`);
   }
 
   // A pointed-at element, injected just above the considerations so the
