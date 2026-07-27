@@ -105,6 +105,23 @@ export async function fetchStorybookCatalog(
   return [...byTitle.values()];
 }
 
+/**
+ * Directories containing this project's own (non-generated) story files.
+ *
+ * Used to tell component discovery where the design system actually lives,
+ * instead of guessing at conventional folder names. Returns absolute paths that
+ * exist; anything outside the project is dropped rather than trusted.
+ */
+export async function storybookComponentDirs(options: CatalogOptions): Promise<string[]> {
+  const catalog = await fetchStorybookCatalog(options);
+  const dirs = new Set<string>();
+  for (const c of catalog) {
+    const full = resolveInProject(options.projectRoot, c.importPath);
+    if (full) dirs.add(path.dirname(full));
+  }
+  return [...dirs];
+}
+
 /** Strip a leading `./` and resolve inside the project, refusing escapes. */
 function resolveInProject(projectRoot: string, importPath: string): string | null {
   const rel = importPath.replace(/^\.\//, '');

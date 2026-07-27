@@ -46,6 +46,34 @@ const IMPORT_PATH = arg('import', '@mantine/core');
  *            prompt quietly under-delivers
  */
 const CASES = [
+  /**
+   * HOUSEKIT — a design system the model provably has no training data for.
+   *
+   * The Mantine cases cannot answer whether project-specific context helps,
+   * because the model already knows Mantine; measured A/B on them showed no
+   * effect. These use an in-repo system with invented names, where the only
+   * way to choose correctly is to have read this project's Storybook. If the
+   * manifest context is worth its tokens, it shows up here or nowhere.
+   */
+  {
+    id: 'housekit-health',
+    prompt: 'A service health dashboard: a row of metric tiles for uptime, open incidents '
+      + 'and mean response time; a table of services showing region, status and p95 latency; '
+      + 'and a status indicator on each row. Use this project\'s own design system.',
+    expect: [['Statlet'], ['Datagrid'], ['Pillbox']],
+    avoidTags: ['table'],
+    minRegions: 0,
+    houseComponents: ['Slab', 'Statlet', 'Datagrid', 'Pillbox'],
+  },
+  {
+    id: 'housekit-panel',
+    prompt: 'A deployment panel with a heading, a live status indicator in the header, '
+      + 'and a list of recent deploys with their status. Use this project\'s own design system.',
+    expect: [['Slab'], ['Pillbox']],
+    avoidTags: [],
+    minRegions: 0,
+    houseComponents: ['Slab', 'Pillbox'],
+  },
   {
     id: 'crm-contact',
     prompt: 'A CRM contact detail view: header with avatar, name, company and status; '
@@ -216,7 +244,7 @@ function invalidProps(code, vocabulary, designSystemNames) {
 
 /** Distinct top-level visual regions, as a crude density signal. */
 function regionCount(code) {
-  const containers = (code.match(/<(Paper|Card|Section|Fieldset|Accordion|Tabs\.Panel)\b/g) || []).length;
+  const containers = (code.match(/<(Paper|Card|Section|Fieldset|Accordion|Tabs\.Panel|Slab)\b/g) || []).length;
   return containers;
 }
 
@@ -265,9 +293,11 @@ async function main() {
     const regions = regionCount(code);
     const thin = regions < (c.minRegions || 0);
 
+    const house = (c.houseComponents || []).filter(n => used.has(n));
     const ok = !missing.length && !handRolled.length && !foreign.length && !bogus.length && !thin;
     results.push({
       id: c.id, ok, missing, handRolled, foreign,
+      houseUsed: c.houseComponents ? `${house.length}/${c.houseComponents.length}` : undefined,
       invalidProps: bogus.slice(0, 6), regions,
       verification: completion.verification?.outcome,
       blockers: completion.verification?.findings?.filter(f => f.severity === 'blocker').length ?? 0,
@@ -280,6 +310,7 @@ async function main() {
       handRolled.length ? `raw<${handRolled.join(',')}>` : '',
       bogus.length ? `badProps:${bogus.slice(0, 3).join(',')}` : '',
       thin ? `thin:${regions}regions` : '',
+      c.houseComponents ? `house:${house.length}/${c.houseComponents.length}(${house.join(',') || 'none'})` : '',
       foreign.length ? `foreign:${foreign.join(',')}` : '',
       `[${completion.verification?.outcome ?? '?'}]`,
     ].filter(Boolean).join(' '));

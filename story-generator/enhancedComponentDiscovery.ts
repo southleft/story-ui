@@ -31,10 +31,38 @@ export class EnhancedComponentDiscovery {
   private discoveredComponents: Map<string, EnhancedComponent> = new Map();
   private validateAvailableComponents: Set<string> = new Set();
   private frameworkAdapter: BaseFrameworkAdapter;
+  /**
+   * Directories Storybook says this project's components live in.
+   *
+   * Supplied by the caller because reading Storybook is async and this class
+   * resolves sources synchronously. See setStorybookComponentDirs.
+   */
+  private storybookComponentDirs: string[] = [];
 
   constructor(config: StoryUIConfig) {
     this.config = config;
     this.frameworkAdapter = this.createFrameworkAdapter();
+  }
+
+  /**
+   * Tell discovery where the Storybook's own stories live.
+   *
+   * Local components were found by guessing at conventional directory names —
+   * src/components, src/ui, lib/components and six others. A team whose design
+   * system lives anywhere else got nothing, and "anywhere else" is common:
+   * src/design-system, src/kit, packages/ui, app/components.
+   *
+   * Measured: a four-component system in `src/housekit`, fully documented with
+   * stories and present in Storybook's own manifest, was invisible to
+   * discovery. The model was handed 237 "available components" that excluded
+   * it, and unsurprisingly composed from Mantine primitives instead — the
+   * exact failure of being dedicated to this Storybook's components.
+   *
+   * A component with a story in this Storybook IS part of this design system,
+   * by definition. That is not a convention to guess at; it is a fact to read.
+   */
+  setStorybookComponentDirs(dirs: string[]): void {
+    this.storybookComponentDirs = dirs;
   }
 
   /**
@@ -273,6 +301,18 @@ export class EnhancedComponentDiscovery {
           type: 'local',
           path: fullPath
         });
+      }
+    }
+
+    // 2b. Wherever Storybook says this project's own stories are.
+    //
+    // Authoritative, not conventional: it works for any directory layout,
+    // including ones nobody thought to add to the list above.
+    for (const dir of this.storybookComponentDirs) {
+      const already = sources.some(s => s.type === 'local' && path.resolve(s.path) === path.resolve(dir));
+      if (!already && fs.existsSync(dir)) {
+        logger.log(`📚 Storybook-declared component directory: ${dir}`);
+        sources.push({ type: 'local', path: dir });
       }
     }
 

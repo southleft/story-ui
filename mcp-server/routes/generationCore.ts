@@ -55,6 +55,7 @@ import {
   fetchStorybookCatalog,
   rankByRelevance,
   formatCatalogForPrompt,
+  storybookComponentDirs,
 } from '../../story-generator/knowledge/storybookCatalog.js';
 import { UrlRedirectService } from '../../story-generator/urlRedirectService.js';
 import {
@@ -284,6 +285,22 @@ export async function runStoryGeneration(
   // Step 2: Discover components
   events.onProgress?.(2, totalSteps, 'components_discovered', 'Discovering available components...');
   const discovery = new EnhancedComponentDiscovery(config);
+
+  // Where Storybook says this project's components are.
+  //
+  // Discovery otherwise guesses at conventional directory names, so a design
+  // system living outside them is invisible — and a component the model is not
+  // told about is a component it will not use, however good the rest of the
+  // context is.
+  try {
+    const sbUrl = config.storybookMcpUrl || storybookUrl || getStorybookUrl();
+    if (sbUrl) {
+      const dirs = await storybookComponentDirs({ storybookUrl: sbUrl, projectRoot: process.cwd() });
+      if (dirs.length) discovery.setStorybookComponentDirs(dirs);
+    }
+  } catch {
+    // Discovery still works from conventions; this only widens it.
+  }
   const components = await discovery.discoverAll();
 
   // Enrich the catalog with real prop signatures read from the installed
