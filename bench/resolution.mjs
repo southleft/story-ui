@@ -44,6 +44,7 @@ const ENVIRONMENTS = [
   { name: 'college-town (Radix+Tailwind, local)', project: '/Users/tjpitre/Sites/college-town', storybook: 'http://localhost:6006' },
   { name: 'mui-material (subpath npm)', project: '/Users/tjpitre/Sites/test-storybooks/mui-material', storybook: 'http://localhost:6107' },
   { name: 'atlaskit (package-per-component)', project: '/Users/tjpitre/Sites/test-storybooks/atlaskit', storybook: 'http://localhost:6108' },
+  { name: 'carbon (IBM, barrel + SCSS)', project: '/Users/tjpitre/Sites/test-storybooks/carbon', storybook: 'http://localhost:6109' },
 ];
 
 /**

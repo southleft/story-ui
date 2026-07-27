@@ -210,12 +210,20 @@ export function formatStylingGuidance(facts: StylingFacts, maxPerGroup = 24): st
     // can out-count the real idiom — react-mantine's 9 stories ranked `style`
     // first — and recommending them would instruct the model to do the exact
     // thing this section exists to prevent.
-    const dominant = top.find(a => !/^(style|css)$/.test(a.name)) ?? top[0];
+    const dominant = top.find(a => !/^(style|css)$/.test(a.name));
     lines.push(
       '',
       `This team styles with ${top.map(a => `\`${a.name}\``).join(', ')} — counted from ${idiom.sampled} of their own stories.`,
-      `\`${dominant.name}\` is the house method (${dominant.uses} uses). Match it. Do not introduce a different styling mechanism.`,
     );
+    if (dominant) {
+      lines.push(`\`${dominant.name}\` is the house method (${dominant.uses} uses). Match it. Do not introduce a different styling mechanism.`);
+    } else {
+      // Only `style`/`css` were seen, which happens on a thin sample. Naming
+      // one as the house method would instruct the model to write raw values —
+      // the exact habit this section exists to break. Carbon's single seed
+      // story produced precisely this case.
+      lines.push('No house styling prop is evident from the sample. Prefer the design system\'s own layout and spacing components over inline style.');
+    }
   }
 
   if (tokens.length) {
