@@ -1609,7 +1609,14 @@ export class EnhancedComponentDiscovery {
 
         this.discoveredComponents.set(comp.name, {
           name: comp.name,
-          filePath: '',
+          // Keep the discovered file path. Declaring a component in config used
+          // to blank it, which destroyed the one field import rewriting needs:
+          // buildComponentToImportMap maps a component to its module by taking
+          // its filePath relative to componentsPath, and skips anything without
+          // one. So declaring `Card` in story-ui.config.js made Card's import
+          // UNRESOLVABLE — the config that exists to improve fidelity was the
+          // thing breaking it.
+          filePath: existing?.filePath || '',
           props: comp.props || existing?.props || [],
           source: {
             type: 'custom-elements',
@@ -1618,8 +1625,17 @@ export class EnhancedComponentDiscovery {
           description: comp.description || existing?.description || `${comp.name} component`,
           category: comp.category || existing?.category || this.categorizeComponent(comp.name, ''),
           slots: comp.slots || existing?.slots || [],
-          examples: comp.examples || existing?.examples || []
-        });
+          examples: comp.examples || existing?.examples || [],
+          // The declared import specifier. Everything else a project writes
+          // down was already honoured here; this field was dropped, and it is
+          // the one that decides whether the story can import anything at all.
+          // college-town declares `CardHeader -> '@/components/card/card'` for
+          // 22 components; without this the adapter fell back to a shadcn-shaped
+          // guess, `@/components/card-header`, which is not a module. 41% of
+          // that project's generated imports 404'd and most stories rendered
+          // blank while scoring full marks on component selection.
+          __componentPath: comp.importPath || existing?.__componentPath,
+        } as EnhancedComponent);
       }
     }
 
@@ -1630,7 +1646,14 @@ export class EnhancedComponentDiscovery {
 
         this.discoveredComponents.set(comp.name, {
           name: comp.name,
-          filePath: '',
+          // Keep the discovered file path. Declaring a component in config used
+          // to blank it, which destroyed the one field import rewriting needs:
+          // buildComponentToImportMap maps a component to its module by taking
+          // its filePath relative to componentsPath, and skips anything without
+          // one. So declaring `Card` in story-ui.config.js made Card's import
+          // UNRESOLVABLE — the config that exists to improve fidelity was the
+          // thing breaking it.
+          filePath: existing?.filePath || '',
           props: comp.props || existing?.props || [],
           source: {
             type: 'custom-elements',
@@ -1639,8 +1662,9 @@ export class EnhancedComponentDiscovery {
           description: comp.description || existing?.description || `${comp.name} component`,
           category: comp.category || existing?.category || this.categorizeComponent(comp.name, ''),
           slots: comp.slots || existing?.slots || [],
-          examples: comp.examples || existing?.examples || []
-        });
+          examples: comp.examples || existing?.examples || [],
+          __componentPath: comp.importPath || existing?.__componentPath,
+        } as EnhancedComponent);
       }
     }
   }

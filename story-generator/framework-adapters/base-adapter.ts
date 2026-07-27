@@ -155,6 +155,23 @@ export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
     component: DiscoveredComponent,
     config: StoryUIConfig
   ): string {
+    // What the PROJECT says, before anything we infer.
+    //
+    // story-ui.config.js can declare each component with its real import
+    // specifier, and college-town does exactly that for 22 components —
+    // `CardHeader -> '@/components/card/card'` — under a comment reading
+    // "REQUIRED for proper story generation". Nothing read it. The convention
+    // guess below produced `@/components/card-header` instead, which is not a
+    // module, so 41% of that project's generated imports 404'd and roughly
+    // three quarters of its stories rendered blank.
+    //
+    // A declared path is a fact about the codebase. An inferred one is a guess
+    // about its conventions. The fact wins.
+    const declared = (config.components || []).find(c => c.name === component.name);
+    if (declared?.importPath) {
+      return declared.importPath;
+    }
+
     // Use component's __componentPath if available
     if (component.__componentPath) {
       return component.__componentPath;

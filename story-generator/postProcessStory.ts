@@ -42,6 +42,16 @@ function buildComponentToImportMap(
   const normalizedComponentsPath = normalizePath(componentsPath);
 
   for (const component of discoveredComponents) {
+    // An explicitly declared import specifier is authoritative — the project
+    // wrote down where this component lives, and no path arithmetic can beat
+    // being told. Covers components that have no filePath at all, such as ones
+    // declared in config but never found on disk.
+    const declaredPath = (component as any).__componentPath;
+    if (declaredPath) {
+      componentMap.set(component.name, declaredPath);
+      continue;
+    }
+
     const normalizedFilePath = normalizePath(component.filePath);
 
     // Check if this component is from our configured components path
