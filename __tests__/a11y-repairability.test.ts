@@ -59,3 +59,31 @@ describe('isDesignSystemInternal', () => {
     expect(isDesignSystemInternal('')).toBe(false);
   });
 });
+
+/**
+ * Controls hidden from assistive technology need no accessible name.
+ *
+ * Mantine's NumberInput renders its spinners as `aria-hidden="true"
+ * tabindex="-1"` buttons — correct practice, since the input carries the label
+ * and the spinners are decorative. The census flagged five of them as blockers
+ * on a loan calculator whose accessibility was fine, and the author could not
+ * have fixed them: the markup belongs to the design system.
+ *
+ * Pinned as a pure predicate because the census body runs inside a page.
+ */
+describe('aria-hidden controls', () => {
+  const needsAccessibleName = (el: { ariaHidden?: string; insideHidden?: boolean }) =>
+    el.ariaHidden !== 'true' && !el.insideHidden;
+
+  it('exempts a control marked aria-hidden', () => {
+    expect(needsAccessibleName({ ariaHidden: 'true' })).toBe(false);
+  });
+
+  it('exempts a control inside an aria-hidden subtree', () => {
+    expect(needsAccessibleName({ insideHidden: true })).toBe(false);
+  });
+
+  it('still requires a name for a visible, exposed control', () => {
+    expect(needsAccessibleName({})).toBe(true);
+  });
+});

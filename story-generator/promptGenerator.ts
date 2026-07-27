@@ -494,6 +494,14 @@ export async function buildFrameworkAwarePrompt(
     '- The story MUST be operable, not a mockup: anything a user would click, type into, toggle or select MUST be the real interactive component from the design system, with real state and real handlers',
     '- NEVER render a visual stand-in for an interactive element (no text styled to look like an input, no bare icon standing in for a button, no static row standing in for tabs or a menu)',
     '- Prefer completeness of behavior over brevity — these stories are lifted directly into product code',
+    // Verification blocks on this and the prompt never mentioned it, so the
+    // model was being failed for a rule it was never given. Measured on one
+    // loan-calculator generation: 7 blockers, 5 of them icon-only controls
+    // with no accessible name. A reviewer rejects that PR outright, which is
+    // the difference between a story that renders and one that ships.
+    '- EVERY control whose visible content is only an icon MUST carry an accessible name — `aria-label` on the control, or the design system\'s equivalent prop. This applies to icon buttons, close buttons, sort toggles, overflow menus and icon-only tabs',
+    '- Every input, select, slider, switch and checkbox MUST have a programmatically associated label — a real <label>/`htmlFor` pair, the design system\'s `label` prop, or `aria-label` when the design genuinely has no visible label',
+    '- Decorative icons that sit beside their own text label are the exception: mark those `aria-hidden="true"` so they are not announced twice',
     // Observed: a Timeline whose `active` prop painted every bullet solid blue,
     // with a "light"-variant icon wrapper inside. The wrapper's 10%-alpha
     // background never covered the blue, and its foreground colour was tuned for

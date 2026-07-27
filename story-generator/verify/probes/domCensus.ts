@@ -360,6 +360,23 @@ export async function runDomCensus(page: any): Promise<CensusResult> {
     let iconsWithoutAccessibleName = 0;
     for (const el of buttons as HTMLElement[]) {
       if (!isVisible(el)) continue;
+
+      /**
+       * Hidden from assistive technology on purpose, so an accessible name is
+       * not merely unnecessary — asking for one is incoherent.
+       *
+       * Mantine's NumberInput renders its increment and decrement spinners as
+       * `aria-hidden="true" tabindex="-1"` buttons, which is CORRECT: the input
+       * carries the label and the spinners are decorative affordances. This
+       * probe reported five blockers for a loan calculator whose accessibility
+       * was fine, and the story's author could not have fixed them — the markup
+       * belongs to the design system, not to the generated code.
+       *
+       * Telling someone their correct work has six accessibility blockers is
+       * how a verification system loses the right to be believed.
+       */
+      if (el.getAttribute('aria-hidden') === 'true' || el.closest('[aria-hidden="true"]')) continue;
+
       const hasOnlyIcon = !!el.querySelector('svg') && !(el.textContent || '').trim();
       if (!hasOnlyIcon) continue;
       if (!accessibleName(el)) {
