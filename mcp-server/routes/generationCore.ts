@@ -325,7 +325,14 @@ export async function runStoryGeneration(
   const shouldUseMcp = useStorybookMcp !== false;
   // Explicit config wins; otherwise use the Storybook origin the panel
   // detected, so the MCP-context toggle works with zero configuration.
-  const mcpUrl = config.storybookMcpUrl || storybookUrl;
+  // Fall back to the environment-derived URL, the same one verification uses.
+  //
+  // Without this the richest component knowledge available — Storybook's own
+  // components manifest, with the team's real imports and story snippets —
+  // simply never loaded whenever a caller did not pass storybookUrl, which is
+  // every request that is not the panel. The client, the manifest endpoint and
+  // the formatter all already worked; nothing ever triggered them.
+  const mcpUrl = config.storybookMcpUrl || storybookUrl || getStorybookUrl() || undefined;
   if (mcpUrl && shouldUseMcp) {
     // Pass the generated-stories directory so our own prior output is kept out
     // of the exemplar pool it sends back as the house style.
@@ -1197,13 +1204,24 @@ async function buildClaudePromptWithContext(
     }
   }
 
-  // What the team's own Storybook says about their design system.
+  // What the team's own Storybook says about their design system — FALLBACK.
   //
-  // Injected close to the user request, below the generic catalog, because it
-  // is far higher-signal: the flat catalog is 237 scraped export names with no
-  // props and no examples, while this is the team's real code for the
-  // components they actually document. Where the two disagree, this wins.
-  if (options.storybookUrl) {
+  // Read from the story files directly, for Storybooks that do not expose a
+  // components manifest (addon-mcp is recent; most projects will not have it).
+  // Same idea, cruder execution: the flat catalog is 237 scraped export names
+  // with no props and no examples, while this is the team's real code for the
+  // components they actually document.
+  //
+  // Only when Storybook's own components manifest is unavailable. When it IS
+  // available it supplies the same knowledge better — Storybook normalises the
+  // CSF wrapper into runnable code with resolved imports, and covers far more
+  // components than the story files we can usefully read ourselves. Injecting
+  // both would spend context twice to say the same thing.
+  const manifestSuppliedDocs = Boolean(
+    options.storybookContext?.available && options.storybookContext?.componentDocs
+      && Object.keys(options.storybookContext.componentDocs).length > 0,
+  );
+  if (options.storybookUrl && !manifestSuppliedDocs) {
     try {
       const catalog = await fetchStorybookCatalog({
         storybookUrl: options.storybookUrl,
