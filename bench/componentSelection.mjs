@@ -37,6 +37,7 @@ const LIMIT = Number(arg('cases', '0')) || Infinity;
 const USE_MANIFEST = !flag('no-manifest');
 const PROJECT = arg('project', '/Users/tjpitre/Sites/test-storybooks/react-mantine');
 const IMPORT_PATH = arg('import', '@mantine/core');
+const SUITE = arg('suite', null);
 
 /**
  * expect     at least one of each group must appear — the composite that exists
@@ -45,6 +46,62 @@ const IMPORT_PATH = arg('import', '@mantine/core');
  *            thing that was asked for, and is the most common way a complex
  *            prompt quietly under-delivers
  */
+/**
+ * COLLEGE-TOWN — a real Radix + Tailwind design system.
+ *
+ * Different in every way that has previously hidden a bug: shadcn-style
+ * compound components, path-alias individual imports (`@/components/x/x`)
+ * rather than a barrel, Tailwind utility classes with no semantic markers, and
+ * a `data-table` composite that is exactly the thing a model hand-rolls out of
+ * primitives when it does not know the library ships one.
+ *
+ *   node bench/componentSelection.mjs --suite ct --mcp http://localhost:4106 \
+ *     --project /Users/tjpitre/Sites/college-town --import '@/components'
+ */
+const CT_CASES = [
+  {
+    suite: 'ct', id: 'ct-alert-compound',
+    prompt: 'A page section showing a success alert, a warning alert and an error alert, '
+      + 'each with a heading and a description line',
+    // The house Alert is compound; using the shell alone is the common miss.
+    expect: [['Alert'], ['AlertTitle'], ['AlertDescription']],
+    avoidTags: [],
+    minRegions: 0,
+  },
+  {
+    suite: 'ct', id: 'ct-data-table',
+    prompt: 'A sortable table of students showing name, major, year and enrollment status, '
+      + 'with a status badge in each row',
+    expect: [['Table', 'DataTable'], ['TableHeader'], ['TableRow'], ['TableCell'], ['Badge']],
+    avoidTags: ['table', 'thead', 'tbody'],
+    minRegions: 0,
+  },
+  {
+    suite: 'ct', id: 'ct-course-card',
+    prompt: 'A grid of course cards, each with a title, description, an instructor avatar '
+      + 'and a badge for the department',
+    expect: [['Card'], ['CardHeader', 'CardTitle'], ['CardContent'], ['Avatar'], ['Badge']],
+    avoidTags: [],
+    minRegions: 0,
+  },
+  {
+    suite: 'ct', id: 'ct-form',
+    prompt: 'A student registration form with name and email fields, a major dropdown, '
+      + 'a terms checkbox and a submit button',
+    expect: [['Input'], ['Label'], ['Select', 'SelectTrigger'], ['Checkbox'], ['Button']],
+    avoidTags: ['input', 'select', 'button'],
+    minRegions: 0,
+  },
+  {
+    suite: 'ct', id: 'ct-tabs-panel',
+    prompt: 'A course detail view with tabs for Overview, Syllabus and Roster, '
+      + 'and a card inside each tab',
+    expect: [['Tabs'], ['TabsList'], ['TabsTrigger'], ['TabsContent'], ['Card']],
+    avoidTags: [],
+    minRegions: 0,
+  },
+];
+
 const CASES = [
   /**
    * HOUSEKIT — a design system the model provably has no training data for.
@@ -184,6 +241,40 @@ function propsUsedIn(files) {
   return used;
 }
 
+/**
+ * Prop names declared in a project's own component source.
+ *
+ * Needed because a local design system has no package in node_modules for
+ * propExtractor to read, and because a prop can be perfectly real without
+ * appearing in any story. `DataTableColumnHeader.sortDirection` is declared in
+ * data-table-column-header.tsx, used by nothing in the story set, and was
+ * reported as a hallucination — a false accusation against a correct
+ * generation, which is the worst kind of bench error.
+ */
+function propsDeclaredIn(projectRoot, componentsDir = 'src/components') {
+  const names = new Set();
+  const root = path.join(projectRoot, componentsDir);
+  const walk = (dir, depth = 0) => {
+    if (depth > 5) return;
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) { if (!e.name.startsWith('.') && e.name !== 'node_modules') walk(full, depth + 1); continue; }
+      if (!/\.[jt]sx?$/.test(e.name) || /\.stories\./.test(e.name)) continue;
+      let src;
+      try { src = fs.readFileSync(full, 'utf8'); } catch { continue; }
+      // Property signatures inside type/interface bodies. Deliberately loose:
+      // over-collecting props only makes the check more conservative.
+      for (const m of src.matchAll(/^\s{2,}([a-zA-Z][a-zA-Z0-9]*)\??\s*:/gm)) names.add(m[1]);
+      // VariantProps-style keys and destructured component params.
+      for (const m of src.matchAll(/^\s{2,}([a-zA-Z][a-zA-Z0-9]*),?\s*$/gm)) names.add(m[1]);
+    }
+  };
+  walk(root);
+  return names;
+}
+
 /** Every .stories.* file in the project that we did not generate. */
 function teamStoryFiles(projectRoot, generatedFragment = 'generated') {
   const out = [];
@@ -249,7 +340,7 @@ function regionCount(code) {
 }
 
 async function main() {
-  let cases = CASES;
+  let cases = SUITE ? CT_CASES.filter(c => c.suite === SUITE) : CASES;
   if (ONLY) cases = cases.filter(c => c.id.includes(ONLY));
   cases = cases.slice(0, LIMIT);
 
@@ -263,7 +354,9 @@ async function main() {
   } catch { /* declared props unavailable; team usage still carries it */ }
   const teamFiles = teamStoryFiles(PROJECT);
   for (const p of propsUsedIn(teamFiles)) vocabulary.add(p);
-  console.log(`${vocabulary.size} prop names (${teamFiles.length} team stories)`);
+  const declared = propsDeclaredIn(PROJECT);
+  for (const p of declared) vocabulary.add(p);
+  console.log(`${vocabulary.size} prop names (${teamFiles.length} team stories, ${declared.size} declared locally)`);
 
   console.log(`\nBench — ${cases.length} case(s), Storybook context ${USE_MANIFEST ? 'ON' : 'OFF'}, ${MCP}\n`);
 
