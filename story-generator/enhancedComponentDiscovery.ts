@@ -4,6 +4,7 @@ import { DiscoveredComponent, PropInfo } from './componentDiscovery.js';
 import { StoryUIConfig } from '../story-ui.config.js';
 import { DynamicPackageDiscovery } from './dynamicPackageDiscovery.js';
 import { logger } from './logger.js';
+import { componentDirsFromStorybookConfig } from './knowledge/storybookConfig.js';
 import { BaseFrameworkAdapter } from './framework-adapters/base-adapter.js';
 import { ReactAdapter } from './framework-adapters/react-adapter.js';
 import { VueAdapter } from './framework-adapters/vue-adapter.js';
@@ -302,6 +303,22 @@ export class EnhancedComponentDiscovery {
           path: fullPath
         });
       }
+    }
+
+    // 2a. What .storybook/main.ts declares, which needs no running server.
+    //
+    // The live-index path below is authoritative but only exists when a dev
+    // server is answering. On a CLI run, in CI, or at cold start there is
+    // none, and the hardcoded convention list was then the only source — so a
+    // design system in an unguessed directory was invisible exactly when
+    // someone first tried the tool.
+    try {
+      for (const dir of componentDirsFromStorybookConfig(projectRoot)) {
+        const already = sources.some(s => s.type === 'local' && path.resolve(s.path) === path.resolve(dir));
+        if (!already) sources.push({ type: 'local', path: dir });
+      }
+    } catch {
+      // Config unreadable; the other sources still apply.
     }
 
     // 2b. Wherever Storybook says this project's own stories are.
@@ -789,6 +806,14 @@ export class EnhancedComponentDiscovery {
       }
 
       const content = fs.readFileSync(file, 'utf-8');
+
+      // A barrel index re-exports and declares nothing; including it would add
+      // a component named after the directory that no file actually defines.
+      // Decided by reading the file, not by its name — an index.tsx that DOES
+      // declare a component is exactly the layout we were previously blind to.
+      if (/(^|\/)index\.[jt]sx?$/i.test(file) && !this.declaresComponent(content)) {
+        continue;
+      }
       
       // Use framework adapter for component extraction
       const componentNames = this.frameworkAdapter.extractComponentNamesFromFile(file, content);
@@ -835,6 +860,23 @@ export class EnhancedComponentDiscovery {
   /**
    * Check if a file should be skipped (stories, tests, etc.)
    */
+  /**
+   * Does this file DEFINE a component, as opposed to re-exporting one?
+   *
+   * A function/class/const declaration returning markup counts; a file whose
+   * only statements are `export ... from` does not.
+   */
+  private declaresComponent(content: string): boolean {
+    const declaration = /(?:export\s+)?(?:default\s+)?(?:function|class)\s+[A-Z]\w*|(?:const|let|var)\s+[A-Z]\w*\s*[:=]/;
+    if (!declaration.test(content)) return false;
+    // Guard against a barrel that merely aliases: `export { Button as Btn } from './button'`
+    const reExportOnly = content
+      .split('\n')
+      .filter(l => l.trim() && !l.trim().startsWith('//') && !l.trim().startsWith('*') && !l.trim().startsWith('/*'))
+      .every(l => /^\s*(export|import)\s/.test(l));
+    return !reExportOnly;
+  }
+
   private isNonComponentFile(filePath: string): boolean {
     // Story UI's own panel is vendored into the consuming project (usually
     // src/stories/StoryUI/), which sits inside a directory we also scan for
@@ -855,7 +897,12 @@ export class EnhancedComponentDiscovery {
       /\.test\.(tsx?|jsx?)$/i,        // Test files
       /\.spec\.(tsx?|jsx?)$/i,        // Spec files
       /\.d\.ts$/i,                    // Type definition files
-      /index\.(tsx?|jsx?)$/i,         // Index files (usually just exports)
+      // NOT index files. `ComponentName/index.tsx` is the dominant layout for
+      // homegrown and monorepo design systems, where the implementation lives
+      // in index.tsx and the folder name is the component. Skipping them by
+      // name made every component in such a system invisible, so the model
+      // composed from npm primitives instead. An index that only re-exports is
+      // filtered below by reading it, which is a fact rather than a guess.
       /\.config\.(tsx?|jsx?)$/i,      // Config files
       /\.mock\.(tsx?|jsx?)$/i,        // Mock files
     ];
