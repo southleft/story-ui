@@ -1371,7 +1371,8 @@ async function buildClaudePromptWithContext(
   // design system that owns it.
   try {
     const styling = readStylingFacts(process.cwd(), (config.generatedStoriesPath || '')
-      .replace(/^\.\//, '').replace(/\/+$/, '').split('/').pop() || 'generated');
+      .replace(/^\.\//, '').replace(/\/+$/, '').split('/').pop() || 'generated',
+      config.importPath);
     const guidance = formatStylingGuidance(styling);
     if (guidance) {
       logger.log(`🎨 Injecting styling guidance: ${styling.idiom.attributes[0]?.name ?? 'no idiom'} idiom, ${styling.tokens.reduce((n, g) => n + g.names.length, 0)} token(s)`);

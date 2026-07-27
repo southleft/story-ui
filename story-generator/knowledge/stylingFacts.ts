@@ -62,14 +62,29 @@ const STYLE_ATTRS = new Set([
   'align', 'justify', 'direction', 'wrap', 'grow',
 ]);
 
-/** Group a token by what its name says it controls. */
+/**
+ * Group a token by what its name says it controls.
+ *
+ * Matched against any SEGMENT rather than the start of the name. Every design
+ * system that namespaces its tokens — Carbon's `--cds-text-primary`, Adobe's
+ * `--spectrum-…`, Shopify's `--p-…` — put a vendor prefix in front, so an
+ * anchored test filed all 446 of Carbon's tokens under "other" and the prompt
+ * showed none of them. Deriving the prefix would be guesswork; not depending
+ * on its absence is free.
+ */
 function categorise(name: string): string {
-  if (/^(color|colour|bg|background|text|fill|stroke|border|ring|accent|primary|secondary|muted|destructive|success|warning|info|foreground|card|popover|sidebar|chart)/.test(name)) return 'color';
-  if (/^(radius|rounded)/.test(name)) return 'radius';
-  if (/^(space|spacing|gap|size|inset)/.test(name)) return 'spacing';
-  if (/^(shadow|elevation)/.test(name)) return 'shadow';
-  if (/^(font|text|leading|tracking|weight)/.test(name)) return 'typography';
-  if (/^(breakpoint|screen|container)/.test(name)) return 'layout';
+  const segments = name.toLowerCase().split(/[-_.]/);
+  const has = (re: RegExp) => segments.some(s => re.test(s));
+  // Order matters: `text` reads as typography on its own but as a colour role
+  // in `text-primary`, which is how every token system in this list uses it.
+  if (has(/^(color|colour|bg|background|fill|stroke|border|ring|accent|primary|secondary|muted|destructive|success|warning|info|danger|error|foreground|layer|support|interactive)$/)) return 'color';
+  if (has(/^(radius|rounded|corner)$/)) return 'radius';
+  if (has(/^(space|spacing|gap|inset|margin|padding)$/)) return 'spacing';
+  if (has(/^(shadow|elevation)$/)) return 'shadow';
+  if (has(/^(font|leading|tracking|weight|type|typography|heading|body|label)$/)) return 'typography';
+  if (has(/^(breakpoint|screen|container|grid)$/)) return 'layout';
+  if (has(/^(text|icon|link)$/)) return 'color';
+  if (has(/^(size|width|height)$/)) return 'spacing';
   return 'other';
 }
 
@@ -121,10 +136,54 @@ function styleFiles(projectRoot: string, limit = 40): string[] {
  * it can reach for it; the resolved colour is the system's business, and
  * shipping 119 values would cost context for information nobody acts on.
  */
-export function readDesignTokens(projectRoot: string): TokenGroup[] {
+/**
+ * Stylesheets the design system itself ships.
+ *
+ * A team using Carbon writes no CSS of their own — the 446 `--cds-*` tokens
+ * they are expected to compose with live in `@carbon/styles/css/`, inside
+ * node_modules, which the project walk deliberately skips. Reading only the
+ * project's own files reported that library as having no design tokens, and
+ * the prompt told the model nothing, which is how Carbon output kept 15 raw
+ * pixel values per story.
+ *
+ * Bounded hard: a compiled design system stylesheet is often megabytes, and
+ * only its custom-property declarations are wanted.
+ */
+function packageStyleFiles(projectRoot: string, importPath?: string, limit = 6): string[] {
+  if (!importPath) return [];
+  const pkgName = importPath.startsWith('@')
+    ? importPath.split('/').slice(0, 2).join('/')
+    : importPath.split('/')[0];
+
+  const out: string[] = [];
+  // The component package and its styles sibling: Carbon splits them
+  // (@carbon/react + @carbon/styles), Mantine and MUI do not.
+  const scope = pkgName.startsWith('@') ? pkgName.split('/')[0] : null;
+  const roots = [path.join(projectRoot, 'node_modules', ...pkgName.split('/'))];
+  if (scope) {
+    for (const sibling of ['styles', 'themes', 'core', 'tokens']) {
+      roots.push(path.join(projectRoot, 'node_modules', scope, sibling));
+    }
+  }
+
+  for (const root of roots) {
+    if (out.length >= limit || !fs.existsSync(root)) continue;
+    // Prefer conventional locations over a full walk of a published package.
+    for (const rel of ['css/styles.css', 'styles.css', 'dist/styles.css', 'index.css', 'dist/index.css', 'css/index.css']) {
+      const full = path.join(root, rel);
+      if (fs.existsSync(full) && !out.includes(full)) {
+        out.push(full);
+        if (out.length >= limit) break;
+      }
+    }
+  }
+  return out;
+}
+
+export function readDesignTokens(projectRoot: string, importPath?: string): TokenGroup[] {
   const byCategory = new Map<string, Set<string>>();
 
-  for (const file of styleFiles(projectRoot)) {
+  for (const file of [...styleFiles(projectRoot), ...packageStyleFiles(projectRoot, importPath)]) {
     let css: string;
     try { css = fs.readFileSync(file, 'utf8'); } catch { continue; }
     for (const m of css.matchAll(/^\s*--([a-zA-Z][\w-]*)\s*:/gm)) {
@@ -135,8 +194,22 @@ export function readDesignTokens(projectRoot: string): TokenGroup[] {
     }
   }
 
+  /**
+   * Most foundational first, because the list gets truncated.
+   *
+   * Alphabetical order gave Carbon's model 24 `--cds-ai-popover-caret-bottom-
+   * background-actions` variants and cut `--cds-text-primary` and
+   * `--cds-layer` — the tokens anyone actually composes with. Across every
+   * system here the core token is the SHORT one and specialisations extend it,
+   * which is a property of how tokens are named rather than a fact about any
+   * one library.
+   */
+  const depth = (n: string) => n.split('-').filter(Boolean).length;
   return [...byCategory.entries()]
-    .map(([category, names]) => ({ category, names: [...names].sort() }))
+    .map(([category, names]) => ({
+      category,
+      names: [...names].sort((a, b) => depth(a) - depth(b) || a.localeCompare(b)),
+    }))
     .sort((a, b) => b.names.length - a.names.length);
 }
 
@@ -183,9 +256,14 @@ export function readStylingIdiom(projectRoot: string, generatedFragment = 'gener
   return { attributes, sampled };
 }
 
-export function readStylingFacts(projectRoot: string, generatedFragment?: string): StylingFacts {
+export function readStylingFacts(
+  projectRoot: string,
+  generatedFragment?: string,
+  /** The configured design system, so its own shipped tokens can be read. */
+  importPath?: string,
+): StylingFacts {
   return {
-    tokens: readDesignTokens(projectRoot),
+    tokens: readDesignTokens(projectRoot, importPath),
     idiom: readStylingIdiom(projectRoot, generatedFragment),
   };
 }
