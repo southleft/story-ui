@@ -128,7 +128,14 @@ export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
   ): string {
     const importPath = this.getImportPath(component, config);
     const isLocal = !!this.getLocalImportPath(component, config);
-    let entry = `- **${component.name}** (import from '${importPath}')${isLocal ? ' — CUSTOM PROJECT COMPONENT, fully allowed; use this exact relative import' : ''}`;
+    // A default export needs different import syntax, and getting it wrong
+    // fails at runtime rather than at build: "does not provide an export named
+    // 'Avatar'", with an empty story and no other clue.
+    const defaultExport = (component as any).__defaultExport === true;
+    const importHow = defaultExport
+      ? `import ${component.name} from '${importPath}'  ← DEFAULT export, not a named one`
+      : `import from '${importPath}'`;
+    let entry = `- **${component.name}** (${importHow})${isLocal ? ' — CUSTOM PROJECT COMPONENT, fully allowed; use this exact relative import' : ''}`;
 
     if (component.props && component.props.length > 0) {
       // Props are the only signal the model has for what a component can

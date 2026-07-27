@@ -603,7 +603,7 @@ export async function runStoryGeneration(
       : await preValidateImports(aiText, config, discovery);
     // Isolation runs for EVERY framework: generated code may only import from
     // the configured library, framework runtime, and explicit allowances.
-    const isolationErrors = validateImportIsolation(aiText, config, detectedFramework, considerationsText);
+    const isolationErrors = validateImportIsolation(aiText, config, detectedFramework, considerationsText, components as any);
     const importErrors = [
       ...(importValidation.isValid ? [] : importValidation.errors),
       ...isolationErrors,
@@ -1542,7 +1542,10 @@ async function attemptRuntimeHealing(args: {
     const importValidation = framework === 'web-components'
       ? { isValid: true, errors: [] }
       : await preValidateImports(code, config, discovery);
-    const isolationErrors = validateImportIsolation(code, config, framework, considerationsText);
+    const isolationErrors = validateImportIsolation(
+      code, config, framework, considerationsText,
+      (discovery?.getDiscoveredComponents?.() ?? []) as any,
+    );
     const errors = aggregateValidationErrors(astResult, patternErrors, [
       ...(importValidation.isValid ? [] : importValidation.errors),
       ...isolationErrors,
@@ -1847,6 +1850,31 @@ function getConsumerDependencies(): Set<string> {
 }
 
 /**
+ * Is this package provably NOT part of the project?
+ *
+ * Must answer "no" whenever it cannot see the project, because the caller
+ * REJECTS on true. getConsumerDependencies can afford a miss — it only grants
+ * allowances, so a wrong answer costs nothing. Inverting that polarity without
+ * inverting the failure mode turned a legitimate `@mantine/hooks` import into a
+ * validation error the moment cwd was not the consumer project, which is every
+ * unit test and any host that runs the server from elsewhere.
+ *
+ * Two independent sources, either sufficient to acquit: a declared dependency,
+ * or a directory on disk (transitive installs are never declared).
+ *
+ * `anchor` is the design system's own package. If THAT is not visible from
+ * here, cwd is not the consumer project — story-ui's own repo is a perfectly
+ * valid Node project that simply has no @mantine in it — and nothing in its
+ * scope can be judged absent.
+ */
+function packageIsAbsent(pkgName: string, consumerDeps: Set<string>, anchor: string): boolean {
+  const modules = path.join(process.cwd(), 'node_modules');
+  const visible = (p: string) => consumerDeps.has(p) || fs.existsSync(path.join(modules, p));
+  if (!visible(anchor)) return false;
+  return !visible(pkgName);
+}
+
+/**
  * Deterministic isolation: every import in generated code must come from the
  * configured component library, the framework runtime, Storybook, configured
  * icon/additional imports, or a package explicitly named in the project's
@@ -1857,7 +1885,9 @@ export function validateImportIsolation(
   code: string,
   config: any,
   framework: FrameworkType,
-  considerationsText: string
+  considerationsText: string,
+  /** Discovered components, so a wrong import can be told where the real one lives. */
+  components: Array<{ name: string; __componentPath?: string }> = [],
 ): string[] {
   const errors: string[] = [];
 
@@ -1876,23 +1906,66 @@ export function validateImportIsolation(
   // @mantine/hooks, @angular/material → @angular/cdk, ...).
   const importScope = config.importPath?.startsWith('@') ? config.importPath.split('/')[0] : null;
 
-  // Collect every static import specifier (named, default, namespace, side-effect).
-  const specifiers = new Set<string>();
-  const importRegex = /import\s+(?:[\s\S]*?from\s+)?['"]([^'"]+)['"]/g;
+  // Collect every static import specifier (named, default, namespace, side-effect),
+  // keeping the names each one binds. A rejected import can then be told where
+  // ITS OWN components live, rather than the first familiar name in the file.
+  const specifiers = new Map<string, string[]>();
+  const importRegex = /import\s+(?:([\s\S]*?)\s+from\s+)?['"]([^'"]+)['"]/g;
   let match;
   while ((match = importRegex.exec(code)) !== null) {
-    specifiers.add(match[1]);
+    const bound = (match[1] || '')
+      .replace(/[{}]/g, ' ')
+      .split(',')
+      .map(s => s.trim().split(/\s+as\s+/)[0].trim())
+      .filter(s => /^[A-Za-z_$][\w$]*$/.test(s));
+    const existing = specifiers.get(match[2]) || [];
+    specifiers.set(match[2], [...existing, ...bound]);
   }
 
   const consumerDeps = getConsumerDependencies();
 
-  for (const specifier of specifiers) {
+  for (const [specifier, boundNames] of specifiers) {
     // Relative imports can't smuggle in foreign packages.
     if (specifier.startsWith('.') || specifier.startsWith('/')) continue;
     const root = importSpecifierRoot(specifier);
 
     if (allowedRoots.has(root)) continue;
-    if (importScope && root.startsWith(importScope + '/')) continue;
+
+    /**
+     * Inside the design system's scope, but does the package exist?
+     *
+     * A scope check alone let `@atlaskit/grid` and `@atlaskit/avatar-context`
+     * through — neither is installed. The catalog had told the model the truth
+     * (`Grid` is in `@atlaskit/primitives`, `AvatarContext` is in
+     * `@atlaskit/avatar`); the model kebab-cased the component name into a
+     * package instead, which is the same guess this engine stopped making. The
+     * story then failed to render.
+     *
+     * For a package-per-component design system that prior is strong enough to
+     * override an explicit instruction, so prevention is not enough. This turns
+     * an unrenderable story into a validation error the healing loop can act
+     * on, and names the real package when discovery knows it.
+     */
+    if (importScope && root.startsWith(importScope + '/')) {
+      if (!packageIsAbsent(root, consumerDeps, importSpecifierRoot(config.importPath))) continue;
+
+      // Only the names THIS import binds. Searching the whole file would find
+      // `Button` in every story and confidently redirect the wrong import.
+      const relocations = boundNames
+        .map(name => components.find(c => c.name === name && c.__componentPath))
+        .filter((c): c is { name: string; __componentPath: string } =>
+          !!c?.__componentPath && c.__componentPath !== specifier);
+
+      errors.push(
+        `Import "${specifier}" does not exist — there is no package "${root}" in this project. ` +
+        (relocations.length
+          ? relocations.map(c => `Import ${c.name} from "${c.__componentPath}" instead. `).join('')
+          : '') +
+        `Use the exact import path shown next to each component in the component reference; ` +
+        `do not derive a package name from a component name.`,
+      );
+      continue;
+    }
     if (root === 'storybook' || root.startsWith('@storybook/')) continue;
     if (root === 'react' && framework === 'react') continue; // react/jsx-runtime etc.
     // Explicitly named in the considerations file → permitted by the project.

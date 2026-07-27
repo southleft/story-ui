@@ -136,6 +136,12 @@ export class EnhancedComponentDiscovery {
           slots: [],
           examples: [],
           __componentPath: found.importPath,
+          // How to import it, not just from where. Atlassian's Avatar is a
+          // DEFAULT export, and the model wrote `import { Avatar } from
+          // '@atlaskit/avatar'` — which compiles, then throws at runtime with
+          // "does not provide an export named 'Avatar'". The story rendered
+          // nothing.
+          __defaultExport: true,
         } as EnhancedComponent);
         this.validateAvailableComponents.add(found.name);
         added++;
@@ -1946,6 +1952,14 @@ export class EnhancedComponentDiscovery {
     }
 
     return null;
+  }
+
+  /**
+   * Everything discovery found, for callers that need more than names —
+   * import-isolation reports where a wrongly-imported component actually lives.
+   */
+  getDiscoveredComponents(): EnhancedComponent[] {
+    return Array.from(this.discoveredComponents.values());
   }
 
   /**
