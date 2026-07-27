@@ -110,6 +110,11 @@ async function measure(env) {
     .catch(() => ({ getFrameworkAdapter: null }));
   const { ReactAdapter } = await import(pathToFileURL(`${DIST}/story-generator/framework-adapters/react-adapter.js`).href);
 
+  // One definition of "is this a real description", shared with the pipeline.
+  const { saysMoreThanName } = await import(
+    pathToFileURL(`${DIST}/story-generator/knowledge/descriptionQuality.js`).href
+  );
+
   const prevCwd = process.cwd();
   process.chdir(env.project);
   const config = await loadUserConfig();
@@ -133,6 +138,19 @@ async function measure(env) {
    * 235 components — measuring a stage the model never sees. If this bench is
    * to mean anything it has to mirror the pipeline, not a slice of it.
    */
+  /**
+   * Prop-level knowledge, counted over the components we actually discovered.
+   *
+   * Prop coverage alone says a component HAS props, not that we know anything
+   * about them. Reading Carbon's propTypes added 2,399 prop descriptions and
+   * 88 deprecations without moving the prop-coverage number at all — a gain
+   * this bench could not see, and therefore could not protect.
+   *
+   * Deprecations are broken out because they are the one fact here that
+   * decides whether output is acceptable to the team that owns the system.
+   */
+  let docedProps = 0, totalProps = 0, deprecatedProps = 0, defaultedProps = 0;
+
   try {
     const { extractProps, rankProps } = await import(pathToFileURL(`${DIST}/story-generator/knowledge/propExtractor.js`).href);
     const extracted = await extractProps(config.importPath, env.project);
@@ -143,6 +161,13 @@ async function measure(env) {
         if (!component.props || component.props.length === 0) {
           component.props = rankProps(facts.props).map(p => `${p.name}${p.required ? '' : '?'}`);
         }
+        // Prose the package writes about itself, same precedence as the
+        // pipeline: never overwrite a description read from project source.
+        if (facts.doc && !saysMoreThanName(component.name, component.description)) component.description = facts.doc;
+        totalProps += facts.props.length;
+        docedProps += facts.props.filter(p => p.doc).length;
+        deprecatedProps += facts.props.filter(p => p.deprecated).length;
+        defaultedProps += facts.props.filter(p => p.defaultValue).length;
       }
     }
   } catch { /* npm type declarations unavailable; local sources still counted */ }
@@ -209,24 +234,15 @@ async function measure(env) {
 
   const withProps = components.filter(c => (c.props || []).length > 0).length;
   /**
-   * A description counts only if it says something the component's NAME does not.
-   *
-   * `/^\w+ component$/` let `"Accordion component from Material UI"` through and
-   * reported 63% description coverage for a library whose real figure is near
-   * zero. Boilerplate that restates the name is not knowledge, and a metric
-   * that counts it hides exactly the gap this bench exists to expose.
+   * A description counts only if it says something the component's NAME does
+   * not — the same predicate the pipeline uses to decide whether to REPLACE a
+   * description. This bench kept its own copy, and the two drifted: enrichment
+   * treated discovery's `Chip component from Material UI` as a real
+   * description and declined to overwrite it, while the bench correctly
+   * scored it as nothing. The result read as "extraction found no
+   * descriptions" when extraction had found 32 and been refused.
    */
-  const isGenericDescription = (name, text) => {
-    if (!text) return true;
-    const residue = text
-      .toLowerCase()
-      .replace(new RegExp(name.toLowerCase(), 'g'), '')
-      // Filler that appears in every generated boilerplate description.
-      .replace(/\b(component|from|the|a|an|for|of|and|ui|material|mantine|chakra|design|system|library)\b/g, '')
-      .replace(/[^a-z0-9]+/g, '');
-    return residue.length < 12;
-  };
-  const withDesc = components.filter(c => !isGenericDescription(c.name, c.description)).length;
+  const withDesc = components.filter(c => saysMoreThanName(c.name, c.description)).length;
   const withExamples = components.filter(c => (c.examples || []).length > 0).length;
 
   process.chdir(prevCwd);
@@ -238,6 +254,7 @@ async function measure(env) {
     resolvable: specs.size - dead.length,
     dead,
     knowProps: withProps,
+    totalProps, docedProps, deprecatedProps, defaultedProps,
     knowDescription: withDesc,
     knowExamples: withExamples,
   };
@@ -251,6 +268,10 @@ function report(r) {
   console.log(`  import specifier resolves  : ${r.resolvable}/${r.withSpecifier}  ${pct(r.resolvable, r.withSpecifier)}`);
   console.log(`  props known                : ${r.knowProps}/${r.components}  ${pct(r.knowProps, r.components)}`);
   console.log(`  real description known     : ${r.knowDescription}/${r.components}  ${pct(r.knowDescription, r.components)}`);
+  // Held, not shipped: see the note in generationCore's enrichment block.
+  console.log(`  prop descriptions known    : ${r.docedProps}/${r.totalProps}  ${pct(r.docedProps, r.totalProps)}  (knowledge only, not in catalog)`);
+  console.log(`  prop defaults known        : ${r.defaultedProps}`);
+  console.log(`  deprecated props flagged   : ${r.deprecatedProps}`);
   console.log(`  usage example known        : ${r.knowExamples}/${r.components}  ${pct(r.knowExamples, r.components)}`);
   if (r.dead.length) {
     console.log(`  DEAD SPECIFIERS (${r.dead.length}):`);

@@ -79,6 +79,7 @@ import { IntentPreview, ValidationFeedback, CompletionFeedback } from './streamT
 import { verifyStory } from '../../story-generator/verify/verifyStory.js';
 import { reflectDesignSystem, formatCompoundReference } from '../../story-generator/knowledge/runtimeReflect.js';
 import { extractProps, rankProps } from '../../story-generator/knowledge/propExtractor.js';
+import { saysMoreThanName } from '../../story-generator/knowledge/descriptionQuality.js';
 import { enrichWithSourceFacts } from '../../story-generator/knowledge/sourceFacts.js';
 import { readStylingFacts, formatStylingGuidance } from '../../story-generator/knowledge/stylingFacts.js';
 import { inheritCompoundExamples } from '../../story-generator/knowledge/storybookCatalog.js';
@@ -334,6 +335,7 @@ export async function runStoryGeneration(
     const extracted = await extractProps(config.importPath, process.cwd());
     if (extracted) {
       let enriched = 0;
+      let describedFromTypes = 0;
       for (const component of components as any[]) {
         const facts = extracted.components[component.name];
         if (!facts) continue;
@@ -347,9 +349,31 @@ export async function runStoryGeneration(
           // renders, so verification passes it, and only a prop check catches
           // it. Parentheses keep the type information while making the string
           // impossible to paste into JSX and have it look right.
-          component.props = rankProps(facts.props).map(p =>
-            `${p.name}${p.required ? '' : '?'}${p.type ? ` (${p.type})` : ''}`,
-          );
+          component.props = rankProps(facts.props).map(p => {
+            let entry = `${p.name}${p.required ? '' : '?'}${p.type ? ` (${p.type})` : ''}`;
+            // A stated default stops the model restating it. `variant="text"`
+            // on an MUI Button is not wrong, but it reads to the team that owns
+            // the system as someone who did not know the API.
+            if (p.defaultValue) entry += ` =${p.defaultValue}`;
+            // Deprecation is the one fact here that changes whether the output
+            // is acceptable at all, so it is never truncated away and never
+            // silently ranked out of view.
+            //
+            // Prop DESCRIPTIONS are deliberately absent. They are extracted and
+            // available (95% coverage on Carbon), but rendering even the top
+            // three per component costs ~10k tokens and the full set ~28k —
+            // against a 15k-token catalog, most of it describing components a
+            // given generation never touches. Filtering the uninformative ones
+            // does not help: Carbon phrases them as full sentences that say
+            // nothing ("Specify an optional className to add"). Serving them
+            // on demand is the right shape, and is not built yet.
+            if (p.deprecated) {
+              // A bare `@deprecated` carries no replacement to name; printing
+              // the tag's own fallback text reads as `DEPRECATED: deprecated`.
+              entry += p.deprecated === 'deprecated' ? ' ⚠DEPRECATED' : ` ⚠DEPRECATED: ${p.deprecated}`;
+            }
+            return entry;
+          });
           enriched++;
         }
         if (facts.variants?.length) {
@@ -358,8 +382,16 @@ export async function runStoryGeneration(
             ? `${component.description} — ${variantNote}`
             : variantNote;
         }
+        // Prose the package wrote about itself. Overwrites discovery's
+        // placeholder but never a real description: one read from the
+        // project's own source is closer to the team's language than anything
+        // npm ships.
+        if (facts.doc && !saysMoreThanName(component.name, component.description)) {
+          component.description = facts.doc;
+          describedFromTypes++;
+        }
       }
-      logger.log(`🧠 Enriched ${enriched} components with extracted prop signatures`);
+      logger.log(`🧠 Enriched ${enriched} components with extracted prop signatures${describedFromTypes ? `, ${describedFromTypes} with descriptions` : ""}`);
     }
   } catch {
     // Enrichment is additive; generation proceeds with names alone.

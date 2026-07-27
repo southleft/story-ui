@@ -17,6 +17,7 @@ import * as nodePath from 'path';
 import { StoryUIConfig } from '../../story-ui.config.js';
 import { DiscoveredComponent } from '../componentDiscovery.js';
 import { logger } from '../logger.js';
+import { saysMoreThanName } from '../knowledge/descriptionQuality.js';
 
 /**
  * Abstract Base Framework Adapter
@@ -148,7 +149,10 @@ export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
       entry += `\n  Props: ${shown.join(', ')}${ranked.length > shown.length ? `, …${ranked.length - shown.length} more` : ''}`;
     }
 
-    if (component.description) {
+    // A description that only restates the name — discovery's `Chip component
+    // from Material UI` — is a line per component that teaches nothing. Across
+    // a 254-component system that is pure context cost.
+    if (saysMoreThanName(component.name, component.description)) {
       entry += `\n  ${component.description}`;
     }
 
