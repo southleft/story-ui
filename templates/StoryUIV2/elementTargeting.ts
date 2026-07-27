@@ -15,16 +15,29 @@
  * THE ACTUAL PROBLEM is translation. The user clicks
  * `<div class="m_7341320d mantine-ThemeIcon-root">`; the source says
  * `<ThemeIcon variant="light">`. There is no source map from one to the other.
- * So instead of locating a source range, we describe the target well enough that
- * the model can find it unambiguously:
  *
- *   1. the design system's own component name, recovered from the rendered markup
- *   2. the nearest distinctive TEXT, which appears verbatim in the source
- *   3. the position among identical siblings
+ * PRIMARY MECHANISM: React's own fiber tree.
  *
- * Measured on real generated stories before being built: timeline bullets that
- * were six identical `ThemeIcon`s resolve to "Deployment completed",
- * "Priya mentioned you", and so on — each uniquely locatable.
+ * React records, on every DOM node, the component that produced it. Reading
+ * that gives the EXACT name the source used — and it cannot be specific to any
+ * design system, because it is React's data, not a per-library heuristic. A
+ * homegrown component library reports its own names for free; so does MUI, so
+ * does anything.
+ *
+ * Measured before it was built: on a Mantine dashboard it recovers `Title`,
+ * `ActionIcon` and `Menu` — correctly skipping Mantine's internal `Box` and
+ * `UnstyledButton` — and on a Radix Themes UI it recovers `Badge`, `Heading`
+ * and `Select.Root`, with no code that knows what Mantine or Radix are. It even
+ * names the story's own local components.
+ *
+ * FALLBACK: class-name conventions. Only used when there is no fiber (a
+ * non-React preview, or a production build with names minified away). This is
+ * the part that has to know about specific design systems, which is exactly why
+ * it is the fallback and not the mechanism.
+ *
+ * Either way the target is then anchored by:
+ *   - the nearest distinctive TEXT, which appears verbatim in the source
+ *   - the position among identical siblings
  */
 
 export interface ElementTarget {
@@ -97,6 +110,10 @@ export function componentFromMarkup(
 }
 
 /** Render a target as the sentence the model actually receives. */
+/**
+ * Only used by the class-name FALLBACK, where the token is not self-describing.
+ * A name from React's fiber is the source name already and needs no label.
+ */
 const SYSTEM_LABEL: Record<string, string> = {
   vuetify: 'Vuetify', ant: 'Ant Design', chakra: 'Chakra',
   mui: 'MUI', mantine: 'Mantine', shoelace: 'Shoelace',
@@ -136,6 +153,78 @@ export function targetLabel(t: ElementTarget): string {
  */
 export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFromMarkupSrc: string): any {
   const componentFrom = eval(`(${componentFromMarkupSrc})`);
+
+  /**
+   * The component that React says produced this node.
+   *
+   * Everything between a host fiber and the NEXT host fiber ancestor is the
+   * stack of components that produced that one DOM node; the OUTERMOST of that
+   * run is what the source wrote. That rule is what turns
+   * `Box > UnstyledButton > ActionIcon` into `ActionIcon`, and
+   * `Box > UnstyledButton > PopoverTarget > MenuTarget > Popover > Menu` into
+   * `Menu` — both verified against a real generated story.
+   */
+  const fiberInfo = (node: any): { name: string | null; ancestors: string[] } | null => {
+    const key = Object.keys(node).find((k: string) =>
+      k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$'));
+    if (!key) return null;
+
+    // Wrapper objects (forwardRef, memo) carry the real component inside.
+    const nameOf = (t: any): string | null => {
+      if (!t) return null;
+      if (typeof t === 'string') return null;
+      if (typeof t === 'function') return t.displayName || t.name || null;
+      if (typeof t === 'object') return t.displayName || nameOf(t.render) || nameOf(t.type) || null;
+      return null;
+    };
+    // `@mantine/core/Title` -> `Title`. Keep the last segment: that is what a
+    // JSX tag looks like.
+    const clean = (n: string | null) => (n ? n.replace(/^.*\//, '') : n);
+    // Structural plumbing, not something a user points at or a source names.
+    const NOISE = /^(Box|Provider|Fragment|ForwardRef|Memo|Unknown|Anonymous|Slot|_c\d*)$/;
+
+    let f: any = node[key];
+    if (f && typeof f.type === 'string') f = f.return;
+
+    const run: string[] = [];
+    while (f && typeof f.type !== 'string') {
+      const n = clean(nameOf(f.type));
+      if (n) run.push(n);
+      f = f.return;
+    }
+    let meaningful = run.filter(n => !NOISE.test(n));
+
+    // A component can render a host element nested inside another host element
+    // it owns, which leaves the tight run empty — observed on a Radix TextArea.
+    // Keep walking outward rather than reporting nothing.
+    let g: any = f;
+    let guard = 0;
+    while (!meaningful.length && g && guard++ < 12) {
+      if (typeof g.type !== 'string') {
+        const n = clean(nameOf(g.type));
+        if (n && !NOISE.test(n)) meaningful = [n];
+      }
+      g = g.return;
+    }
+
+    const ancestors: string[] = [];
+    let h: any = g || f;
+    let guard2 = 0;
+    while (h && ancestors.length < 3 && guard2++ < 40) {
+      if (typeof h.type !== 'string') {
+        const n = clean(nameOf(h.type));
+        if (n && !NOISE.test(n) && n !== meaningful[meaningful.length - 1] && ancestors.indexOf(n) === -1) {
+          ancestors.push(n);
+        }
+      }
+      h = h.return;
+    }
+
+    return {
+      name: meaningful.length ? meaningful[meaningful.length - 1] : null,
+      ancestors,
+    };
+  };
   const classesOf = (n: any) => (n.getAttribute('class') || '').split(/\s+/).filter(Boolean);
   const textOf = (n: any) => (n.innerText || '').replace(/\s+/g, ' ').trim();
 
@@ -149,12 +238,16 @@ export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFro
     return null;
   };
 
-  const found = nearest(el);
+  // React first. The class-name path below only runs when there is no fiber.
+  const fiber = fiberInfo(el);
+  const found = fiber && fiber.name
+    ? { c: { name: fiber.name, via: 'react', slot: undefined }, node: el, depth: 0 }
+    : nearest(el);
 
   // Enclosing components, so the model knows the target sits in, say, a
   // Timeline inside a Card rather than somewhere else that looks the same.
-  const ancestors: string[] = [];
-  let cur = found ? found.node.parentElement : el.parentElement;
+  const ancestors: string[] = (fiber && fiber.name) ? fiber.ancestors.slice() : [];
+  let cur = (fiber && fiber.name) ? null : (found ? found.node.parentElement : el.parentElement);
   let guard = 0;
   while (cur && ancestors.length < 3 && guard < 24) {
     const c = componentFrom(cur.tagName.toLowerCase(), classesOf(cur));

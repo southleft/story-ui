@@ -1,5 +1,11 @@
 /**
- * Recovering a design system component name from rendered markup.
+ * Recovering a design system component name.
+ *
+ * NOTE ON SCOPE: these cover the class-name FALLBACK only. The primary
+ * mechanism is React's fiber tree, which reports the exact component the source
+ * used and cannot be design-system specific because it is React's own data —
+ * it is verified against live Storybooks rather than unit-tested, since it
+ * needs a real React runtime. See elementTargeting.ts.
  *
  * This is the load-bearing assumption behind click-to-select: the user clicks a
  * DOM node, and we have to name the component the SOURCE used, with no source
