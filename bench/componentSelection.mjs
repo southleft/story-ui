@@ -333,6 +333,32 @@ function invalidProps(code, vocabulary, designSystemNames) {
   return [...new Set(bad)];
 }
 
+/**
+ * Imports that do not resolve to a file on disk.
+ *
+ * The single most consequential defect a generation can have, and it passed
+ * every other check here: on a project using path-alias individual imports,
+ * 41% of generated imports pointed at modules that do not exist. Vite 404s the
+ * module, the story never mounts, and the user sees a blank canvas after a
+ * generation that scored full marks on component selection.
+ *
+ * Only project-relative aliases and relative paths are checked; a bare package
+ * specifier is node_modules' business, and import isolation already covers it.
+ */
+function unresolvedImports(code, projectRoot, alias = '@/') {
+  const bad = [];
+  const exts = ['.tsx', '.ts', '.jsx', '.js', '/index.tsx', '/index.ts', '/index.js'];
+  for (const m of code.matchAll(/from\s+['"]([^'"]+)['"]/g)) {
+    const spec = m[1];
+    let base = null;
+    if (spec.startsWith(alias)) base = path.join(projectRoot, 'src', spec.slice(alias.length));
+    else if (spec.startsWith('.')) continue; // relative to the story dir; resolved by writeStory
+    else continue;
+    if (!exts.some(e => fs.existsSync(base + e))) bad.push(spec);
+  }
+  return [...new Set(bad)];
+}
+
 /** Distinct top-level visual regions, as a crude density signal. */
 function regionCount(code) {
   const containers = (code.match(/<(Paper|Card|Section|Fieldset|Accordion|Tabs\.Panel|Slab)\b/g) || []).length;
@@ -383,15 +409,17 @@ async function main() {
       .filter(f => !new RegExp(IMPORT_PATH.split('/')[0].replace('@', ''), 'i').test(f))
       .filter(f => !/icons/i.test(f));
     const bogus = invalidProps(code, vocabulary, dsNames);
+    const unresolved = unresolvedImports(code, PROJECT);
     const regions = regionCount(code);
     const thin = regions < (c.minRegions || 0);
 
     const house = (c.houseComponents || []).filter(n => used.has(n));
-    const ok = !missing.length && !handRolled.length && !foreign.length && !bogus.length && !thin;
+    const ok = !missing.length && !handRolled.length && !foreign.length && !bogus.length
+      && !thin && !unresolved.length;
     results.push({
       id: c.id, ok, missing, handRolled, foreign,
       houseUsed: c.houseComponents ? `${house.length}/${c.houseComponents.length}` : undefined,
-      invalidProps: bogus.slice(0, 6), regions,
+      invalidProps: bogus.slice(0, 6), unresolvedImports: unresolved.slice(0, 6), regions,
       verification: completion.verification?.outcome,
       blockers: completion.verification?.findings?.filter(f => f.severity === 'blocker').length ?? 0,
       lines: code.split('\n').length,
@@ -402,6 +430,7 @@ async function main() {
       missing.length ? `missing:${missing.join(',')}` : '',
       handRolled.length ? `raw<${handRolled.join(',')}>` : '',
       bogus.length ? `badProps:${bogus.slice(0, 3).join(',')}` : '',
+      unresolved.length ? `DEAD IMPORTS:${unresolved.slice(0, 3).join(',')}` : '',
       thin ? `thin:${regions}regions` : '',
       c.houseComponents ? `house:${house.length}/${c.houseComponents.length}(${house.join(',') || 'none'})` : '',
       foreign.length ? `foreign:${foreign.join(',')}` : '',
