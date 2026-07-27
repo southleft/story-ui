@@ -179,10 +179,27 @@ async function measure(env) {
 
   // The adapter's catalog text is exactly what the model is told, so parse the
   // specifiers back out of it rather than calling a private method.
+  //
+  // Match the QUOTED PATH, not the sentence around it. The catalog gained a
+  // second phrasing for default exports (`import Avatar from '...'`) and a
+  // regex pinned to `(import from '` silently stopped checking every component
+  // that used it — atlaskit fell from 31 specifiers to 10 and still reported
+  // "All specifiers resolve". A coverage check that quietly shrinks is worse
+  // than no check, so the count is asserted against the catalog below.
   const reference = adapter.generateComponentReference(components, config);
   const specs = new Map();
-  for (const m of reference.matchAll(/\*\*([A-Za-z0-9_]+)\*\* \(import from '([^']+)'/g)) {
+  for (const m of reference.matchAll(/\*\*([A-Za-z0-9_]+)\*\* \((?:import\s+(?:\w+\s+)?from\s+)?'([^']+)'/g)) {
     specs.set(m[1], m[2]);
+  }
+
+  // Every catalog entry offers an import path; if we parsed fewer than the
+  // catalog lists, the parser has drifted from the format again.
+  const entryCount = (reference.match(/^- \*\*[A-Za-z0-9_]+\*\* \(/gm) || []).length;
+  if (specs.size < entryCount) {
+    throw new Error(
+      `bench parser drift: catalog lists ${entryCount} components but only ${specs.size} import specifiers were parsed. ` +
+      `The catalog format changed; update the regex before trusting any number below.`,
+    );
   }
 
   const dead = [];
