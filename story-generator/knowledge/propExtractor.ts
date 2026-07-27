@@ -192,7 +192,53 @@ function declarationDoc(node: ts.Node, source: ts.SourceFile, name: string): str
   return residue.length >= 12 ? clip(prose, 160) : undefined;
 }
 
-function collectFromFile(filePath: string, out: Record<string, ComponentFacts>, inheritedOnly: string[]): void {
+/**
+ * A component whose declaration names a props type we have not resolved yet.
+ *
+ * `<Name>Props` is a convention, not a rule, and treating it as one is the
+ * same inference this extractor exists to remove. Atlassian's Avatar takes
+ * `AvatarPropTypes`; its Tag takes `SimpleTagProps`; its Button takes a
+ * `ButtonProps` declared in a different file. All three reported no props at
+ * all, while the declaration beside them stated the answer:
+ *
+ *   declare const Avatar: React.ForwardRefExoticComponent<
+ *     React.PropsWithoutRef<AvatarPropTypes> & React.RefAttributes<HTMLElement>>
+ *
+ * Recorded during the per-file pass and resolved once every file has been
+ * read, because the type is often declared in a file other than the component.
+ */
+interface PropsTypeLink {
+  component: string;
+  propsType: string;
+}
+
+/** Type names that are React plumbing, never a component's props. */
+const REACT_TYPE_NOISE = /^(React\.)?(ForwardRefExoticComponent|MemoExoticComponent|PropsWithoutRef|PropsWithChildren|RefAttributes|FunctionComponent|FC|ComponentType|ElementType|ReactElement|JSX\.Element|Omit|Pick|Partial|Readonly)$/;
+
+/** Props-type names mentioned by a component's declared type, best first. */
+function propsTypeCandidates(typeNode: ts.Node, source: ts.SourceFile): string[] {
+  const found: string[] = [];
+  const visit = (n: ts.Node) => {
+    if (ts.isTypeReferenceNode(n)) {
+      const name = n.typeName.getText(source);
+      // `AvatarPropTypes` is singular-Prop plus Types, so a pattern anchored on
+      // "Props" missed the very declaration this exists to read.
+      if (!REACT_TYPE_NOISE.test(name) && /(Props|PropTypes|PropsTypes)$/.test(name)) found.push(name);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(typeNode);
+  return found;
+}
+
+function collectFromFile(
+  filePath: string,
+  out: Record<string, ComponentFacts>,
+  inheritedOnly: string[],
+  /** Every named type with members, so a link can be resolved across files. */
+  allTypes: Record<string, PropFact[]> = {},
+  links: PropsTypeLink[] = [],
+): void {
   let text: string;
   try {
     text = fs.readFileSync(filePath, 'utf-8');
@@ -205,7 +251,10 @@ function collectFromFile(filePath: string, out: Record<string, ComponentFacts>, 
   // all, and parsing a large package's entire JS output would dominate the
   // runtime of a step that is meant to be incidental.
   if (isDeclaration) {
-    if (!text.includes('Props') && !text.includes('Variant')) return;
+    // `Prop`, not `Props`: a type named `AvatarPropTypes` contains no "Props"
+    // substring, so the file declaring it was skipped entirely and the
+    // component that pointed at it resolved to nothing.
+    if (!text.includes('Prop') && !text.includes('Variant')) return;
   } else if (!text.includes('.propTypes')) {
     return;
   }
@@ -241,6 +290,66 @@ function collectFromFile(filePath: string, out: Record<string, ComponentFacts>, 
     return found;
   };
 
+  /**
+   * Every named type in this file, so a props alias can be followed one hop.
+   *
+   * Atlassian declares the actual members under a neutral name and exports the
+   * component's type as an application of it:
+   *
+   *   type OwnProps = { isChecked?: boolean; ... }
+   *   export type CheckboxProps = Combine<Omit<InputHTMLAttributes, …>, OwnProps>
+   *
+   * Reading only literal members found nothing for `CheckboxProps` and filed
+   * the real props under the component name "Own" — which matches nothing, so
+   * Checkbox, Tag and Avatar reported no props at all. This is LOCAL
+   * indirection: the answer is in the same file, and following it needs no
+   * TypeChecker and no module resolution, which is the boundary this extractor
+   * deliberately does not cross.
+   */
+  const namedTypes = new Map<string, ts.Node>();
+  ts.forEachChild(source, node => {
+    if (ts.isTypeAliasDeclaration(node)) namedTypes.set(node.name.text, node.type);
+    else if (ts.isInterfaceDeclaration(node)) namedTypes.set(node.name.text, node);
+  });
+
+  /**
+   * Members reachable from a type node, following local references.
+   *
+   * Depth-limited because these chains are short in practice and a cycle
+   * (`type A = B & {…}; type B = A`) would otherwise not terminate.
+   */
+  const membersOf = (typeNode: ts.Node, depth = 0, seen = new Set<string>()): PropFact[] => {
+    if (depth > 3) return [];
+    if (ts.isTypeLiteralNode(typeNode)) return readMembers(typeNode.members);
+    if (ts.isInterfaceDeclaration(typeNode)) return readMembers(typeNode.members);
+
+    const out: PropFact[] = [];
+    if (ts.isIntersectionTypeNode(typeNode) || ts.isUnionTypeNode(typeNode)) {
+      for (const part of typeNode.types) out.push(...membersOf(part, depth + 1, seen));
+      return out;
+    }
+    // `Combine<A, B>` / `Omit<A, 'x'>` — the members live in the arguments.
+    if (ts.isTypeReferenceNode(typeNode)) {
+      const name = typeNode.typeName.getText(source);
+      if (!seen.has(name)) {
+        seen.add(name);
+        const target = namedTypes.get(name);
+        if (target) out.push(...membersOf(target, depth + 1, seen));
+      }
+      for (const arg of typeNode.typeArguments || []) out.push(...membersOf(arg, depth + 1, seen));
+    }
+    return out;
+  };
+
+  // Members of every named type in the file, under its own name, so a
+  // declaration elsewhere in the package can point at it. Keyed by the type's
+  // real name — no convention applied, and no component inferred from it.
+  for (const [typeName, typeNode] of namedTypes) {
+    if (allTypes[typeName]) continue;
+    const members = membersOf(typeNode);
+    if (members.length > 0) allTypes[typeName] = members;
+  }
+
   ts.forEachChild(source, node => {
     /**
      * type <Name>Props = { ... }  and  type <Name>Props = Base & { ... }
@@ -255,14 +364,8 @@ function collectFromFile(filePath: string, out: Record<string, ComponentFacts>, 
       const componentName = node.name.text.replace(/Props$/, '');
       if (!componentName) return;
 
-      // A literal, or the literal halves of an intersection with a base type.
-      const literals: ts.TypeLiteralNode[] = [];
-      if (ts.isTypeLiteralNode(node.type)) literals.push(node.type);
-      else if (ts.isIntersectionTypeNode(node.type)) {
-        for (const part of node.type.types) if (ts.isTypeLiteralNode(part)) literals.push(part);
-      }
-
-      const props = literals.flatMap(l => readMembers(l.members));
+      // Literal members, plus any reachable by following local type names.
+      const props = mergeProps([], membersOf(node.type));
       if (props.length > 0) {
         const record = (key: string) => {
           const existing = out[key];
@@ -359,6 +462,13 @@ function collectFromFile(filePath: string, out: Record<string, ComponentFacts>, 
       for (const decl of node.declarationList.declarations) {
         if (ts.isIdentifier(decl.name) && /^[A-Z]/.test(decl.name.text)) {
           noteDoc(decl.name.text, node);
+          // What does this component say its props are? Recorded even when a
+          // `<Name>Props` also exists — resolution only fills a gap.
+          if (decl.type) {
+            for (const candidate of propsTypeCandidates(decl.type, source)) {
+              links.push({ component: decl.name.text, propsType: candidate });
+            }
+          }
         }
       }
     } else if (
@@ -568,7 +678,33 @@ export async function extractProps(
   const files = findDeclarationFiles(root);
   const components: Record<string, ComponentFacts> = {};
   const inheritedOnly: string[] = [];
-  for (const file of files) collectFromFile(file, components, inheritedOnly);
+  const allTypes: Record<string, PropFact[]> = {};
+  const links: PropsTypeLink[] = [];
+  for (const file of files) collectFromFile(file, components, inheritedOnly, allTypes, links);
+
+  /**
+   * Fill components whose props type is not named after them.
+   *
+   * Only ever ADDS: a component that already has props keeps them, so a link
+   * can never displace something read directly. That matters because type
+   * names are not unique across a package — two files may each declare
+   * `OwnProps` — and a link is trusted precisely to the extent that it cannot
+   * overwrite a better answer.
+   */
+  let linked = 0;
+  for (const { component, propsType } of links) {
+    const members = allTypes[propsType];
+    if (!members?.length) continue;
+    const existing = components[component];
+    if (existing?.props?.length) continue;
+    components[component] = {
+      name: component,
+      props: members,
+      variants: existing?.variants,
+      doc: existing?.doc,
+    };
+    linked++;
+  }
 
   const extracted: ExtractedProps = {
     schema: EXTRACTOR_SCHEMA,
@@ -587,9 +723,67 @@ export async function extractProps(
   logger.log(
     `🧠 Extracted props for ${Object.keys(components).length} components from ${importPath}` +
     `${version ? `@${version}` : ''} in ${Date.now() - started}ms ` +
-    `(${inheritedOnly.length} inherit-only)`,
+    `(${inheritedOnly.length} inherit-only, ${linked} linked by declared props type)`,
   );
   return extracted;
+}
+
+/**
+ * Extract across every package a design system is spread over.
+ *
+ * A package-per-component system has no single place to read. Atlassian
+ * configures `importPath: '@atlaskit'`, which is a SCOPE — it resolves to the
+ * scope directory, so extraction walked all of node_modules/@atlaskit as one
+ * undifferentiated tree and truncated at the file limit. Sixteen of 31
+ * components ended up with props, and which sixteen depended on directory
+ * order.
+ *
+ * Discovery already records where each component actually lives. Reading those
+ * packages by name is bounded, complete, and derived from what the project
+ * states rather than from how a walk happened to terminate.
+ *
+ * Results are merged rather than concatenated: a component named in two
+ * packages (a re-export, or a shared base) should end up with the union of
+ * what both declare, by the same field-wise rule used within a package.
+ */
+export async function extractPropsForPackages(
+  packages: string[],
+  projectRoot: string = process.cwd(),
+  options: { force?: boolean } = {},
+): Promise<ExtractedProps | null> {
+  const unique = [...new Set(packages.filter(Boolean))];
+  if (unique.length === 0) return null;
+
+  const merged: Record<string, ComponentFacts> = {};
+  const inheritedOnly: string[] = [];
+  let any = false;
+
+  for (const pkg of unique) {
+    const one = await extractProps(pkg, projectRoot, options);
+    if (!one) continue;
+    any = true;
+    for (const [name, facts] of Object.entries(one.components)) {
+      const prior = merged[name];
+      merged[name] = prior
+        ? {
+            name,
+            props: mergeProps(prior.props, facts.props),
+            variants: prior.variants ?? facts.variants,
+            doc: prior.doc ?? facts.doc,
+          }
+        : facts;
+    }
+    for (const n of one.inheritedOnly) if (!inheritedOnly.includes(n)) inheritedOnly.push(n);
+  }
+
+  if (!any) return null;
+  return {
+    schema: EXTRACTOR_SCHEMA,
+    importPath: unique.join(','),
+    components: merged,
+    inheritedOnly,
+    extractedAt: new Date().toISOString(),
+  };
 }
 
 /**

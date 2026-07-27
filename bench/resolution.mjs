@@ -152,8 +152,13 @@ async function measure(env) {
   let docedProps = 0, totalProps = 0, deprecatedProps = 0, defaultedProps = 0;
 
   try {
-    const { extractProps, rankProps } = await import(pathToFileURL(`${DIST}/story-generator/knowledge/propExtractor.js`).href);
-    const extracted = await extractProps(config.importPath, env.project);
+    const { extractProps, extractPropsForPackages, rankProps } = await import(pathToFileURL(`${DIST}/story-generator/knowledge/propExtractor.js`).href);
+    // Same package selection as the pipeline: a design system spread over many
+    // packages is read package by package, not as one truncated tree.
+    const homes = [...new Set(components.map(c => c.__componentPath).filter(p => typeof p === 'string'))];
+    const extracted = homes.length > 1
+      ? await extractPropsForPackages([config.importPath, ...homes], env.project)
+      : await extractProps(config.importPath, env.project);
     if (extracted) {
       for (const component of components) {
         const facts = extracted.components[component.name];

@@ -78,7 +78,7 @@ import {
 import { IntentPreview, ValidationFeedback, CompletionFeedback } from './streamTypes.js';
 import { verifyStory } from '../../story-generator/verify/verifyStory.js';
 import { reflectDesignSystem, formatCompoundReference } from '../../story-generator/knowledge/runtimeReflect.js';
-import { extractProps, rankProps } from '../../story-generator/knowledge/propExtractor.js';
+import { extractProps, extractPropsForPackages, rankProps } from '../../story-generator/knowledge/propExtractor.js';
 import { saysMoreThanName } from '../../story-generator/knowledge/descriptionQuality.js';
 import { enrichWithSourceFacts } from '../../story-generator/knowledge/sourceFacts.js';
 import { readStylingFacts, formatStylingGuidance } from '../../story-generator/knowledge/stylingFacts.js';
@@ -332,7 +332,25 @@ export async function runStoryGeneration(
   // so without this the model infers every component's API — fine for a library
   // it has memorised, guesswork for a private design system.
   try {
-    const extracted = await extractProps(config.importPath, process.cwd());
+    /**
+     * Read every package the components actually live in.
+     *
+     * For a barrel library that is the one configured path. For a
+     * package-per-component system it is ~20 of them, and reading only
+     * `config.importPath` meant reading a scope directory as one tree and
+     * truncating — so which components had props depended on directory order.
+     */
+    const homes = [...new Set(
+      (components as any[]).map(c => c.__componentPath).filter((p): p is string => typeof p === 'string'),
+    )];
+    // The union, not a replacement. Reading the homes ALONE measured worse
+    // than the scope walk it was meant to fix (45% vs 52%): shared packages
+    // that declare no component of their own — primitives, tokens, base types
+    // — are not in the homes list, and the scope walk was picking them up.
+    // Each source covers what the other misses.
+    const extracted = homes.length > 1
+      ? await extractPropsForPackages([config.importPath, ...homes], process.cwd())
+      : await extractProps(config.importPath, process.cwd());
     if (extracted) {
       let enriched = 0;
       let describedFromTypes = 0;

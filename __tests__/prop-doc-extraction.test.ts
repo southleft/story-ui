@@ -210,6 +210,77 @@ describe('propTypes, for design systems that ship JavaScript', () => {
   });
 });
 
+describe('props types that are not named after the component', () => {
+  it('follows a local alias to the type that holds the members', async () => {
+    // Atlassian declares the members under a neutral name and exports the
+    // component's type as an application of it. Reading only literal members
+    // filed Checkbox's props under the component name "Own".
+    const root = make('@fixture/indirect', {
+      'types.d.ts': `
+        type OwnProps = {
+          /** Sets whether the checkbox is checked. */
+          isChecked?: boolean;
+          isDisabled?: boolean;
+        };
+        type Combine<First, Second> = Omit<First, keyof Second> & Second;
+        export type CheckboxProps = Combine<Omit<React.InputHTMLAttributes<HTMLInputElement>, 'x'>, OwnProps>;
+      `,
+    });
+    const facts = await extractProps('@fixture/indirect', root, { force: true });
+    const names = facts.components.Checkbox.props.map((p: any) => p.name);
+    expect(names).toContain('isChecked');
+    expect(names).toContain('isDisabled');
+    expect(facts.components.Checkbox.props.find((p: any) => p.name === 'isChecked').doc)
+      .toBe('Sets whether the checkbox is checked.');
+  });
+
+  it('reads the props type the declaration names, across files', async () => {
+    // `<Name>Props` is a convention, not a rule. Avatar takes
+    // `AvatarPropTypes` — singular Prop — and it is declared elsewhere.
+    const root = make('@fixture/declared', {
+      'types.d.ts': `
+        export interface AvatarPropTypes {
+          /** Provides a URL for the avatar image. */
+          src?: string;
+          size?: 'small' | 'large';
+        }
+      `,
+      'avatar.d.ts': `
+        import type { AvatarPropTypes } from './types';
+        declare const Avatar: React.ForwardRefExoticComponent<
+          React.PropsWithoutRef<AvatarPropTypes> & React.RefAttributes<HTMLElement>>;
+        export default Avatar;
+      `,
+    });
+    const facts = await extractProps('@fixture/declared', root, { force: true });
+    expect(facts.components.Avatar.props.map((p: any) => p.name)).toEqual(
+      expect.arrayContaining(['src', 'size']),
+    );
+  });
+
+  it('never lets a linked type displace props read directly', async () => {
+    // Type names are not unique across a package — two files may each declare
+    // `OwnProps`. A link is trusted only as far as it cannot overwrite a
+    // better answer.
+    const root = make('@fixture/nodisplace', {
+      'real.d.ts': `
+        export interface WidgetProps {
+          /** The real one. */
+          realProp?: string;
+        }
+      `,
+      'decl.d.ts': `
+        export interface OtherPropTypes { wrongProp?: string }
+        declare const Widget: React.FC<OtherPropTypes>;
+      `,
+    });
+    const facts = await extractProps('@fixture/nodisplace', root, { force: true });
+    const names = facts.components.Widget.props.map((p: any) => p.name);
+    expect(names).toContain('realProp');
+    expect(names).not.toContain('wrongProp');
+  });
+});
+
 describe('description quality', () => {
   it('treats discovery placeholders as absent', () => {
     // These are truthy strings, so any `!description` guard reads them as
