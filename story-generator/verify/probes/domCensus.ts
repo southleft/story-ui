@@ -197,6 +197,17 @@ export async function runDomCensus(page: any): Promise<CensusResult> {
       // Inside a real control, placeholder-ish text is just a label.
       if (el.closest('button, a[href], [role="button"], [role="combobox"], [role="searchbox"], [role="textbox"]')) continue;
 
+      /**
+       * Data is not an affordance.
+       *
+       * This fires on placeholder-ish TEXT, so a table row describing a
+       * deployment named "search-indexer" was reported as "a search affordance
+       * that cannot accept text". The row is correct; the word merely appeared
+       * in the content. A cell, row or list item is somewhere data is
+       * displayed, never somewhere a user types.
+       */
+      if (el.closest('tr, td, th, li, [role="row"], [role="cell"], [role="gridcell"], [role="listitem"]')) continue;
+
       // Normalize: collapse whitespace so text split across child nodes reads as prose.
       const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
       if (!text || text.length > 60) continue;

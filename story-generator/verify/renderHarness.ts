@@ -94,6 +94,34 @@ export async function renderStory(options: RenderOptions): Promise<RenderResult>
       };
     }
 
+    /**
+     * Wait for the DOM to STOP CHANGING, not merely to be non-empty.
+     *
+     * `childElementCount > 0` is the earliest signal that something mounted,
+     * and probing there measures a story mid-render. Carbon reported two
+     * accessibility blockers on correct code: a sort button whose text had not
+     * arrived yet ("Buttons must have discernible text" — it reads
+     * "Deployment" a moment later), and an overflow menu whose
+     * `aria-labelledby` pointed at a tooltip Carbon had not rendered yet (it
+     * resolves to "Options"). Both were false, and a verification system that
+     * fails correct work is worse than none.
+     *
+     * Two consecutive identical samples, then stop. Cheap, framework-agnostic,
+     * and bounded so a story with a live animation or a polling timer cannot
+     * hold verification open.
+     */
+    const settleDeadline = Date.now() + Math.min(3000, timeoutMs);
+    let previous = -1;
+    let stableReadings = 0;
+    while (Date.now() < settleDeadline && stableReadings < 2) {
+      const signature: number = await page.evaluate(
+        () => document.querySelectorAll('*').length + (document.body.innerText || '').length,
+      );
+      stableReadings = signature === previous ? stableReadings + 1 : 0;
+      previous = signature;
+      if (stableReadings < 2) await page.waitForTimeout(120);
+    }
+
     const bodyText: string = await page.evaluate(() => document.body.innerText || '');
     const isErrorPlaceholder = ERROR_PLACEHOLDER_MARKERS.some(m => bodyText.includes(m));
 
