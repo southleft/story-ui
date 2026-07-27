@@ -254,8 +254,12 @@ export class DynamicPackageDiscovery {
       /^handle[A-Z]/, // handlers
       /^on[A-Z]/, // event handlers
       /Config$/,
-      /Provider$/,
-      /Context$/,
+      // `/Provider$/` and `/Context$/` were here and are deliberately gone.
+      // Shopify Polaris's `AppProvider` is the mandatory application root, and
+      // every Radix-derived system exposes `*.Provider` as a required part.
+      // Rejecting them by name emptied the catalog of the one component
+      // without which nothing renders. These exports are already imported by
+      // the time this runs, so `isComponentLike` below judges the real value.
       /^default$/,
       /^DEFAULT_/,
       /^SUPPORTED_/,

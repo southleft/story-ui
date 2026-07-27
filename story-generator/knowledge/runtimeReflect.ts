@@ -38,11 +38,42 @@ export interface ReflectedKnowledge {
   reflectedAt: string;
 }
 
-/** Statics that are React/library plumbing rather than sub-components. */
+/**
+ * Statics that are React/library plumbing rather than sub-components.
+ *
+ * `Provider` and `Consumer` are deliberately NOT here. In Radix-derived systems
+ * — Radix itself, shadcn/ui, Ark, Chakra v3, Base UI — `Tooltip.Provider` and
+ * `Toast.Provider` are required composition members, not context plumbing.
+ * Stripping them by name told the model to use dot notation while hiding the
+ * one child without which the component throws.
+ *
+ * Whether a static is a component is decided below by what it IS, not by what
+ * it is called.
+ */
 const NON_COMPONENT_STATICS = new Set([
   'displayName', 'propTypes', 'defaultProps', 'contextType', 'contextTypes',
-  'childContextTypes', 'extend', 'withProps', 'classes', 'Provider', 'Consumer',
+  'childContextTypes', 'extend', 'withProps', 'classes',
 ]);
+
+/**
+ * Is this value something React can render?
+ *
+ * A function, or a forwardRef/memo wrapper object. The runtime value is in
+ * hand, so there is no reason to guess from a name.
+ */
+export function isRenderableForTest(value: any): boolean {
+  return isRenderable(value);
+}
+
+function isRenderable(value: any): boolean {
+  if (!value) return false;
+  if (typeof value === 'function') return true;
+  if (typeof value === 'object') {
+    // forwardRef and memo expose $$typeof plus a render/type payload.
+    return Boolean(value.$$typeof || value.render || value.type || value.displayName);
+  }
+  return false;
+}
 
 function cachePath(projectRoot: string, importPath: string, version?: string): string {
   const safe = importPath.replace(/[^a-z0-9]+/gi, '-');
@@ -140,7 +171,7 @@ export async function reflectDesignSystem(
     let children: string[];
     try {
       children = Object.keys(value).filter(
-        k => /^[A-Z]/.test(k) && !NON_COMPONENT_STATICS.has(k),
+        k => /^[A-Z]/.test(k) && !NON_COMPONENT_STATICS.has(k) && isRenderable((value as any)[k]),
       );
     } catch {
       continue; // exotic proxy/getter
