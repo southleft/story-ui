@@ -171,6 +171,52 @@ export function readComponentExample(
 }
 
 /**
+ * Record where a compound part nests, from its parent's real example.
+ *
+ * A design system documents `Alert`, not `AlertTitle`. Measured on
+ * college-town: 51 of 247 components have an example of their own, and 187 of
+ * the remaining 196 are compound parts of a documented parent whose example
+ * shows them in use — verified, 6 of 6 sampled parents demonstrate their child.
+ *
+ * Deliberately does NOT copy the snippet onto the child: 247 components each
+ * carrying a ~500-character example is 120KB of catalog, recreating the
+ * wall-of-context problem that made the flat catalog useless. The load-bearing
+ * fact is where the part belongs, which is one short line.
+ *
+ * Matched on the LONGEST documented prefix, only when the remainder starts a
+ * new capitalised word, and only when the parent's code actually contains the
+ * child's tag. Without those guards `Table` claims `TableOfContents`, whose
+ * example teaches nothing about it.
+ */
+export function inheritCompoundExamples(components: any[]): number {
+  const documented = components
+    .filter(c => (c.examples || []).length > 0)
+    .map(c => c.name)
+    .sort((a, b) => b.length - a.length);
+
+  let attributed = 0;
+  for (const component of components) {
+    if ((component.examples || []).length > 0) continue;
+
+    const parent = documented.find(name => {
+      if (component.name === name || !component.name.startsWith(name)) return false;
+      return /^[A-Z]/.test(component.name.slice(name.length));
+    });
+    if (!parent) continue;
+
+    const source = components.find(c => c.name === parent);
+    const demonstrated = (source?.examples || []).some((ex: any) =>
+      typeof ex === 'string' && ex.includes(`<${component.name}`));
+    if (!demonstrated) continue;
+
+    component.usedInside = parent;
+    attributed++;
+  }
+  if (attributed) logger.log(`🧩 ${attributed} compound part(s) attributed to a parent`);
+  return attributed;
+}
+
+/**
  * Rank components by how much they look like what the user asked for.
  *
  * Deliberately lexical rather than embedding-based: it needs no model call, no

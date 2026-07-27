@@ -80,6 +80,7 @@ import { verifyStory } from '../../story-generator/verify/verifyStory.js';
 import { reflectDesignSystem, formatCompoundReference } from '../../story-generator/knowledge/runtimeReflect.js';
 import { extractProps, rankProps } from '../../story-generator/knowledge/propExtractor.js';
 import { enrichWithSourceFacts } from '../../story-generator/knowledge/sourceFacts.js';
+import { inheritCompoundExamples } from '../../story-generator/knowledge/storybookCatalog.js';
 import {
   writeStoryArtifacts,
   extractStylesheet,
@@ -336,8 +337,17 @@ export async function runStoryGeneration(
         const facts = extracted.components[component.name];
         if (!facts) continue;
         if (!component.props || component.props.length === 0) {
+          // `htmlFor (string)`, not `htmlFor?: string`.
+          //
+          // The TypeScript signature form is copyable into an attribute
+          // position and reads as plausible there. Observed: the model emitted
+          // `<Label htmlFor: string="name" htmlFor="name">`, which React parses
+          // as a namespaced attribute and passes to the DOM as garbage — it
+          // renders, so verification passes it, and only a prop check catches
+          // it. Parentheses keep the type information while making the string
+          // impossible to paste into JSX and have it look right.
           component.props = rankProps(facts.props).map(p =>
-            `${p.name}${p.required ? '' : '?'}${p.type ? `: ${p.type}` : ''}`,
+            `${p.name}${p.required ? '' : '?'}${p.type ? ` (${p.type})` : ''}`,
           );
           enriched++;
         }
@@ -389,6 +399,28 @@ export async function runStoryGeneration(
         : `⚠️ Storybook MCP not available: ${storybookContext.error}`);
     }
   }
+
+  // Where each compound part nests, derived from its parent's real example.
+  //
+  // A design system documents `Alert`, not `AlertTitle`; 187 of college-town's
+  // 247 components have no usage of their own but appear inside a documented
+  // parent's code. Requires storybookContext to have supplied examples, which
+  // is why it runs after that fetch.
+  try {
+    const docs = storybookContext?.componentDocs;
+    if (docs) {
+      for (const component of components as any[]) {
+        if (component.examples?.length) continue;
+        const doc = (docs as any)[component.name];
+        const snippets = doc?.stories?.map((st: any) => st.snippet).filter(Boolean);
+        if (snippets?.length) component.examples = snippets;
+      }
+    }
+    inheritCompoundExamples(components as any[]);
+  } catch (error) {
+    logger.log(`⚠️ Could not attribute compound usage: ${error}`);
+  }
+
 
   // Persistence services
   const storyTracker = new StoryTracker(config);

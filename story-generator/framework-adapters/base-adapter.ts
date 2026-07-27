@@ -145,6 +145,17 @@ export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
       entry += `\n  ${component.description}`;
     }
 
+    // Where a compound part belongs, derived from the parent's own example.
+    //
+    // A design system documents `Alert`, not `AlertTitle`, so 187 of
+    // college-town's 247 components have no usage of their own. The one fact
+    // that keeps them from being misused is which parent they nest inside —
+    // without it a model may render AlertTitle standalone, or invent
+    // `Alert.Title`, which is the wrong convention for this library.
+    if ((component as any).usedInside) {
+      entry += `\n  Used inside <${(component as any).usedInside}>`;
+    }
+
     return entry;
   }
 
