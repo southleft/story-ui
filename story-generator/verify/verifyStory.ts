@@ -16,6 +16,7 @@ import { resolveHostTooling, canLaunchBrowser } from './hostTooling.js';
 import { renderStory, waitForStoryIndexed, indexIsStale } from './renderHarness.js';
 import { runDomCensus } from './probes/domCensus.js';
 import { runLayoutProbe } from './probes/layout.js';
+import { runVisualCritique, type CritiqueModel } from './probes/visualCritic.js';
 import { runA11yProbe, isGenerationDefect, isDesignSystemConcern, isDesignSystemInternal } from './probes/a11y.js';
 import type { Finding, VerifyReport } from './findings.js';
 import { blockers, summarize } from './findings.js';
@@ -45,6 +46,17 @@ export interface VerifyStoryOptions {
    * from "Storybook's watcher has stopped noticing files".
    */
   generatedDir?: string;
+  /**
+   * Vision model for judging the rendered result against the request.
+   *
+   * Supplied by the caller so this module stays free of provider coupling —
+   * the same shape as the repair loop's callModel.
+   */
+  visualCritic?: CritiqueModel;
+  /** What the user asked for, which the critic judges the screenshot against. */
+  request?: string;
+  /** Components the story used, so the critic cannot suggest foreign ones. */
+  componentsUsed?: string[];
 }
 
 const notVerified = (reason: string, started: number, extra: Finding[] = []): VerifyReport => ({
@@ -132,7 +144,7 @@ export function censusFindings(problems: Awaited<ReturnType<typeof runDomCensus>
 
 export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyReport> {
   const started = Date.now();
-  const { storybookUrl, storyIdPrefix, title, projectRoot = process.cwd(), timeoutMs = 20000, libraryComponents, generatedDir } = options;
+  const { storybookUrl, storyIdPrefix, title, projectRoot = process.cwd(), timeoutMs = 20000, libraryComponents, generatedDir, visualCritic, request, componentsUsed } = options;
 
   if (!storybookUrl) {
     return notVerified('No Storybook URL available to verify against', started);
@@ -273,6 +285,49 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
           // Only a generation defect is worth asking the model to fix.
           repairable: generationDefect,
         });
+      }
+    }
+
+    /**
+     * Eyes, last — and only on something that already renders.
+     *
+     * Deliberately after the deterministic probes: those are free and exact,
+     * and there is no sense paying a vision call to be told about a grid whose
+     * arithmetic we already checked. The critic answers only what arithmetic
+     * cannot — whether the composition delivers what was asked for.
+     */
+    if (visualCritic && request) {
+      try {
+        /**
+         * FULL PAGE, not the viewport.
+         *
+         * A viewport capture cuts every composition taller than 900px, and the
+         * critic — reporting the image faithfully — calls the cut edge a
+         * clipped element. Measured: a permissions page whose last button sat
+         * below the fold was reported as "clipped at the bottom of the
+         * viewport, cutting off its text and border". The critic was right
+         * about the picture and the picture was wrong about the page.
+         */
+        const screenshot: Buffer = await render.page.screenshot({ type: 'png', fullPage: true });
+        const visual = await runVisualCritique(
+          { screenshot, request, componentsUsed }, visualCritic,
+        );
+        for (const v of visual) {
+          findings.push({
+            id: `visual-${findings.length}`,
+            severity: v.severity,
+            class: 'code',
+            message: v.element ? `${v.issue} (${v.element})` : v.issue,
+            evidence: v.fix ? `Suggested change: ${v.fix}` : 'observed in the rendered screenshot',
+            // Only a blocker earns a repair attempt. A warning from a
+            // subjective reviewer must never rewrite working code.
+            repairable: v.severity === 'blocker',
+          });
+        }
+        // Logged either way: "no findings" and "never ran" must not look alike.
+        logger.log(`👁️ Visual critique: ${visual.length} finding(s)`);
+      } catch (err) {
+        logger.warn(`[visual-critique] skipped: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
 

@@ -1118,6 +1118,37 @@ export async function runStoryGeneration(
         // the composition that used it.
         const libraryComponents = (components as any[]).map(c => c.name).filter(Boolean);
         const generatedDir = path.resolve(process.cwd(), config.generatedStoriesPath || './src/stories/generated');
+
+        /**
+         * Vision critique, on unless switched off.
+         *
+         * Costs one extra call per generation. That buys the class of defect a
+         * reviewer notices first and no probe can compute — a region that
+         * arrived empty, a primary action that reads as secondary, a request
+         * that was half-answered. `STORY_UI_VISUAL_CRITIQUE=false` disables it
+         * for anyone who would rather have the latency back.
+         */
+        const critiqueEnabled = process.env.STORY_UI_VISUAL_CRITIQUE !== 'false';
+        const visualCritic = critiqueEnabled
+          ? async (critiquePrompt: string, screenshot: Buffer) => {
+              events.onLLMCall?.();
+              const result = await callLLM(
+                [{ role: 'user', content: critiquePrompt }],
+                // Full ImageContent shape. An earlier `as any` here passed a
+                // flat {data, mediaType} object, which the provider rejected —
+                // and the critic's own catch swallowed it, so the pass looked
+                // like "no findings" rather than "never ran". Silent no-ops
+                // are the failure mode this whole verification stack exists to
+                // avoid.
+                [{
+                  type: 'image',
+                  source: { type: 'base64', mediaType: 'image/png', data: screenshot.toString('base64') },
+                }],
+                { provider, model },
+              );
+              return result.content;
+            }
+          : undefined;
         verification = await verifyStory({
           storybookUrl: verifyUrl,
           storyIdPrefix: storyIdSlug,
@@ -1125,6 +1156,9 @@ export async function runStoryGeneration(
           projectRoot: process.cwd(),
           libraryComponents,
           generatedDir,
+          visualCritic,
+          request: prompt,
+          componentsUsed: libraryComponents,
         });
         // Enforce mode: repair what the browser observed.
         //
@@ -1159,6 +1193,9 @@ export async function runStoryGeneration(
                 projectRoot: process.cwd(),
                 libraryComponents,
                 generatedDir,
+                // No critique on the repair pass: it judged the previous
+                // render, and re-judging mid-repair invites an opinion loop
+                // where each pass chases the last one's aesthetic note.
               });
             },
           });
