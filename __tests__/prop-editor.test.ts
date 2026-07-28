@@ -98,6 +98,22 @@ describe('editProp', () => {
     expect(r.code).toBe(story);
   });
 
+  it('replaces an attribute where it already sits', () => {
+    // Removing and re-appending moved every edited prop to the end of the tag,
+    // turning `kind="tertiary" size="sm"` into `size="sm" kind="danger"`. The
+    // result is correct and the diff is noise — and this writes to a file
+    // someone else reviews.
+    const before = '<Button kind="tertiary" size="sm" onClick={r}>Reset</Button>';
+    const r = editProp(before, { component: 'Button', occurrence: 0, prop: 'kind', value: 'danger' });
+    expect(r.code).toContain('<Button kind="danger" size="sm" onClick={r}>');
+  });
+
+  it('appends only when the attribute is new', () => {
+    const before = '<Button kind="tertiary" size="sm">Reset</Button>';
+    const r = editProp(before, { component: 'Button', occurrence: 0, prop: 'disabled', value: true });
+    expect(r.code).toContain('kind="tertiary" size="sm" disabled');
+  });
+
   it('survives an attribute value containing braces and elements', () => {
     // The reason this is an AST transform and not a regex. Every regex-based
     // edit in this codebase has eventually met a case like this.

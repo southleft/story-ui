@@ -120,17 +120,29 @@ export function editProp(code: string, edit: PropEdit): PropEditResult {
             previous = existing[0].initializer ? existing[0].initializer.getText(source) : 'true';
           }
 
-          // Everything except this attribute, preserved exactly as written.
-          const others = element.attributes.properties.filter(
-            a => !(ts.isJsxAttribute(a) && a.name.getText(source) === edit.prop),
+          const isTarget = (a: ts.JsxAttributeLike) =>
+            ts.isJsxAttribute(a) && a.name.getText(source) === edit.prop;
+
+          const replacement = ts.factory.createJsxAttribute(
+            ts.factory.createIdentifier(edit.prop),
+            makeInitializer(),
           );
 
+          /**
+           * Replace IN PLACE; only append when the attribute is new.
+           *
+           * Removing and re-appending moved every edited prop to the end of
+           * the tag, so changing `kind` on `<Button kind="tertiary"
+           * size="sm">` rewrote it as `<Button size="sm" kind="danger">`. The
+           * result is correct and the diff is noise — and this writes to a
+           * file someone else reviews, where a tool that reshuffles lines it
+           * did not need to touch stops being trusted.
+           */
           const next = edit.value === null
-            ? others
-            : [...others, ts.factory.createJsxAttribute(
-                ts.factory.createIdentifier(edit.prop),
-                makeInitializer(),
-              )];
+            ? element.attributes.properties.filter(a => !isTarget(a))
+            : existing.length
+              ? element.attributes.properties.map(a => (isTarget(a) ? replacement : a))
+              : [...element.attributes.properties, replacement];
 
           const attrs = ts.factory.createJsxAttributes(next);
           return isSelfClosing
