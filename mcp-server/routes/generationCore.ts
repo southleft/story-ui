@@ -883,7 +883,14 @@ export async function runStoryGeneration(
   let isFallbackStory = false;
 
   if (!validationResult.isValid && !validationResult.fixedCode) {
-    fileContents = createFrameworkAwareFallbackStory(prompt, cleanPromptForTitle(prompt), config, detectedFramework);
+    // The hash is already unique per generation; passing it as the story id
+    // stops two failures from colliding and breaking Storybook's index.
+    fileContents = createFrameworkAwareFallbackStory(
+      prompt, cleanPromptForTitle(prompt), config, detectedFramework,
+      // Hashed from the prompt AND the moment, because the same prompt failing
+      // twice is exactly the case that collided.
+      `fallback-${crypto.createHash('sha1').update(`${prompt}${startedAt}`).digest('hex').slice(0, 8)}`,
+    );
     hasValidationWarnings = true;
     isFallbackStory = true;
     events.onValidation?.({

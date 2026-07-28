@@ -221,7 +221,18 @@ export function createFrameworkAwareFallbackStory(
   prompt: string,
   displayTitle: string,
   config: any,
-  framework: string
+  framework: string,
+  /**
+   * A unique story id for this fallback.
+   *
+   * Without one Storybook derives the id from the TITLE, and the title here is
+   * the prompt truncated to 50 characters. Two failures on similar prompts
+   * therefore produced identical ids, Storybook refused to index the project,
+   * and the ENTIRE Storybook went down — not just the failed story. Observed
+   * on Atlassian: two attempts at the same panel took the whole environment
+   * with them, so a generation failure became an environment failure.
+   */
+  storyId?: string,
 ): string {
   // Use the displayTitle for the story title (properly cased)
   // Use the prompt for the "Original prompt" in the error message
@@ -229,6 +240,8 @@ export function createFrameworkAwareFallbackStory(
   const escapedTitle = truncatedTitle.replace(/"/g, '\\"').replace(/'/g, "\\'");
   const escapedPrompt = prompt.replace(/"/g, '\\"').replace(/'/g, "\\'");
   const storyPrefix = config.storyPrefix || 'Generated/';
+  // Emitted next to the title so the id can never be derived from it.
+  const idLine = storyId ? `\n  id: '${storyId.replace(/'/g, "")}',` : '';
 
   // Framework-specific fallback templates
   switch (framework) {
@@ -237,7 +250,7 @@ export function createFrameworkAwareFallbackStory(
 
 // Fallback story generated due to AI generation error
 const meta: Meta = {
-  title: '${storyPrefix}${escapedTitle}',
+  title: '${storyPrefix}${escapedTitle}',${idLine}
   parameters: {
     docs: {
       description: {
@@ -268,7 +281,7 @@ export const Default: Story = {
 
 // Fallback story generated due to AI generation error
 const meta: Meta = {
-  title: '${storyPrefix}${escapedTitle}',
+  title: '${storyPrefix}${escapedTitle}',${idLine}
   parameters: {
     docs: {
       description: {
@@ -301,7 +314,7 @@ export const Default: Story = {
 
   // Fallback story generated due to AI generation error
   const { Story } = defineMeta({
-    title: '${storyPrefix}${escapedTitle}',
+    title: '${storyPrefix}${escapedTitle}',${idLine}
     tags: ['autodocs'],
     parameters: {
       docs: {
@@ -328,7 +341,7 @@ import type { Meta, StoryObj } from '@storybook/web-components';
 
 // Fallback story generated due to AI generation error
 const meta: Meta = {
-  title: '${storyPrefix}${escapedTitle}',
+  title: '${storyPrefix}${escapedTitle}',${idLine}
   parameters: {
     docs: {
       description: {
@@ -360,7 +373,7 @@ import type { StoryObj } from '${storybookFramework}';
 
 // Fallback story generated due to AI generation error
 export default {
-  title: '${storyPrefix}${escapedTitle}',
+  title: '${storyPrefix}${escapedTitle}',${idLine}
   component: () => (
     <div style={{ padding: '2rem', textAlign: 'center', border: '2px dashed #ccc', borderRadius: '8px' }}>
       <h2>Story Generation Error</h2>
