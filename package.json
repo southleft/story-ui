@@ -13,7 +13,12 @@
     "./panel": {
       "import": "./dist/templates/StoryUI/index.js",
       "types": "./dist/templates/StoryUI/index.d.ts"
-    }
+    },
+    "./workspace": {
+      "import": "./dist/templates/StoryUIV2/Workspace.js",
+      "types": "./dist/templates/StoryUIV2/Workspace.d.ts"
+    },
+    "./workspace.css": "./dist/templates/StoryUIV2/workspace.css"
   },
   "bin": {
     "story-ui": "dist/cli/index.js"

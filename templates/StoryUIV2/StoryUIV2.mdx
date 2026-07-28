@@ -9,7 +9,21 @@
 
 import { Meta } from '@storybook/addon-docs/blocks';
 import { useEffect, useState } from 'react';
-import { Workspace } from './Workspace';
+/*
+  Imported from the PACKAGE, not from a copy in this project.
+
+  The workspace builds its own UI with @radix-ui/themes. When its source was
+  copied into the consumer's src/, that dependency became the consumer's
+  problem — a Carbon or MUI team was told to install Radix to use a
+  design-system tool, which is a fair thing to refuse. Importing from the
+  package resolves it inside the package instead, where it is already a
+  declared dependency.
+
+  It also means the workspace updates when the package does. Copied source
+  went stale the moment anything shipped, and the only fix was recopying it by
+  hand.
+*/
+import { Workspace } from '@tpitre/story-ui/workspace';
 
 <Meta title="Story UI/Workspace" />
 
