@@ -154,7 +154,18 @@ const CASES = [
     prompt: 'A service monitoring dashboard: four status tiles with uptime percentages, '
       + 'a filterable incident table with severity badges, and a side panel listing '
       + 'on-call engineers with an escalate button on each',
-    expect: [['Table'], ['Badge'], ['SimpleGrid', 'Grid']],
+    /**
+     * The HOUSE component counts as the right answer.
+     *
+     * This case failed three runs running, and every time the generation was
+     * correct: it reached for `Datagrid`, `Pillbox` and `Statlet` — this
+     * project's own design system — where the case demanded Mantine's `Table`
+     * and `Badge`. Preferring the project's components over the npm library is
+     * the behaviour this whole tool exists to produce, and the bench was
+     * scoring it as a miss.
+     */
+    expect: [['Table', 'Datagrid'], ['Badge', 'Pillbox'], ['SimpleGrid', 'Grid']],
+    // `<table>` is still hand-rolling: both Mantine and housekit ship a table.
     avoidTags: ['table'],
     minRegions: 3,
   },
@@ -372,10 +383,41 @@ function rawStyleValues(code) {
   return { px: px.length, hex: hex.length };
 }
 
-/** Distinct top-level visual regions, as a crude density signal. */
-function regionCount(code) {
-  const containers = (code.match(/<(Paper|Card|Section|Fieldset|Accordion|Tabs\.Panel|Slab)\b/g) || []).length;
-  return containers;
+/**
+ * How many distinct visual regions the composition builds, as a density signal.
+ *
+ * The container vocabulary used to be a hardcoded list — Paper, Card, Section,
+ * Fieldset, Accordion, Slab — which is a Mantine-and-housekit list wearing a
+ * generic name. It undercounted every other design system by construction:
+ * Carbon's regions are Tiles, MUI's are Papers and Accordions, and a house
+ * component like `Statlet` was invisible, so a correct four-tile dashboard
+ * scored as two regions and was failed for being thin.
+ *
+ * A region is now a component that CONTAINS other components. Counting every
+ * non-self-closing component instead scored the same dashboard at 19, because
+ * `<Text>label</Text>` and `<Title>Heading</Title>` are not regions — a
+ * threshold nothing could ever fail is no more useful than one nothing can
+ * pass. Containment is what separates a structural block from a leaf, it is
+ * visible in the code, and it needs no per-library vocabulary.
+ *
+ * Measured on the monitoring dashboard that failed three runs for being thin:
+ * hardcoded list 2, every-wrapper 19, contains-a-component 10.
+ */
+function regionCount(code, designSystemNames) {
+  const known = designSystemNames instanceof Set ? designSystemNames : new Set(designSystemNames || []);
+  let regions = 0;
+  for (const m of code.matchAll(/<([A-Z][A-Za-z0-9]*)\b([^>]*)>/g)) {
+    const [full, name, attrs] = m;
+    if (attrs.trimEnd().endsWith('/')) continue;
+    if (known.size > 0 && !known.has(name)) continue;
+    // Look only as far as this element's own closing tag, so a sibling
+    // further down the file cannot make a leaf look like a container.
+    const after = code.slice(m.index + full.length, m.index + full.length + 400);
+    const close = after.indexOf(`</${name}`);
+    const body = close >= 0 ? after.slice(0, close) : after;
+    if (/<[A-Z]/.test(body)) regions++;
+  }
+  return regions;
 }
 
 async function main() {
@@ -424,7 +466,10 @@ async function main() {
     const bogus = invalidProps(code, vocabulary, dsNames);
     const unresolved = unresolvedImports(code, PROJECT);
     const raw = rawStyleValues(code);
-    const regions = regionCount(code);
+    // `used` rather than `dsNames`: a house component imported by relative
+    // path is a region too, and counting only the npm library's names was part
+    // of why a house-built dashboard scored as thin.
+    const regions = regionCount(code, used);
     const thin = regions < (c.minRegions || 0);
 
     const house = (c.houseComponents || []).filter(n => used.has(n));
