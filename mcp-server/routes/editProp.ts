@@ -139,8 +139,8 @@ export async function editablePropsHandler(req: Request, res: Response): Promise
 
 export async function editPropHandler(req: Request, res: Response): Promise<void> {
   try {
-    const { fileName, component, occurrence, prop, value } = req.body ?? {};
-    if (!fileName || !component || !prop) {
+    const { fileName, component, candidates, occurrence, prop, value } = req.body ?? {};
+    if (!fileName || (!component && !Array.isArray(candidates)) || !prop) {
       res.status(400).json({ error: 'fileName, component and prop are required' });
       return;
     }
@@ -166,8 +166,30 @@ export async function editPropHandler(req: Request, res: Response): Promise<void
     }
 
     const before = fs.readFileSync(filePath, 'utf-8');
+
+    /**
+     * Which candidate does the source actually contain?
+     *
+     * The browser can only offer a hypothesis: the fiber chain includes names
+     * that are not JSX elements at all — Carbon wraps components in a
+     * `hookified` HOC — and no list of wrapper names could cover every design
+     * system. The FILE knows, so the first candidate that appears in it wins.
+     * Innermost-first order means the most specific real element is chosen.
+     */
+    const ordered: string[] = [
+      ...(component ? [String(component)] : []),
+      ...(Array.isArray(candidates) ? candidates.map(String) : []),
+    ];
+    const resolved = ordered.find(name => occurrencesInSource(before, name) > 0);
+    if (!resolved) {
+      res.status(409).json({
+        error: `None of these appear in the story: ${ordered.join(', ') || '(nothing offered)'}`,
+      });
+      return;
+    }
+
     const result = editProp(before, {
-      component: String(component),
+      component: resolved,
       occurrence: Number(occurrence) || 0,
       prop: String(prop),
       value: value === null ? null : value,
@@ -179,7 +201,7 @@ export async function editPropHandler(req: Request, res: Response): Promise<void
     }
 
     fs.writeFileSync(filePath, result.code, 'utf-8');
-    logger.log(`✏️ ${component}[${occurrence ?? 0}].${prop} = ${JSON.stringify(value)} in ${fileName}`);
+    logger.log(`✏️ ${resolved}[${occurrence ?? 0}].${prop} = ${JSON.stringify(value)} in ${fileName}`);
 
     res.json({
       ok: true,
@@ -190,7 +212,8 @@ export async function editPropHandler(req: Request, res: Response): Promise<void
        * "this changes all 4" when one JSX element renders a list via .map()
        * and the DOM occurrence cannot be mapped one-to-one.
        */
-      occurrencesInSource: occurrencesInSource(result.code, String(component)),
+      component: resolved,
+      occurrencesInSource: occurrencesInSource(result.code, resolved),
     });
   } catch (error) {
     logger.warn(`[edit-prop] failed: ${error instanceof Error ? error.message : String(error)}`);

@@ -108,3 +108,32 @@ describe('editProp', () => {
     expect(r.code).toContain('save({ a: 1 })');
   });
 });
+
+describe('candidate resolution', () => {
+  /**
+   * The browser can only offer a hypothesis about which component the source
+   * contains. A fiber chain includes names that are not JSX elements at all —
+   * Carbon wraps its components in a `hookified` HOC, and clicking a Dropdown
+   * resolves to the `ListBox` inside it. No list of wrapper names could cover
+   * every design system, so the FILE decides.
+   */
+  const file = `<Tile><Button kind="ghost">Remove</Button></Tile>`;
+
+  it('finds the candidate the source actually contains', () => {
+    const candidates = ['hookified', 'ListBox', 'Button'];
+    const resolved = candidates.find(c => occurrencesInSource(file, c) > 0);
+    expect(resolved).toBe('Button');
+  });
+
+  it('prefers the innermost real element over its container', () => {
+    // Both Tile and Button are in the file; innermost-first order means the
+    // element clicked wins rather than the largest container on the page.
+    const candidates = ['Button', 'Tile'];
+    expect(candidates.find(c => occurrencesInSource(file, c) > 0)).toBe('Button');
+  });
+
+  it('resolves nothing when no candidate is real', () => {
+    const candidates = ['hookified', 'ListBox'];
+    expect(candidates.find(c => occurrencesInSource(file, c) > 0)).toBeUndefined();
+  });
+});

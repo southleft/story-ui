@@ -66,6 +66,31 @@ export interface ElementTarget {
    * instead.
    */
   occurrence?: number;
+  /**
+   * The component the STORY wrote, which is not always the one you clicked.
+   *
+   * Clicking a Carbon Dropdown resolves, by fiber, to `ListBox` — Carbon's
+   * internal implementation. The story's source contains `<Dropdown>`, so an
+   * edit aimed at `ListBox` targets something that does not exist in the file.
+   *
+   * `_debugOwner` names the component whose render authored an element, so the
+   * outermost element still owned by the story's own component IS the JSX the
+   * story wrote. React 19 removed `_debugSource` but kept this.
+   */
+  sourceComponent?: string;
+  /** Position of that element among all instances of it, in document order. */
+  sourceOccurrence?: number;
+  /**
+   * Every component between the click and the story, innermost first.
+   *
+   * The fiber chain contains names that are not JSX elements — Carbon wraps
+   * its components in a `hookified` HOC, and no list of wrapper names could
+   * cover every design system. Rather than guess which entry the source
+   * contains, the candidates are sent and the SERVER picks the first that
+   * actually appears in the file. The file is authoritative; the chain is a
+   * hypothesis.
+   */
+  sourceCandidates?: string[];
 }
 
 /**
@@ -332,6 +357,87 @@ export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFro
     }
   }
 
+  /**
+   * The element the story's own source actually contains.
+   *
+   * Walks outward collecting component fibers, and keeps the LAST one whose
+   * `_debugOwner` is the story's own component. That is the boundary between
+   * what the story wrote and what the design system rendered underneath —
+   * `<Dropdown>` rather than the `ListBox` inside it.
+   */
+  const ownerName = (f: any) => {
+    const o = f && f._debugOwner;
+    if (!o) return null;
+    const t = o.type;
+    return typeof t === 'string' ? t : (t && (t.displayName || t.name)) || null;
+  };
+
+  let sourceComponent;
+  let sourceOccurrence;
+  let sourceCandidates;
+  const key = Object.keys(target).find((k: string) =>
+    k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$'));
+  if (key) {
+    // The story component is whatever owns the outermost element in the tree,
+    // so it is the owner name that appears furthest up this chain.
+    const chain: Array<{ name: string; owner: string | null }> = [];
+    let f: any = (target as any)[key];
+    let guard = 0;
+    while (f && guard++ < 40) {
+      if (typeof f.type !== 'string' && f.type) {
+        const nm = (f.type.displayName || f.type.name || '').replace(/^.*\//, '');
+        if (nm && !/^(Fragment|ForwardRef|Memo|Anonymous|Slot|Provider|_c\d*)$/.test(nm)) {
+          chain.push({ name: nm, owner: ownerName(f) });
+        }
+      }
+      f = f.return;
+    }
+    /**
+     * The story's own component is the OUTERMOST non-null owner.
+     *
+     * Above it sit Storybook's wrappers, which own nothing; below it sits the
+     * design system's internals, owned by each other. Observed chain for a
+     * button inside a Carbon table:
+     *   TableContainer(owner DataTable) -> DataTable(owner UserPermissionsPage)
+     * so UserPermissionsPage is the story and DataTable is what it wrote.
+     */
+    const owners = chain.map(c => c.owner).filter(Boolean);
+    const storyComponent = owners.length ? owners[owners.length - 1] : null;
+
+    /**
+     * INNERMOST element the story authored, not outermost.
+     *
+     * Both `<DataTable>` and the `<Button>` inside its render prop are owned by
+     * the story, and the user clicked the button. Taking the outermost match
+     * would aim every edit at the largest container on the page.
+     */
+    const authored = chain.find(c => c.owner === storyComponent);
+    // Innermost-first, deduped. The server resolves which of these is real.
+    sourceCandidates = [...new Set(chain.map(c => c.name).filter(Boolean))].slice(0, 8);
+    if (authored) {
+      sourceComponent = authored.name;
+      const scope = document.querySelector('#storybook-root') || document.body;
+      let n = 0;
+      for (const node of Array.from(scope.querySelectorAll('*'))) {
+        const nk = Object.keys(node).find((k: string) => k.startsWith('__reactFiber$'));
+        if (!nk) continue;
+        let g: any = (node as any)[nk];
+        let steps = 0;
+        let owned = null;
+        while (g && steps++ < 40) {
+          if (typeof g.type !== 'string' && g.type) {
+            const nm2 = (g.type.displayName || g.type.name || '').replace(/^.*\//, '');
+            if (nm2 === authored.name && ownerName(g) === storyComponent) { owned = g; break; }
+          }
+          g = g.return;
+        }
+        if (!owned) continue;
+        if (node === target || (node as any).contains?.(target)) { sourceOccurrence = n; break; }
+        n++;
+      }
+    }
+  }
+
   return {
     component: found ? found.c.name : null,
     via: found ? found.c.via : 'none',
@@ -342,6 +448,9 @@ export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFro
     siblings: sibs.length > 1 ? sibs.length : undefined,
     ancestors,
     occurrence,
+    sourceComponent,
+    sourceOccurrence,
+    sourceCandidates,
   };
 }})`;
 

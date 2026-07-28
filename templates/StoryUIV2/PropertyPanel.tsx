@@ -77,9 +77,13 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
         body: JSON.stringify({
           fileName,
           component,
-          // The clicked element's position among all instances of this
-          // component, which is what maps it to a JSX element in the source.
-          occurrence: target?.occurrence ?? 0,
+          // Every component between the click and the story, innermost first.
+          // The server picks whichever actually appears in the file — the
+          // fiber chain contains HOC wrappers that are not JSX elements.
+          candidates: target?.sourceCandidates,
+          // The clicked element's position among all instances of it, which is
+          // what maps it to a JSX element in the source.
+          occurrence: target?.sourceOccurrence ?? target?.occurrence ?? 0,
           prop,
           value,
         }),
