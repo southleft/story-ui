@@ -1029,15 +1029,23 @@ export class DynamicPackageDiscovery {
        * The EXPORTED name is the alias. `export { X as Y }` means a consumer
        * writes `import { Y }`; the local name may not be importable at all.
        */
-      const bracedExports = /export\s*(?:type\s*)?\{([^}]*)\}/g;
+      // `export type { … }` exports TYPES. Including them put `AvatarPropTypes`,
+      // `LozengeProps`, `SizeType` and `AppearanceType` in the catalog as
+      // components — names the model can import but never render.
+      const bracedExports = /export\s*\{([^}]*)\}/g;
       let braced;
       while ((braced = bracedExports.exec(content)) !== null) {
         for (const entry of braced[1].split(',')) {
-          const parts = entry.trim().split(/\s+as\s+/).map(p => p.trim()).filter(Boolean);
+          const raw = entry.trim();
+          // Inline type modifier: `export { type Foo, Bar }`.
+          if (/^type\s/.test(raw)) continue;
+          const parts = raw.split(/\s+as\s+/).map(p => p.trim()).filter(Boolean);
           const exported = parts[parts.length - 1];
           // `export { default }` with no alias exposes no importable name.
           if (!exported || exported === 'default') continue;
           if (!/^[A-Z][a-zA-Z0-9]*$/.test(exported)) continue;
+          // Type-shaped names that a design system never renders as an element.
+          if (/(Props|PropTypes|Type|Types|Handler|Options|Config|Context|State)$/.test(exported)) continue;
           if (result[exported]) continue;
           result[exported] = `Component_${exported}`;
           logger.log(`📍 Found component in .d.ts: ${exported}`);

@@ -143,6 +143,8 @@ export function fixBarrelImports(
 
     // Group components by their import path
     const groupedByImportPath = new Map<string, string[]>();
+    // Components discovery cannot place. They stay on the original import.
+    const unmapped: string[] = [];
 
     for (const component of components) {
       let componentImportPath: string;
@@ -152,11 +154,29 @@ export function fixBarrelImports(
         componentImportPath = componentToImport.get(component)!;
         logger.log(`[DISCOVERY] ${component} -> ${componentImportPath}`);
       } else {
-        // Fallback: Use simple PascalCase to kebab-case conversion
-        // This handles components not found in discovery
-        const fileName = toKebabCase(component);
-        componentImportPath = `${importPath}/${fileName}`;
-        logger.log(`[FALLBACK] ${component} -> ${componentImportPath} (not in discovery)`);
+        /**
+         * Do not invent a path. Leave the import exactly as written.
+         *
+         * This branch used to kebab-case the component name onto the import
+         * path — `Box` became `@atlaskit/box` — which is the same guess the
+         * engine has had to stop making in discovery, in the catalog and in
+         * import validation, here wearing a helper labelled "design-system
+         * agnostic". For a scope like `@atlaskit` there is no such package:
+         * Box, Flex, MetricText, Text and Anchor all live in
+         * `@atlaskit/primitives`.
+         *
+         * Measured consequence: the model imported correctly from the path the
+         * catalog gave it, validation PASSED, and one second later this step
+         * rewrote five correct imports into five packages that do not exist.
+         * The story then rendered nothing, and every downstream signal blamed
+         * the generation.
+         *
+         * Unconverted is not a failure mode — the original import came from
+         * the catalog and is the best information available.
+         */
+        unmapped.push(component);
+        logger.log(`[KEPT] ${component} — not in discovery, leaving its import untouched`);
+        continue;
       }
 
       if (!groupedByImportPath.has(componentImportPath)) {
@@ -165,12 +185,14 @@ export function fixBarrelImports(
       groupedByImportPath.get(componentImportPath)!.push(component);
     }
 
-    // Build individual imports
-    const individualImports = Array.from(groupedByImportPath.entries())
-      .map(([path, comps]) => {
-        return `import { ${comps.join(', ')} } from '${path}';`;
-      })
-      .join('\n');
+    // Build individual imports, re-emitting anything we could not place on
+    // its ORIGINAL specifier rather than dropping or inventing it.
+    const rewritten = Array.from(groupedByImportPath.entries())
+      .map(([path, comps]) => `import { ${comps.join(', ')} } from '${path}';`);
+    if (unmapped.length > 0) {
+      rewritten.unshift(`import { ${unmapped.join(', ')} } from '${importPath}';`);
+    }
+    const individualImports = rewritten.join('\n');
 
     logger.log(`[DEBUG] Replacement: "${individualImports}"`);
 
