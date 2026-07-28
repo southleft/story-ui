@@ -91,6 +91,20 @@
     linear-gradient(var(--gray-a3) 1px, transparent 1px),
     linear-gradient(90deg, var(--gray-a3) 1px, transparent 1px);
   background-size: 32px 32px;
+}
+
+/**
+ * Fit mode: the frame IS the stage.
+ *
+ * The padding and the grid backdrop both exist to make a fixed-width frame
+ * read as an artifact sitting on a surface. At full width there is no surface
+ * left to show, and every pixel spent on it is preview the reviewer cannot
+ * see — which was the complaint.
+ */
+.suiw-stage--fit {
+  padding: 0;
+  background-image: none;
+  place-items: stretch;
   background-position: -1px -1px;
 }
 
@@ -101,6 +115,16 @@
   overflow: hidden;
   box-shadow: var(--shadow-5);
   transition: opacity 180ms ease, width 180ms ease, height 180ms ease;
+}
+
+/* At full width the rounded corners, border and drop shadow are framing a
+   frame that has nothing to sit on — they only eat preview area. */
+.suiw-stage--fit .suiw-frame {
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+  width: 100% !important;
+  height: 100% !important;
 }
 
 /* The canvas keeps showing the previous composition while a new one builds, so

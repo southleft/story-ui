@@ -14,9 +14,22 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Badge, Button, Callout, Flex, SegmentedControl, Text } from '@radix-ui/themes';
 import { attachElementPicker, type ElementTarget } from './elementTargeting';
 
-export type Viewport = 'desktop' | 'tablet' | 'mobile';
+export type Viewport = 'fit' | 'desktop' | 'tablet' | 'mobile';
 
+/**
+ * `fit` uses the whole stage; the rest are real device widths.
+ *
+ * The canvas was pinned to a 1280px desktop frame that only ever scaled DOWN,
+ * so on any wider stage the user got grid backdrop instead of preview and had
+ * no way to reclaim it. The device widths are worth keeping — checking a
+ * composition at 390px is exactly what they are for — but they are a
+ * deliberate act, not a sensible default. Reviewing the work should use all
+ * the room there is.
+ *
+ * Width 0 means "measure the stage"; see `spec` below.
+ */
 const VIEWPORTS: Record<Viewport, { w: number; h: number; label: string }> = {
+  fit: { w: 0, h: 0, label: 'Fit' },
   desktop: { w: 1280, h: 900, label: 'Desktop' },
   tablet: { w: 834, h: 1000, label: 'Tablet' },
   mobile: { w: 390, h: 844, label: 'Mobile' },
@@ -61,7 +74,7 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
   historySlot,
 }) => {
   const [picking, setPicking] = useState(false);
-  const [viewport, setViewport] = useState<Viewport>('desktop');
+  const [viewport, setViewport] = useState<Viewport>('fit');
   const [zoom, setZoom] = useState(1);
   const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
   const stageRef = useRef<HTMLDivElement>(null);
@@ -79,15 +92,27 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
     return () => ro.disconnect();
   }, []);
 
-  const spec = VIEWPORTS[viewport];
+  /**
+   * In `fit` the frame IS the stage: real pixel size, no scaling, so the story
+   * sees the width it is actually being shown at and its media queries are
+   * honest. Falls back to the desktop frame until the stage has been measured.
+   */
+  const spec = useMemo(() => {
+    if (viewport !== 'fit') return VIEWPORTS[viewport];
+    if (!stageSize.w || !stageSize.h) return VIEWPORTS.desktop;
+    return { w: Math.round(stageSize.w), h: Math.round(stageSize.h), label: 'Fit' };
+  }, [viewport, stageSize]);
 
   // Fit the chosen viewport inside the stage. Never scale UP — a 390px mobile
   // frame blown up to fill 1200px would misrepresent the design.
   const fitScale = useMemo(() => {
+    // `fit` is already stage-sized; scaling it would shrink it away from the
+    // edges it was just measured to fill.
+    if (viewport === 'fit') return 1;
     if (!stageSize.w || !stageSize.h) return 1;
     const pad = 48;
     return Math.min(1, (stageSize.w - pad) / spec.w, (stageSize.h - pad) / spec.h);
-  }, [stageSize, spec]);
+  }, [stageSize, spec, viewport]);
 
   const scale = fitScale * zoom;
   const src = storyId ? `/iframe.html?id=${encodeURIComponent(storyId)}&viewMode=story` : undefined;
@@ -220,7 +245,7 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
         </Button>
       </Flex>
 
-      <div className="suiw-stage" ref={stageRef}>
+      <div className={`suiw-stage${viewport === 'fit' ? ' suiw-stage--fit' : ''}`} ref={stageRef}>
         {src ? (
           <div
             className={`suiw-frame${busy ? ' suiw-frame--stale' : ''}`}
