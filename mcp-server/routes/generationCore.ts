@@ -28,7 +28,7 @@ import { isBlacklistedComponent, isBlacklistedIcon, getBlacklistErrorMessage, IC
 import { StoryTracker, StoryMapping } from '../../story-generator/storyTracker.js';
 import { getManifestManager } from '../../story-generator/manifestManager.js';
 import { getDocumentation } from '../../story-generator/documentation-sources.js';
-import { postProcessStory, fixBarrelImports } from '../../story-generator/postProcessStory.js';
+import { postProcessStory, fixBarrelImports, splitScopeImports } from '../../story-generator/postProcessStory.js';
 import { validateStory } from '../../story-generator/storyValidator.js';
 import {
   ValidationErrors,
@@ -557,6 +557,13 @@ export async function runStoryGeneration(
     designGuidelines: considerationsText || undefined,
   };
 
+  /** Each component's real package, for repairing a scope-root import. */
+  const componentHomes = new Map<string, string>();
+  for (const c of components as any[]) {
+    const home = c.__componentPath || c.source?.path;
+    if (c.name && typeof home === 'string' && home.includes('/')) componentHomes.set(c.name, home);
+  }
+
   let aiText = '';
   /** Stylesheet emitted alongside the story, when the model needed real states. */
   let generatedStylesheet: string | null = null;
@@ -630,6 +637,17 @@ export async function runStoryGeneration(
     }
     aiText = extractedCode;
 
+    /**
+     * Deterministic repair before validation judges the result.
+     *
+     * The model collapses some components onto the npm SCOPE root even with a
+     * correct, complete catalog in front of it, and repeats it through every
+     * healing attempt. The right package for each component is a fact
+     * discovery already holds, so this is fixed from data rather than by
+     * spending another LLM call on an instruction that has not worked.
+     */
+    aiText = splitScopeImports(aiText, config.importPath, componentHomes);
+
     // Step 5: Validation (pattern + AST + imports)
     events.onProgress?.(5, totalSteps, 'validating', 'Validating generated code...');
 
@@ -653,6 +671,10 @@ export async function runStoryGeneration(
       : await preValidateImports(aiText, config, discovery);
     // Isolation runs for EVERY framework: generated code may only import from
     // the configured library, framework runtime, and explicit allowances.
+    // Again here, immediately before judging: an earlier pass (auto-fix,
+    // barrel rewriting) can reintroduce a scope-root import after the first
+    // repair, and validation must judge the code that will actually be written.
+    aiText = splitScopeImports(aiText, config.importPath, componentHomes);
     const isolationErrors = validateImportIsolation(aiText, config, detectedFramework, considerationsText, components as any);
     // A resolving specifier is not an existing binding: verified against the
     // module on disk, for relative imports where that answer is certain.
@@ -724,6 +746,15 @@ export async function runStoryGeneration(
 
   if (finalErrors.importErrors.length > 0) {
     logger.log(`❌ Import validation failed. Invalid components: ${finalErrors.importErrors.join(', ')}`);
+    // What the model ACTUALLY wrote. An error that says "your imports were
+    // rejected" without showing them makes every diagnosis a guess — three
+    // separate investigations on this branch had to reconstruct it by hand.
+    logger.log(
+      `   imports as written:\n${
+        (aiText.match(/^\s*import[^;\n]*(from\s*['"][^'"]+['"])?;?/gm) || [])
+          .slice(0, 12).map(l => `     ${l.trim()}`).join('\n') || '     (none)'
+      }`,
+    );
     throw new GenerationError('INVALID_IMPORTS', 'Generated code contains invalid imports', {
       httpStatus: 422,
       details: finalErrors.importErrors.join('; '),
@@ -840,6 +871,23 @@ export async function runStoryGeneration(
         components
       );
     }
+
+    /**
+     * THE LAST WORD ON IMPORTS. Nothing may run after this.
+     *
+     * The model writes `import { Box, Stack, Flex } from '@atlaskit'` in its
+     * raw output — verified by logging the code before any transform — with a
+     * correct 4KB catalog in front of it saying `@atlaskit/primitives`, and it
+     * repeats that through every self-healing attempt. Three prompt revisions
+     * did not move it.
+     *
+     * Every component's real package is a fact discovery already holds, so
+     * this is repaired from data at zero cost instead of spending more LLM
+     * calls on an instruction that does not land. It has to be last because
+     * validation and barrel-rewriting both run after the earlier repair and
+     * put the scope import back.
+     */
+    fixed = splitScopeImports(fixed, config.importPath, componentHomes);
 
     return {
       code: fixed,

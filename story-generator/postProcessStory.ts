@@ -305,3 +305,71 @@ function convertToastChildrenToExports(code: string): string {
   logger.log('Toast conversion not yet implemented');
   return code;
 }
+
+/**
+ * Split an import from an npm SCOPE into the real packages its components live in.
+ *
+ * Measured against Atlassian: the model gets most imports exactly right —
+ * `Avatar from '@atlaskit/avatar'`, `Lozenge from '@atlaskit/lozenge'` — and
+ * then collapses the layout primitives onto the scope root:
+ *
+ *   import { Box, Stack, Flex } from '@atlaskit';
+ *
+ * It does this with a correct, complete, 4KB catalog in front of it that
+ * states `**Box** (import from '@atlaskit/primitives')`, and it repeats the
+ * mistake through every self-healing attempt until the loop gives up. Three
+ * prompt revisions did not move it.
+ *
+ * So stop asking. The right package for each component is a fact discovery
+ * already holds, so the repair is deterministic and costs no LLM call. This is
+ * the exact inverse of the fallback that used to live in fixBarrelImports:
+ * that one INVENTED a path from a component's name; this one only ever applies
+ * a path the project stated.
+ *
+ * Bindings we cannot place are left on the original specifier, where import
+ * validation will report them honestly rather than have a guess smuggled in.
+ */
+export function splitScopeImports(
+  code: string,
+  importPath: string,
+  componentHomes: Map<string, string>,
+): string {
+  // Only meaningful for a scope root — `@scope` with no package after it.
+  if (!importPath.startsWith('@') || importPath.includes('/')) return code;
+  if (componentHomes.size === 0) return code;
+
+  const scopeImport = new RegExp(
+    `import\\s*\\{([^}]+)\\}\\s*from\\s*['"]${escapeRegExp(importPath)}['"];?`,
+    'g',
+  );
+
+  return code.replace(scopeImport, (whole, bindingList: string) => {
+    const byPackage = new Map<string, string[]>();
+    const unplaced: string[] = [];
+
+    for (const raw of String(bindingList).split(',')) {
+      const binding = raw.trim();
+      if (!binding) continue;
+      // `Foo as Bar` — resolve on the ORIGINAL name, emit the whole clause.
+      const source = binding.split(/\s+as\s+/)[0].trim();
+      const home = componentHomes.get(source);
+      if (!home) {
+        unplaced.push(binding);
+        continue;
+      }
+      if (!byPackage.has(home)) byPackage.set(home, []);
+      byPackage.get(home)!.push(binding);
+    }
+
+    if (byPackage.size === 0) return whole;
+
+    const lines = [...byPackage.entries()].map(
+      ([pkg, names]) => `import { ${names.join(', ')} } from '${pkg}';`,
+    );
+    if (unplaced.length > 0) {
+      lines.push(`import { ${unplaced.join(', ')} } from '${importPath}';`);
+    }
+    logger.log(`🔧 Split ${byPackage.size + (unplaced.length ? 1 : 0)} import(s) out of scope '${importPath}'`);
+    return lines.join('\n');
+  });
+}

@@ -728,6 +728,27 @@ function fixIncorrectImportPaths(code: string, correctImportPath: string): strin
   // should become:
   //   import { VAlert, VBtn } from 'vuetify/components';
 
+  /**
+   * Never consolidate onto an npm SCOPE — it is not a module.
+   *
+   * This transform exists for Vuetify, where deep paths like
+   * `vuetify/components/lib/components/VBtn` genuinely should collapse to
+   * `vuetify/components`. Applied to a package-per-component design system it
+   * does the exact opposite of what is needed: `@atlaskit/avatar`,
+   * `@atlaskit/lozenge` and `@atlaskit/primitives` are the CORRECT specifiers,
+   * and rewriting them to `@atlaskit` produces a module that does not exist.
+   *
+   * This ran after validation had already passed, so the defect reached the
+   * written file with every gate green — and it looked for all the world like
+   * the model ignoring its instructions. Three prompt revisions and a
+   * deterministic import repair were spent before the transform doing it was
+   * found.
+   */
+  const targetIsScope = correctImportPath.startsWith('@') && !correctImportPath.includes('/');
+  if (targetIsScope) {
+    return fixedCode.replace(/\n\n\n+/g, '\n\n');
+  }
+
   // Find all component imports from wrong paths
   const wrongPathImports: string[] = [];
   const wrongPathPattern = new RegExp(
