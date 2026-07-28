@@ -654,9 +654,15 @@ export async function runStoryGeneration(
     // Isolation runs for EVERY framework: generated code may only import from
     // the configured library, framework runtime, and explicit allowances.
     const isolationErrors = validateImportIsolation(aiText, config, detectedFramework, considerationsText, components as any);
+    // A resolving specifier is not an existing binding: verified against the
+    // module on disk, for relative imports where that answer is certain.
+    const namedImportErrors = validateLocalNamedImports(
+      aiText, path.resolve(process.cwd(), config.generatedStoriesPath || './src/stories/generated'), components as any,
+    );
     const importErrors = [
       ...(importValidation.isValid ? [] : importValidation.errors),
       ...isolationErrors,
+      ...namedImportErrors,
     ];
 
     const currentErrors = aggregateValidationErrors(astResult, patternErrors, importErrors);
@@ -1597,9 +1603,14 @@ async function attemptRuntimeHealing(args: {
       code, config, framework, considerationsText,
       (discovery?.getDiscoveredComponents?.() ?? []) as any,
     );
+    const namedImportErrors = validateLocalNamedImports(
+      code, path.resolve(process.cwd(), config.generatedStoriesPath || './src/stories/generated'),
+      (discovery?.getDiscoveredComponents?.() ?? []) as any,
+    );
     const errors = aggregateValidationErrors(astResult, patternErrors, [
       ...(importValidation.isValid ? [] : importValidation.errors),
       ...isolationErrors,
+      ...namedImportErrors,
     ]);
     if (!hasNoErrors(errors)) {
       logger.warn(`⚠️ Runtime-healed code failed static validation: ${formatErrorsForLog(errors)}`);
@@ -1932,6 +1943,162 @@ function packageIsAbsent(pkgName: string, consumerDeps: Set<string>, anchor: str
  * considerations file (the sole escape hatch). Everything else — Tailwind,
  * other UI kits, random npm packages — is rejected and fed to self-healing.
  */
+/** Extensions a relative specifier may resolve to, in resolution order. */
+const LOCAL_EXTENSIONS = ['.tsx', '.ts', '.jsx', '.js', '.mjs'];
+
+/** An importable specifier for `file`, as written from `fromDir`. */
+function relativeSpecifier(fromDir: string, file: string): string {
+  let rel = path.relative(fromDir, file).replace(/\\/g, '/');
+  rel = rel.replace(/\.(tsx|ts|jsx|js|mjs)$/, '').replace(/\/index$/, '');
+  return rel.startsWith('.') ? rel : `./${rel}`;
+}
+
+/** Resolve a relative specifier to a file the way the bundler would. */
+function resolveLocalModule(specifier: string, fromDir: string): string | null {
+  const base = path.resolve(fromDir, specifier);
+  for (const ext of LOCAL_EXTENSIONS) {
+    if (fs.existsSync(base + ext)) return base + ext;
+  }
+  for (const ext of LOCAL_EXTENSIONS) {
+    const indexFile = path.join(base, `index${ext}`);
+    if (fs.existsSync(indexFile)) return indexFile;
+  }
+  return fs.existsSync(base) && fs.statSync(base).isFile() ? base : null;
+}
+
+/**
+ * Names a module exports, following `export * from` one hop.
+ *
+ * Deliberately textual. The alternative is a TypeScript program per generated
+ * story, which costs more than the whole generation, and the shapes here are
+ * the ones a design system actually writes.
+ */
+function exportedNames(file: string, depth = 0, seen = new Set<string>()): Set<string> {
+  const names = new Set<string>();
+  if (depth > 2 || seen.has(file)) return names;
+  seen.add(file);
+
+  let text: string;
+  try { text = fs.readFileSync(file, 'utf-8'); } catch { return names; }
+
+  for (const m of text.matchAll(/export\s+(?:declare\s+)?(?:const|let|var|function|class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/g)) {
+    names.add(m[1]);
+  }
+  for (const m of text.matchAll(/export\s*\{([^}]*)\}/g)) {
+    for (const part of m[1].split(',')) {
+      const alias = part.split(/\s+as\s+/).pop()?.trim();
+      if (alias && /^[A-Za-z_$][\w$]*$/.test(alias)) names.add(alias);
+    }
+  }
+  if (/export\s+default\b/.test(text)) names.add('default');
+
+  // `export * from './Pillbox'` — the names live one file over.
+  for (const m of text.matchAll(/export\s*\*\s*from\s*['"]([^'"]+)['"]/g)) {
+    const target = resolveLocalModule(m[1], path.dirname(file));
+    if (target) for (const n of exportedNames(target, depth + 1, seen)) names.add(n);
+  }
+  return names;
+}
+
+/**
+ * Does each named import actually exist in the module it is taken from?
+ *
+ * A specifier that RESOLVES is not the same as a binding that EXISTS, and the
+ * gap between them produces the worst failure available: the story compiles,
+ * Storybook indexes it, and the browser throws
+ *
+ *   The requested module '/src/housekit/Datagrid.tsx' does not provide an
+ *   export named 'Pillbox'
+ *
+ * — leaving a blank canvas with no build error. Observed on a local design
+ * system where the model wrote one bundled import for four components that
+ * live in four files, having correctly imported three of them on the lines
+ * below. Every existing check passed it: the components are real, the package
+ * is in scope, the path resolves.
+ *
+ * Scoped to relative imports, where the answer is on disk and certain. npm
+ * packages are covered by the catalog's default-export marking and the
+ * scope-existence check.
+ */
+export function validateLocalNamedImports(
+  code: string,
+  generatedDir: string,
+  /** Where discovery says each component lives, to name the right module. */
+  components: Array<{ name: string; __componentPath?: string; filePath?: string }> = [],
+): string[] {
+  const errors: string[] = [];
+  /**
+   * `[^'"]` for the clause, not `[\s\S]` — an import clause can never contain
+   * a quote, and allowing one let the match START at an earlier statement and
+   * END at this specifier. `import type { Meta, StoryObj } from
+   * '@storybook/react-vite'` followed by a relative import produced
+   * "'../../housekit/Datagrid' does not export 'Meta'", and the healing loop
+   * could not satisfy it because there was nothing wrong.
+   */
+  const importRegex = /import\s+(?:([^'"]*?)\s+from\s+)?['"](\.[^'"]+)['"]/g;
+
+  let match;
+  while ((match = importRegex.exec(code)) !== null) {
+    const clause = match[1] || '';
+    const specifier = match[2];
+
+    // Only the braced part: a default import binds any name it likes.
+    const braced = clause.match(/\{([^}]*)\}/);
+    if (!braced) continue;
+    const bindings = braced[1]
+      .split(',')
+      .map(s => s.trim().split(/\s+as\s+/)[0].trim())
+      .filter(s => /^[A-Za-z_$][\w$]*$/.test(s));
+    if (bindings.length === 0) continue;
+
+    const file = resolveLocalModule(specifier, generatedDir);
+    // An unresolvable relative path is a different fault, already reported by
+    // import validation; saying so twice helps nobody.
+    if (!file) continue;
+
+    const available = exportedNames(file);
+    // A module we could not read anything from tells us nothing. Staying quiet
+    // beats inventing an error for every binding in it.
+    if (available.size === 0) continue;
+
+    for (const binding of bindings) {
+      if (available.has(binding)) continue;
+      /**
+       * Where this component really lives, as a specifier the model can paste.
+       *
+       * Local components carry `filePath` (absolute, on disk) and usually no
+       * `__componentPath`, so relying on the latter alone meant the correction
+       * was never offered for exactly the design systems this check exists to
+       * protect — the private ones.
+       */
+      const known = components.find(c => c.name === binding && (c.__componentPath || c.filePath));
+      const home = known && {
+        __componentPath: known.__componentPath || relativeSpecifier(generatedDir, known.filePath!),
+      };
+      /**
+       * State the FIX, not just the fault.
+       *
+       * The first version of this error said only what was wrong. The healing
+       * loop took the cheapest route that satisfied it: it deleted the
+       * offending components and rebuilt the composition out of the npm
+       * library instead, turning a broken story that used four of the
+       * project's own components into a working one that used none. That is a
+       * worse outcome than the bug, and it was this message that chose it.
+       */
+      errors.push(
+        `Import error: "${specifier}" does not export "${binding}". ` +
+        `This compiles but throws at runtime and renders nothing.` +
+        (home
+          ? `\nFix the PATH — write: import { ${binding} } from '${home.__componentPath}';`
+          : `\nImport ${binding} from the exact path shown beside it in the component reference.`) +
+        `\nDo NOT remove ${binding} or replace it with something else: it is one of this ` +
+        `project's own components and belongs in this composition. Only the import path is wrong.`,
+      );
+    }
+  }
+  return errors;
+}
+
 export function validateImportIsolation(
   code: string,
   config: any,

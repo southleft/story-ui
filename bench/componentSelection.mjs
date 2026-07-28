@@ -437,6 +437,12 @@ async function main() {
       rawPx: raw.px, rawHex: raw.hex,
       verification: completion.verification?.outcome,
       blockers: completion.verification?.findings?.filter(f => f.severity === 'blocker').length ?? 0,
+      // The COUNT alone cannot be acted on, and this suite has produced
+      // verification false positives before — aria-hidden spinners, a
+      // mid-render sort label, an unrendered tooltip target. Carry the text.
+      blockerDetail: (completion.verification?.findings ?? [])
+        .filter(f => f.severity === 'blocker')
+        .map(f => `${f.probe ?? f.type ?? '?'}: ${String(f.message ?? f.detail ?? '').slice(0, 120)}`),
       lines: code.split('\n').length,
     });
 
