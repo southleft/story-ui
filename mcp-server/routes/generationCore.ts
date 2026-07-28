@@ -28,7 +28,7 @@ import { isBlacklistedComponent, isBlacklistedIcon, getBlacklistErrorMessage, IC
 import { StoryTracker, StoryMapping } from '../../story-generator/storyTracker.js';
 import { getManifestManager } from '../../story-generator/manifestManager.js';
 import { getDocumentation } from '../../story-generator/documentation-sources.js';
-import { postProcessStory, fixBarrelImports, splitScopeImports } from '../../story-generator/postProcessStory.js';
+import { postProcessStory, fixBarrelImports, splitScopeImports, editDivergence } from '../../story-generator/postProcessStory.js';
 import { validateStory } from '../../story-generator/storyValidator.js';
 import {
   ValidationErrors,
@@ -524,12 +524,51 @@ export async function runStoryGeneration(
     if (currentVersion) {
       previousCode = currentVersion.code;
       parentVersionId = currentVersion.id;
+    } else {
+      /**
+       * Fall back to the file on disk. It IS the story.
+       *
+       * Without this, an update whose history is missing silently becomes a
+       * fresh generation: the model is handed no prior code, invents a whole
+       * new composition, and overwrites the user's work — while the reply
+       * claims the layout was preserved, because the model is describing the
+       * thing it just invented. Reported from manual testing, where selecting
+       * one button and asking for a red background replaced an entire page.
+       *
+       * History is a convenience for versioning. The file is the truth, it is
+       * always there, and reading it makes the failure impossible regardless
+       * of why history was empty.
+       */
+      try {
+        const onDisk = path.resolve(
+          process.cwd(),
+          config.generatedStoriesPath || './src/stories/generated',
+          fileName,
+        );
+        if (fs.existsSync(onDisk)) {
+          previousCode = fs.readFileSync(onDisk, 'utf-8');
+          logger.log(`📄 History had no version for ${fileName}; using the file on disk as the base for this edit`);
+        }
+      } catch {
+        /* unreadable — handled by the guard below */
+      }
+    }
+
+    if (previousCode) {
       const titleMatch = previousCode.match(/title:\s*["']([^"']+)['"]/);
       if (titleMatch) {
         oldTitle = titleMatch[1];
         const cleanOldTitle = oldTitle.replace(config.storyPrefix || 'Generated/', '');
         oldStoryUrl = `/story/${cleanOldTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-')}--primary`;
       }
+    } else {
+      // An edit with nothing to edit. Regenerating from scratch here is how a
+      // one-word request ("Red background.") silently destroys a page, so say
+      // so rather than letting it look like a successful modification.
+      logger.warn(
+        `⚠️ Update requested for "${fileName}" but no prior code was found in history or on disk — ` +
+        `this will generate a NEW composition rather than modify the existing one`,
+      );
     }
   }
 
@@ -685,6 +724,34 @@ export async function runStoryGeneration(
     // Step 5: Validation (pattern + AST + imports)
     events.onProgress?.(5, totalSteps, 'validating', 'Validating generated code...');
 
+    /**
+     * A targeted edit must not become a rewrite.
+     *
+     * Only when the user pointed AT something: a selection plus a short
+     * request is a property change, and it cannot legitimately replace most of
+     * the tree. Without this the model can restart from scratch, overwrite the
+     * page, and describe the result as a preserved layout — which is what
+     * happened when "Red background." on one button returned a different page
+     * entirely.
+     *
+     * Fed into the same self-healing loop as any other error, so the retry
+     * carries the original code and an explicit instruction, and the attempt
+     * with the LOWEST error count still wins if the model cannot comply.
+     */
+    const editErrors: string[] = [];
+    if (previousCode && selection) {
+      const { divergence, before, after } = editDivergence(previousCode, aiText);
+      if (divergence > 0.5) {
+        editErrors.push(
+          `This was a targeted edit to "${selection}", but the result replaced the composition ` +
+          `(${Math.round(divergence * 100)}% of the element structure changed; ${before} elements before, ${after} after). ` +
+          `Return the ORIGINAL code with ONLY the requested change applied. Do not rewrite, re-theme, ` +
+          `or re-content anything else — every other element, prop and string must be byte-identical.`,
+        );
+        logger.warn(`⚠️ Targeted edit diverged ${Math.round(divergence * 100)}% from the original — treating as a failed edit`);
+      }
+    }
+
     const patternErrors = validateStory(aiText);
 
     const validationFileName = `story${frameworkAdapter.defaultExtension || '.stories.tsx'}`;
@@ -719,6 +786,7 @@ export async function runStoryGeneration(
       ...(importValidation.isValid ? [] : importValidation.errors),
       ...isolationErrors,
       ...namedImportErrors,
+      ...editErrors,
     ];
 
     const currentErrors = aggregateValidationErrors(astResult, patternErrors, importErrors);

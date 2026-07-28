@@ -373,3 +373,48 @@ export function splitScopeImports(
     return lines.join('\n');
   });
 }
+
+/**
+ * Did a targeted edit quietly replace the whole composition?
+ *
+ * Reported from manual testing: with one button selected and the request "Red
+ * background.", the tool returned an entirely different page — and the reply
+ * asserted that "the Grid, Row, and Column layout structure remains
+ * unchanged", because the model was describing the composition it had just
+ * invented rather than the one it was asked to modify. Every existing gate
+ * passed it: the code compiled, rendered, and verified.
+ *
+ * Structural similarity is the check that catches this. A request that names
+ * one element and one property cannot legitimately change most of the file, so
+ * a large divergence is evidence the model restarted instead of editing.
+ *
+ * Compares the JSX ELEMENT SEQUENCE rather than raw text, because a legitimate
+ * property edit changes attributes and whitespace everywhere while leaving the
+ * shape of the tree alone.
+ */
+export function editDivergence(previousCode: string, nextCode: string): {
+  /** 0 = identical structure, 1 = nothing in common. */
+  divergence: number;
+  before: number;
+  after: number;
+} {
+  const shape = (code: string): string[] =>
+    [...code.matchAll(/<\/?([A-Za-z][A-Za-z0-9.]*)/g)].map(m => m[1]);
+
+  const before = shape(previousCode);
+  const after = shape(nextCode);
+  if (before.length === 0) return { divergence: 0, before: 0, after: after.length };
+
+  // Multiset overlap: order-insensitive, so reordering a section is not
+  // mistaken for a rewrite, but replacing the components is.
+  const counts = new Map<string, number>();
+  for (const tag of before) counts.set(tag, (counts.get(tag) || 0) + 1);
+  let shared = 0;
+  for (const tag of after) {
+    const left = counts.get(tag) || 0;
+    if (left > 0) { shared++; counts.set(tag, left - 1); }
+  }
+
+  const divergence = 1 - shared / Math.max(before.length, after.length);
+  return { divergence, before: before.length, after: after.length };
+}
