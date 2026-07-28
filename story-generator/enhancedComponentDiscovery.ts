@@ -647,8 +647,17 @@ export class EnhancedComponentDiscovery {
       } as EnhancedComponent);
     }
 
-    // Store the component names for validation
-    this.validateAvailableComponents = new Set(realComponents.map(c => c.name));
+    /**
+     * ACCUMULATE. This runs once per npm package.
+     *
+     * Assigning replaced the set on every call, so for a scope with 36
+     * packages the last one processed decided what the validator would accept.
+     * The catalog kept offering all 168 components while validation knew about
+     * a handful, so the model was told to use `Box`, rejected for using it,
+     * told again by the healing loop, rejected again, and generation failed
+     * outright — three cases in a row producing no code at all.
+     */
+    for (const c of realComponents) this.validateAvailableComponents.add(c.name);
   }
 
 
@@ -1890,20 +1899,31 @@ export class EnhancedComponentDiscovery {
     invalid: string[];
     suggestions: Map<string, string>;
   }> {
-    // If we have real component validation data, use it
-    if (this.validateAvailableComponents.size > 0) {
+    /**
+     * Anything the CATALOG offers is valid, by construction.
+     *
+     * These were two independently maintained sets, and when they diverged the
+     * model was told to use a component and then punished for using it — an
+     * unwinnable loop that burned every healing attempt and returned no code.
+     * The catalog is what the model is shown, so it is the authority on what
+     * the model may use; the validation set can only ever add to it.
+     */
+    const allowed = new Set<string>(this.validateAvailableComponents);
+    for (const name of this.discoveredComponents.keys()) allowed.add(name);
+
+    if (allowed.size > 0) {
       const valid: string[] = [];
       const invalid: string[] = [];
       const suggestions = new Map<string, string>();
 
       for (const componentName of componentNames) {
-        if (this.validateAvailableComponents.has(componentName)) {
+        if (allowed.has(componentName)) {
           valid.push(componentName);
         } else {
           invalid.push(componentName);
 
           // Find a similar component
-          const suggestion = this.findSimilarComponent(componentName, Array.from(this.validateAvailableComponents));
+          const suggestion = this.findSimilarComponent(componentName, Array.from(allowed));
           if (suggestion) {
             suggestions.set(componentName, suggestion);
           }
@@ -1984,9 +2004,10 @@ export class EnhancedComponentDiscovery {
    * Get the available component names for validation
    */
   getAvailableComponentNames(): string[] {
-    if (this.validateAvailableComponents.size > 0) {
-      return Array.from(this.validateAvailableComponents).sort();
-    }
-    return Array.from(this.discoveredComponents.keys()).sort();
+    // Union, for the same reason validateComponentNames takes one: returning
+    // only the validation set hid components the catalog was actively offering.
+    const all = new Set<string>(this.validateAvailableComponents);
+    for (const name of this.discoveredComponents.keys()) all.add(name);
+    return Array.from(all).sort();
   }
 }
