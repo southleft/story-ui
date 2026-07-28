@@ -77,6 +77,7 @@ import {
 } from '../../story-generator/storybookMcpClient.js';
 import { IntentPreview, ValidationFeedback, CompletionFeedback } from './streamTypes.js';
 import { verifyStory } from '../../story-generator/verify/verifyStory.js';
+import { moduleText, waitForRecompile } from '../../story-generator/verify/renderHarness.js';
 import { reflectDesignSystem, formatCompoundReference } from '../../story-generator/knowledge/runtimeReflect.js';
 import { extractProps, extractPropsForPackages, rankProps } from '../../story-generator/knowledge/propExtractor.js';
 import { saysMoreThanName } from '../../story-generator/knowledge/descriptionQuality.js';
@@ -1186,7 +1187,21 @@ export async function runStoryGeneration(
         // helper refuses to ship anything that does not strictly reduce
         // blockers, so the worst case is a wasted call rather than a damaged
         // composition.
-        const enforce = process.env.STORY_UI_VERIFY_ENFORCE === 'true';
+        /**
+         * On by default.
+         *
+         * The verification stack finds real, specific defects — a row using 11
+         * of 16 columns, a control nothing can focus — and until now did
+         * nothing about them. Repair is strictly-better-or-nothing by
+         * construction: the candidate is re-verified and discarded unless it
+         * reduces blockers, and the original is restored on disk either way,
+         * so the worst case is one wasted call rather than a damaged story.
+         *
+         * Measured: 1 blocker to 0 on a story it could rewrite. The limit is
+         * SIZE — a 380-line composition exceeds the output ceiling and is kept
+         * unchanged, which is reported rather than silently skipped.
+         */
+        const enforce = process.env.STORY_UI_VERIFY_ENFORCE !== 'false';
         if (enforce && verification.outcome === 'issues') {
           const repair = await attemptVerificationRepair({
             code: fixedFileContents,
@@ -1200,11 +1215,65 @@ export async function runStoryGeneration(
               events.onLLMCall?.();
               // Fresh, minimal context — not the growing generate transcript.
               const result = await callLLM([{ role: 'user', content: prompt }], undefined, { provider, model });
+              /**
+               * Say when the model ran out of room rather than reporting it as
+               * "no code".
+               *
+               * Repair asks for the COMPLETE story, so a large composition can
+               * exceed the output ceiling — measured on a 380-line story, which
+               * stopped at max_tokens and produced no usable block. That is a
+               * size limit worth naming, not a model that declined to answer,
+               * and the two look identical in a log that does not distinguish
+               * them.
+               */
+              if (result.truncated) {
+                logger.warn(
+                  '⚠️ Verification repair hit the output limit regenerating this story — ' +
+                  'it is too large to rewrite in one response, so the original is kept',
+                );
+                return null;
+              }
               return extractCodeBlock(result.content, detectedFramework);
             },
             writeAndVerify: async (candidate) => {
               const { code: finalized } = finalizeStoryCode(candidate);
-              writeStory(finalized);
+              /**
+               * Capture the compiled module BEFORE writing, then wait for it to
+               * change before judging the result.
+               *
+               * Without this the loop verifies the PREVIOUS render: a grid fix
+               * changing `lg={12}` to `lg={16}` was measured as no improvement
+               * and discarded, while probing the same story a minute later
+               * showed zero problems. Storybook can take longer than ten
+               * seconds to recompile, so no fixed sleep is both safe and fast —
+               * the module text changing is the actual signal.
+               */
+              const relModule = path.relative(process.cwd(), outPath).split(path.sep).join('/');
+
+              /**
+               * A repair that changes nothing needs no wait and no re-render.
+               *
+               * The model sometimes returns the story essentially unchanged.
+               * The module text then never changes either, so waiting for a
+               * recompile burns the full timeout and reports "Storybook did
+               * not recompile in time" — which reads as an infrastructure
+               * problem when it is simply a no-op repair. Two different things
+               * must not produce the same warning.
+               */
+              const identical = (() => {
+                try { return fs.readFileSync(outPath, 'utf-8') === finalized; } catch { return false; }
+              })();
+
+              if (identical) {
+                logger.log('🔧 Repair returned the story unchanged — nothing to re-verify');
+              } else {
+                const before = await moduleText(verifyUrl, relModule);
+                writeStory(finalized);
+                const live = await waitForRecompile(verifyUrl, relModule, before);
+                if (!live) {
+                  logger.warn('⚠️ Storybook did not recompile in time — the repair check may read a stale render');
+                }
+              }
               return verifyStory({
                 storybookUrl: verifyUrl,
                 storyIdPrefix: storyIdSlug,

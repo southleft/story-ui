@@ -158,14 +158,15 @@ export async function runLayoutProbe(page: any, options: LayoutOptions = {}): Pr
 
         let used = 0;
         let measurable = true;
+        const spans: number[] = [];
         for (const child of row) {
           const cs = getComputedStyle(child);
           // `grid-column: span 5 / span 5` or resolved `2 / 7`.
           const raw = `${cs.gridColumnStart} / ${cs.gridColumnEnd}`;
           const spanMatch = raw.match(/span\s+(\d+)/);
-          if (spanMatch) { used += Number(spanMatch[1]); continue; }
+          if (spanMatch) { const n = Number(spanMatch[1]); used += n; spans.push(n); continue; }
           const nums = raw.match(/^(\d+)\s*\/\s*(\d+)$/);
-          if (nums) { used += Number(nums[2]) - Number(nums[1]); continue; }
+          if (nums) { const n = Number(nums[2]) - Number(nums[1]); used += n; spans.push(n); continue; }
           // `auto` and named lines cannot be counted honestly. One unknown
           // child makes the whole row unmeasurable rather than under-counted.
           measurable = false;
@@ -184,8 +185,26 @@ export async function runLayoutProbe(page: any, options: LayoutOptions = {}): Pr
           if (problems.length < 6) {
             problems.push({
               kind: 'grid_underfilled',
-              message: `A grid row uses ${used} of ${columnCount} columns, leaving ${unused} empty`,
-              evidence: `${row.length} item(s) spanning ${used} of ${columnCount} tracks — the remaining ${unused} render as dead space on one side`,
+              /**
+               * State the CHANGE, not just the fault.
+               *
+               * Measured: with a message that only described the defect,
+               * repair failed to reduce blockers on every attempt — the model
+               * was told a row used 12 of 16 columns and left to work out
+               * which prop that corresponds to. The same lesson as the import
+               * error that made it delete components rather than fix paths.
+               *
+               * The spans ARE the props, so naming them turns the finding into
+               * an instruction.
+               */
+              message:
+                `A grid row uses ${used} of ${columnCount} columns, leaving ${unused} empty. ` +
+                `Column spans in this row: ${spans.join(' + ')}. ` +
+                `Increase them so they total ${columnCount} (for example ${spans.length === 1
+                  ? `change the single span to ${columnCount}`
+                  : `${spans.slice(0, -1).join(' + ')} + ${columnCount - spans.slice(0, -1).reduce((a, b) => a + b, 0)}`}), ` +
+                `or add a sibling column to fill the remainder.`,
+              evidence: `${row.length} item(s) spanning ${spans.join('+')} = ${used} of ${columnCount} tracks; ${unused} columns render as dead space`,
               selector: cssPath(el),
               /**
                * Deliberately NOT attributed to the library.

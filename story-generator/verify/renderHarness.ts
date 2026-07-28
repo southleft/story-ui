@@ -268,3 +268,62 @@ export async function waitForStoryIndexed(
   }
   return { indexed: false };
 }
+
+/**
+ * Wait until the dev server has recompiled a story before judging it.
+ *
+ * The repair loop writes a fix, re-verifies, and keeps the result only if it
+ * strictly reduces blockers. Measured, that never happened — and not because
+ * the repairs were wrong. A grid fix changing `lg={12}` to `lg={16}` was
+ * verified against the PREVIOUS render, reported as no improvement, and
+ * discarded; probing the same story a minute later showed zero problems.
+ *
+ * Storybook can take longer than ten seconds to recompile, so no fixed sleep
+ * is both safe and fast. Vite serves the transformed module at the source
+ * path, so the honest signal is the module TEXT changing — which needs no
+ * guess about what the change should look like, only that one happened.
+ *
+ * Returns true when the change is live, false on timeout. A timeout is not an
+ * error: the caller proceeds and simply risks the stale reading it always had.
+ */
+export async function waitForRecompile(
+  storybookUrl: string,
+  /** Path relative to the project root, e.g. `src/stories/generated/x.stories.tsx`. */
+  modulePath: string,
+  /** Module text captured BEFORE the write. */
+  previousText: string | null,
+  timeoutMs = 25000,
+  intervalMs = 500,
+): Promise<boolean> {
+  if (previousText === null) return false;
+  const base = storybookUrl.replace(/\/+$/, '');
+  const url = `${base}/${modulePath.replace(/^\/+/, '')}`;
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${url}?t=${Date.now()}`, { headers: { 'Cache-Control': 'no-cache' } });
+      if (res.ok) {
+        const text = await res.text();
+        if (text !== previousText) return true;
+      }
+    } catch {
+      // Dev server busy recompiling; keep polling until the deadline.
+    }
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+  return false;
+}
+
+/** The dev server's current transformed text for a module, or null. */
+export async function moduleText(storybookUrl: string, modulePath: string): Promise<string | null> {
+  try {
+    const base = storybookUrl.replace(/\/+$/, '');
+    const res = await fetch(`${base}/${modulePath.replace(/^\/+/, '')}?t=${Date.now()}`, {
+      headers: { 'Cache-Control': 'no-cache' },
+    });
+    return res.ok ? await res.text() : null;
+  } catch {
+    return null;
+  }
+}
