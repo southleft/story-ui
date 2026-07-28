@@ -1952,6 +1952,15 @@ function packageIsAbsent(pkgName: string, consumerDeps: Set<string>, anchor: str
  * considerations file (the sole escape hatch). Everything else — Tailwind,
  * other UI kits, random npm packages — is rejected and fed to self-healing.
  */
+/** Does this specifier name an actual installed package (not just a scope dir)? */
+function hasPackageManifest(specifier: string): boolean {
+  try {
+    return fs.existsSync(path.join(process.cwd(), 'node_modules', specifier, 'package.json'));
+  } catch {
+    return false;
+  }
+}
+
 /** Extensions a relative specifier may resolve to, in resolution order. */
 const LOCAL_EXTENSIONS = ['.tsx', '.ts', '.jsx', '.js', '.mjs'];
 
@@ -2156,6 +2165,34 @@ export function validateImportIsolation(
     if (specifier.startsWith('.') || specifier.startsWith('/')) continue;
     const root = importSpecifierRoot(specifier);
 
+    /**
+     * A SCOPE is not a package.
+     *
+     * `@atlaskit` names a directory in node_modules, not something importable.
+     * It is the configured importPath, so it sat in allowedRoots and every
+     * check waved it through — while the model, told its design system is
+     * "@atlaskit", collapsed eleven components onto
+     * `import { Avatar, Box, Stack, … } from '@atlaskit'`. That resolves to
+     * nothing and renders nothing.
+     *
+     * The catalog already gives each component its real package. This turns an
+     * unrenderable story into an error the healing loop can act on.
+     */
+    if (specifier === importScope && importScope && !hasPackageManifest(importScope)) {
+      const bound = boundNames
+        .map(name => components.find(c => c.name === name && c.__componentPath))
+        .filter((c): c is { name: string; __componentPath: string } => !!c?.__componentPath);
+      errors.push(
+        `Import from "${specifier}" is not valid — that is an npm SCOPE, a directory of packages, not a package. ` +
+        `Every component lives in its own package under it. ` +
+        (bound.length
+          ? bound.slice(0, 4).map(c => `Import ${c.name} from "${c.__componentPath}".`).join(' ') + ' '
+          : '') +
+        `Use the exact import path shown beside each component in the component reference.`,
+      );
+      continue;
+    }
+
     if (allowedRoots.has(root)) continue;
 
     /**
@@ -2173,7 +2210,9 @@ export function validateImportIsolation(
      * an unrenderable story into a validation error the healing loop can act
      * on, and names the real package when discovery knows it.
      */
-    if (importScope && root.startsWith(importScope + '/')) {
+    // Same design system family: a sibling package under the scope, or the
+    // scope name itself when it really is a package.
+    if (importScope && (root.startsWith(importScope + '/') || root === importScope)) {
       if (!packageIsAbsent(root, consumerDeps, importSpecifierRoot(config.importPath))) continue;
 
       // Only the names THIS import binds. Searching the whole file would find

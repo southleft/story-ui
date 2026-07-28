@@ -133,6 +133,36 @@ import Avatar from '@atlaskit/avatar';
       expect(validateImportIsolation(code, atlas, 'react', '', components)).toEqual([]);
     });
 
+    it('rejects an import from the SCOPE itself, which is not a package', () => {
+      // `@atlaskit` names a directory in node_modules. It is the configured
+      // importPath, so it sat in allowedRoots and every check waved it through
+      // while the model collapsed eleven components onto it. Resolves to
+      // nothing, renders nothing.
+      process.chdir(fakeProject(['@atlaskit/avatar', '@atlaskit/primitives']));
+      const code = "import { Avatar, Box } from '@atlaskit';";
+      const errors = validateImportIsolation(code, atlas, 'react', '', components);
+      expect(errors.length).toBe(1);
+      expect(errors[0]).toContain('npm SCOPE');
+    });
+
+    it('names the real package for each component on a scope import', () => {
+      process.chdir(fakeProject(['@atlaskit/avatar', '@atlaskit/primitives']));
+      const errors = validateImportIsolation(
+        "import { Grid } from '@atlaskit';", atlas, 'react', '', components,
+      );
+      expect(errors[0]).toContain('@atlaskit/primitives');
+    });
+
+    it('allows a scope name that IS a real package', () => {
+      // Some scopes ship a package at the root. Rejecting by shape alone would
+      // break them, so the check asks node_modules rather than assuming.
+      const root = fakeProject(['@atlaskit/avatar']);
+      fs.mkdirSync(path.join(root, 'node_modules', '@atlaskit'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'node_modules', '@atlaskit', 'package.json'), '{"name":"@atlaskit"}');
+      process.chdir(root);
+      expect(validateImportIsolation("import { Avatar } from '@atlaskit';", atlas, 'react', '', components)).toEqual([]);
+    });
+
     it('stays silent when cwd is not the consumer project', () => {
       // The check rejects, so it must not fire on a guess. With the design
       // system itself absent, this cwd cannot speak to its scope at all —
