@@ -13,6 +13,7 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 import express from 'express';
 import cors from 'cors';
 import { getComponents, getProps } from './routes/components.js';
+import { editablePropsHandler, editPropHandler } from './routes/editProp.js';
 import { makeHandoff, makeHandoffStatus } from './routes/handoff.js';
 import { makeListVersions, makeRestoreVersion } from './routes/storyVersions.js';
 import {
@@ -163,6 +164,10 @@ app.use((err: any, _req: express.Request, res: express.Response, next: express.N
 
 // Component discovery routes
 app.get('/mcp/components', getComponents);
+// Direct property editing — the deterministic path for changes that have
+// exactly one correct answer, so "make this button red" never reaches a model.
+app.get('/mcp/editable-props', editablePropsHandler);
+app.post('/mcp/edit-prop', editPropHandler);
 app.get('/mcp/props', getProps);
 
 // AI generation routes
