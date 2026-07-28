@@ -381,12 +381,41 @@ async function generate(prompt) {
   return completion;
 }
 
+/**
+ * Every name an import binds — DEFAULT imports included.
+ *
+ * Matching only braced imports made this bench blind to an entire class of
+ * design system. Atlassian ships one package per component and most are
+ * default exports, so `import Button from '@atlaskit/button/new'` was
+ * invisible: the suite reported Button, Tooltip, Lozenge and Textfield as
+ * MISSING from code that imported all four correctly, and scored 0/3 on
+ * generations that had chosen exactly the right components.
+ *
+ * The same species of defect as the resolution bench's regex that could not
+ * see default-export components — a measurement that quietly shrinks reads
+ * exactly like a failure.
+ */
 function importsOf(code) {
-  return [...code.matchAll(/import\s*(?:type\s*)?{([^}]+)}\s*from\s*['"]([^'"]+)['"]/g)]
-    .map(m => ({
-      from: m[2],
-      names: m[1].split(',').map(s => s.trim().split(/\s+as\s+/)[0]).filter(Boolean),
-    }));
+  const out = [];
+  // `import Default, { A, B as C } from 'x'` / `import * as NS from 'x'`
+  const re = /import\s+(?:type\s+)?(?:([A-Za-z_$][\w$]*)\s*,?\s*)?(?:\*\s+as\s+([A-Za-z_$][\w$]*)\s*)?(?:{([^}]*)})?\s*from\s*['"]([^'"]+)['"]/g;
+  let m;
+  while ((m = re.exec(code)) !== null) {
+    const [, def, ns, braced, from] = m;
+    const names = [];
+    if (def) names.push(def);
+    if (ns) names.push(ns);
+    if (braced) {
+      for (const part of braced.split(',')) {
+        // The ALIAS is the name the code uses, and what a case should match.
+        const bits = part.trim().split(/\s+as\s+/).map(x => x.trim()).filter(Boolean);
+        const bound = bits[bits.length - 1];
+        if (bound && /^[A-Za-z_$][\w$]*$/.test(bound)) names.push(bound);
+      }
+    }
+    if (names.length) out.push({ from, names });
+  }
+  return out;
 }
 
 /**
