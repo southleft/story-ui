@@ -127,6 +127,150 @@ const CT_CASES = [
   },
 ];
 
+
+/**
+ * PUBLISHED ENTERPRISE DESIGN SYSTEMS — Carbon, MUI, Atlassian.
+ *
+ * Selection had only ever been measured on Mantine, housekit and
+ * college-town. The knowledge layer was then improved substantially for these
+ * three — Carbon to 98% props and 85 deprecations, Atlassian from 31 to 168
+ * components — with no measurement of whether any of it changed what the model
+ * CHOOSES. That left the most expensive question answered by assumption.
+ *
+ * Every name below was checked twice: that the installed package exports it,
+ * and that OUR DISCOVERY surfaces it. The second check matters more. A case
+ * demanding a component the model was never shown measures our catalog, not
+ * its judgement, and would fail forever while looking like a selection defect.
+ *
+ *   node bench/componentSelection.mjs --suite carbon
+ */
+const LIBRARY_CASES = [
+  {
+    suite: 'mui', id: 'mui-material-invoices-sortable-paginated-table',
+    prompt: 'Build the Invoices screen for our billing console: a header strip with a search field, '
+      + 'status filter chips and a date-range button; beneath it a scrollable table of invoices '
+      + '(number, customer, issued, due, amount, status) with a sticky header row, where Issued '
+      + 'and Amount are click-to-sort with a visible ascending/descending indicator on the active '
+      + 'column, each row ending in a right-aligned overflow icon action; and a footer bar with '
+      + 'rows-per-page and page navigation showing \'1-10 of 248\'.',
+    expect: [['TableContainer'], ['Table'], ['TableHead'], ['TableBody'], ['TableRow'], ['TableCell'], ['TableSortLabel'], ['TablePagination', 'Pagination']],
+    avoidTags: ['table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td'],
+    minRegions: 3,
+  },
+  {
+    suite: 'mui', id: 'mui-material-onboarding-vertical-stepper-flow',
+    prompt: 'Design the \'Add a payment method\' flow inside our merchant onboarding panel: a vertical '
+      + 'progress tracker with four stages (Business details, Bank account, Verification, Review) '
+      + 'where the active stage expands inline to reveal its own form fields rather than swapping '
+      + 'the whole panel, a country field that filters a long list of countries as the user types '
+      + 'and shows a clearable selection, Back/Continue actions under each stage\'s content, and a '
+      + 'transient success toast pinned to the bottom-left after the final submit.',
+    expect: [['Stepper'], ['Step'], ['StepLabel'], ['StepContent'], ['Autocomplete'], ['Snackbar']],
+    avoidTags: ['ol', 'select', 'button', 'dialog'],
+    minRegions: 4,
+  },
+  {
+    suite: 'mui', id: 'mui-material-notification-prefs-accordion-list',
+    prompt: 'Build the Notification Preferences page for our workspace admin: a navigational trail '
+      + 'reading Settings / Workspace / Notifications across the top, then three collapsible '
+      + 'panels (Email, In-app, Mobile push) that expand one at a time with a chevron in each '
+      + 'header and a summary count beside the title, each panel containing a dense set of rows '
+      + 'where every row has a leading channel icon, a bold title with a smaller description line '
+      + 'underneath, and a switch pinned to the trailing edge; finally a floating action button '
+      + 'anchored bottom-right that fans out on hover into Mute all, Export log and Send test.',
+    expect: [['Breadcrumbs'], ['Accordion'], ['AccordionSummary'], ['AccordionDetails'], ['List'], ['ListItem', 'ListItemButton'], ['ListItemText'], ['SpeedDial'], ['SpeedDialAction']],
+    avoidTags: ['ul', 'li', 'ol', 'details', 'summary'],
+    minRegions: 4,
+  },
+  {
+    suite: 'carbon', id: 'carbon-contained-list-row-actions',
+    prompt: 'Build a "Data source connections" management panel for our admin console: a bordered list '
+      + 'region titled "Connected sources" with an inline search affordance in its header that '
+      + 'expands from an icon when clicked, plus an "Add source" button in that same header. Each '
+      + 'row shows the source name, a status indicator, and a per-row kebab menu on the right with '
+      + 'Edit, Test connection, and a destructive Remove. Below it, a second bordered list titled '
+      + '"Archived sources" using the muted/disclosed treatment with just names and a Restore item '
+      + 'in each row\'s kebab menu.',
+    expect: [['ContainedList'], ['ContainedListItem'], ['OverflowMenu'], ['OverflowMenuItem'], ['ExpandableSearch', 'Search'], ['Tag']],
+    avoidTags: ['ul', 'li', 'table'],
+    minRegions: 3,
+  },
+  {
+    suite: 'carbon', id: 'carbon-provision-review-step',
+    prompt: 'Design the final "Review and provision" screen of a 4-step cluster provisioning wizard. '
+      + 'Across the top, a horizontal step tracker showing Details / Networking / Review / '
+      + 'Provision with Review as the current step, the first two complete, and Networking flagged '
+      + 'with a warning caption. The main region is a read-only specification summary rendered as '
+      + 'label/value rows under a two-column header ("Setting" / "Value") covering region, node '
+      + 'type, node count, Kubernetes version, and encryption. To the right, a cost estimate card '
+      + 'showing the monthly total up front that expands in place — not into a modal or an '
+      + 'accordion — to reveal the per-line-item breakdown underneath. Footer has Back and '
+      + 'Provision cluster actions.',
+    expect: [['ProgressIndicator'], ['ProgressStep'], ['StructuredListWrapper'], ['StructuredListHead', 'StructuredListBody'], ['StructuredListRow'], ['StructuredListCell'], ['ExpandableTile'], ['TileAboveTheFoldContent'], ['TileBelowTheFoldContent']],
+    avoidTags: ['dl', 'dt', 'dd', 'table', 'thead', 'tbody', 'ol'],
+    minRegions: 4,
+  },
+  {
+    suite: 'carbon', id: 'carbon-access-review-batch-table',
+    prompt: 'Build an "Access review" console for our security team. A filter bar sits above the grid '
+      + 'with a type-ahead single-select for Workspace (several hundred workspaces, must narrow as '
+      + 'the user types) and a multi-select for Roles with checkboxes and a selected-count badge. '
+      + 'The grid below lists service accounts with columns Account, Owner, Last used, and Scopes '
+      + 'count; it has a toolbar containing a search field and a Download action. Rows are '
+      + 'checkbox-selectable, and selecting one or more swaps the toolbar for a batch action bar '
+      + 'offering Approve, Rotate key, and a destructive Revoke with a live selected count and a '
+      + 'cancel. Every row also expands to reveal that account\'s granted scopes as a nested '
+      + 'detail region.',
+    expect: [['DataTable'], ['Table'], ['TableContainer'], ['TableToolbar', 'TableToolbarContent'], ['TableToolbarSearch'], ['TableBatchActions'], ['TableBatchAction'], ['TableSelectRow'], ['TableSelectAll'], ['TableExpandRow'], ['TableExpandedRow'], ['TableExpandHeader'], ['ComboBox'], ['FilterableMultiSelect', 'MultiSelect']],
+    avoidTags: ['table', 'thead', 'tbody', 'tr', 'th', 'td', 'select'],
+    minRegions: 3,
+  },
+  {
+    suite: 'atlaskit', id: 'atlaskit-metric-tiles-drilldown',
+    prompt: 'Build the analytics overview strip that sits at the top of a Jira project dashboard: a '
+      + 'row of four KPI cards (Open work items 128, Resolved this sprint 41, Median cycle time '
+      + '3.2d, Escaped defects 6). Each card shows a small tinted icon container, the figure '
+      + 'rendered in the design system\'s tabular metric type so the digits don\'t jitter while '
+      + 'the number polls every 30s, a sub-label, and a coloured delta badge like "+12% vs last '
+      + 'sprint". The entire card is one click target that drills through to the filtered board, '
+      + 'and a fifth card is still fetching so it renders as a shimmering placeholder in the same '
+      + 'footprint.',
+    expect: [['MetricText'], ['Pressable'], ['Lozenge'], ['Skeleton', 'TileSkeleton'], ['Grid', 'Inline', 'Flex', 'Stack', 'Box']],
+    avoidTags: ['button', 'h2', 'h3'],
+    minRegions: 4,
+  },
+  {
+    suite: 'atlaskit', id: 'atlaskit-work-item-header-split-actions',
+    prompt: 'Compose the header region of a Jira work item detail view. Left side: the item title as a '
+      + 'proper heading, an in-progress status pill, and a metadata line with the assignee. Below '
+      + 'it, the item\'s labels as a wrapping row of chips. Right side, an action bar: the primary '
+      + 'action is a split control — "Create branch" performs the default action while an attached '
+      + 'chevron segment opens the other repo choices; next to it a grouped pair of secondary '
+      + 'actions (Watch, Share); and finally an icon-only overflow control whose meaning is only '
+      + 'conveyed on hover, so it needs a hover/focus label rather than a title attribute.',
+    // SplitButton lives in the @atlaskit/button/new subpath entry point and IconButton is not 
+    // in the installed version, so neither reaches the catalog. Demanding a component the model was never shown measures nothing.
+    expect: [['Button'], ['Tooltip'], ['Lozenge'], ['Tag', 'SimpleTag', 'RemovableTag', 'AvatarTag']],
+    avoidTags: ['button', 'h1', 'h2'],
+    minRegions: 3,
+  },
+  {
+    suite: 'atlaskit', id: 'atlaskit-invite-members-panel',
+    prompt: 'Build the "People" panel of a team settings page. Top: an invite form with an email entry '
+      + 'field and its helper text, a permission scope list of four independent toggles (Can view, '
+      + 'Can comment, Can edit, Can administer) each with its own label, and a small info '
+      + 'affordance next to "Can administer" that reveals an explanation on hover and keyboard '
+      + 'focus. Below: the existing members list, where each row is an avatar paired with the '
+      + 'member\'s name as primary text and their role as secondary text on one line, plus a '
+      + 'dismissible team chip with an × on the right. The members list is still loading for the '
+      + 'first render, so show four shimmering placeholder rows in the same row geometry before '
+      + 'the data arrives.',
+    expect: [['Textfield'], ['Checkbox'], ['Tooltip'], ['AvatarItem'], ['Skeleton'], ['RemovableTag', 'Tag']],
+    avoidTags: ['input', 'img', 'h2'],
+    minRegions: 3,
+  },
+];
+
 const CASES = [
   /**
    * HOUSEKIT — a design system the model provably has no training data for.
