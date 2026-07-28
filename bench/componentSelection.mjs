@@ -31,13 +31,38 @@ const args = process.argv.slice(2);
 const arg = (n, d) => { const i = args.indexOf(`--${n}`); return i >= 0 && args[i + 1] ? args[i + 1] : d; };
 const flag = (n) => args.includes(`--${n}`);
 
-const MCP = arg('mcp', 'http://localhost:4101');
 const ONLY = arg('only', null);
 const LIMIT = Number(arg('cases', '0')) || Infinity;
 const USE_MANIFEST = !flag('no-manifest');
-const PROJECT = arg('project', '/Users/tjpitre/Sites/test-storybooks/react-mantine');
-const IMPORT_PATH = arg('import', '@mantine/core');
 const SUITE = arg('suite', null);
+
+/**
+ * Where each suite runs.
+ *
+ * Selection was only ever measured on Mantine, housekit and college-town —
+ * two barrel libraries and a local one. The knowledge layer was then improved
+ * substantially for Carbon, MUI and Atlassian without any measurement of
+ * whether it changed what the model CHOOSES on them, which left the most
+ * expensive question of all answered by assumption.
+ *
+ * Each suite carries its own project, import path and server so a run needs
+ * one flag rather than three that can silently disagree — pointing the MCP at
+ * one project while resolving imports against another produced a bench that
+ * measured neither.
+ */
+const SUITE_CONFIG = {
+  mantine: { project: '/Users/tjpitre/Sites/test-storybooks/react-mantine', importPath: '@mantine/core', mcp: 'http://localhost:4101' },
+  ct: { project: '/Users/tjpitre/Sites/college-town', importPath: '@/components', mcp: 'http://localhost:4106' },
+  mui: { project: '/Users/tjpitre/Sites/test-storybooks/mui-material', importPath: '@mui/material', mcp: 'http://localhost:4107' },
+  atlaskit: { project: '/Users/tjpitre/Sites/test-storybooks/atlaskit', importPath: '@atlaskit', mcp: 'http://localhost:4108' },
+  carbon: { project: '/Users/tjpitre/Sites/test-storybooks/carbon', importPath: '@carbon/react', mcp: 'http://localhost:4109' },
+};
+
+const suiteDefaults = SUITE_CONFIG[SUITE] || SUITE_CONFIG.mantine;
+// Explicit flags still win, so a one-off run against an unlisted project works.
+const MCP = arg('mcp', suiteDefaults.mcp);
+const PROJECT = arg('project', suiteDefaults.project);
+const IMPORT_PATH = arg('import', suiteDefaults.importPath);
 
 /**
  * expect     at least one of each group must appear — the composite that exists
@@ -421,7 +446,15 @@ function regionCount(code, designSystemNames) {
 }
 
 async function main() {
-  let cases = SUITE ? CT_CASES.filter(c => c.suite === SUITE) : CASES;
+  // One registry, so a new suite is added in exactly one place. The old form
+  // filtered CT_CASES alone, so `--suite carbon` would have silently matched
+  // nothing and reported a clean run over zero cases.
+  const ALL = [...CASES, ...CT_CASES, ...LIBRARY_CASES];
+  let cases = SUITE ? ALL.filter(c => c.suite === SUITE) : CASES;
+  if (SUITE && cases.length === 0) {
+    console.error(`No cases for suite "${SUITE}". Known suites: ${[...new Set(ALL.map(c => c.suite).filter(Boolean))].join(', ')}`);
+    process.exit(1);
+  }
   if (ONLY) cases = cases.filter(c => c.id.includes(ONLY));
   cases = cases.slice(0, LIMIT);
 

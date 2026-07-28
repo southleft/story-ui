@@ -1133,16 +1133,34 @@ export class EnhancedComponentDiscovery {
       names.add(match[3]);
     }
 
-    // 2. Check for grouped exports: export { Name1, Name2 }
+    /**
+     * 2. Grouped exports: `export { Name }`, `export { X as Y }`.
+     *
+     * The EXPORTED name is the alias, not the local one. `export { X as Y }`
+     * means a consumer writes `import { Y }`; the local name is private and
+     * often not importable at all.
+     *
+     * Taking the name before `as` dropped every component a package re-exports
+     * from a default — `export { default as Box } from './components/box'`
+     * yielded the word `default`, which fails the PascalCase test and vanished.
+     * Measured on `@atlaskit/primitives`: `Grid` and `Bleed` were found because
+     * they happen to be plain named re-exports, while `Box`, `Inline`, `Stack`,
+     * `Flex`, `Text`, `Pressable` and `MetricText` were all invisible. That is
+     * the entire layout primitive set of the design system, which is why
+     * Atlassian compositions had nothing to lay out with and fell back to raw
+     * pixel values.
+     */
     const groupedExportRegex = /export\s*\{\s*([^}]+)\s*\}/g;
     while ((match = groupedExportRegex.exec(content)) !== null) {
       const exports = match[1].split(',');
       for (const exp of exports) {
-        // Handle "Name" or "Name as Alias" - we want the original name
-        const namePart = exp.trim().split(/\s+as\s+/)[0].trim();
-        // Only include PascalCase names (components start with uppercase)
-        if (/^[A-Z][A-Za-z0-9]*$/.test(namePart)) {
-          names.add(namePart);
+        const parts = exp.trim().split(/\s+as\s+/).map(p => p.trim()).filter(Boolean);
+        const exported = parts[parts.length - 1];
+        // `export { default }` with no alias exports no NAME to import.
+        if (!exported || exported === 'default') continue;
+        // Only PascalCase names (components start with uppercase).
+        if (/^[A-Z][A-Za-z0-9]*$/.test(exported)) {
+          names.add(exported);
         }
       }
     }

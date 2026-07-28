@@ -994,7 +994,6 @@ export class DynamicPackageDiscovery {
       const exportPatterns = [
         /export\s+declare\s+const\s+([A-Z][a-zA-Z0-9]+)/g,
         /export\s+declare\s+function\s+([A-Z][a-zA-Z0-9]+)/g,
-        /export\s+\{\s*([A-Z][a-zA-Z0-9, ]+)\s*\}/g,
         /export\s+default\s+([A-Z][a-zA-Z0-9]+)/g,
       ];
 
@@ -1006,6 +1005,42 @@ export class DynamicPackageDiscovery {
             result[componentName] = `Component_${componentName}`;
             logger.log(`📍 Found component in .d.ts: ${componentName}`);
           }
+        }
+      }
+
+      /**
+       * Braced export lists, parsed rather than pattern-matched.
+       *
+       * The old pattern was `export\s*\{\s*([A-Z][a-zA-Z0-9, ]+)\s*\}` — the
+       * list had to BEGIN with a capital letter, so
+       *
+       *   export { default as Box } from './components/box';
+       *
+       * never matched. Measured on `@atlaskit/primitives`: `Grid` and `Bleed`
+       * were found because they happen to be plain named re-exports, while
+       * `Box`, `Inline`, `Stack`, `Flex`, `Text`, `Pressable` and `MetricText`
+       * were invisible — the design system's entire layout primitive set. A
+       * composition with nothing to lay out with falls back to raw pixel
+       * values, which is exactly what Atlassian output was doing.
+       *
+       * The same pattern also admitted `export { Foo as Bar }` as one capture
+       * and registered a component literally named "Foo as Bar".
+       *
+       * The EXPORTED name is the alias. `export { X as Y }` means a consumer
+       * writes `import { Y }`; the local name may not be importable at all.
+       */
+      const bracedExports = /export\s*(?:type\s*)?\{([^}]*)\}/g;
+      let braced;
+      while ((braced = bracedExports.exec(content)) !== null) {
+        for (const entry of braced[1].split(',')) {
+          const parts = entry.trim().split(/\s+as\s+/).map(p => p.trim()).filter(Boolean);
+          const exported = parts[parts.length - 1];
+          // `export { default }` with no alias exposes no importable name.
+          if (!exported || exported === 'default') continue;
+          if (!/^[A-Z][a-zA-Z0-9]*$/.test(exported)) continue;
+          if (result[exported]) continue;
+          result[exported] = `Component_${exported}`;
+          logger.log(`📍 Found component in .d.ts: ${exported}`);
         }
       }
     } catch (error) {
