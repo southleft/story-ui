@@ -13,7 +13,7 @@
 
 import { logger } from '../logger.js';
 import { resolveHostTooling, canLaunchBrowser } from './hostTooling.js';
-import { renderStory, waitForStoryIndexed } from './renderHarness.js';
+import { renderStory, waitForStoryIndexed, indexIsStale } from './renderHarness.js';
 import { runDomCensus } from './probes/domCensus.js';
 import { runA11yProbe, isGenerationDefect, isDesignSystemConcern, isDesignSystemInternal } from './probes/a11y.js';
 import type { Finding, VerifyReport } from './findings.js';
@@ -34,6 +34,16 @@ export interface VerifyStoryOptions {
   projectRoot?: string;
   /** Total budget. Verification must never dominate generation latency. */
   timeoutMs?: number;
+  /**
+   * The design system's component names, so findings can be attributed to the
+   * library that rendered the markup rather than to the story that used it.
+   */
+  libraryComponents?: string[];
+  /**
+   * Where generated stories are written, so "not indexed" can be told apart
+   * from "Storybook's watcher has stopped noticing files".
+   */
+  generatedDir?: string;
 }
 
 const notVerified = (reason: string, started: number, extra: Finding[] = []): VerifyReport => ({
@@ -44,9 +54,33 @@ const notVerified = (reason: string, started: number, extra: Finding[] = []): Ve
   durationMs: Date.now() - started,
 });
 
-/** Map census problems onto typed findings with deliberate severity choices. */
-function censusFindings(problems: Awaited<ReturnType<typeof runDomCensus>>['problems']): Finding[] {
+/**
+ * Map census problems onto typed findings with deliberate severity choices.
+ *
+ * A problem in markup the LIBRARY rendered is demoted before any of the
+ * per-kind choices below apply. The defect is real — a sortable `<th>` with an
+ * onClick and no tabIndex genuinely cannot be operated by keyboard — but the
+ * story did not write that markup and cannot change it. The only repair
+ * available to a model told to fix it is to stop using the component, which
+ * turns a composition built from the design system into one that avoids it.
+ *
+ * Still reported, because a design system team should see it. Never blocking,
+ * never repairable, and named so the address is unambiguous.
+ */
+export function censusFindings(problems: Awaited<ReturnType<typeof runDomCensus>>['problems']): Finding[] {
   return problems.map((p, i) => {
+    if (p.ownedByLibrary && p.owner) {
+      return {
+        id: `library-${p.kind}-${i}`,
+        severity: 'warning',
+        class: p.kind === 'clickable_non_button' || p.kind === 'unnamed_icon_control' ? 'a11y' : 'interaction',
+        message: `${p.message} — in <${p.owner}>, a design system component`,
+        evidence: [p.evidence, `rendered by <${p.owner}>, not by this story; not fixable from the composition`]
+          .filter(Boolean).join(' · '),
+        selector: p.selector,
+        repairable: false,
+      } as Finding;
+    }
     switch (p.kind) {
       case 'fake_field':
         return {
@@ -97,7 +131,7 @@ function censusFindings(problems: Awaited<ReturnType<typeof runDomCensus>>['prob
 
 export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyReport> {
   const started = Date.now();
-  const { storybookUrl, storyIdPrefix, title, projectRoot = process.cwd(), timeoutMs = 20000 } = options;
+  const { storybookUrl, storyIdPrefix, title, projectRoot = process.cwd(), timeoutMs = 20000, libraryComponents, generatedDir } = options;
 
   if (!storybookUrl) {
     return notVerified('No Storybook URL available to verify against', started);
@@ -117,13 +151,26 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
   // separates "generated badly" from "Storybook never noticed the file".
   const indexed = await waitForStoryIndexed(storybookUrl, storyIdPrefix, Math.min(10000, timeoutMs), 250, title);
   if (!indexed.indexed || !indexed.storyId) {
+    // Stale watcher or broken story? The counts answer it, and the two need
+    // very different responses from whoever reads this.
+    const staleness = generatedDir
+      ? await indexIsStale(storybookUrl, generatedDir)
+      : { stale: false, onDisk: 0, indexed: 0 };
+
     return notVerified(
-      `Story did not appear in Storybook's index — it may not have been picked up yet`,
+      staleness.stale
+        ? `Storybook's index is behind the filesystem — its file watcher has stopped picking up changes. Restart Storybook to verify.`
+        : `Story did not appear in Storybook's index — it may not have been picked up yet`,
       started,
       [{
-        id: 'not-indexed', severity: 'warning', class: 'infrastructure',
-        message: 'Storybook has not indexed the generated story',
-        evidence: `no entry starting with "${storyIdPrefix}--" after polling /index.json`,
+        id: staleness.stale ? 'stale-index' : 'not-indexed',
+        severity: 'warning', class: 'infrastructure',
+        message: staleness.stale
+          ? 'Storybook\'s story index is stale — this is a dev-server problem, not a defect in the generated story'
+          : 'Storybook has not indexed the generated story',
+        evidence: staleness.stale
+          ? `${staleness.onDisk} generated story files on disk, ${staleness.indexed} in Storybook's index`
+          : `no entry starting with "${storyIdPrefix}--" after polling /index.json`,
         repairable: false,
       }],
     );
@@ -169,7 +216,7 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
       });
     }
 
-    const census = await runDomCensus(render.page);
+    const census = await runDomCensus(render.page, { libraryComponents });
     findings.push(...censusFindings(census.problems));
 
     // Accessibility. Only rules that indicate the GENERATOR produced wrong

@@ -45,15 +45,86 @@ export interface CensusResult {
     message: string;
     evidence: string;
     selector?: string;
+    /**
+     * The component React says rendered this node, when it can be determined.
+     *
+     * Without it, verification cannot tell a defect the composition CAUSED
+     * from one it INHERITED. Measured on a design system whose Datagrid
+     * renders a sortable `<th>` with `cursor: pointer`, an onClick and no
+     * tabIndex: three keyboard blockers, all real, none fixable from the
+     * story. The only repair available to a model told to fix them is to stop
+     * using the component — which is the failure this whole branch keeps
+     * closing.
+     */
+    owner?: string;
+    /** True when `owner` is one of the design system's own components. */
+    ownedByLibrary?: boolean;
   }>;
+}
+
+export interface CensusOptions {
+  /**
+   * Names of the design system's components, so a node can be attributed.
+   *
+   * Passed in rather than inferred from class names. The previous attribution
+   * matched `mantine-Slider-thumb` and `MuiSlider-thumb` by shape, which by
+   * construction cannot see a library that styles inline or with Tailwind —
+   * and those are exactly the private design systems this tool exists for.
+   */
+  libraryComponents?: string[];
 }
 
 /**
  * The census body runs INSIDE the page. It must be fully self-contained —
  * no imports, no closures over module scope.
  */
-export async function runDomCensus(page: any): Promise<CensusResult> {
-  return page.evaluate(() => {
+export async function runDomCensus(page: any, options: CensusOptions = {}): Promise<CensusResult> {
+  return page.evaluate((opts: CensusOptions) => {
+    const LIBRARY = new Set(opts?.libraryComponents || []);
+
+    /**
+     * The component that rendered this DOM node, from React's fiber.
+     *
+     * A host fiber's nearest COMPONENT ancestor is the component whose render
+     * produced it: for a `<th>` inside Datagrid the chain is th → tr → thead →
+     * table → Datagrid, and for markup the story wrote itself the chain ends
+     * at the story's own function. That distinction is the whole question, and
+     * the fiber states it — unlike a class name, which a library styling
+     * inline never emits.
+     */
+    const ownerOf = (node: any): string | null => {
+      const key = Object.keys(node).find((k: string) =>
+        k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$'));
+      if (!key) return null;
+
+      // forwardRef/memo wrappers carry the real component inside.
+      const nameOf = (t: any): string | null => {
+        if (!t) return null;
+        if (typeof t === 'string') return null;
+        if (typeof t === 'function') return t.displayName || t.name || null;
+        if (typeof t === 'object') return t.displayName || nameOf(t.render) || nameOf(t.type) || null;
+        return null;
+      };
+      // Plumbing that renders no markup of its own and names no author.
+      const NOISE = /^(Fragment|ForwardRef|Memo|Unknown|Anonymous|Slot|Provider|_c\d*)$/;
+
+      let f: any = node[key];
+      let guard = 0;
+      while (f && guard++ < 40) {
+        if (typeof f.type !== 'string' && f.type) {
+          const n = (nameOf(f.type) || '').replace(/^.*\//, '');
+          if (n && !NOISE.test(n)) return n;
+        }
+        f = f.return;
+      }
+      return null;
+    };
+
+    const attribute = (el: any) => {
+      const owner = ownerOf(el);
+      return owner ? { owner, ownedByLibrary: LIBRARY.has(owner) } : {};
+    };
+
     const root: HTMLElement =
       (document.querySelector('#storybook-root') as HTMLElement) ||
       (document.querySelector('#root') as HTMLElement) ||
@@ -225,6 +296,7 @@ export async function runDomCensus(page: any): Promise<CensusResult> {
         message: 'A search/input affordance is rendered but cannot accept text — it has no real input element',
         evidence: `"${text}" sits in a field-like container with no input/textarea/contenteditable inside`,
         selector: cssPath(el),
+        ...attribute(el),
       });
     }
 
@@ -248,6 +320,7 @@ export async function runDomCensus(page: any): Promise<CensusResult> {
           message: 'Icon is not inside any focusable control and is not marked decorative',
           evidence: 'If it is interactive it needs a button wrapper; if decorative it needs aria-hidden="true"',
           selector: cssPath(svg),
+          ...attribute(svg),
         });
       }
     }
@@ -334,6 +407,7 @@ export async function runDomCensus(page: any): Promise<CensusResult> {
           message: 'Icon is not visible against the background it sits on',
           evidence: `contrast ${ratio.toFixed(2)}:1 — icon rgb(${fg.map(Math.round).join(',')}) on rgb(${bg.map(Math.round).join(',')}). A filled parent (timeline bullet, selected tab, status chip) usually means the icon needs an explicit contrasting colour rather than a light/subtle variant.`,
           selector: cssPath(svg as Element),
+          ...attribute(svg as Element),
         });
       }
     }
@@ -362,6 +436,8 @@ export async function runDomCensus(page: any): Promise<CensusResult> {
             message: 'Element looks clickable but cannot be reached or activated by keyboard',
             evidence: hasRole ? 'has role="button" without a tabindex' : 'has cursor:pointer but is not focusable',
             selector: cssPath(el),
+        ...attribute(el),
+            ...attribute(el),
           });
         }
       }
@@ -398,6 +474,8 @@ export async function runDomCensus(page: any): Promise<CensusResult> {
             message: 'Icon-only control has no accessible name',
             evidence: 'no aria-label, aria-labelledby, title, or text content',
             selector: cssPath(el),
+        ...attribute(el),
+            ...attribute(el),
           });
         }
       }
@@ -431,12 +509,26 @@ export async function runDomCensus(page: any): Promise<CensusResult> {
           return boxy && r.height >= 20 && r.height <= 64;
         });
 
+      /**
+       * Inherit the address of whatever raised the alarm.
+       *
+       * This finding is a CONSEQUENCE of the element-level ones above. When
+       * every affordance that triggered it was rendered by a design system
+       * component, so was this — the story cannot make a library's markup
+       * focusable, and telling it to would only push it to drop the component.
+       * Measured on a Datagrid whose sortable headers are the sole affordance.
+       */
+      const triggers = problems.filter(p => p.kind === 'fake_field' || p.kind === 'clickable_non_button');
+      const allFromLibrary = triggers.length > 0 && triggers.every(p => p.ownedByLibrary === true);
+      const libraryOwner = allFromLibrary ? triggers[0].owner : undefined;
+
       problems.push({
         kind: impliesInteractive ? 'no_focusables' : 'static_only',
         message: impliesInteractive
           ? 'The story presents interactive affordances but nothing can be focused or operated'
           : 'Nothing in this story is focusable — correct for a purely presentational component, worth confirming otherwise',
         evidence: `${all.length} elements rendered, 0 focusable`,
+        ...(impliesInteractive && libraryOwner ? { owner: libraryOwner, ownedByLibrary: true } : {}),
       });
     }
 
@@ -456,5 +548,5 @@ export async function runDomCensus(page: any): Promise<CensusResult> {
       },
       problems,
     } as CensusResult;
-  });
+  }, options);
 }

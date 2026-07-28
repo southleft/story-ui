@@ -8,6 +8,7 @@
  * page can observe whether a story actually rendered.
  */
 
+import fs from 'fs';
 import { logger } from '../logger.js';
 import type { HostTooling } from './hostTooling.js';
 
@@ -153,6 +154,57 @@ export async function renderStory(options: RenderOptions): Promise<RenderResult>
  * distinction the panel needs, since Storybook's watcher can stop delivering
  * events entirely.
  */
+/**
+ * Is Storybook's index behind the filesystem?
+ *
+ * "Story did not appear in the index" has two very different causes, and
+ * reporting them as one thing cost three false diagnoses in a single session:
+ * the story is broken, or the dev server's file watcher has died. The second
+ * happens routinely on a Storybook that has been running for hours, and it is
+ * not a defect in anything we generated.
+ *
+ * Comparing counts answers it without guessing: if more generated story files
+ * exist on disk than the index knows about, the index is stale, full stop.
+ * That also gives the user something actionable — restart Storybook — instead
+ * of a story blamed for its host's watcher.
+ */
+export async function indexIsStale(
+  storybookUrl: string,
+  generatedDir: string,
+): Promise<{ stale: boolean; onDisk: number; indexed: number }> {
+  let onDisk = 0;
+  try {
+    onDisk = fs.readdirSync(generatedDir).filter(f => /\.stories\.[jt]sx?$/.test(f)).length;
+  } catch {
+    return { stale: false, onDisk: 0, indexed: 0 };
+  }
+
+  let indexed = 0;
+  try {
+    const res = await fetch(`${storybookUrl.replace(/\/+$/, '')}/index.json?t=${Date.now()}`, {
+      headers: { 'Cache-Control': 'no-cache' },
+    });
+    if (!res.ok) return { stale: false, onDisk, indexed: 0 };
+    const index: any = await res.json();
+    const entries = index?.entries ?? {};
+    // Distinct stories, not entries: one file yields a --docs and one or more
+    // story entries, so counting entries would never match a file count.
+    const distinct = new Set<string>();
+    for (const [id, entry] of Object.entries<any>(entries)) {
+      if (typeof entry?.importPath === 'string' && entry.importPath.includes('generated')) {
+        distinct.add(entry.importPath);
+      } else if (String(entry?.title || '').startsWith('Generated/')) {
+        distinct.add(id.replace(/--[^-]*$/, ''));
+      }
+    }
+    indexed = distinct.size;
+  } catch {
+    return { stale: false, onDisk, indexed: 0 };
+  }
+
+  return { stale: onDisk > indexed, onDisk, indexed };
+}
+
 export async function waitForStoryIndexed(
   storybookUrl: string,
   storyIdPrefix: string,

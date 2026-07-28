@@ -963,11 +963,18 @@ export async function runStoryGeneration(
     try {
       const verifyUrl = config.storybookMcpUrl || storybookUrl || getStorybookUrl();
       if (verifyUrl) {
+        // Names of the design system's own components, so a defect rendered by
+        // the LIBRARY is reported against the library rather than charged to
+        // the composition that used it.
+        const libraryComponents = (components as any[]).map(c => c.name).filter(Boolean);
+        const generatedDir = path.resolve(process.cwd(), config.generatedStoriesPath || './src/stories/generated');
         verification = await verifyStory({
           storybookUrl: verifyUrl,
           storyIdPrefix: storyIdSlug,
           title: cleanTitle,
           projectRoot: process.cwd(),
+          libraryComponents,
+          generatedDir,
         });
         // Enforce mode: repair what the browser observed.
         //
@@ -1000,6 +1007,8 @@ export async function runStoryGeneration(
                 storyIdPrefix: storyIdSlug,
                 title: cleanTitle,
                 projectRoot: process.cwd(),
+                libraryComponents,
+                generatedDir,
               });
             },
           });
