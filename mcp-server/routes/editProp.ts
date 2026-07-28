@@ -47,8 +47,22 @@ export interface EditableProp {
 export function classifyProp(p: PropFact): EditableProp {
   const type = (p.type || '').trim();
 
-  // `'sm' | 'md' | 'lg'` — the case worth having, and the one a design system
-  // uses for every variant, size and appearance prop.
+  /**
+   * Values resolved by the extractor win over anything parsed from the type
+   * TEXT. Carbon writes `kind?: hasIconOnly extends true ? IconButtonKind :
+   * ButtonKind`, which no amount of string matching turns into eight options —
+   * following the type to its const tuple does.
+   */
+  if (p.options && p.options.length > 1) {
+    return {
+      name: p.name,
+      kind: 'enum',
+      options: p.options,
+      doc: p.doc, defaultValue: p.defaultValue, deprecated: p.deprecated,
+    };
+  }
+
+  // Inline unions still handled, for libraries that write them out.
   const literals = type.match(/'[^']+'/g);
   if (literals && literals.length > 1 && /^(\s*'[^']*'\s*\|?)+$/.test(type)) {
     return {
@@ -96,7 +110,19 @@ export async function editablePropsHandler(req: Request, res: Response): Promise
     const extracted = await extractProps(config.importPath, process.cwd());
     const facts = extracted?.components?.[component];
 
-    const props = (facts?.props ?? []).map(classifyProp).filter(panelWorthy);
+    /**
+     * Most-actionable first, because a panel is scanned, not read.
+     *
+     * A picker with the component's real variants is the reason someone opened
+     * this; a boolean flag is second; free text is last and rarely what anyone
+     * came for. Alphabetical order buried `kind` and `size` below
+     * `dangerDescription` and `iconDescription`.
+     */
+    const RANK: Record<EditableProp['kind'], number> = { enum: 0, boolean: 1, number: 2, string: 3, other: 4 };
+    const props = (facts?.props ?? [])
+      .map(classifyProp)
+      .filter(panelWorthy)
+      .sort((a, b) => RANK[a.kind] - RANK[b.kind] || a.name.localeCompare(b.name));
 
     // Design tokens travel with the response so a colour or spacing control
     // can offer the project's OWN scale rather than a colour wheel — picking

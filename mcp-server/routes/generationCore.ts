@@ -383,6 +383,18 @@ export async function runStoryGeneration(
             // A stated default stops the model restating it. `variant="text"`
             // on an MUI Button is not wrong, but it reads to the team that owns
             // the system as someone who did not know the API.
+            /**
+             * The values this prop actually accepts.
+             *
+             * Resolved from the library's own const tuples, so `kind` on a
+             * Carbon Button reads as its eight real kinds rather than as an
+             * unhelpful `ButtonKind`. A model given the legal set cannot
+             * invent `kind="destructive"`.
+             */
+            if (p.options?.length) {
+              const shown = p.options.slice(0, 8).join('|');
+              entry += ` [${shown}${p.options.length > 8 ? `|…${p.options.length - 8}` : ''}]`;
+            }
             if (p.defaultValue) entry += ` =${p.defaultValue}`;
             // Deprecation is the one fact here that changes whether the output
             // is acceptable at all, so it is never truncated away and never

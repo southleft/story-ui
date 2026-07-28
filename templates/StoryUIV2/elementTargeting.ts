@@ -55,6 +55,17 @@ export interface ElementTarget {
   siblings?: number;
   /** Chain of enclosing components, outermost last. Gives the model context. */
   ancestors: string[];
+  /**
+   * 0-based position among EVERY instance of this component in the story, in
+   * document order — not among siblings.
+   *
+   * This is what maps a clicked element to a JSX element in the source: the
+   * Nth <Button> on screen is the Nth <Button> in the file. `index` answers a
+   * different question (which of these adjacent twins) and cannot be used for
+   * it. React 19 removed `_debugSource`, so there is no file-and-line to read
+   * instead.
+   */
+  occurrence?: number;
 }
 
 /**
@@ -298,6 +309,29 @@ export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFro
     ? Array.from(parent.children).filter((c: any) => c.tagName === target.tagName)
     : [];
 
+  /**
+   * Where this element sits among all instances of the same component.
+   *
+   * Walks the whole story in document order and counts elements whose OWN
+   * component resolves to the same name, so the count matches what the source
+   * contains. Only meaningful when the component was identified; without a
+   * name there is nothing to count.
+   */
+  let occurrence;
+  if (found) {
+    const scope = document.querySelector('#storybook-root') || document.body;
+    const all = Array.from(scope.querySelectorAll('*'));
+    let n = 0;
+    for (const node of all) {
+      if (node === target) { occurrence = n; break; }
+      const f = fiberInfo(node);
+      const name = (f && f.name)
+        ? f.name
+        : (componentFrom(node.tagName.toLowerCase(), classesOf(node)) || {}).name;
+      if (name && name === found.c.name) n++;
+    }
+  }
+
   return {
     component: found ? found.c.name : null,
     via: found ? found.c.via : 'none',
@@ -307,6 +341,7 @@ export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFro
     index: sibs.length > 1 ? sibs.indexOf(target) + 1 : undefined,
     siblings: sibs.length > 1 ? sibs.length : undefined,
     ancestors,
+    occurrence,
   };
 }})`;
 

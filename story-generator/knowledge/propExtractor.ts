@@ -48,6 +48,14 @@ export interface PropFact {
    * installed version.
    */
   deprecated?: string;
+  /**
+   * The string values this prop accepts, when the type declares them.
+   *
+   * Powers a direct-manipulation control: a picker offering exactly what the
+   * component takes cannot produce an invalid value, which is the whole
+   * advantage of editing a prop instead of asking a model to.
+   */
+  options?: string[];
 }
 
 export interface ComponentFacts {
@@ -95,6 +103,19 @@ function rawDocBlock(node: ts.Node, source: ts.SourceFile): string | undefined {
     .join(' ')
     .trim();
   return cleaned || undefined;
+}
+
+/** String literals inside `readonly ["a","b"]` or `["a","b"] as const`. */
+function stringLiteralsIn(node: ts.Node | undefined, source: ts.SourceFile): string[] {
+  if (!node) return [];
+  const out: string[] = [];
+  const visit = (n: ts.Node) => {
+    if (ts.isLiteralTypeNode(n) && ts.isStringLiteral(n.literal)) out.push(n.literal.text);
+    else if (ts.isStringLiteral(n) && !ts.isImportDeclaration(n.parent)) out.push(n.text);
+    ts.forEachChild(n, visit);
+  };
+  visit(node);
+  return out;
 }
 
 const clip = (s: string, max: number) => (s.length > max ? `${s.slice(0, max - 1)}…` : s);
@@ -280,11 +301,15 @@ function collectFromFile(
       const name = member.name.getText(source);
       if (!/^[a-zA-Z_$][\w$]*$/.test(name)) continue;
       if (name.startsWith('_')) continue;
+      const opts = literalOptions(member.type);
       found.push({
         name,
         type: shortType(member.type, source),
         required: !member.questionToken,
         ...readDoc(member, source),
+        // Deduped and capped: a handful of variants is a control, forty is a
+        // list nobody scrolls.
+        ...(opts.length > 1 && opts.length <= 24 ? { options: [...new Set(opts)] } : {}),
       });
     }
     return found;
@@ -307,10 +332,79 @@ function collectFromFile(
    * deliberately does not cross.
    */
   const namedTypes = new Map<string, ts.Node>();
+  /**
+   * `const X = [...] as const` declarations, for the `(typeof X)[number]` idiom.
+   *
+   * Carbon writes its variant sets this way:
+   *   export declare const ButtonKinds: readonly ["primary", "secondary", …];
+   *   export type ButtonKind = (typeof ButtonKinds)[number];
+   * so the legal values are in a const, not in the type. Without following
+   * that hop, `kind` — the single most useful prop on a Button — has no
+   * knowable values at all.
+   */
+  const constTuples = new Map<string, string[]>();
   ts.forEachChild(source, node => {
     if (ts.isTypeAliasDeclaration(node)) namedTypes.set(node.name.text, node.type);
     else if (ts.isInterfaceDeclaration(node)) namedTypes.set(node.name.text, node);
+    else if (ts.isVariableStatement(node)) {
+      for (const decl of node.declarationList.declarations) {
+        if (!ts.isIdentifier(decl.name)) continue;
+        const literals = stringLiteralsIn(decl.type ?? decl.initializer, source);
+        if (literals.length) constTuples.set(decl.name.text, literals);
+      }
+    }
   });
+
+  /**
+   * The string values a prop's type admits, following local references.
+   *
+   * Depth-limited and local-only, the same boundary the rest of this file
+   * keeps. A conditional type contributes BOTH branches: `hasIconOnly extends
+   * true ? IconButtonKind : ButtonKind` genuinely accepts either set depending
+   * on another prop, and offering the union is honest where picking a branch
+   * would silently hide half the options.
+   */
+  const literalOptions = (node: ts.Node | undefined, depth = 0, seen = new Set<string>()): string[] => {
+    if (!node || depth > 4) return [];
+
+    if (ts.isUnionTypeNode(node)) {
+      return node.types.flatMap(t => literalOptions(t, depth + 1, seen));
+    }
+    if (ts.isLiteralTypeNode(node) && ts.isStringLiteral(node.literal)) {
+      return [node.literal.text];
+    }
+    if (ts.isConditionalTypeNode(node)) {
+      return [
+        ...literalOptions(node.trueType, depth + 1, seen),
+        ...literalOptions(node.falseType, depth + 1, seen),
+      ];
+    }
+    if (ts.isParenthesizedTypeNode(node)) return literalOptions(node.type, depth + 1, seen);
+
+    // `(typeof ButtonKinds)[number]`
+    if (ts.isIndexedAccessTypeNode(node)) {
+      const objectType = node.objectType;
+      if (ts.isParenthesizedTypeNode(objectType) || ts.isTypeQueryNode(objectType)) {
+        const query = ts.isParenthesizedTypeNode(objectType) ? objectType.type : objectType;
+        if (ts.isTypeQueryNode(query)) {
+          const name = query.exprName.getText(source);
+          return constTuples.get(name) ?? [];
+        }
+      }
+      return literalOptions(objectType, depth + 1, seen);
+    }
+
+    if (ts.isTypeReferenceNode(node)) {
+      const name = node.typeName.getText(source);
+      if (seen.has(name)) return [];
+      seen.add(name);
+      const target = namedTypes.get(name);
+      if (target) return literalOptions(target, depth + 1, seen);
+      // A type alias may point straight at a const tuple's name.
+      return constTuples.get(name) ?? [];
+    }
+    return [];
+  };
 
   /**
    * Members reachable from a type node, following local references.
@@ -399,11 +493,13 @@ function collectFromFile(
         // Library internals (__staticSelector, __vars, _internal) are noise to a
         // consumer and were surfacing in the ranked list.
         if (name.startsWith('_')) continue;
+        const opts = literalOptions(member.type);
         props.push({
           name,
           type: shortType(member.type, source),
           required: !member.questionToken,
           ...readDoc(member, source),
+          ...(opts.length > 1 && opts.length <= 24 ? { options: [...new Set(opts)] } : {}),
         });
       }
 
@@ -523,6 +619,7 @@ function mergeProps(a: PropFact[], b: PropFact[]): PropFact[] {
       doc: prior.doc ?? p.doc,
       defaultValue: prior.defaultValue ?? p.defaultValue,
       deprecated: prior.deprecated ?? p.deprecated,
+      options: prior.options ?? p.options,
     });
   }
   return [...byName.values()];

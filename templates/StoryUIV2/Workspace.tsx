@@ -40,6 +40,7 @@ import { HandoffDialog } from './HandoffDialog';
 import { useGeneration, waitForStory, type Verification } from './useGeneration';
 import { useSessions, takeEditRequest, cleanReply, type SessionSummary } from './useSessions';
 import { describeTarget, targetLabel, type ElementTarget } from './elementTargeting';
+import { PropertyPanel } from './PropertyPanel';
 import { VersionHistory, type StoryVersionSummary } from './VersionHistory';
 
 interface Turn {
@@ -193,6 +194,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
    * is how a good dashboard picks up new problems while fixing a small one.
    */
   const [selection, setSelection] = useState<ElementTarget | null>(null);
+  const [showProperties, setShowProperties] = useState(false);
   /**
    * The story the handoff dialog is acting on.
    *
@@ -428,19 +430,45 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
             instruction applies to. Without it the user cannot tell whether a
             selection is still armed. */}
         {selection && (
-          <Flex align="center" gap="2" mb="2">
-            <Badge color="jade" variant="soft" className="suiw-ellipsis">
-              {targetLabel(selection)}
-            </Badge>
-            <Button
-              size="1"
-              variant="ghost"
-              color="gray"
-              onClick={() => setSelection(null)}
-              title="Apply the next instruction to the whole story instead"
-            >
-              Clear
-            </Button>
+          <Flex direction="column" gap="2" mb="2">
+            <Flex align="center" gap="2">
+              <Badge color="jade" variant="soft" className="suiw-ellipsis">
+                {targetLabel(selection)}
+              </Badge>
+              <Button
+                size="1"
+                variant="ghost"
+                color="gray"
+                onClick={() => setSelection(null)}
+                title="Apply the next instruction to the whole story instead"
+              >
+                Clear
+              </Button>
+              <Button
+                size="1"
+                variant={showProperties ? 'soft' : 'ghost'}
+                color="gray"
+                onClick={() => setShowProperties(v => !v)}
+                title="Change a property directly, without asking the model"
+              >
+                Properties
+              </Button>
+            </Flex>
+
+            {/* Direct manipulation for the class of change that has exactly one
+                correct answer. The model stays available for anything
+                structural, one button away. */}
+            {showProperties && (
+              <div className="suiw-properties">
+                <PropertyPanel
+                  apiBase={apiBase}
+                  target={selection}
+                  fileName={activeFile?.fileName}
+                  onApplied={() => setReloadToken(t => t + 1)}
+                  onAskInstead={() => setShowProperties(false)}
+                />
+              </div>
+            )}
           </Flex>
         )}
 
