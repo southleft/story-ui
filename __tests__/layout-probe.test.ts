@@ -13,8 +13,22 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+
 import { resolveHostTooling, canLaunchBrowser } from '../story-generator/verify/hostTooling.js';
 import { runLayoutProbe } from '../story-generator/verify/probes/layout.js';
+
+/**
+ * These launch a real Chromium. Everything else in the suite is pure.
+ *
+ * Observed twice: the whole file failing while a Storybook dev server and
+ * other Playwright scripts were competing for the same browser, then passing
+ * on the next run with no code change. That is an environmental race, not a
+ * logic defect — but a suite that fails at random is a suite people stop
+ * reading, which costs more than the flake does.
+ *
+ * Retries are scoped to this file so a genuine regression elsewhere still
+ * fails on the first attempt.
+ */
 
 const tooling = resolveHostTooling('/Users/tjpitre/Sites/test-storybooks/react-mantine');
 let browser: any;
@@ -42,7 +56,7 @@ const grid = (children: string, cols = 16) =>
 const cell = (span: number, h = 60) =>
   `<div style="grid-column:span ${span};height:${h}px;background:#eee">x</div>`;
 
-describe.runIf(tooling)('layout probe — grid coverage', () => {
+describe.runIf(tooling)('layout probe — grid coverage', { retry: 2 }, () => {
   it('flags a row that leaves a large part of the grid empty', async () => {
     // The reported defect: 5 + 6 of 16.
     const r = await probe(grid(cell(5) + cell(6)));
@@ -82,7 +96,7 @@ describe.runIf(tooling)('layout probe — grid coverage', () => {
   }, 30_000);
 });
 
-describe.runIf(tooling)('layout probe — ragged edges', () => {
+describe.runIf(tooling)('layout probe — ragged edges', { retry: 2 }, () => {
   const stack = (offsets: number[]) =>
     `<div>${offsets.map(o => `<div style="margin-left:${o}px;height:40px">item</div>`).join('')}</div>`;
 
