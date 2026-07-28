@@ -80,6 +80,17 @@ import { verifyStory } from '../../story-generator/verify/verifyStory.js';
 import { reflectDesignSystem, formatCompoundReference } from '../../story-generator/knowledge/runtimeReflect.js';
 import { extractProps, extractPropsForPackages, rankProps } from '../../story-generator/knowledge/propExtractor.js';
 import { saysMoreThanName } from '../../story-generator/knowledge/descriptionQuality.js';
+
+/**
+ * Props that decide geometry, and documentation that actually explains it.
+ *
+ * Both conditions matter. The name alone admits `FluidNumberInput.max` (a
+ * numeric bound, not a breakpoint); the prose alone would admit half the
+ * library. Together they select the props whose value the model has to get
+ * numerically right — column spans, offsets, gutters — and nothing else.
+ */
+const GEOMETRY_PROP = /^(sm|md|lg|xl|xxl|max|xs|span|offset|start|end|gap|columns|narrow|condensed|fullWidth|orientation)$/;
+const LAYOUT_PROSE = /\b(column|columns|grid|breakpoint|gutter|span|spacing|width|row|layout)\b/i;
 import { enrichWithSourceFacts } from '../../story-generator/knowledge/sourceFacts.js';
 import { readStylingFacts, formatStylingGuidance } from '../../story-generator/knowledge/stylingFacts.js';
 import { inheritCompoundExamples } from '../../story-generator/knowledge/storybookCatalog.js';
@@ -377,7 +388,30 @@ export async function runStoryGeneration(
             // is acceptable at all, so it is never truncated away and never
             // silently ranked out of view.
             //
-            // Prop DESCRIPTIONS are deliberately absent. They are extracted and
+            /**
+             * Layout props carry their documentation. Nothing else does.
+             *
+             * Alignment defects are the most visible thing a design system
+             * owner sees, and they come from one fact the model cannot infer:
+             * how many columns the grid has. Carbon states it in the prop's
+             * own JSDoc — "This breakpoint supports 16 columns by default" —
+             * and without it the model produced `lg={5}` beside `lg={6}`,
+             * leaving five of sixteen columns empty, and `sm={4}` twice in a
+             * FOUR-column grid, which wraps. Both were visible as ragged edges
+             * in the rendered output.
+             *
+             * Selected by what the prop DOES, not by component name: a prop
+             * whose name is geometric AND whose documentation talks about
+             * columns, gutters or breakpoints. That works for Carbon's 16/8/4,
+             * MUI's 12 and anything else, because each states its own numbers.
+             * Measured cost on Carbon: 44 props, about 1k tokens.
+             */
+            if (p.doc && GEOMETRY_PROP.test(p.name) && LAYOUT_PROSE.test(p.doc)) {
+              // 150, not 110: the COLUMN COUNT is the payload and it sits at the
+              // end of Carbon's sentence — clipping shorter risks cutting the number.
+              entry += ` — ${p.doc.length > 150 ? `${p.doc.slice(0, 149)}…` : p.doc}`;
+            }
+            // Other prop DESCRIPTIONS are deliberately absent. They are extracted and
             // available (95% coverage on Carbon), but rendering even the top
             // three per component costs ~10k tokens and the full set ~28k —
             // against a 15k-token catalog, most of it describing components a
