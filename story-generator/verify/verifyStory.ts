@@ -15,6 +15,7 @@ import { logger } from '../logger.js';
 import { resolveHostTooling, canLaunchBrowser } from './hostTooling.js';
 import { renderStory, waitForStoryIndexed, indexIsStale } from './renderHarness.js';
 import { runDomCensus } from './probes/domCensus.js';
+import { runLayoutProbe } from './probes/layout.js';
 import { runA11yProbe, isGenerationDefect, isDesignSystemConcern, isDesignSystemInternal } from './probes/a11y.js';
 import type { Finding, VerifyReport } from './findings.js';
 import { blockers, summarize } from './findings.js';
@@ -217,6 +218,32 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
     }
 
     const census = await runDomCensus(render.page, { libraryComponents });
+
+    /**
+     * Layout arithmetic, before any aesthetic judgement is applied.
+     *
+     * "This does not sit on the grid" reads as taste and is not: a row using
+     * 11 of 16 columns is a sum, and stacked elements 3px out of line are a
+     * measurement. Checking them costs nothing, cannot drift, and catches the
+     * defect a reviewer notices first.
+     */
+    const layout = await runLayoutProbe(render.page, { libraryComponents });
+    for (const p of layout.problems) {
+      findings.push({
+        id: `${p.kind}-${findings.length}`,
+        // Blocker: a composition that does not fill its grid is the most
+        // visible defect a design system owner sees, and it is repairable by
+        // changing numbers the story already wrote.
+        severity: p.kind === 'grid_underfilled' ? 'blocker' : 'warning',
+        class: 'code',
+        message: p.ownedByLibrary && p.owner
+          ? `${p.message} — in <${p.owner}>, a design system component`
+          : p.message,
+        evidence: p.evidence,
+        selector: p.selector,
+        repairable: !p.ownedByLibrary,
+      });
+    }
     findings.push(...censusFindings(census.problems));
 
     // Accessibility. Only rules that indicate the GENERATOR produced wrong
@@ -260,6 +287,7 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
       findings,
       metrics: {
         ...census.metrics,
+        ...layout.metrics,
         navMs: render.navMs,
         axeRan: a11y.ran,
         axeViolations: a11y.violations.length,
