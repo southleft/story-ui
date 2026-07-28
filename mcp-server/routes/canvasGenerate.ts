@@ -171,6 +171,21 @@ export const Default: StoryObj = {
 let reactLiveChecked = false;
 let reactLiveInstalling: Promise<void> | null = null;
 
+/**
+ * Is react-live present right now?
+ *
+ * Distinct from ensureReactLive, which INSTALLS it. Startup must not install
+ * anything into a user's project uninvited, and must not write a file that
+ * needs a dependency the project does not have — so it asks instead.
+ */
+export function reactLiveIsInstalled(): boolean {
+  try {
+    return fs.existsSync(path.join(process.cwd(), 'node_modules', 'react-live'));
+  } catch {
+    return false;
+  }
+}
+
 export async function ensureReactLive(): Promise<void> {
   if (reactLiveChecked) return;
   // If another request is already installing, wait for it
@@ -215,6 +230,25 @@ export async function ensureReactLive(): Promise<void> {
  * Subsequent calls are no-ops — the file never changes after initial creation.
  */
 export function ensureVoiceCanvasStory(storiesDir: string): void {
+  /**
+   * Only when the project can actually compile it.
+   *
+   * This template imports `react-live`. Writing it into a project that does
+   * not have that dependency breaks the whole Storybook with a Vite overlay —
+   * not just this story — because the dev server fails to resolve the import
+   * and stops rendering anything. Observed on a Carbon project: every
+   * generated story was fine, and the workspace was unusable.
+   *
+   * The existing guard checked the FRAMEWORK, which answers a different
+   * question. React projects that have never installed react-live are the
+   * common case, not the exception, so the guard passed exactly where it
+   * needed to fail. Ask for the dependency itself.
+   */
+  if (!reactLiveIsInstalled()) {
+    logger.log('[canvas-generate] Skipping voice-canvas template — react-live is not installed in this project');
+    return;
+  }
+
   const resolvedDir = path.resolve(process.cwd(), storiesDir);
   if (!fs.existsSync(resolvedDir)) {
     fs.mkdirSync(resolvedDir, { recursive: true });
