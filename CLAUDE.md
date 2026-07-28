@@ -1,6 +1,6 @@
 # Story UI - AI Assistant Project Guide
 
-> **Last Updated**: July 27, 2026
+> **Last Updated**: July 28, 2026
 > **Current Version**: 4.17.0
 > **Production URL**: https://app-production-16de.up.railway.app (Vue/Vuetify example)
 > **Repository**: https://github.com/southleft/story-ui
@@ -40,8 +40,20 @@ This document provides comprehensive context for AI assistants working on the St
 | Component Discovery | `story-generator/componentDiscovery.ts` |
 | LLM Providers | `story-generator/llm-providers/` |
 | Framework Adapters | `story-generator/framework-adapters/` |
-| Storybook Panel | `templates/StoryUI/StoryUIPanel.tsx` |
+| Storybook Panel (V1) | `templates/StoryUI/StoryUIPanel.tsx` |
 | MDX Wrapper | `templates/StoryUI/StoryUIPanel.mdx` |
+| V2 Workspace | `templates/StoryUIV2/Workspace.tsx` |
+| V2 Element targeting (React fiber) | `templates/StoryUIV2/elementTargeting.ts` |
+| V2 Property panel (direct manipulation) | `templates/StoryUIV2/PropertyPanel.tsx` |
+| Verification orchestrator | `story-generator/verify/verifyStory.ts` |
+| DOM census probe | `story-generator/verify/probes/domCensus.ts` |
+| Layout probe (grid/alignment arithmetic) | `story-generator/verify/probes/layout.ts` |
+| Visual critique (vision model) | `story-generator/verify/probes/visualCritic.ts` |
+| Prop AST editor (no LLM) | `story-generator/editing/propEditor.ts` |
+| Prop edit endpoints | `mcp-server/routes/editProp.ts` |
+| Prop/type knowledge | `story-generator/knowledge/propExtractor.ts` |
+| Token + styling idiom | `story-generator/knowledge/stylingFacts.ts` |
+| Description quality predicate | `story-generator/knowledge/descriptionQuality.ts` |
 | CLI Entry | `cli/index.ts` |
 | CLI Setup | `cli/setup.ts` |
 
@@ -75,6 +87,15 @@ Development and testing uses five framework-specific Storybook instances (create
 | `vue-vuetify` | Vue 3 | Vuetify 3.x | 6103 | 4103 |
 | `svelte-flowbite` | Svelte 5 | Flowbite + Tailwind | 6104 | 4104 |
 | `web-components-shoelace` | Lit 3 | Shoelace 2.x | 6105 | 4105 |
+| `college-town` | React | Radix + Tailwind (local source) | 6006 | 4106 |
+| `mui-material` | React | MUI (npm subpath) | 6107 | 4107 |
+| `atlaskit` | React | Atlassian (one package per component) | 6108 | 4108 |
+| `carbon` | React | IBM Carbon (barrel + SCSS) | 6109 | 4109 |
+
+**The four React architectures all behave differently and each hid a distinct
+bug.** npm barrel (Mantine, Carbon), npm subpath (MUI), package-per-component
+(Atlassian), and local source (college-town, `src/housekit`). A change that
+works on one is not a change that works.
 
 ### Starting a Test Environment
 
@@ -445,9 +466,77 @@ applied the same correction.
 | kebab-casing a component name | the file on disk, and `config.components[].importPath` |
 | npm `.d.ts` only | the component's own source: `cva()` maps, JSDoc, story prose |
 | an export's NAME (`/Provider$/`) | the imported runtime value |
+| a grid's column count | the rendered `grid-template-columns` track list |
+| which component a defect belongs to | React's fiber owner, not the CSS class shape |
+| a component's legal prop values | the library's own `const` tuple behind its type alias |
+| which JSX element a click maps to | the source file — the fiber chain is only a hypothesis |
+| that a scope (`@atlaskit`) is importable | `node_modules/<name>/package.json` |
 
 When adding knowledge, ask what file already states the answer. If the code is
 pattern-matching a name, it is probably wrong for some design system.
+
+### The other recurring shape: a silent no-op that looks like success
+
+Distinct from inference, and it cost more time than any single bug. A check
+that cannot run reports the same thing as a check that found nothing.
+
+| Looked like | Actually was |
+|---|---|
+| "all specifiers resolve" | the bench had stopped parsing 19 of 31 components |
+| "no visual findings" | the image payload was malformed and the call never ran |
+| "story is broken" | Storybook's watcher had died; the file was fine |
+| "the model ignores instructions" | our own post-processing rewrote its correct imports |
+| props/descriptions at 0% | a disk cache keyed only on the LIBRARY version |
+| "0/3 selection" | the bench could not see default imports |
+
+Rule: when a measurement can be absent, make absent and zero look different in
+the log. Three separate diagnoses on this branch were wrong because they did
+not.
+
+### The two classes of change (V2)
+
+Changes to a generated story are not one thing, and treating them as one is
+how a request to change a background colour returned a different page.
+
+| | Example | Right tool |
+|---|---|---|
+| **Compositional** | "add a filters panel", "make this three columns" | the model |
+| **Parametric** | "make this button red", "use the secondary variant" | `propEditor` — an AST edit, no model |
+
+A parametric change has exactly ONE correct edit to one attribute of one
+element. Sending it to a model adds latency, cost and risk and nothing else.
+`GET /mcp/editable-props` reports what a component accepts (read from its own
+types, deprecated props withheld); `POST /mcp/edit-prop` applies it.
+
+Targeting note: React 19 removed `_debugSource`, so there is no file:line.
+`_debugOwner` survives and names the authoring component. The browser sends
+CANDIDATES innermost-first and the SERVER picks the first that appears in the
+file — the fiber chain contains HOC wrappers (`hookified`) and library
+internals (`ListBox`) that are not JSX elements in the source.
+
+### Verification stack, in order
+
+Each layer only runs on what the previous one passed, cheapest first.
+
+1. **AST + pattern + import validation** — free, before anything renders.
+2. **Render harness** — Playwright; waits for the DOM to STOP changing, not merely to be non-empty.
+3. **DOM census** — fake fields, unnamed icon controls, invisible icons, keyboard reachability.
+4. **Layout probe** — grid coverage and left-edge alignment. Arithmetic, not taste.
+5. **axe** — accessibility rules that indicate the GENERATOR produced wrong markup.
+6. **Visual critique** — a vision model, last, only on something that already rendered.
+
+Findings are ATTRIBUTED via React fiber: a defect in markup the library
+rendered is reported but never blocks and never triggers repair, because the
+only repair available to a model told to fix it is to stop using the
+component. When ownership cannot be determined the finding blocks, exactly as
+before — silently suppressing what cannot be explained is worse than a false
+blocker.
+
+The critique's PARSER enforces the contract, not the prompt: suggestions are
+dropped ("consider", "might", "improve the look"), unknown severity degrades
+to warning, six findings maximum, and an empty list is the expected answer for
+well-formed output. A critic that always finds something is noise, and noise
+costs a regeneration of correct code.
 
 ### Testing discipline
 
@@ -480,6 +569,21 @@ valuable environment. `src/housekit` is a synthetic design system the model has
 no training data for — the only way to test an unknown library.
 
 ## Issue History & Resolutions
+
+### July 28, 2026 (knowledge, verification and direct manipulation)
+
+| Issue | Root cause | Resolution |
+|-------|------------|------------|
+| Descriptions 0% on every npm design system | a props cache keyed only on the LIBRARY version, so new extractor fields never appeared; `@default`/`@deprecated` deliberately discarded; discovery's `"X component from Y"` placeholder blocking real prose | schema-versioned cache; tags kept; one shared `saysMoreThanName` predicate used by pipeline AND bench |
+| Carbon measured as undocumented | its prose is in `Component.propTypes` in `.js`, not in `.d.ts` (Tile.js has 49 JSDoc blocks, Tile.d.ts none) | read both and merge FIELD-wise — declarations hold the type, propTypes the prose |
+| Atlassian missing its entire layout primitive set | export scraper required the braced list to begin with a capital, so `export { default as Box }` was invisible | parse braced exports; the exported name is the ALIAS |
+| Atlassian generation returned no code at all | catalog and validator were separate sets that diverged — the model was told to use `Box`, rejected for it, told again | anything the catalog offers is valid, by construction |
+| Correct imports rewritten into packages that do not exist | `fixBarrelImports` kebab-cased a component name onto the import path when discovery could not place it | leave unplaceable imports exactly as written |
+| Model "ignoring" the catalog and importing from `@atlaskit` | it genuinely emits that; the prompt also taught a path FORMULA | repair deterministically from discovery as the LAST transform; prompt points at the catalog instead |
+| Ragged layouts, content not on the grid | nothing checked layout arithmetic; the model was never told the column count | layout probe reads the rendered `grid-template-columns`; layout prop docs added to the catalog |
+| A targeted edit replaced the whole page | `previousCode` came only from history, so a missing version silently became a fresh generation | fall back to the file on disk; measure structural divergence and reject a rewrite |
+| A failed generation broke the whole Storybook | fallback stories had no `id`, so Storybook derived one from the truncated prompt and two failures collided | explicit id hashed from prompt + time, in all five framework templates |
+| Voice-canvas template broke Vite for any project without react-live | guard checked the FRAMEWORK, not the dependency | check for react-live itself |
 
 ### July 2026 (fidelity and verification, V2 branch)
 
