@@ -1108,6 +1108,25 @@ Material UI (MUI) is a React component library implementing Material Design.
   // Wire the "Edit in Story UI" toolbar button into the Storybook manager
   ensureManagerAddonWiring(storyUITargetDir);
 
+  /**
+   * Install the V2 workspace — ONE file.
+   *
+   * V1 copies seven modules plus the voice canvas into the project, because
+   * the panel imports its siblings by relative path. V2 ships as a package
+   * export instead, so the project needs only the MDX entry that mounts it and
+   * resolves the API base. The workspace, its styles and its own UI
+   * dependencies all live in the package and update when it does.
+   */
+  const v2TargetDir = path.join(storiesDir, 'StoryUIV2');
+  const v2Source = path.resolve(__dirname, '../../templates/StoryUIV2/StoryUIV2.mdx');
+  if (fs.existsSync(v2Source)) {
+    if (!fs.existsSync(v2TargetDir)) fs.mkdirSync(v2TargetDir, { recursive: true });
+    fs.copyFileSync(v2Source, path.join(v2TargetDir, 'StoryUIV2.mdx'));
+    console.log(chalk.green('✅ Installed Story UI workspace (V2)'));
+  } else {
+    console.warn(chalk.yellow('⚠️  V2 workspace template not found — only the classic panel was installed'));
+  }
+
   // Copy Voice Canvas files
   const voiceSourceDir = path.join(templatesDir, 'voice');
   const voiceTargetDir = path.join(storyUITargetDir, 'voice');
@@ -1211,9 +1230,20 @@ export default registry;
     let mainContent = fs.readFileSync(actualMainPath, 'utf-8');
     let configUpdated = false;
 
-    // Add Story UI path to stories array if not already present
+    /**
+     * Ask whether `.mdx` is actually covered, not whether a substring appears.
+     *
+     * The V2 workspace is an MDX docs page — that is how it stays React in a
+     * Vue, Angular or Svelte project. A `stories` glob that ends in
+     * `.stories.tsx` satisfies a `src/stories` substring check while matching
+     * no `.mdx` at all, so the workspace installs correctly and never appears
+     * in the sidebar. Observed on a
+     * Carbon project, where the panel was silently absent until the glob was
+     * widened by hand.
+     */
+    const coversMdx = mainContent.includes('.mdx') || mainContent.includes('mdx|');
     const storyUIStoriesPath = `'../src/stories/**/*.@(mdx|stories.@(js|jsx|ts|tsx))'`;
-    if (!mainContent.includes('src/stories/**/*')) {
+    if (!mainContent.includes('src/stories/**/*') || !coversMdx) {
       // Find the stories array and add our path
       const storiesArrayPattern = /(stories\s*:\s*\[[\s\S]*?)(\],?)/;
       const match = mainContent.match(storiesArrayPattern);
