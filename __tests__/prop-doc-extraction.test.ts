@@ -299,3 +299,76 @@ describe('description quality', () => {
     expect(() => isGenericDescription('Foo(Bar', 'anything at all here')).not.toThrow();
   });
 });
+
+describe('props inherited through an extends chain', () => {
+  it('resolves a component whose own interface is empty', async () => {
+    /**
+     * The shape Chakra v3 uses throughout: the component's own props interface
+     * declares nothing, and the real props sit three levels down behind a
+     * GENERIC ARGUMENT.
+     *
+     *   interface ButtonProps extends HTMLChakraProps<"button", ButtonBaseProps> {}
+     *   interface ButtonBaseProps extends UnstyledProp, ButtonLoadingProps {}
+     *   interface ButtonLoadingProps { loading?: …; @default … }
+     *
+     * Measured before: 822 components discovered, props known for 76. This is a
+     * lookup through types the package already declares — no TypeChecker.
+     */
+    const root = make('@chain/ds', {
+      'index.d.ts': `
+export interface ButtonLoadingProps {
+  /**
+   * If true, the button shows a spinner.
+   * @default false
+   */
+  loading?: boolean;
+  /** Placement of the spinner. */
+  spinnerPlacement?: 'start' | 'end';
+}
+export interface UnstyledProp { unstyled?: boolean }
+export interface ButtonBaseProps extends UnstyledProp, ButtonLoadingProps {}
+export interface HTMLChakraProps<T, P> { asChild?: boolean }
+export interface ButtonProps extends HTMLChakraProps<"button", ButtonBaseProps> {}
+export declare const Button: (props: ButtonProps) => JSX.Element;
+`,
+    });
+
+    const out = await extractProps('@chain/ds', root, { force: true });
+    const names = (out?.components?.Button?.props ?? []).map(p => p.name);
+    expect(names).toContain('loading');
+    expect(names).toContain('spinnerPlacement');
+
+    const loading = out!.components.Button.props.find(p => p.name === 'loading');
+    expect(loading?.defaultValue).toBe('false');
+    expect(loading?.doc).toMatch(/spinner/i);
+
+    const placement = out!.components.Button.props.find(p => p.name === 'spinnerPlacement');
+    expect(placement?.options).toEqual(expect.arrayContaining(['start', 'end']));
+  });
+
+  it('lets a subtype narrow an inherited prop', async () => {
+    const root = make('@chain/narrow', {
+      'index.d.ts': `
+export interface BaseProps { size?: 'sm' | 'md' | 'lg' }
+export interface CompactProps extends BaseProps { size?: 'sm' }
+export declare const Compact: (props: CompactProps) => JSX.Element;
+`,
+    });
+    const out = await extractProps('@chain/narrow', root, { force: true });
+    const size = out?.components?.Compact?.props.find(p => p.name === 'size');
+    // The subtype's own declaration wins over what it inherits.
+    expect(size?.type).toBe(`'sm'`);
+  });
+
+  it('terminates on a cyclic extends chain', async () => {
+    const root = make('@chain/cycle', {
+      'index.d.ts': `
+export interface AProps extends BProps { a?: string }
+export interface BProps extends AProps { b?: string }
+export declare const A: (props: AProps) => JSX.Element;
+`,
+    });
+    const out = await extractProps('@chain/cycle', root, { force: true });
+    expect(out?.components?.A?.props?.some(p => p.name === 'a')).toBe(true);
+  });
+});

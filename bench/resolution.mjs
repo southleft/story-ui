@@ -62,6 +62,10 @@ const ENVIRONMENTS = [
   // which needs federation to reach props AND namespaces to know the members
   // are `Dialog.Root`. Either half alone yields nothing usable.
   { name: 'radix-ui (federated namespace)', project: '/Users/tjpitre/Sites/test-storybooks/radix', storybook: 'http://localhost:6113' },
+  // Ships BOTH surfaces for the same components — flat `DialogRoot` and
+  // namespace `Dialog.Root` — and states nearly every prop through an inherited
+  // generic, which is the deepest heritage chain measured anywhere.
+  { name: 'chakra-v3 (dual surface)', project: '/Users/tjpitre/Sites/test-storybooks/chakra', storybook: 'http://localhost:6114' },
 ];
 
 /**
