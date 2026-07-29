@@ -77,6 +77,13 @@ export interface ExtractedProps {
   /** Interfaces that declare nothing locally, so callers can be honest about gaps. */
   inheritedOnly: string[];
   extractedAt: string;
+  /**
+   * Packages this one re-exports from, when it is a barrel over siblings.
+   *
+   * A property of THIS package's version, so it caches safely under this key.
+   * The merged union of their props deliberately does not.
+   */
+  reexportedFrom?: string[];
 }
 
 /** Long unions and generics hurt more than they help inside a prompt. */
@@ -647,6 +654,131 @@ function packageRoot(projectRoot: string, importPath: string): string | null {
 }
 
 /**
+ * The declarations file a package names as its entry.
+ *
+ * `exports['.']` nests the answer behind conditions (MUI:
+ * `exports['.'].import.types`), so it is walked rather than indexed. Must not
+ * throw when there is no package.json at all — Atlassian configures a bare
+ * SCOPE, and `node_modules/@atlaskit/package.json` does not exist.
+ */
+function typesEntryFile(pkgRoot: string): string | null {
+  let pkg: any;
+  try { pkg = JSON.parse(fs.readFileSync(path.join(pkgRoot, 'package.json'), 'utf-8')); } catch { return null; }
+
+  const candidates: string[] = [];
+  const walk = (node: unknown, depth = 0) => {
+    if (depth > 5 || node == null) return;
+    if (typeof node === 'string') { if (/\.d\.[cm]?ts$/.test(node)) candidates.push(node); return; }
+    if (Array.isArray(node)) return node.forEach(n => walk(n, depth + 1));
+    if (typeof node === 'object') {
+      const obj = node as Record<string, unknown>;
+      // `types` must win over `default` within the same condition block.
+      if (typeof obj.types === 'string') candidates.push(obj.types);
+      for (const [k, v] of Object.entries(obj)) if (k !== 'types') walk(v, depth + 1);
+    }
+  };
+  walk(pkg?.exports?.['.']);
+  if (typeof pkg?.types === 'string') candidates.push(pkg.types);
+  if (typeof pkg?.typings === 'string') candidates.push(pkg.typings);
+
+  for (const rel of candidates) {
+    const full = path.join(pkgRoot, rel);
+    if (fs.existsSync(full)) return full;
+  }
+  return null;
+}
+
+/**
+ * Packages a barrel re-exports its API from.
+ *
+ * Fluent UI v9's `@fluentui/react-components` is 6,083 lines of
+ * `import { ButtonProps } from '@fluentui/react-button'` followed by
+ * `export { ButtonProps }` — 2,027 of each, and ZERO declarations. The props
+ * are real and this extractor reads them perfectly; they simply live in 58
+ * sibling packages. The only missing fact is which packages, and the barrel
+ * states it outright.
+ *
+ * RELATIVE specifiers are dropped. That single rule is what keeps this change
+ * inert for Astryx and Carbon, whose barrels re-export from directories INSIDE
+ * the package (`export * from './Button'`) that the existing walk already
+ * covers — measured byte-identical on both.
+ *
+ * Type-only re-exports are kept: `export type { ButtonProps } from '...'` is
+ * precisely the fact wanted.
+ */
+function reexportPackages(entryFile: string | null): string[] {
+  if (!entryFile) return [];
+  let text: string;
+  try { text = fs.readFileSync(entryFile, 'utf-8'); } catch { return []; }
+
+  const source = ts.createSourceFile(entryFile, text, ts.ScriptTarget.Latest, true);
+  const localToSpecifier = new Map<string, string>();
+  const specifiers = new Set<string>();
+
+  const packageOf = (spec: string): string | null => {
+    if (!spec || spec.startsWith('.')) return null;   // relative: already walked
+    return spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0];
+  };
+
+  ts.forEachChild(source, node => {
+    // `import { X } from 'pkg'` — remembered, in case a bare `export { X }` follows.
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+      const spec = node.moduleSpecifier.text;
+      const bindings = node.importClause?.namedBindings;
+      if (bindings && ts.isNamedImports(bindings)) {
+        for (const el of bindings.elements) localToSpecifier.set(el.name.text, spec);
+      }
+      return;
+    }
+    if (!ts.isExportDeclaration(node)) return;
+
+    // `export { X } from 'pkg'` / `export * from 'pkg'`
+    if (node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+      const pkg = packageOf(node.moduleSpecifier.text);
+      if (pkg) specifiers.add(pkg);
+      return;
+    }
+    // `export { X }` with no specifier — resolve X back through the imports.
+    if (node.exportClause && ts.isNamedExports(node.exportClause)) {
+      for (const el of node.exportClause.elements) {
+        // The LOCAL name is what the import bound. `export { Image_2 as Image }`
+        // must look up Image_2; using the exported name finds nothing, and that
+        // is 4 of Fluent's real exports.
+        const local = (el.propertyName ?? el.name).text;
+        const spec = localToSpecifier.get(local);
+        const pkg = spec ? packageOf(spec) : null;
+        if (pkg) specifiers.add(pkg);
+      }
+    }
+  });
+
+  return [...specifiers];
+}
+
+/** A barrel over siblings can itself be re-exported; two levels is ample. */
+const MAX_FEDERATION_DEPTH = 2;
+/** Runaway guard, far above any real design system's fan-out (Fluent: 58). */
+const MAX_FEDERATED_PACKAGES = 200;
+
+/** Field-wise merge of one package's components into an accumulator. */
+function mergeComponents(
+  into: Record<string, ComponentFacts>,
+  from: Record<string, ComponentFacts>,
+): void {
+  for (const [name, facts] of Object.entries(from)) {
+    const prior = into[name];
+    into[name] = prior
+      ? {
+          name,
+          props: mergeProps(prior.props, facts.props),
+          variants: prior.variants ?? facts.variants,
+          doc: prior.doc ?? facts.doc,
+        }
+      : facts;
+  }
+}
+
+/**
  * Walk a published package, skipping its noisy corners.
  *
  * `.js` is collected alongside `.d.ts` because a large share of design systems
@@ -739,14 +871,15 @@ function collectPropTypes(source: ts.SourceFile, out: Record<string, ComponentFa
  * design system itself published a release. A stale cache that looks like a
  * measurement is how a knowledge layer silently stops improving.
  */
-const EXTRACTOR_SCHEMA = 2;
+const EXTRACTOR_SCHEMA = 3;
 
 function cachePath(projectRoot: string, importPath: string, version?: string): string {
   const safe = importPath.replace(/[^a-z0-9]+/gi, '-');
   return path.join(projectRoot, '.story-ui', 'knowledge', `${safe}@${version || 'unknown'}.props.json`);
 }
 
-export async function extractProps(
+/** Read ONE package's own declarations. No federation; cached under its own key. */
+async function readOnePackage(
   importPath: string,
   projectRoot: string = process.cwd(),
   options: { version?: string; force?: boolean } = {},
@@ -803,6 +936,9 @@ export async function extractProps(
     linked++;
   }
 
+  const entry = typesEntryFile(root);
+  const reexportedFrom = reexportPackages(entry);
+
   const extracted: ExtractedProps = {
     schema: EXTRACTOR_SCHEMA,
     importPath,
@@ -810,6 +946,7 @@ export async function extractProps(
     components,
     inheritedOnly,
     extractedAt: new Date().toISOString(),
+    reexportedFrom,
   };
 
   try {
@@ -817,12 +954,98 @@ export async function extractProps(
     fs.writeFileSync(cacheFile, JSON.stringify(extracted), 'utf-8');
   } catch { /* cache is an optimisation */ }
 
+  /**
+   * Three situations that all printed "0 components" must read differently.
+   *
+   * A scope directory with no types entry, a package that genuinely declares
+   * nothing, and a barrel that declares nothing but names 58 siblings are
+   * completely different facts, and Fluent spent this entire session looking
+   * like the second when it was the third.
+   */
+  const count = Object.keys(components).length;
+  const why = !entry
+    ? ' — no types entry declared, nothing to read'
+    : count === 0 && reexportedFrom.length > 0
+      ? ` — declares nothing itself, re-exports from ${reexportedFrom.length} package(s)`
+      : count === 0
+        ? ' — declares nothing and re-exports from nothing'
+        : '';
   logger.log(
-    `🧠 Extracted props for ${Object.keys(components).length} components from ${importPath}` +
+    `🧠 Extracted props for ${count} components from ${importPath}` +
     `${version ? `@${version}` : ''} in ${Date.now() - started}ms ` +
-    `(${inheritedOnly.length} inherit-only, ${linked} linked by declared props type)`,
+    `(${inheritedOnly.length} inherit-only, ${linked} linked by declared props type)${why}`,
   );
   return extracted;
+}
+
+/**
+ * Read a package, following its re-exports into sibling packages.
+ *
+ * Fluent UI v9 is the case: `@fluentui/react-components` declares zero props
+ * and re-exports its entire API from 58 siblings. Reading only the configured
+ * package reported that design system as having props for 0 of 233 components;
+ * following the re-exports reports 85%.
+ *
+ * ALWAYS federates rather than gating on "the barrel found nothing" — a partial
+ * barrel that declares some components locally and federates its primitives is
+ * a real architecture, and gating would under-serve it invisibly. Cold cost is
+ * ~640ms once, ~10ms warm.
+ *
+ * The merged union is deliberately NOT cached under the barrel's key. That key
+ * names only the barrel's version, and siblings publish independently
+ * (react-components@9.74.4 alongside react-button@9.10.1), so a sibling bump
+ * would serve a stale merge until the barrel itself released — the same
+ * stale-cache failure the schema version exists to prevent.
+ */
+export async function extractProps(
+  importPath: string,
+  projectRoot: string = process.cwd(),
+  options: { version?: string; force?: boolean } = {},
+): Promise<ExtractedProps | null> {
+  const base = await readOnePackage(importPath, projectRoot, options);
+  if (!base || base.reexportedFrom?.length === 0 || !base.reexportedFrom) return base;
+
+  // The requested package is merged FIRST, so its own reading wins on conflict.
+  const components: Record<string, ComponentFacts> = {};
+  mergeComponents(components, base.components);
+  const inheritedOnly = [...base.inheritedOnly];
+
+  const seen = new Set<string>([importPath]);
+  let queue = base.reexportedFrom.map(name => ({ name, depth: 1 }));
+  let read = 0;
+  let unresolved = 0;
+
+  while (queue.length && read < MAX_FEDERATED_PACKAGES) {
+    const next: Array<{ name: string; depth: number }> = [];
+    for (const { name, depth } of queue) {
+      if (seen.has(name) || read >= MAX_FEDERATED_PACKAGES) continue;
+      seen.add(name);
+      const one = await readOnePackage(name, projectRoot, { force: options.force });
+      if (!one) { unresolved++; continue; }   // named by the barrel, absent from node_modules
+      read++;
+      mergeComponents(components, one.components);
+      for (const n of one.inheritedOnly) if (!inheritedOnly.includes(n)) inheritedOnly.push(n);
+      if (depth < MAX_FEDERATION_DEPTH) {
+        for (const child of one.reexportedFrom ?? []) if (!seen.has(child)) next.push({ name: child, depth: depth + 1 });
+      }
+    }
+    queue = next;
+  }
+
+  logger.log(
+    `🧠 Federated ${importPath}: ${base.reexportedFrom.length} package(s) named, ${read} read, ` +
+    `${unresolved} unresolved — ${Object.keys(components).length} components total`,
+  );
+
+  return {
+    schema: EXTRACTOR_SCHEMA,
+    importPath,
+    version: base.version,
+    components,
+    inheritedOnly,
+    extractedAt: new Date().toISOString(),
+    reexportedFrom: base.reexportedFrom,
+  };
 }
 
 /**

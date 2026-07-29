@@ -45,6 +45,13 @@ const ENVIRONMENTS = [
   { name: 'mui-material (subpath npm)', project: '/Users/tjpitre/Sites/test-storybooks/mui-material', storybook: 'http://localhost:6107' },
   { name: 'atlaskit (package-per-component)', project: '/Users/tjpitre/Sites/test-storybooks/atlaskit', storybook: 'http://localhost:6108' },
   { name: 'carbon (IBM, barrel + SCSS)', project: '/Users/tjpitre/Sites/test-storybooks/carbon', storybook: 'http://localhost:6109' },
+  // Federated barrel: declares nothing, re-exports its whole API from 58
+  // sibling packages. Measured by nobody until it was added here, and it was
+  // the only architecture reporting props for 0 of 233 components.
+  { name: 'fluent (federated barrel)', project: '/Users/tjpitre/Sites/test-storybooks/fluent', storybook: 'http://localhost:6110' },
+  // Published June 2026, after every current model's training cutoff — the only
+  // environment here that cannot be answered from memory instead of knowledge.
+  { name: 'astryx (Meta, StyleX)', project: '/Users/tjpitre/Sites/test-storybooks/astryx', storybook: 'http://localhost:6111' },
 ];
 
 /**
