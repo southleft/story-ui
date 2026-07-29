@@ -273,7 +273,17 @@ function collectFromFile(
   } catch {
     return;
   }
-  const isDeclaration = filePath.endsWith('.d.ts');
+  /**
+   * TypeScript SOURCE carries declarations too.
+   *
+   * A workspace package consumed without a build step points `types` at
+   * `src/index.ts`; it has no `.d.ts` and no `.js` anywhere. Treating only
+   * `.d.ts` as declaration-bearing meant such a package yielded zero props,
+   * zero descriptions, zero defaults and zero deprecations — while its source
+   * stated all of them. Measured on a source-only fixture: 0 -> 15 props,
+   * 4 prop docs, 3 component descriptions, 1 deprecation, 1 default.
+   */
+  const isDeclaration = /\.(d\.ts|d\.mts|d\.cts|ts|tsx|mts)$/.test(filePath) && !/\.stories\.[jt]sx?$/.test(filePath);
 
   // Cheap pre-filter — most files in a published package describe no props at
   // all, and parsing a large package's entire JS output would dominate the
@@ -805,7 +815,10 @@ function findDeclarationFiles(root: string, limit = 3000): string[] {
       if (e.isDirectory()) {
         if (skip.has(e.name) || e.name.startsWith('.')) continue;
         walk(full, depth + 1);
-      } else if (e.name.endsWith('.d.ts') || /\.(js|jsx)$/.test(e.name)) {
+      } else if (/\.d\.[cm]?ts$/.test(e.name) || /\.(js|jsx|ts|tsx|mts)$/.test(e.name)) {
+        // `.ts`/`.tsx` for source-only workspace packages; stories are the
+        // project's usage, not the component's API, and are read elsewhere.
+        if (/\.stories\.[jt]sx?$/.test(e.name) || /\.test\.[jt]sx?$/.test(e.name)) continue;
         results.push(full);
       }
     }

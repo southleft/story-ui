@@ -1,3 +1,4 @@
+import { packageDirFor } from './knowledge/packageLocator.js';
 import fs from 'fs';
 import path from 'path';
 import { DiscoveredComponent, PropInfo } from './componentDiscovery.js';
@@ -313,7 +314,7 @@ export class EnhancedComponentDiscovery {
    * utility packages does not gain phantom components.
    */
   private defaultExportComponent(packageName: string): { name: string; importPath: string } | null {
-    const pkgDir = path.join(this.getProjectRoot(), 'node_modules', packageName);
+    const pkgDir = packageDirFor(this.getProjectRoot(), packageName) ?? path.join(this.getProjectRoot(), 'node_modules', packageName);
     let types: string | undefined;
     try {
       const meta = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf-8'));
@@ -576,7 +577,17 @@ export class EnhancedComponentDiscovery {
       }
     }
 
-    const packagePath = path.join(projectRoot, 'node_modules', normalizedPackageName);
+    /**
+     * Resolve, do not guess the layout.
+     *
+     * A literal join under the project's own node_modules is wrong for every
+     * monorepo, and wrong in two opposite ways: an npm workspace hoists the
+     * symlink to the repo root so the path does not exist, while a pnpm-style
+     * layout puts it locally but leaves the package unresolvable by Node. Both
+     * fixtures reported zero components.
+     */
+    const packagePath = packageDirFor(projectRoot, normalizedPackageName)
+      ?? path.join(projectRoot, 'node_modules', normalizedPackageName);
 
     // Helper function to load known components as fallback
     const loadFallbackComponents = () => {

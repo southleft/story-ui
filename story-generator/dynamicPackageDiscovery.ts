@@ -1,3 +1,4 @@
+import { packageDirFor } from './knowledge/packageLocator.js';
 import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
@@ -56,7 +57,7 @@ export class DynamicPackageDiscovery {
         }
       }
 
-      const packagePath = path.join(this.projectRoot, 'node_modules', normalizedPackageName);
+      const packagePath = packageDirFor(this.projectRoot, normalizedPackageName) ?? path.join(this.projectRoot, 'node_modules', normalizedPackageName);
 
       if (!fs.existsSync(packagePath)) {
         console.warn(`Package ${normalizedPackageName} not found in node_modules`);
@@ -453,7 +454,7 @@ export class DynamicPackageDiscovery {
         }
       }
 
-      const packagePath = path.join(this.projectRoot, 'node_modules', normalizedPackageName);
+      const packagePath = packageDirFor(this.projectRoot, normalizedPackageName) ?? path.join(this.projectRoot, 'node_modules', normalizedPackageName);
       const packageJsonPath = path.join(packagePath, 'package.json');
 
       if (!fs.existsSync(packageJsonPath)) {
@@ -991,10 +992,20 @@ export class DynamicPackageDiscovery {
       // export default Button
       // export { Button }
 
+      /**
+       * `declare` is optional, because the file may be SOURCE.
+       *
+       * A workspace package consumed without a build step points `types` at
+       * `src/index.ts`, and source writes `export const Button = …`, not
+       * `export declare const`. Requiring the keyword found only the braced
+       * re-exports: measured on a fixture whose three files export a forwardRef
+       * const, a function declaration and a braced pair, discovery returned 2
+       * of 4 components and reported no error.
+       */
       const exportPatterns = [
-        /export\s+declare\s+const\s+([A-Z][a-zA-Z0-9]+)/g,
-        /export\s+declare\s+function\s+([A-Z][a-zA-Z0-9]+)/g,
-        /export\s+default\s+([A-Z][a-zA-Z0-9]+)/g,
+        /export\s+(?:declare\s+)?const\s+([A-Z][a-zA-Z0-9]*)/g,
+        /export\s+(?:declare\s+)?function\s+([A-Z][a-zA-Z0-9]*)/g,
+        /export\s+default\s+([A-Z][a-zA-Z0-9]*)/g,
       ];
 
       for (const pattern of exportPatterns) {
@@ -1050,6 +1061,31 @@ export class DynamicPackageDiscovery {
           result[exported] = `Component_${exported}`;
           logger.log(`📍 Found component in .d.ts: ${exported}`);
         }
+      }
+      /**
+       * `export * from './Button'` — follow it, or see nothing at all.
+       *
+       * A source-only workspace package routinely has an index that is nothing
+       * but star re-exports of sibling files. Measured on two fixtures that are
+       * byte-identical apart from this line: `export { Button } from './Button'`
+       * yields 4 components, `export * from './Button'` yields ZERO. The
+       * package was found, opened, and read — and reported empty.
+       *
+       * Bounded: relative targets only (a bare specifier is another package's
+       * problem, handled by federation in propExtractor), one level deep, and
+       * capped, so a barrel-of-barrels cannot walk a whole node_modules tree.
+       */
+      const dir = path.dirname(typingsPath);
+      const starExports = [...content.matchAll(/export\s+\*\s+from\s+['"](\.[^'"]+)['"]/g)]
+        .map(m => m[1])
+        .slice(0, 200);
+      for (const rel of starExports) {
+        const base = path.resolve(dir, rel);
+        const target = ['.d.ts', '.ts', '.tsx', '.d.mts', '/index.d.ts', '/index.ts', '/index.tsx']
+          .map(ext => base.endsWith(ext) ? base : base + ext)
+          .find(p => fs.existsSync(p) && fs.statSync(p).isFile());
+        if (!target || target === typingsPath) continue;
+        this.extractExportsFromTypeDefinitions(target, result);
       }
     } catch (error) {
       console.warn(`Could not read TypeScript definitions: ${error}`);
