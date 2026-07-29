@@ -52,6 +52,10 @@ const ENVIRONMENTS = [
   // Published June 2026, after every current model's training cutoff — the only
   // environment here that cannot be answered from memory instead of knowledge.
   { name: 'astryx (Meta, StyleX)', project: '/Users/tjpitre/Sites/test-storybooks/astryx', storybook: 'http://localhost:6111' },
+  // Namespace-only exports: `import { Menu }` then `<Menu.Root>`. 29 of its 40
+  // top-level exports are namespaces, and they were invisible — a shape
+  // carrying roughly 10% of the React component-library market by installs.
+  { name: 'base-ui (namespace exports)', project: '/Users/tjpitre/Sites/test-storybooks/base-ui', storybook: 'http://localhost:6112' },
 ];
 
 /**
