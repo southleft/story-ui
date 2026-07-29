@@ -1664,9 +1664,25 @@ async function buildClaudePromptWithContext(
       .replace(/^\.\//, '').replace(/\/+$/, '').split('/').pop() || 'generated',
       config.importPath);
     const guidance = formatStylingGuidance(styling);
+    const src = styling.sources;
     if (guidance) {
-      logger.log(`🎨 Injecting styling guidance: ${styling.idiom.attributes[0]?.name ?? 'no idiom'} idiom, ${styling.tokens.reduce((n, g) => n + g.names.length, 0)} token(s)`);
+      logger.log(`🎨 Injecting styling guidance: ${styling.idiom.attributes[0]?.name ?? 'no idiom'} idiom, ${src.tokens} token(s) from ${src.projectFiles} project + ${src.packageFiles} package file(s)`);
       prompt = injectBeforeUserRequest(prompt, guidance);
+    } else {
+      /**
+       * Log the EMPTY case too.
+       *
+       * This branch previously logged nothing, so a design system whose tokens
+       * we failed to find was indistinguishable in the log from one where the
+       * feature was never wired up. Measured: Fluent, Astryx and MUI all
+       * emitted an empty guidance string and said nothing about it, and Astryx
+       * had 288 tokens sitting in a file we were not reading.
+       */
+      logger.log(
+        src.lookedAtNothing
+          ? `🎨 No styling guidance: examined NO stylesheets (${config.importPath ?? 'no importPath'} declares none and the project has none) — tokens unknown, not zero`
+          : `🎨 No styling guidance: examined ${src.projectFiles} project + ${src.packageFiles} package file(s) (${src.declaredFiles} declared) and found ${src.tokens} token(s)`,
+      );
     }
   } catch (error) {
     logger.log(`⚠️ Could not read styling facts: ${error}`);

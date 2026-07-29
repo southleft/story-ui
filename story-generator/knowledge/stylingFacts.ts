@@ -47,9 +47,33 @@ export interface StylingIdiom {
   sampled: number;
 }
 
+/**
+ * How the token read went — so a caller can tell ABSENT from ZERO.
+ *
+ * Fluent and MUI genuinely ship no stylesheet; that is a derived positive
+ * result ("we looked at 0 files because this package declares none"), and it
+ * must not read the same as "we probed six guessed filenames and none matched",
+ * which is what silently cost Astryx its 288 tokens. Every count here is
+ * paired with what was actually examined.
+ */
+export interface TokenSources {
+  /** Project-owned CSS files read. */
+  projectFiles: number;
+  /** Design-system files read, and where each came from. */
+  packageFiles: number;
+  /** Package stylesheets found via an `exports`/`style` declaration. */
+  declaredFiles: number;
+  /** Tokens found across all of it. */
+  tokens: number;
+  /** True when nothing was examined at all — the case that must never be silent. */
+  lookedAtNothing: boolean;
+}
+
 export interface StylingFacts {
   tokens: TokenGroup[];
   idiom: StylingIdiom;
+  /** Provenance of the token read. Present so zero and absent are separable. */
+  sources: TokenSources;
 }
 
 /** Attributes that carry styling. Deliberately broad; frequency decides. */
@@ -73,12 +97,33 @@ const STYLE_ATTRS = new Set([
  * on its absence is free.
  */
 function categorise(name: string): string {
-  const segments = name.toLowerCase().split(/[-_.]/);
+  /**
+   * camelCase is a segment boundary too.
+   *
+   * Splitting only on `[-_.]` made every camelCase token a single segment, so
+   * Fluent's `colorNeutralForeground1`, `borderRadiusMedium` and
+   * `spacingHorizontalM` all landed in `other` — and `other` is skipped when
+   * the guidance is formatted, so the model would have been shown NONE of that
+   * system's 467 tokens even once they were collected. Same failure as the
+   * anchored test below it, one naming convention later.
+   */
+  const segments = name
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .toLowerCase()
+    .split(/[-_.]/);
   const has = (re: RegExp) => segments.some(s => re.test(s));
   // Order matters: `text` reads as typography on its own but as a colour role
   // in `text-primary`, which is how every token system in this list uses it.
-  if (has(/^(color|colour|bg|background|fill|stroke|border|ring|accent|primary|secondary|muted|destructive|success|warning|info|danger|error|foreground|layer|support|interactive)$/)) return 'color';
+  /**
+   * Radius before colour, because `border` belongs to both vocabularies.
+   *
+   * `--border-subtle` is a colour; `borderRadiusMedium` is a radius. With the
+   * colour test first, `border` matched and every camelCase radius token was
+   * filed as a colour — invisible until camelCase splitting made these names
+   * reachable at all.
+   */
   if (has(/^(radius|rounded|corner)$/)) return 'radius';
+  if (has(/^(color|colour|bg|background|fill|stroke|border|ring|accent|primary|secondary|muted|destructive|success|warning|info|danger|error|foreground|layer|support|interactive)$/)) return 'color';
   if (has(/^(space|spacing|gap|inset|margin|padding)$/)) return 'spacing';
   if (has(/^(shadow|elevation)$/)) return 'shadow';
   if (has(/^(font|leading|tracking|weight|type|typography|heading|body|label)$/)) return 'typography';
@@ -149,6 +194,43 @@ function styleFiles(projectRoot: string, limit = 40): string[] {
  * Bounded hard: a compiled design system stylesheet is often megabytes, and
  * only its custom-property declarations are wanted.
  */
+/**
+ * Stylesheets a package DECLARES, read from its own `exports` map.
+ *
+ * The map is the authoritative closed list: a specifier absent from it is not
+ * importable even when the file exists on disk. That distinction is not
+ * academic — `@astryxdesign/core/dist/astryx.css` is a real 127KB file and
+ * importing it fails with ERR_PACKAGE_PATH_NOT_EXPORTED, taking the whole
+ * Storybook preview down with no JavaScript error. The exported spelling is
+ * `@astryxdesign/core/astryx.css`.
+ *
+ * Wildcard keys (`"./styles/*": "./styles/*"`, which Mantine uses for 174
+ * per-component sheets) are expanded against disk.
+ */
+function declaredStyleFiles(pkgRoot: string): string[] {
+  let pkg: any;
+  try { pkg = JSON.parse(fs.readFileSync(path.join(pkgRoot, 'package.json'), 'utf8')); } catch { return []; }
+
+  const out: string[] = [];
+  const addTarget = (target: unknown) => {
+    if (typeof target !== 'string' || !/\.(css|scss)$/.test(target)) return;
+    const full = path.join(pkgRoot, target);
+    if (fs.existsSync(full) && !out.includes(full)) out.push(full);
+  };
+  // Conditions nest arbitrarily ({ import: { default: './x.css' } }), so walk.
+  const walk = (node: unknown, depth = 0) => {
+    if (depth > 5 || node == null) return;
+    if (typeof node === 'string') return addTarget(node);
+    if (Array.isArray(node)) return node.forEach(n => walk(n, depth + 1));
+    if (typeof node === 'object') for (const v of Object.values(node as any)) walk(v, depth + 1);
+  };
+  walk(pkg.exports);
+  // `style` and `sass` are the pre-exports-map way of stating the same fact.
+  addTarget(pkg.style);
+  addTarget(pkg.sass);
+  return out;
+}
+
 function packageStyleFiles(projectRoot: string, importPath?: string, limit = 6): string[] {
   if (!importPath) return [];
   const pkgName = importPath.startsWith('@')
@@ -156,19 +238,43 @@ function packageStyleFiles(projectRoot: string, importPath?: string, limit = 6):
     : importPath.split('/')[0];
 
   const out: string[] = [];
-  // The component package and its styles sibling: Carbon splits them
-  // (@carbon/react + @carbon/styles), Mantine and MUI do not.
   const scope = pkgName.startsWith('@') ? pkgName.split('/')[0] : null;
   const roots = [path.join(projectRoot, 'node_modules', ...pkgName.split('/'))];
+
+  /**
+   * Sibling packages come from what is INSTALLED under the scope, not guesses.
+   *
+   * The guessed list was `styles|themes|core|tokens`, which happens to find
+   * Carbon's `@carbon/styles` and misses `@astryxdesign/theme-neutral` — the
+   * package holding all 172 of that system's theme tokens.
+   *
+   * Reading the project's declared dependencies is NOT sufficient and was
+   * measured wrong: `@carbon/styles` is a TRANSITIVE dependency of
+   * `@carbon/react`, absent from the project's package.json, and that spelling
+   * took Carbon from 370 tokens to 0. The directory listing is the fact both
+   * guesses were approximating.
+   */
   if (scope) {
-    for (const sibling of ['styles', 'themes', 'core', 'tokens']) {
-      roots.push(path.join(projectRoot, 'node_modules', scope, sibling));
-    }
+    try {
+      const scopeDir = path.join(projectRoot, 'node_modules', scope);
+      for (const entry of fs.readdirSync(scopeDir, { withFileTypes: true })) {
+        if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+        const full = path.join(scopeDir, entry.name);
+        if (full !== roots[0]) roots.push(full);
+      }
+    } catch { /* unscoped or not installed; the configured package alone still works */ }
   }
 
   for (const root of roots) {
     if (out.length >= limit || !fs.existsSync(root)) continue;
-    // Prefer conventional locations over a full walk of a published package.
+    // What the package declares, first — it is authoritative where it exists.
+    for (const declared of declaredStyleFiles(root)) {
+      if (!out.includes(declared)) out.push(declared);
+      if (out.length >= limit) break;
+    }
+    if (out.length >= limit) break;
+    // Legacy packages (Carbon, Atlassian) ship no exports map at all, so any
+    // real path is legal and convention is the only remaining signal.
     for (const rel of ['css/styles.css', 'styles.css', 'dist/styles.css', 'index.css', 'dist/index.css', 'css/index.css']) {
       const full = path.join(root, rel);
       if (fs.existsSync(full) && !out.includes(full)) {
@@ -186,7 +292,16 @@ export function readDesignTokens(projectRoot: string, importPath?: string): Toke
   for (const file of [...styleFiles(projectRoot), ...packageStyleFiles(projectRoot, importPath)]) {
     let css: string;
     try { css = fs.readFileSync(file, 'utf8'); } catch { continue; }
-    for (const m of css.matchAll(/^\s*--([a-zA-Z][\w-]*)\s*:/gm)) {
+    /**
+     * NOT line-anchored: a minified stylesheet has no lines.
+     *
+     * `@carbon/styles/css/styles.min.css` is 813KB on a SINGLE line. The
+     * anchored form found 0 custom properties in it; unanchored finds 839. A
+     * minified sheet therefore looked exactly like a sheet that declares no
+     * tokens, which is the absent-vs-zero conflation in its purest form —
+     * Carbon escapes it today only because the unminified file is found first.
+     */
+    for (const m of css.matchAll(/--([a-zA-Z][\w-]*)\s*:/g)) {
       const name = m[1];
       const category = categorise(name);
       if (!byCategory.has(category)) byCategory.set(category, new Set());
@@ -262,9 +377,28 @@ export function readStylingFacts(
   /** The configured design system, so its own shipped tokens can be read. */
   importPath?: string,
 ): StylingFacts {
+  const projectFiles = styleFiles(projectRoot);
+  const packageFiles = packageStyleFiles(projectRoot, importPath);
+  const pkgRoot = importPath
+    ? path.join(projectRoot, 'node_modules', ...(importPath.startsWith('@')
+        ? importPath.split('/').slice(0, 2)
+        : [importPath.split('/')[0]]))
+    : null;
+  const declaredFiles = pkgRoot ? declaredStyleFiles(pkgRoot).length : 0;
+
+  const tokens = readDesignTokens(projectRoot, importPath);
+  const tokenCount = tokens.reduce((n, g) => n + g.names.length, 0);
+
   return {
-    tokens: readDesignTokens(projectRoot, importPath),
+    tokens,
     idiom: readStylingIdiom(projectRoot, generatedFragment),
+    sources: {
+      projectFiles: projectFiles.length,
+      packageFiles: packageFiles.length,
+      declaredFiles,
+      tokens: tokenCount,
+      lookedAtNothing: projectFiles.length === 0 && packageFiles.length === 0,
+    },
   };
 }
 
