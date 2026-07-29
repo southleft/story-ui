@@ -491,7 +491,7 @@ export async function runStoryGeneration(
       generatedDirFragment || undefined,
     );
     if (storybookClient) {
-      storybookContext = await storybookClient.fetchContext(componentNames);
+      storybookContext = await storybookClient.fetchContext(componentNames, prompt);
       logger.log(storybookContext.available
         ? `✅ Storybook MCP context fetched in ${storybookContext.fetchTimeMs}ms`
         : `⚠️ Storybook MCP not available: ${storybookContext.error}`);
@@ -510,7 +510,21 @@ export async function runStoryGeneration(
       for (const component of components as any[]) {
         if (component.examples?.length) continue;
         const doc = (docs as any)[component.name];
-        const snippets = doc?.stories?.map((st: any) => st.snippet).filter(Boolean);
+        /**
+         * `examples`, not `stories`.
+         *
+         * ComponentDocumentation has no `stories` field — fetchFromManifest
+         * normalises each story's snippet into `examples[].code`. Reading
+         * `doc.stories` was therefore always undefined, so NO manifest example
+         * has ever reached a prompt, and inheritCompoundExamples on the next
+         * line had nothing to propagate.
+         *
+         * It survived because bench/resolution.mjs parses the RAW manifest,
+         * where `stories[].snippet` does exist, and reported example coverage
+         * the pipeline never received. Same bench-versus-pipeline divergence
+         * already recorded for the description predicate.
+         */
+        const snippets = doc?.examples?.map((ex: any) => ex.code).filter(Boolean);
         if (snippets?.length) component.examples = snippets;
       }
     }

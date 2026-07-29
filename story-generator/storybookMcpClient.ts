@@ -9,6 +9,7 @@
  */
 
 import { logger } from './logger.js';
+import { rankByRelevance } from './knowledge/storybookCatalog.js';
 
 /**
  * Context fetched from Storybook MCP
@@ -162,6 +163,37 @@ interface ManifestProp {
 /**
  * Storybook MCP Client for fetching context from Storybook instances
  */
+/**
+ * Choose which manifest components to spend prompt space on.
+ *
+ * Delegates the scoring to `rankByRelevance`, the same function the catalog
+ * path uses, rather than reimplementing it — two rankers that drift is how the
+ * catalog and validator ended up disagreeing about which components exist.
+ *
+ * With no prompt there is nothing to rank on, so manifest order stands; that is
+ * the old behaviour, kept for the case where it is genuinely all we know.
+ */
+function selectRelevant<T extends { name: string; id: string }>(
+  entries: T[],
+  prompt: string,
+  limit: number,
+): T[] {
+  if (!prompt.trim() || entries.length <= limit) return entries.slice(0, limit);
+  const byName = new Map(entries.map(e => [e.name, e]));
+  const ranked = rankByRelevance(
+    entries.map(e => ({ name: e.name, title: e.name, importPath: e.id, storyNames: [] })),
+    prompt,
+    limit,
+  );
+  const picked = ranked.map(r => byName.get(r.name)).filter(Boolean) as T[];
+  // Top up from manifest order if ranking returned fewer than the budget.
+  for (const e of entries) {
+    if (picked.length >= limit) break;
+    if (!picked.includes(e)) picked.push(e);
+  }
+  return picked.slice(0, limit);
+}
+
 export class StorybookMcpClient {
   private baseUrl: string;
   private timeout: number;
@@ -224,7 +256,11 @@ export class StorybookMcpClient {
   /**
    * Fetch all available context from Storybook MCP
    */
-  async fetchContext(componentNames?: string[]): Promise<StorybookMcpContext> {
+  /** The request being served, so exemplars can be chosen for it rather than alphabetically. */
+  private lastPrompt = '';
+
+  async fetchContext(componentNames?: string[], prompt?: string): Promise<StorybookMcpContext> {
+    this.lastPrompt = prompt || '';
     const startTime = Date.now();
 
     try {
@@ -353,12 +389,20 @@ export class StorybookMcpClient {
         if (filtered.length > 0) {
           componentEntries = filtered;
         } else {
-          // If no matches, use first 15 components
-          componentEntries = componentEntries.slice(0, 15);
+          componentEntries = selectRelevant(componentEntries, this.lastPrompt, 15);
         }
       } else {
-        // Limit to 15 components to avoid overwhelming context
-        componentEntries = componentEntries.slice(0, 15);
+        /**
+         * Rank by relevance to the request, not alphabetically.
+         *
+         * `slice(0, 15)` took the first fifteen in manifest order, and a
+         * non-empty manifest also SUPPRESSES the prompt-ranked catalog path in
+         * generationCore. Measured on a 51-component project, a request for a
+         * data table was answered with Accordion, Alert, AspectRatio, Avatar,
+         * Badge, Breadcrumb… — the alphabetical head, with the ranked path
+         * switched off.
+         */
+        componentEntries = selectRelevant(componentEntries, this.lastPrompt, 15);
       }
 
       for (const comp of componentEntries) {
