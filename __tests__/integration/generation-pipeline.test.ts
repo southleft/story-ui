@@ -48,15 +48,36 @@ import { getManifestManager } from '../../story-generator/manifestManager.js';
 let fixture: FixtureProject;
 let originalCwd: string;
 
+let originalStorybookUrl: string | undefined;
+
 beforeAll(() => {
   originalCwd = process.cwd();
   fixture = createFixtureProject();
   process.chdir(fixture.root);
+
+  /**
+   * Keep this suite off the network.
+   *
+   * With no Storybook URL supplied, generation falls back to
+   * `http://localhost:6006` — the conventional default — and on a developer
+   * machine that is very often a REAL, unrelated Storybook. This suite was
+   * silently fetching 16 components from whatever happened to be running
+   * there, spending 3.4s doing it, and timing out at 5s depending on that
+   * server's load. A test whose result depends on ambient network state is
+   * measuring the machine, not the code.
+   *
+   * Port 1 cannot be listened on, so the fetch fails immediately rather than
+   * waiting out a timeout.
+   */
+  originalStorybookUrl = process.env.STORYBOOK_URL;
+  process.env.STORYBOOK_URL = 'http://127.0.0.1:1';
 });
 
 afterAll(() => {
   process.chdir(originalCwd);
   fixture.cleanup();
+  if (originalStorybookUrl === undefined) delete process.env.STORYBOOK_URL;
+  else process.env.STORYBOOK_URL = originalStorybookUrl;
 });
 
 beforeEach(() => {

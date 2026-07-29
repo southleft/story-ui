@@ -56,6 +56,12 @@ const ENVIRONMENTS = [
   // top-level exports are namespaces, and they were invisible — a shape
   // carrying roughly 10% of the React component-library market by installs.
   { name: 'base-ui (namespace exports)', project: '/Users/tjpitre/Sites/test-storybooks/base-ui', storybook: 'http://localhost:6112' },
+  // Federated NAMESPACE barrel — the composition of two architectures, and the
+  // single largest package in the ecosystem at 42.4M installs/month. Every one
+  // of its 55 siblings arrives as `import * as x` + `export { x as Name }`,
+  // which needs federation to reach props AND namespaces to know the members
+  // are `Dialog.Root`. Either half alone yields nothing usable.
+  { name: 'radix-ui (federated namespace)', project: '/Users/tjpitre/Sites/test-storybooks/radix', storybook: 'http://localhost:6113' },
 ];
 
 /**

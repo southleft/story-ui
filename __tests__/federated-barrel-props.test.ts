@@ -202,3 +202,38 @@ describe('cache correctness', () => {
     expect(out?.components?.Button?.props?.some(p => p.name === 'appearance')).toBe(true);
   });
 });
+
+describe('a federated NAMESPACE barrel', () => {
+  it('follows `import * as x` + `export { x as Name }`', async () => {
+    /**
+     * The unified `radix-ui` package — 42.4M installs a month, larger than
+     * @mui/material — is built entirely from this pattern across 55 siblings:
+     *
+     *   import * as reactDialog from '@radix-ui/react-dialog';
+     *   export { reactDialog as Dialog };
+     *
+     * Handling only NAMED imports missed all 55: 33 components discovered with
+     * props for none of them. The pattern also evades an `export * as`
+     * detector, which is the shape one would think to look for.
+     */
+    const root = fixture({
+      '@fx/ns': { 'index.d.ts': `import * as fxButton from '@fx/ns-button';\nexport { fxButton as Button };\n` },
+      '@fx/ns-button': { 'index.d.ts': BUTTON_SIBLING },
+    });
+    const out = await extractProps('@fx/ns', root, { force: true });
+    expect(out?.reexportedFrom).toContain('@fx/ns-button');
+    expect(out?.components?.Button?.props?.some(p => p.name === 'appearance')).toBe(true);
+  });
+
+  it('ignores a relative namespace import', async () => {
+    // `import * as x from './parts'` is inside the package; the walk covers it.
+    const root = fixture({
+      '@fx/nslocal': {
+        'index.d.ts': `import * as parts from './parts';\nexport { parts as Button };\n`,
+        'parts.d.ts': BUTTON_SIBLING,
+      },
+    });
+    const out = await extractProps('@fx/nslocal', root, { force: true });
+    expect(out?.reexportedFrom).toEqual([]);
+  });
+});

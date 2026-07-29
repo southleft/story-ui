@@ -737,6 +737,21 @@ function reexportPackages(entryFile: string | null): string[] {
       const bindings = node.importClause?.namedBindings;
       if (bindings && ts.isNamedImports(bindings)) {
         for (const el of bindings.elements) localToSpecifier.set(el.name.text, spec);
+      } else if (bindings && ts.isNamespaceImport(bindings)) {
+        /**
+         * `import * as reactDialog from '@radix-ui/react-dialog'`
+         *
+         * The unified `radix-ui` package — 42.4M installs a month, larger than
+         * @mui/material — is built entirely from this followed by
+         * `export { reactDialog as Dialog }`, across 55 siblings. It is a
+         * FEDERATED NAMESPACE barrel: federation to reach the props, namespaces
+         * to know the members are `Dialog.Root` and never bare `Root`.
+         *
+         * Handling only named imports missed all 55: 33 components discovered
+         * with props for none of them. The pattern also evades an
+         * `export * as` detector, which is the shape one would look for.
+         */
+        localToSpecifier.set(bindings.name.text, spec);
       }
       return;
     }
