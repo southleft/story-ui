@@ -16,6 +16,7 @@ import { resolveHostTooling, canLaunchBrowser } from './hostTooling.js';
 import { renderStory, waitForStoryIndexed, indexIsStale } from './renderHarness.js';
 import { runDomCensus } from './probes/domCensus.js';
 import { runLayoutProbe } from './probes/layout.js';
+import { runClassEffectProbe } from './probes/classEffect.js';
 import { runVisualCritique, type CritiqueModel } from './probes/visualCritic.js';
 import { runA11yProbe, isGenerationDefect, isDesignSystemConcern, isDesignSystemInternal } from './probes/a11y.js';
 import type { Finding, VerifyReport } from './findings.js';
@@ -239,6 +240,38 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
      * measurement. Checking them costs nothing, cannot drift, and catches the
      * defect a reviewer notices first.
      */
+    /**
+     * Classes the story wrote that no loaded stylesheet defines.
+     *
+     * The only check that can catch a stale or mistyped class name. Nothing
+     * static can: no import is involved, the HTML is valid, and the element
+     * renders unstyled without an error. Version drift is the common case —
+     * daisyUI renamed `card-bordered` to `card-border` between majors, and a
+     * model's training data still carries the old one.
+     */
+    const classes = await runClassEffectProbe(render.page, { libraryComponents });
+    if (classes.unreadable) {
+      // No stylesheet was readable, so silence here means nothing. Say that.
+      logger.log(`🎨 Class check skipped: ${classes.sheetsBlocked} stylesheet(s) unreadable, 0 readable — classes unverified, not clean`);
+    } else {
+      for (const u of classes.undefined_) {
+        findings.push({
+          id: `undefined-class-${findings.length}`,
+          severity: 'warning',
+          class: 'code',
+          message: u.ownedByLibrary && u.owner
+            ? `Class "${u.className}" is not defined by any loaded stylesheet — written by <${u.owner}>, a design system component`
+            : `Class "${u.className}" is not defined by any loaded stylesheet`,
+          evidence: u.ownedByLibrary
+            ? `used on ${u.onElements} element(s); the library rendered this markup, so the composition cannot change it`
+            : `used on ${u.onElements} element(s), first a <${u.sample}> — the element renders unstyled, with no error`,
+          // The library's own markup is not the story's to fix. Sending repair
+          // at it can only make the model stop using the component.
+          repairable: !u.ownedByLibrary,
+        });
+      }
+    }
+
     const layout = await runLayoutProbe(render.page, { libraryComponents });
     for (const p of layout.problems) {
       findings.push({

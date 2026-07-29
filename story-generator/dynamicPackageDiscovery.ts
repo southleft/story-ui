@@ -855,16 +855,28 @@ export class DynamicPackageDiscovery {
           : (typeof mainExport === 'string' && mainExport.endsWith('.css'));
 
         if (isCSSOnly) {
-          logger.log(`⚠️ ${this.packageName} is CSS-only (Tailwind/CSS utilities). No Svelte components available.`);
-          logger.log(`💡 This package provides CSS utilities only. Use standard HTML elements with its CSS classes.`);
-
-          // Return a special marker indicating CSS-only
-          exports['__CSS_ONLY__'] = true;
-          exports['__MESSAGE__'] = `${this.packageName} provides CSS utilities only. Use standard HTML elements with CSS classes.`;
+          /**
+           * Say so, and return NOTHING.
+           *
+           * This used to smuggle two sentinel keys — `__CSS_ONLY__` and
+           * `__MESSAGE__` — through the component map. Nothing filters
+           * `__`-prefixed keys, and the caller returns early on any non-empty
+           * result, so a CSS-only dependency on a Svelte project produced two
+           * components literally named `__CSS_ONLY__` and `__MESSAGE__`, fed
+           * them to the catalog AND to validateAvailableComponents as legal
+           * component names, and skipped every other discovery method for that
+           * package.
+           *
+           * A component map is not a channel for diagnostics. The log carries
+           * the message; the map stays honest.
+           */
+          logger.log(`⚠️ ${this.packageName} ships CSS utilities only — no importable components.`);
+          logger.log(`💡 Use standard HTML elements with its CSS classes; there is nothing to import.`);
+          return null;
         }
       }
 
-      if (Object.keys(exports).length > 0 && !exports['__CSS_ONLY__']) {
+      if (Object.keys(exports).length > 0) {
         logger.log(`✅ Svelte Framework: Found ${Object.keys(exports).length} components`);
       }
 
