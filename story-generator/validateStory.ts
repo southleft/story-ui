@@ -202,7 +202,21 @@ function performSemanticChecks(sourceFile: ts.SourceFile, config?: any): string[
         // CRITICAL: Check for incorrect import paths that contain the configured importPath but with extra segments
         // This catches LLM errors like: vuetify/components/lib/components/VAlert instead of vuetify/components
         // NOTE: Web Components often require deep imports to register custom elements, so we skip this check for them
-        if (config && config.importPath && config.componentFramework !== 'web-components') {
+        //
+        // A BARE SCOPE IS NOT AN IMPORTABLE PACKAGE, so nothing "deeper" than it
+        // is a mistake. Atlassian configures `importPath: '@atlaskit'` because it
+        // ships one package per component; correct code imports
+        // `@atlaskit/primitives`, which starts with `@atlaskit/` and so tripped
+        // this check. The advice it produced — import from '@atlaskit' — names a
+        // package that cannot resolve, and the pipeline elsewhere runs
+        // splitScopeImports precisely to REPAIR that spelling. Two parts of the
+        // engine demanding opposite things is how correct imports got rewritten
+        // into packages that do not exist.
+        //
+        // Derived from the value rather than from a config flag: `@scope` with no
+        // slash is never importable, whatever importStyle happens to say.
+        const scopeRootOnly = typeof config?.importPath === 'string' && /^@[^/]+$/.test(config.importPath);
+        if (config && config.importPath && config.componentFramework !== 'web-components' && !scopeRootOnly) {
           const configuredPath = config.importPath;
 
           // Check if LLM used a deep/incorrect path instead of the configured one
