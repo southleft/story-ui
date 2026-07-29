@@ -27,16 +27,55 @@ export interface CompoundComponent {
   name: string;
   /** Sub-component names, e.g. ["Target", "Dropdown", "Item"]. */
   children: string[];
+  /**
+   * Can the parent itself be rendered?
+   *
+   * True for statics on a real component (`Card` with `Card.Header`). False for
+   * a namespace object (Base UI's `Menu`), where `<Menu>` throws. The
+   * difference decides whether the model may write `<Menu>…</Menu>`.
+   */
+  parentRenderable?: boolean;
+  /**
+   * Each child's OWN name according to the runtime, keyed by its static key.
+   *
+   * The key into prop knowledge is not parent+child. Measured across Base UI's
+   * 266 sub-components: naive concatenation is wrong 51 times, the runtime name
+   * 7. `Menu.Separator` is "Separator", not "MenuSeparator"; `AlertDialog.Close`
+   * is literally "DialogClose", because AlertDialog reuses Dialog's parts.
+   */
+  childRuntimeNames?: Record<string, string>;
 }
 
 export interface ReflectedKnowledge {
+  /** Reflector schema that produced this record; see REFLECT_SCHEMA. */
+  schema?: number;
   importPath: string;
   version?: string;
   /** Every PascalCase export, so we can tell a real component from a guess. */
   exports: string[];
   compound: CompoundComponent[];
+  /**
+   * Exports that are namespace objects: real, importable, and NOT renderable.
+   *
+   * `import { Menu } from '@base-ui/react'` then `<Menu.Root>`. `<Menu>` itself
+   * throws — it is a plain object. Dropping these loses the library (29 of Base
+   * UI's 40 exports, including every interactive composite); marking them
+   * renderable invites the throw. They are a third state.
+   */
+  namespaces?: string[];
   reflectedAt: string;
 }
+
+/**
+ * Bump when reflection learns to record something new.
+ *
+ * The cache was keyed on the library version alone and had no schema field, so
+ * every new field would be invisible on any machine with a warm cache until the
+ * design system itself published a release. Exactly the failure already fixed
+ * in propExtractor, which is why it is fixed here before adding fields rather
+ * than after.
+ */
+const REFLECT_SCHEMA = 1;
 
 /**
  * Statics that are React/library plumbing rather than sub-components.
@@ -144,7 +183,9 @@ export async function reflectDesignSystem(
 
   if (!force && fs.existsSync(cacheFile)) {
     try {
-      return JSON.parse(fs.readFileSync(cacheFile, 'utf-8')) as ReflectedKnowledge;
+      const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf-8')) as ReflectedKnowledge;
+      // A record from an older reflector lacks fields this one produces.
+      if (cached.schema === REFLECT_SCHEMA) return cached;
     } catch {
       // Corrupt cache — fall through and rebuild.
     }
@@ -162,11 +203,31 @@ export async function reflectDesignSystem(
     return null;
   }
 
-  const exports = Object.keys(mod).filter(n => /^[A-Z]/.test(n));
+  /**
+   * Unwrap the CJS interop namespace before looking for components.
+   *
+   * A CommonJS package imported from ESM arrives as `{ __esModule, default }`.
+   * Neither key is PascalCase, so filtering the top level returned ZERO exports
+   * and zero compound components — silently, for every CJS-published library.
+   * Measured: `@fluentui/react-components` has 0 PascalCase keys at the top and
+   * 1,209 under `.default`; Material Tailwind, 0 versus 126.
+   *
+   * Preferring whichever level actually has components, rather than testing for
+   * `__esModule`, also covers packages that legitimately export both.
+   */
+  const pascalCount = (o: any) => {
+    try { return Object.keys(o).filter(n => /^[A-Z]/.test(n)).length; } catch { return 0; }
+  };
+  const inner = (mod as any)?.default;
+  const surface: Record<string, any> =
+    inner && typeof inner === 'object' && pascalCount(inner) > pascalCount(mod) ? inner : mod;
+
+  const exports = Object.keys(surface).filter(n => /^[A-Z]/.test(n));
   const compound: CompoundComponent[] = [];
+  const namespaces: string[] = [];
 
   for (const name of exports) {
-    const value = mod[name];
+    const value = surface[name];
     if (!value || (typeof value !== 'function' && typeof value !== 'object')) continue;
     let children: string[];
     try {
@@ -176,14 +237,40 @@ export async function reflectDesignSystem(
     } catch {
       continue; // exotic proxy/getter
     }
-    if (children.length > 0) compound.push({ name, children });
+    if (children.length === 0) continue;
+
+    /**
+     * Ask the VALUE whether the parent can render, rather than its name.
+     *
+     * A namespace object has renderable members and is not itself renderable —
+     * Base UI's `Menu` is a plain object, and `<Menu>` throws. Recording that
+     * as a third state is what lets the catalog offer `Menu.Root` while
+     * refusing `<Menu>`.
+     */
+    const parentRenderable = isRenderable(value);
+    if (!parentRenderable) namespaces.push(name);
+
+    // The library's own name for each part, which is not parent+child.
+    const childRuntimeNames: Record<string, string> = {};
+    for (const k of children) {
+      const child = (value as any)[k];
+      const runtime = child?.displayName
+        || (typeof child === 'function' ? child.name : undefined)
+        || child?.render?.displayName
+        || child?.type?.displayName;
+      if (runtime && typeof runtime === 'string') childRuntimeNames[k] = runtime;
+    }
+
+    compound.push({ name, children, parentRenderable, childRuntimeNames });
   }
 
   const knowledge: ReflectedKnowledge = {
+    schema: REFLECT_SCHEMA,
     importPath,
     version,
     exports,
     compound,
+    namespaces,
     reflectedAt: new Date().toISOString(),
   };
 
@@ -196,7 +283,12 @@ export async function reflectDesignSystem(
 
   logger.log(
     `🧠 Reflected ${importPath}${version ? `@${version}` : ''}: ` +
-    `${exports.length} exports, ${compound.length} compound components`,
+    `${exports.length} exports, ${compound.length} compound` +
+    (namespaces.length ? `, ${namespaces.length} namespace-only (not renderable on their own)` : '') +
+    (surface !== mod ? ' [read through the CJS default export]' : '') +
+    // Zero exports after a SUCCESSFUL import is a real signal, not a non-event:
+    // it means the package resolved, loaded, and exposed nothing we recognise.
+    (exports.length === 0 ? ' — imported successfully but exposed no PascalCase exports' : ''),
   );
   return knowledge;
 }

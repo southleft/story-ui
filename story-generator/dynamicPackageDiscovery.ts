@@ -309,13 +309,45 @@ export class DynamicPackageDiscovery {
   /**
    * Check if an object has component-like properties
    */
+  /**
+   * Is this object a component, or a namespace holding components?
+   *
+   * Duck-typing on `.render`/`.component`/`.Component` answers only the first
+   * question, and answers it wrongly for the export shape that now carries ~10%
+   * of the React component-library market. Base UI's `Menu` is a PLAIN OBJECT
+   * whose members are the components — `Menu.Root`, `Menu.Popup`, `Menu.Item`.
+   * It has none of the three markers, so it was classified not-a-component and
+   * dropped, taking 29 of that library's 40 exports with it, including every
+   * interactive composite: Menu, Dialog, Select, Tabs, Tooltip, Popover,
+   * Combobox, Accordion.
+   *
+   * The loss was invisible: 11 survivors is greater than zero, so the
+   * no-components fallback never fired and the log read "Discovered 11
+   * components" exactly as it would for a complete library.
+   *
+   * A namespace is admitted here so the library is not lost. Whether the parent
+   * may itself be RENDERED is a separate question, answered from the runtime
+   * value by runtimeReflect's `parentRenderable` — `<Menu>` throws.
+   */
   private hasComponentLikeProperties(obj: any): boolean {
-    // Some components are wrapped in objects with render methods or similar
-    return (
+    if (
       typeof obj.render === 'function' ||
       typeof obj.component === 'function' ||
       typeof obj.Component === 'function'
-    );
+    ) return true;
+
+    // A namespace: at least one PascalCase member that is itself renderable.
+    try {
+      return Object.keys(obj).some(k => {
+        if (!/^[A-Z]/.test(k)) return false;
+        const v = (obj as any)[k];
+        if (!v) return false;
+        if (typeof v === 'function') return true;
+        return typeof v === 'object' && Boolean(v.$$typeof || v.render || v.type);
+      });
+    } catch {
+      return false; // exotic proxy or throwing getter
+    }
   }
 
   /**
@@ -945,7 +977,20 @@ export class DynamicPackageDiscovery {
     // Skip constants and utilities
     if (name.toUpperCase() === name) return false; // ALL_CAPS constants
     if (name.startsWith('Styled')) return false; // Styled components (usually internal)
-    if (name.endsWith('Provider')) return false; // Context providers
+    /**
+     * A `*Provider` is very often a MANDATORY component, not plumbing.
+     *
+     * This rejection was removed from the runtime path after it deleted Shopify
+     * Polaris's `AppProvider` — without which that library throws — and was left
+     * standing here, in the structural path, where it silently costs any
+     * Radix-derived system its `Tooltip.Provider` and `Toast.Provider`. Those
+     * are required composition members: telling a model to use dot notation
+     * while hiding the one child it cannot render without is worse than saying
+     * nothing.
+     *
+     * `*Context` stays rejected: a React context object genuinely is not
+     * renderable, and unlike a provider it is never written as an element.
+     */
     if (name.endsWith('Context')) return false; // React contexts
     if (name.endsWith('Type') || name.endsWith('Types')) return false; // Type definitions
 
