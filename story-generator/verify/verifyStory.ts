@@ -18,7 +18,7 @@ import { runDomCensus } from './probes/domCensus.js';
 import { runLayoutProbe } from './probes/layout.js';
 import { runClassEffectProbe } from './probes/classEffect.js';
 import { runVisualCritique, type CritiqueModel } from './probes/visualCritic.js';
-import { runA11yProbe, isGenerationDefect, isDesignSystemConcern, isDesignSystemInternal } from './probes/a11y.js';
+import { runA11yProbe, isGenerationDefect, isDesignSystemConcern, isDesignSystemInternal, isContrastDefect } from './probes/a11y.js';
 import type { Finding, VerifyReport } from './findings.js';
 import { blockers, summarize } from './findings.js';
 
@@ -300,7 +300,15 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
         // A violation on markup the library renders is not something the story
         // can fix, however severe the rule.
         const libraryInternal = isDesignSystemInternal(v.selector);
-        const generationDefect = isGenerationDefect(v.id) && !libraryInternal;
+        /**
+         * Unreadable text blocks, unless the library rendered it.
+         *
+         * The story chose the foreground/background pairing, so the story can
+         * change it — and text at contrast 1.04 is not a preference, it is
+         * content nobody can see.
+         */
+        const contrastDefect = isContrastDefect(v.id) && !libraryInternal;
+        const generationDefect = (isGenerationDefect(v.id) || contrastDefect) && !libraryInternal;
         const severe = v.impact === 'critical' || v.impact === 'serious';
         findings.push({
           id: `axe-${v.id}`,

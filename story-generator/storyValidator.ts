@@ -3,6 +3,54 @@ export interface ValidationError {
   line: number;
 }
 
+/**
+ * Emoji standing in for an icon — a defect, not a style preference.
+ *
+ * Observed on a radix-ui dashboard: the four stat cards used 📦 ⚠️ ⏳ ⛔ as
+ * their icons, because that library ships no icon set and the model reached for
+ * the nearest thing. No design system implementation ships emoji as
+ * iconography; it renders at a different scale and weight to everything around
+ * it, cannot be recoloured by a token, and reads instantly as unowned.
+ *
+ * The line drawn here is deterministic: a LONE emoji is being used as a UI
+ * element, an emoji inside a sentence is content. `<span>📦</span>` is an icon;
+ * `"Deployed release 🎉 successfully"` is prose, and the tool has no business
+ * policing prose.
+ *
+ * Presentation selectors and variation selectors are stripped before measuring
+ * length, so ⚠️ (U+26A0 U+FE0F) is recognised as the single character it looks
+ * like rather than as two.
+ */
+/**
+ * Ranges chosen from the real failure, not from memory. The radix dashboard used
+ * 📦 U+1F4E6, ⚠️ U+26A0, ⏳ U+23F3 and ⛔ U+26D4 — and an earlier version of this
+ * pattern caught three of the four, because U+23F3 sits in Miscellaneous
+ * Technical (U+2300–U+23FF) which the obvious ranges miss. Verified against that
+ * file: 4 of 4.
+ */
+const EMOJI = /[\u{1F300}-\u{1FAFF}\u{1F000}-\u{1F2FF}\u{2300}-\u{23FF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{20E3}]/u;
+
+export function emojiUsedAsUi(line: string): string | null {
+  // A JSX text node or a string literal holding ONLY emoji and whitespace.
+  const candidates = [
+    ...line.matchAll(/>([^<>{}]{1,12})</g),          // <span>📦</span>
+    ...line.matchAll(/['"`]([^'"`]{1,12})['"`]/g),   // icon: '📦'
+  ];
+  for (const m of candidates) {
+    const raw = m[1];
+    if (!EMOJI.test(raw)) continue;
+    // Strip emoji, variation selectors and whitespace; anything left is prose.
+    const remainder = raw
+      .replace(new RegExp(EMOJI.source, 'gu'), '')
+      .replace(/[\s‍]/g, '');
+    if (remainder.length === 0) {
+      const found = raw.match(new RegExp(EMOJI.source, 'u'));
+      return found ? found[0] : null;
+    }
+  }
+  return null;
+}
+
 export function validateStory(storyContent: string): ValidationError[] {
   const errors: ValidationError[] = [];
   const lines = storyContent.split('\n');
@@ -31,6 +79,17 @@ export function validateStory(storyContent: string): ValidationError[] {
           line: index + 1,
         });
       }
+    }
+    const emoji = emojiUsedAsUi(line);
+    if (emoji) {
+      errors.push({
+        message:
+          `Emoji "${emoji}" is being used as a UI element. Never use emoji as iconography, status ` +
+          `indicators, bullets or decoration — use the design system's own icon set, or omit the icon ` +
+          `entirely if it has none. Emoji inside a sentence of body copy is fine; a lone emoji standing ` +
+          `in for an icon is not.`,
+        line: index + 1,
+      });
     }
   });
 

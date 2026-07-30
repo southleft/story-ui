@@ -69,11 +69,37 @@ const GENERATION_DEFECT_RULES = new Set([
 ]);
 
 /**
+ * Text nobody can read is a COMPOSITION defect, not a palette opinion.
+ *
+ * `color-contrast` sat in DESIGN_SYSTEM_RULES below — reported, never blocking —
+ * on the reasoning that contrast follows from the design system's palette and a
+ * story cannot change it. Measured, that reasoning is wrong in the case that
+ * matters most.
+ *
+ * A generated pricing page rendered its highlighted card with a light
+ * background while the text colour came from a token that resolves LIGHT in
+ * dark mode. axe reported it exactly: 12 nodes, contrast ratio 1.04, #fafafa on
+ * #ffffff. White on white. Completely unreadable, and the single most obvious
+ * defect a reviewer sees — and we computed the answer and threw it away.
+ *
+ * The story chose that pairing, so the story can fix it. Where the LIBRARY'S own
+ * markup fails, `isDesignSystemInternal` already demotes it, which is the right
+ * split: a system's grey-on-grey is its own business, a composition's
+ * white-on-white is not.
+ *
+ * `color-contrast-enhanced` (AAA) stays advisory — AA is the line worth blocking.
+ */
+const CONTRAST_RULES = new Set(['color-contrast']);
+
+export function isContrastDefect(ruleId: string): boolean {
+  return CONTRAST_RULES.has(ruleId);
+}
+
+/**
  * Rules that describe the design system's own visual choices rather than the
  * composition. Reported, never blocking.
  */
 const DESIGN_SYSTEM_RULES = new Set([
-  'color-contrast',
   'color-contrast-enhanced',
   'landmark-one-main',
   'region',

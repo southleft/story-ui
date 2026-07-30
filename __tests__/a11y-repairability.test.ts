@@ -3,6 +3,7 @@ import {
   isGenerationDefect,
   isDesignSystemConcern,
   isDesignSystemInternal,
+  isContrastDefect,
 } from '../story-generator/verify/probes/a11y.js';
 
 /**
@@ -23,11 +24,35 @@ describe('axe rule classification', () => {
     }
   });
 
-  it('treats palette and document structure as design-system concerns', () => {
-    for (const rule of ['color-contrast', 'region', 'heading-order', 'html-has-lang']) {
+  it('treats document structure as a design-system concern', () => {
+    for (const rule of ['region', 'heading-order', 'html-has-lang']) {
       expect(isDesignSystemConcern(rule)).toBe(true);
       expect(isGenerationDefect(rule)).toBe(false);
     }
+  });
+
+  /**
+   * `color-contrast` used to be in that list, and this test used to assert it.
+   *
+   * The reasoning was that contrast follows from the design system's palette and
+   * a story cannot change it. Measured against real output, that is wrong in the
+   * case that matters most: a generated pricing page rendered its highlighted
+   * card with a light background while the text colour came from a token that
+   * resolves LIGHT in dark mode. axe reported it exactly — 12 nodes, contrast
+   * ratio 1.04, #fafafa on #ffffff. White on white, the most obvious defect a
+   * reviewer can see, and the answer was computed and discarded.
+   *
+   * The STORY chose that pairing, so the story can fix it. Where the library's
+   * own markup fails, isDesignSystemInternal still demotes it — which is the
+   * right split: a system's grey-on-grey is its own business, a composition's
+   * white-on-white is not.
+   */
+  it('treats unreadable text as a composition defect, not a palette opinion', () => {
+    expect(isContrastDefect('color-contrast')).toBe(true);
+    expect(isDesignSystemConcern('color-contrast')).toBe(false);
+    // AAA stays advisory: AA is the line worth blocking on.
+    expect(isContrastDefect('color-contrast-enhanced')).toBe(false);
+    expect(isDesignSystemConcern('color-contrast-enhanced')).toBe(true);
   });
 });
 
