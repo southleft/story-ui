@@ -17,6 +17,7 @@ import { renderStory, waitForStoryIndexed, indexIsStale } from './renderHarness.
 import { runDomCensus } from './probes/domCensus.js';
 import { runLayoutProbe } from './probes/layout.js';
 import { runClassEffectProbe } from './probes/classEffect.js';
+import { runInteractionProbe } from './probes/interaction.js';
 import { runVisualCritique, type CritiqueModel } from './probes/visualCritic.js';
 import { runA11yProbe, isGenerationDefect, isDesignSystemConcern, isDesignSystemInternal, isContrastDefect } from './probes/a11y.js';
 import type { Finding, VerifyReport } from './findings.js';
@@ -249,6 +250,69 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
      * daisyUI renamed `card-bordered` to `card-border` between majors, and a
      * model's training data still carries the old one.
      */
+    /**
+     * Use the page, do not merely look at it.
+     *
+     * Every probe above observes a static render, and a human reviewer found two
+     * defects living precisely in that gap: three toggle switches that were
+     * correctly labelled, focusable, axe-clean and completely inert, and a menu
+     * that pushed sibling content sideways every time it opened. Neither is
+     * visible in a screenshot, so the vision critic cannot see them either.
+     */
+    const interaction = await runInteractionProbe(render.page, { libraryComponents });
+    if (interaction.skipped) {
+      logger.log(`🖱️ Interaction checks skipped: ${interaction.skipReason} — controls unverified, not working`);
+    } else {
+      for (const c of interaction.deadControls) {
+        /**
+         * Deliberately NOT attributed to the library, unlike a11y and census
+         * findings.
+         *
+         * The element is always a library component — it is the library's Switch
+         * or Checkbox — so attributing by who rendered it would demote every
+         * single dead control to a warning and defeat the check entirely.
+         * Measured: three inert Astryx switches all reported owner=Switch.
+         *
+         * But the WIRING is the story's. The real defect in that case was the
+         * story passing `isSelected={…}` to a component whose prop is `value` —
+         * React Aria's convention on a library that does not use it. The handler
+         * fired, state updated, and the control never reflected it. That is
+         * fixable from the composition, which is the test for repairable.
+         *
+         * Same reasoning as grid underfill in the layout probe: fiber names the
+         * container's owner, but the spans are props the story wrote.
+         */
+        findings.push({
+          id: `dead-control-${findings.length}`,
+          severity: 'blocker',
+          class: 'interaction',
+          message: `"${c.label}" does not respond to a click`,
+          evidence: `${c.descriptor}${c.owner ? ` (a <${c.owner}>)` : ''}: clicked it and waited for ${c.expected}. `
+            + `Check the component's own prop names — a value/checked prop from a different library is ignored silently.`,
+          repairable: true,
+        });
+      }
+      for (const o of interaction.flowBreakingOverlays) {
+        findings.push({
+          id: `overlay-in-flow-${findings.length}`,
+          severity: o.ownedByLibrary ? 'warning' : 'blocker',
+          class: 'interaction',
+          message: o.ownedByLibrary && o.owner
+            ? `Opening "${o.label}" moves the page — rendered by <${o.owner}>, a design system component`
+            : `Opening "${o.label}" pushes other content instead of floating above it`,
+          evidence: `${o.siblingsMoved} element(s) shifted by up to ${o.shiftedBy}px when it opened. `
+            + `The overlay is in the document flow — it needs the library's portal/positioner parts around its content.`,
+          repairable: !o.ownedByLibrary,
+        });
+      }
+      logger.log(
+        `🖱️ Interaction: ${interaction.controlsTested} control(s) and ${interaction.overlaysTested} overlay(s) exercised` +
+        ` — ${interaction.deadControls.length} inert, ${interaction.flowBreakingOverlays.length} in-flow` +
+        (interaction.controlsTested === 0 && interaction.overlaysTested === 0
+          ? ' (nothing interactive found — not a pass)' : ''),
+      );
+    }
+
     const classes = await runClassEffectProbe(render.page, { libraryComponents });
     if (classes.unreadable) {
       // No stylesheet was readable, so silence here means nothing. Say that.
