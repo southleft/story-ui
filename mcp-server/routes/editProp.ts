@@ -22,6 +22,8 @@ import { editProp, occurrencesInSource } from '../../story-generator/editing/pro
 import { extractProps, type PropFact } from '../../story-generator/knowledge/propExtractor.js';
 import { loadUserConfig } from '../../story-generator/configLoader.js';
 import { readDesignTokens } from '../../story-generator/knowledge/stylingFacts.js';
+import { StoryHistoryManager } from '../../story-generator/storyHistory.js';
+import { getManifestManager } from '../../story-generator/manifestManager.js';
 import { logger } from '../../story-generator/logger.js';
 
 /** A prop the panel can render a control for. */
@@ -202,6 +204,34 @@ export async function editPropHandler(req: Request, res: Response): Promise<void
 
     fs.writeFileSync(filePath, result.code, 'utf-8');
     logger.log(`✏️ ${resolved}[${occurrence ?? 0}].${prop} = ${JSON.stringify(value)} in ${fileName}`);
+
+    /**
+     * Record the edit as a version, exactly as a generation would.
+     *
+     * Without this, history's "current version" is the PRE-edit code, and the
+     * next conversational update regenerates from it — the change the user just
+     * made, and can see on screen, silently vanishes. The manifest is kept in
+     * step the same way restore does, so the conversation the workspace
+     * rebuilds agrees with the canvas.
+     */
+    const editDescription = value === null
+      ? `Reset ${resolved}[${Number(occurrence) || 0}].${prop} to its default`
+      : `Set ${resolved}[${Number(occurrence) || 0}].${prop} = ${JSON.stringify(value)}`;
+    try {
+      const historyManager = new StoryHistoryManager(process.cwd());
+      const currentVersion = historyManager.getCurrentVersion(String(fileName));
+      historyManager.addVersion(String(fileName), editDescription, result.code, currentVersion?.id);
+    } catch (historyError) {
+      logger.warn('[edit-prop] version record failed (non-fatal):', historyError);
+    }
+    try {
+      getManifestManager().upsert(String(fileName), {
+        source: 'panel',
+        metadata: { prompt: editDescription },
+      });
+    } catch (manifestError) {
+      logger.warn('[edit-prop] manifest update failed (non-fatal):', manifestError);
+    }
 
     res.json({
       ok: true,

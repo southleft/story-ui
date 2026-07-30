@@ -23,7 +23,7 @@ import {
 import { FrameworkType, StoryGenerationOptions, getAdapter, FrameworkAdapter } from '../../story-generator/framework-adapters/index.js';
 import { loadUserConfig, validateConfig } from '../../story-generator/configLoader.js';
 import { extractAndValidateCodeBlock, validateStoryCode, ValidationResult } from '../../story-generator/validateStory.js';
-import { createFrameworkAwareFallbackStory } from './storyHelpers.js';
+import { createFrameworkAwareFallbackStory, isFallbackStoryCode } from './storyHelpers.js';
 import { isBlacklistedComponent, isBlacklistedIcon, getBlacklistErrorMessage, ICON_CORRECTIONS } from '../../story-generator/componentBlacklist.js';
 import { StoryTracker, StoryMapping } from '../../story-generator/storyTracker.js';
 import { getManifestManager } from '../../story-generator/manifestManager.js';
@@ -65,7 +65,7 @@ import {
   generateTitle as llmGenerateTitle,
   isProviderConfigured,
   getProviderInfo,
-  chatCompletionWithImages,
+  chatCompletionWithImagesDetailed,
   buildMessageWithImages,
 } from '../../story-generator/llm-providers/story-llm-service.js';
 import { processImageInputs, ImageInput } from '../../story-generator/imageProcessor.js';
@@ -112,7 +112,7 @@ import type { VerifyReport } from '../../story-generator/verify/findings.js';
 export interface GenerationRequest {
   prompt: string;
   fileName?: string;
-  conversation?: Array<{ role: string; content: string }>;
+  conversation?: Array<{ role: string; content: string; thumbnails?: string[] }>;
   isUpdate?: boolean;
   /**
    * A prose description of the element the user pointed at in the preview,
@@ -608,43 +608,82 @@ export async function runStoryGeneration(
   // Refinement resolution — find the prior story when this is an update
   const isActualUpdate = Boolean(isUpdate || (fileName && conversation && conversation.length > 2));
   let previousCode: string | undefined;
+  /**
+   * True when the baseline is the placeholder a FAILED generation wrote.
+   *
+   * That failure was recorded to disk and to history unconditionally, and the
+   * panel keeps its activeFile even on failure — so the user's natural next
+   * message ("try again") arrives as an update whose previous code is the
+   * error box. A fresh composition then diverges ~1.0 from it, and the edit
+   * guard would hard-block every retry with EDIT_DIVERGENCE, permanently.
+   * Rebuilding from scratch over a placeholder is the desired outcome, so the
+   * guard is skipped for exactly this baseline.
+   */
+  let previousCodeIsFallback = false;
   let parentVersionId: string | undefined;
   let oldTitle: string | undefined;
   let oldStoryUrl: string | undefined;
 
   if (isActualUpdate && fileName) {
+    /**
+     * The file on disk IS the story. History is a convenience for versioning.
+     *
+     * Two failure shapes, both observed, both from trusting history over disk:
+     *
+     *  - History MISSING: the model is handed no prior code, invents a whole
+     *    new composition, and overwrites the user's work — while the reply
+     *    claims the layout was preserved, because the model is describing the
+     *    thing it just invented. Reported from manual testing, where selecting
+     *    one button and asking for a red background replaced an entire page.
+     *
+     *  - History STALE: something wrote the file without recording a version —
+     *    a prop edit, a hand edit — and regenerating from history's current
+     *    version silently reverts the change the user is looking at right now.
+     *
+     * So the disk wins whenever it disagrees with history, and the two cases
+     * log differently: absent history and divergent history are different
+     * facts, and a log that conflates them makes the next diagnosis a guess.
+     */
+    let onDiskCode: string | undefined;
+    try {
+      const onDisk = path.resolve(
+        process.cwd(),
+        config.generatedStoriesPath || './src/stories/generated',
+        fileName,
+      );
+      if (fs.existsSync(onDisk)) {
+        onDiskCode = fs.readFileSync(onDisk, 'utf-8');
+      }
+    } catch {
+      /* unreadable — history below, or the no-prior-code guard */
+    }
+
     const currentVersion = historyManager.getCurrentVersion(fileName);
     if (currentVersion) {
-      previousCode = currentVersion.code;
       parentVersionId = currentVersion.id;
-    } else {
-      /**
-       * Fall back to the file on disk. It IS the story.
-       *
-       * Without this, an update whose history is missing silently becomes a
-       * fresh generation: the model is handed no prior code, invents a whole
-       * new composition, and overwrites the user's work — while the reply
-       * claims the layout was preserved, because the model is describing the
-       * thing it just invented. Reported from manual testing, where selecting
-       * one button and asking for a red background replaced an entire page.
-       *
-       * History is a convenience for versioning. The file is the truth, it is
-       * always there, and reading it makes the failure impossible regardless
-       * of why history was empty.
-       */
-      try {
-        const onDisk = path.resolve(
-          process.cwd(),
-          config.generatedStoriesPath || './src/stories/generated',
-          fileName,
+      if (onDiskCode !== undefined && onDiskCode !== currentVersion.code) {
+        previousCode = onDiskCode;
+        logger.log(
+          `📄 History for ${fileName} is behind the file on disk (something wrote the file without ` +
+          `recording a version) — using the file on disk as the base for this edit`,
         );
-        if (fs.existsSync(onDisk)) {
-          previousCode = fs.readFileSync(onDisk, 'utf-8');
-          logger.log(`📄 History had no version for ${fileName}; using the file on disk as the base for this edit`);
+      } else {
+        previousCode = currentVersion.code;
+        if (onDiskCode === undefined) {
+          logger.log(`📄 ${fileName} is not readable on disk — using history's current version as the base for this edit`);
         }
-      } catch {
-        /* unreadable — handled by the guard below */
       }
+    } else if (onDiskCode !== undefined) {
+      previousCode = onDiskCode;
+      logger.log(`📄 History had no version for ${fileName}; using the file on disk as the base for this edit`);
+    }
+
+    if (previousCode && isFallbackStoryCode(previousCode)) {
+      previousCodeIsFallback = true;
+      logger.log(
+        `📄 The baseline for ${fileName} is the placeholder a failed generation wrote — ` +
+        `the edit-divergence guard is skipped so this retry can rebuild from scratch`,
+      );
     }
 
     if (previousCode) {
@@ -734,8 +773,17 @@ export async function runStoryGeneration(
   /** Stylesheet emitted alongside the story, when the model needed real states. */
   let generatedStylesheet: string | null = null;
   let finalErrors: ValidationErrors = createEmptyErrors();
+  /**
+   * Divergence findings from the last attempt, kept apart from the aggregate.
+   *
+   * They ride inside importErrors so the healing loop retries on them like any
+   * other error, but folding them in for REPORTING made a persistent
+   * divergence failure throw INVALID_IMPORTS — the user asked for a small
+   * change, was told their imports were wrong, and neither was true.
+   */
+  let finalEditErrors: string[] = [];
   const errorHistory: ValidationErrors[] = [];
-  const allAttempts: Array<{ code: string; errors: ValidationErrors }> = [];
+  const allAttempts: Array<{ code: string; errors: ValidationErrors; editErrors: string[] }> = [];
   let attempts = 0;
   let selfHealingUsed = false;
   let lastAstResult: ValidationResult | null = null;
@@ -818,30 +866,55 @@ export async function runStoryGeneration(
     events.onProgress?.(5, totalSteps, 'validating', 'Validating generated code...');
 
     /**
-     * A targeted edit must not become a rewrite.
+     * An update must not become a rewrite.
      *
-     * Only when the user pointed AT something: a selection plus a short
-     * request is a property change, and it cannot legitimately replace most of
-     * the tree. Without this the model can restart from scratch, overwrite the
-     * page, and describe the result as a preserved layout — which is what
-     * happened when "Red background." on one button returned a different page
-     * entirely.
+     * When the user pointed AT something, a selection plus a short request is
+     * a property change, and it cannot legitimately replace most of the tree.
+     * Without this the model can restart from scratch, overwrite the page, and
+     * describe the result as a preserved layout — which is what happened when
+     * "Red background." on one button returned a different page entirely.
+     *
+     * A conversational follow-up with no selection gets the same guard at a
+     * looser threshold. Compositional requests legitimately change structure —
+     * "add a filters panel" adds elements, "make it three columns" moves them,
+     * "rewrite the copy" replaces the words — and divergence is measured
+     * relative to the PREVIOUS code, so all of those score well under the
+     * limit. What none of them can defend is the previous work almost entirely
+     * gone, which is the only thing the loose threshold blocks.
      *
      * Fed into the same self-healing loop as any other error, so the retry
      * carries the original code and an explicit instruction, and the attempt
      * with the LOWEST error count still wins if the model cannot comply.
      */
+    const TARGETED_EDIT_DIVERGENCE_LIMIT = 0.5;
+    // The arithmetic bounds this limit: editDivergence weights tags 0.35 and
+    // content 0.65, so a rewrite that keeps the same tag multiset but replaces
+    // ALL text and attributes — the documented "same components, entirely
+    // different page" failure — caps at 0.65. The limit must sit BELOW 0.65 or
+    // it can never fire on that case (0.85 was unreachable). 0.6 blocks the
+    // full content rewrite while legitimate work passes: divergence measures
+    // overlap relative to the PREVIOUS code, so pure additions score ~0 and
+    // prop tweaks score well under 0.4.
+    const CONVERSATIONAL_UPDATE_DIVERGENCE_LIMIT = 0.6;
     const editErrors: string[] = [];
-    if (previousCode && selection) {
+    if (previousCode && !previousCodeIsFallback) {
       const { divergence, before, after } = editDivergence(previousCode, aiText);
-      if (divergence > 0.5) {
-        editErrors.push(
-          `This was a targeted edit to "${selection}", but the result replaced the composition ` +
-          `(${Math.round(divergence * 100)}% of the element structure changed; ${before} elements before, ${after} after). ` +
-          `Return the ORIGINAL code with ONLY the requested change applied. Do not rewrite, re-theme, ` +
-          `or re-content anything else — every other element, prop and string must be byte-identical.`,
+      const limit = selection ? TARGETED_EDIT_DIVERGENCE_LIMIT : CONVERSATIONAL_UPDATE_DIVERGENCE_LIMIT;
+      if (divergence > limit) {
+        editErrors.push(selection
+          ? `This was a targeted edit to "${selection}", but the result replaced the composition ` +
+            `(${Math.round(divergence * 100)}% of the element structure and content changed; ${before} elements before, ${after} after). ` +
+            `Return the ORIGINAL code with ONLY the requested change applied. Do not rewrite, re-theme, ` +
+            `or re-content anything else — every other element, prop and string must be byte-identical.`
+          : `This was an update to an existing story, but the result replaced nearly all of it ` +
+            `(${Math.round(divergence * 100)}% of the element structure and content changed; ${before} elements before, ${after} after). ` +
+            `Modify the PREVIOUS GENERATED CODE instead of starting over — keep every element, prop ` +
+            `and string the request did not ask to change.`,
         );
-        logger.warn(`⚠️ Targeted edit diverged ${Math.round(divergence * 100)}% from the original — treating as a failed edit`);
+        logger.warn(
+          `⚠️ ${selection ? 'Targeted edit' : 'Update'} diverged ${Math.round(divergence * 100)}% from the original ` +
+          `(limit ${Math.round(limit * 100)}%) — treating as a failed edit`,
+        );
       }
     }
 
@@ -899,7 +972,7 @@ export async function runStoryGeneration(
 
     const currentErrors = aggregateValidationErrors(astResult, patternErrors, importErrors);
     errorHistory.push(currentErrors);
-    allAttempts.push({ code: aiText, errors: currentErrors });
+    allAttempts.push({ code: aiText, errors: currentErrors, editErrors });
 
     if (hasNoErrors(currentErrors)) {
       logger.log('✅ Validation passed on attempt', attempts);
@@ -910,6 +983,7 @@ export async function runStoryGeneration(
         autoFixApplied: !!astResult?.fixedCode,
       });
       finalErrors = currentErrors;
+      finalEditErrors = editErrors;
       break;
     }
 
@@ -926,6 +1000,7 @@ export async function runStoryGeneration(
     });
 
     finalErrors = currentErrors;
+    finalEditErrors = editErrors;
 
     const retryDecision = shouldContinueRetrying(attempts, selfHealingOptions.maxAttempts, errorHistory);
     if (!retryDecision.shouldRetry) {
@@ -944,6 +1019,8 @@ export async function runStoryGeneration(
     if (bestAttempt) {
       aiText = bestAttempt.code;
       finalErrors = bestAttempt.errors;
+      // selectBestAttempt narrows the type; the chosen object is still ours.
+      finalEditErrors = (bestAttempt as typeof allAttempts[number]).editErrors ?? [];
       logger.log(`📌 Selected best attempt with ${getTotalErrorCount(finalErrors)} errors`);
     }
   }
@@ -953,6 +1030,25 @@ export async function runStoryGeneration(
 
   // Step 6: Code extraction and final processing
   events.onProgress?.(6, totalSteps, 'code_extracted', 'Processing generated code...');
+
+  /**
+   * A persistent divergence failure is its own outcome, named as what it is.
+   *
+   * It travels through the loop inside importErrors, but throwing it as
+   * INVALID_IMPORTS told the user their imports were wrong when the actual
+   * event was "the model rewrote your page and we refused to save it". Nothing
+   * has been written at this point, and the message says so — that the
+   * existing story is intact is the one fact the user needs.
+   */
+  if (finalEditErrors.length > 0) {
+    logger.log(`❌ Edit divergence persisted through ${attempts} attempt(s) — the existing story was left untouched`);
+    throw new GenerationError('EDIT_DIVERGENCE', 'The change replaced too much of the existing story; nothing was written', {
+      httpStatus: 422,
+      details: finalEditErrors.join('; '),
+      recoverable: true,
+      suggestion: 'Try describing the change more narrowly, or break it into smaller steps — the existing story is unchanged',
+    });
+  }
 
   if (finalErrors.importErrors.length > 0) {
     logger.log(`❌ Import validation failed. Invalid components: ${finalErrors.importErrors.join(', ')}`);
@@ -1493,14 +1589,38 @@ export async function runStoryGeneration(
   // assistant reply is appended server-side so the conversation survives even
   // if the panel never receives the completion event.
   try {
-    const manifestConversation = (conversation ?? [])
-      .filter((m) => (m.role === 'user' || m.role === 'ai') && typeof m.content === 'string' && m.content.trim())
-      .map((m) => ({ role: m.role as 'user' | 'ai', content: m.content }));
-    if (manifestConversation.length > 0 && !isFallbackStory) {
-      const replyHeader = `[SUCCESS] **${isActualUpdate ? 'Updated' : 'Created'}: "${cleanTitle}"**`;
-      const replyBody = chatSummary
-        || `${isActualUpdate ? 'Updated' : 'Created'} this story based on your request.`;
-      manifestConversation.push({ role: 'ai', content: `${replyHeader}\n\n${replyBody}` });
+    const manifestConversation: Array<{ role: 'user' | 'ai'; content: string; thumbnails?: string[] }> =
+      (conversation ?? [])
+        .filter((m) => (m.role === 'user' || m.role === 'ai') && typeof m.content === 'string' && m.content.trim())
+        // Thumbnails ride along so a reopened chat still shows its reference
+        // images; the manifest manager bounds them (count and size) on write.
+        .map((m) => ({
+          role: m.role as 'user' | 'ai',
+          content: m.content,
+          ...(Array.isArray(m.thumbnails) ? { thumbnails: m.thumbnails } : {}),
+        }));
+    if (manifestConversation.length > 0) {
+      if (isFallbackStory) {
+        // Recovery requires the conversation to END with an 'ai' reply — the
+        // poller treats anything else as still-in-flight and gives up after
+        // its window, leaving the user staring at a fallback story it never
+        // acknowledged. A failure gets an honest reply, not silence. There is
+        // no completion payload, so lastCompletion stays undefined below.
+        const reason = (validationResult.errors?.[0] || 'the generated code failed validation')
+          .split('\n')[0].slice(0, 300);
+        manifestConversation.push({
+          role: 'ai',
+          content:
+            `[ERROR] **Generation failed: "${cleanTitle}"**\n\n` +
+            `${reason}\n\n` +
+            `A placeholder story was written in its place — try rephrasing your request.`,
+        });
+      } else {
+        const replyHeader = `[SUCCESS] **${isActualUpdate ? 'Updated' : 'Created'}: "${cleanTitle}"**`;
+        const replyBody = chatSummary
+          || `${isActualUpdate ? 'Updated' : 'Created'} this story based on your request.`;
+        manifestConversation.push({ role: 'ai', content: `${replyHeader}\n\n${replyBody}` });
+      }
     }
     getManifestManager().upsert(finalFileName, {
       id: storyIdSlug,
@@ -1985,8 +2105,8 @@ async function callLLM(
       return msg;
     });
     logger.log(`🖼️ Attached ${images.length} image(s) to message ${targetIndex} for ${providerInfo.currentProvider}/${providerInfo.currentModel}`);
-    const content = await chatCompletionWithImages(messagesWithImages as any, llmOptions);
-    return { content, truncated: false };
+    const visionResult = await chatCompletionWithImagesDetailed(messagesWithImages as any, llmOptions);
+    return { content: visionResult.content, truncated: visionResult.truncated };
   }
 
   const result = await chatCompletionDetailed(messages, llmOptions);

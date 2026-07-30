@@ -122,6 +122,14 @@ export function sanitizeThumbnails(value: unknown): string[] | undefined {
     .filter(t => t.startsWith('data:image/'))
     .filter(t => t.length <= MAX_THUMBNAIL_CHARS)
     .slice(0, MAX_THUMBNAILS_PER_MESSAGE);
+  if (safe.length < value.length) {
+    // Dropped and never-sent must not look alike in the log, or a missing
+    // thumbnail gets diagnosed as a client that never attached one.
+    logger.log(
+      `[manifest] dropped ${value.length - safe.length} thumbnail(s): malformed, over ` +
+      `${Math.round(MAX_THUMBNAIL_CHARS / 1024)}KB, or past the per-message cap of ${MAX_THUMBNAILS_PER_MESSAGE}`,
+    );
+  }
   return safe.length > 0 ? safe : undefined;
 }
 

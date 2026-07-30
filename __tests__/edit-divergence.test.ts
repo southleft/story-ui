@@ -38,6 +38,42 @@ describe('editDivergence', () => {
     expect(editDivergence(original, edited).divergence).toBeLessThan(0.2);
   });
 
+  it('scores a pure addition as zero, however large', () => {
+    // "Add a filters panel" keeps everything that existed. The failure being
+    // guarded against is prior work destroyed, not new work added.
+    const edited = original.replace('</Section>', `
+      <Panel>
+        <Heading>Filters</Heading>
+        <Checkbox label="Active" />
+        <Checkbox label="Archived" />
+        <Select placeholder="Sort by" />
+        <Button>Apply</Button>
+      </Panel>
+    </Section>`);
+    expect(editDivergence(original, edited).divergence).toBe(0);
+  });
+
+  it('flags a rewrite that keeps the tags but replaces the content', () => {
+    // The gap in the tag-only metric: the same six components, every word and
+    // prop on them different, scored ~0 — the shape of the tree survived while
+    // the page did not.
+    const page = (title: string, tone: string, labels: string[]) => `
+      <Section>
+        <Heading>${title}</Heading>
+        <Grid>
+          ${labels.map(l => `<Card tone="${tone}" title="${l}"><Text>${l} details</Text></Card>`).join('\n          ')}
+        </Grid>
+      </Section>
+    `;
+    const before = page('Team overview', 'calm', ['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon', 'Zeta']);
+    const rewritten = page('Quarterly revenue', 'loud', ['North', 'South', 'East', 'West', 'Online', 'Retail']);
+    // An identical tag multiset with all content replaced scores exactly the
+    // content weight (0.65). The conversational guard limit (0.6) sits below
+    // it so this exact failure — same components, entirely different page —
+    // is blockable even without a selection.
+    expect(editDivergence(before, rewritten).divergence).toBeGreaterThan(0.6);
+  });
+
   it('is not fooled by reordering', () => {
     // Moving a section is not a rewrite. Comparing sequences positionally
     // would call this a total replacement and block a legitimate edit.

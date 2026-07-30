@@ -210,6 +210,23 @@ export function findSimilarIcon(iconName: string, allowedIcons: Set<string>): st
 }
 
 /**
+ * Sentinel comment emitted by every framework's fallback template below.
+ *
+ * The disk file has to be detectable as a fallback even when history is
+ * empty: a failed generation writes the placeholder AND records it as a
+ * version, so the user's follow-up "try again" arrives as an update whose
+ * baseline is the placeholder. Divergence from an error box is ~1.0 by
+ * construction — a fresh build over it is the DESIRED outcome, not a rewrite
+ * to block.
+ */
+const FALLBACK_STORY_MARKER = 'Fallback story generated due to AI generation error';
+
+/** Is this code one of the fallback placeholders below, whatever the framework? */
+export function isFallbackStoryCode(code: string): boolean {
+  return code.includes(FALLBACK_STORY_MARKER);
+}
+
+/**
  * Creates a framework-aware fallback story when generation fails.
  * Uses the adapter to generate framework-appropriate code.
  * @param prompt - The original user prompt (used in error message)

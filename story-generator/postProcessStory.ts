@@ -388,33 +388,63 @@ export function splitScopeImports(
  * one element and one property cannot legitimately change most of the file, so
  * a large divergence is evidence the model restarted instead of editing.
  *
- * Compares the JSX ELEMENT SEQUENCE rather than raw text, because a legitimate
- * property edit changes attributes and whitespace everywhere while leaving the
- * shape of the tree alone.
+ * Two signals, both multisets so reordering a section is never mistaken for a
+ * rewrite:
+ *
+ *   - the JSX ELEMENT NAMES — is it still the same set of components?
+ *   - the CONTENT — attribute name=value pairs and rendered text. Tags alone
+ *     scored a rewrite that kept the same six Cards but replaced every word
+ *     and prop on them as ~0, because the shape of the tree survived while the
+ *     page did not.
+ *
+ * Overlap is measured relative to the PREVIOUS code: how much of what existed
+ * is still there. A pure addition keeps everything and scores 0, however large
+ * it is — the failure being guarded against is prior work destroyed, not new
+ * work added — while a replacement loses the old material and scores high.
  */
+const TAG_WEIGHT = 0.35;
+const CONTENT_WEIGHT = 0.65;
+
 export function editDivergence(previousCode: string, nextCode: string): {
-  /** 0 = identical structure, 1 = nothing in common. */
+  /** 0 = identical structure and content, 1 = nothing in common. */
   divergence: number;
   before: number;
   after: number;
 } {
-  const shape = (code: string): string[] =>
+  const tags = (code: string): string[] =>
     [...code.matchAll(/<\/?([A-Za-z][A-Za-z0-9.]*)/g)].map(m => m[1]);
 
-  const before = shape(previousCode);
-  const after = shape(nextCode);
-  if (before.length === 0) return { divergence: 0, before: 0, after: after.length };
+  // What the elements SAY. Attribute values with nested braces are skipped by
+  // the regex — consistently on both sides, so they cancel — and text with no
+  // letters or digits is punctuation the JSX syntax itself produced.
+  const content = (code: string): string[] => [
+    ...[...code.matchAll(/([A-Za-z_][\w-]*)=("[^"]*"|'[^']*'|\{[^{}]*\})/g)].map(m => `${m[1]}=${m[2]}`),
+    ...[...code.matchAll(/>([^<>{}]+)</g)]
+      .map(m => m[1].trim())
+      .filter(t => /[A-Za-z0-9]/.test(t)),
+  ];
 
-  // Multiset overlap: order-insensitive, so reordering a section is not
-  // mistaken for a rewrite, but replacing the components is.
-  const counts = new Map<string, number>();
-  for (const tag of before) counts.set(tag, (counts.get(tag) || 0) + 1);
-  let shared = 0;
-  for (const tag of after) {
-    const left = counts.get(tag) || 0;
-    if (left > 0) { shared++; counts.set(tag, left - 1); }
-  }
+  // How much of `before` survives into `after`. 1 when there was nothing to
+  // preserve — an empty signal is not evidence of a rewrite.
+  const survivingFraction = (before: string[], after: string[]): number => {
+    if (before.length === 0) return 1;
+    const counts = new Map<string, number>();
+    for (const item of before) counts.set(item, (counts.get(item) || 0) + 1);
+    let shared = 0;
+    for (const item of after) {
+      const left = counts.get(item) || 0;
+      if (left > 0) { shared++; counts.set(item, left - 1); }
+    }
+    return shared / before.length;
+  };
 
-  const divergence = 1 - shared / Math.max(before.length, after.length);
-  return { divergence, before: before.length, after: after.length };
+  const beforeTags = tags(previousCode);
+  const afterTags = tags(nextCode);
+  if (beforeTags.length === 0) return { divergence: 0, before: 0, after: afterTags.length };
+
+  const tagOverlap = survivingFraction(beforeTags, afterTags);
+  const contentOverlap = survivingFraction(content(previousCode), content(nextCode));
+
+  const divergence = 1 - (TAG_WEIGHT * tagOverlap + CONTENT_WEIGHT * contentOverlap);
+  return { divergence, before: beforeTags.length, after: afterTags.length };
 }

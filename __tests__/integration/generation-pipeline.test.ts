@@ -36,6 +36,7 @@ vi.mock('../../story-generator/llm-providers/story-llm-service.js', () => ({
   chatCompletion: vi.fn(async () => ''),
   chatCompletionStream: vi.fn(),
   chatCompletionWithImages: vi.fn(async () => { throw new Error('vision not used in these tests'); }),
+  chatCompletionWithImagesDetailed: vi.fn(async () => { throw new Error('vision not used in these tests'); }),
   buildMessageWithImages: vi.fn((content: string) => content),
   generateTitle: vi.fn(async () => 'Fixture Story'),
   isProviderConfigured: vi.fn(() => true),
@@ -43,7 +44,10 @@ vi.mock('../../story-generator/llm-providers/story-llm-service.js', () => ({
 }));
 
 import { runStoryGeneration } from '../../mcp-server/routes/generationCore.js';
+import { editPropHandler } from '../../mcp-server/routes/editProp.js';
+import { editDivergence } from '../../story-generator/postProcessStory.js';
 import { getManifestManager } from '../../story-generator/manifestManager.js';
+import { StoryHistoryManager } from '../../story-generator/storyHistory.js';
 
 let fixture: FixtureProject;
 let originalCwd: string;
@@ -85,6 +89,96 @@ beforeEach(() => {
   llm.calls.length = 0;
 });
 
+/** Minimal Express response double for calling route handlers directly. */
+function mockRes() {
+  return {
+    statusCode: 200,
+    body: undefined as any,
+    status(code: number) { this.statusCode = code; return this; },
+    json(payload: any) { this.body = payload; return this; },
+  };
+}
+
+/**
+ * A response that keeps the Stack and one line of copy ("Click me") but
+ * replaces the rest — measured divergence ~0.59, between the targeted
+ * threshold (0.5) and the conversational one (0.6), so it pins the
+ * two-threshold split: rejected when a selection said "change one thing",
+ * accepted as a conversational rework. The tests below assert the arithmetic
+ * by running editDivergence directly, so a drift in the metric or the
+ * thresholds fails loudly here instead of silently un-pinning the split.
+ */
+function moderateRewriteResponse(): string {
+  return [
+    '```tsx',
+    "import React from 'react';",
+    "import type { Meta, StoryObj } from '@storybook/react';",
+    `import { Badge, Stack } from '${FIXTURE_LIB}';`,
+    'const meta: Meta = {',
+    "  title: 'Placeholder',",
+    '};',
+    'export default meta;',
+    'type Story = StoryObj;',
+    '',
+    'export const Primary: Story = {',
+    '  render: () => (',
+    '    <Stack>',
+    '      <Badge>Click me</Badge>',
+    '      <Badge>Brand new copy</Badge>',
+    '      <Badge>Another badge</Badge>',
+    '    </Stack>',
+    '  ),',
+    '};',
+    '```',
+  ].join('\n');
+}
+
+/** The bare code inside a scripted response, as the divergence guard sees it. */
+function codeOf(response: string): string {
+  return response.replace(/^[\s\S]*?```tsx\n/, '').replace(/\n```[\s\S]*$/, '');
+}
+
+/** A response sharing no elements and no content with the fixture story. */
+function totalRewriteResponse(): string {
+  return [
+    '```tsx',
+    "import React from 'react';",
+    "import type { Meta, StoryObj } from '@storybook/react';",
+    `import { Badge } from '${FIXTURE_LIB}';`,
+    'const meta: Meta = {',
+    "  title: 'Placeholder',",
+    '};',
+    'export default meta;',
+    'type Story = StoryObj;',
+    '',
+    'export const Primary: Story = {',
+    '  render: () => (',
+    '    <>',
+    '      <Badge>Entirely</Badge>',
+    '      <Badge>Different</Badge>',
+    '      <Badge>Composition</Badge>',
+    '    </>',
+    '  ),',
+    '};',
+    '```',
+  ].join('\n');
+}
+
+function updateRequest(first: { fileName: string; title: string; storyId: string }, prompt: string) {
+  return {
+    prompt,
+    fileName: first.fileName,
+    isUpdate: true,
+    originalTitle: first.title,
+    storyId: first.storyId,
+    conversation: [
+      { role: 'user', content: 'Create a card' },
+      { role: 'ai', content: 'Done' },
+      { role: 'user', content: prompt },
+    ],
+  };
+}
+
 
 describe('generation pipeline (integration)', () => {
   it('generates, validates, and persists a story on the happy path', async () => {
@@ -94,7 +188,13 @@ describe('generation pipeline (integration)', () => {
     const outcome = await runStoryGeneration(
       {
         prompt: 'Create a card with a greeting and a button',
-        conversation: [{ role: 'user', content: 'Create a card with a greeting and a button' }],
+        conversation: [{
+          role: 'user',
+          content: 'Create a card with a greeting and a button',
+          // Small composer thumbnail — must survive to the manifest so a
+          // reopened chat still shows what was referenced.
+          thumbnails: ['data:image/jpeg;base64,thumb'],
+        }],
       },
       { onProgress: (_s, _t, phase) => progressPhases.push(phase) }
     );
@@ -123,6 +223,8 @@ describe('generation pipeline (integration)', () => {
     expect(entry).toBeTruthy();
     expect(entry!.conversation.at(-1)!.role).toBe('ai');
     expect(entry!.conversation.at(-1)!.content).toContain('I put together');
+    // The user message's thumbnails survived to disk (bounded by the manifest).
+    expect(entry!.conversation[0].thumbnails).toEqual(['data:image/jpeg;base64,thumb']);
 
     // The full completion payload is persisted so a panel that reloaded
     // mid-generation (or reopens this chat later) can restore the reply.
@@ -241,5 +343,129 @@ describe('generation pipeline (integration)', () => {
     // Refinement prompt carried the previous code as modification context
     const updateCall = llm.calls[1].map(m => m.content).join('\n');
     expect(updateCall).toContain('PREVIOUS GENERATED CODE');
+  });
+
+  it('builds the next update on the file a prop edit wrote, not the pre-edit history', async () => {
+    llm.queue.push({ content: validStoryResponse() });
+    const first = await runStoryGeneration({ prompt: 'Create a card to edit' });
+
+    // Panel prop edit: a direct AST write, no model involved.
+    const res = mockRes();
+    await editPropHandler(
+      { body: { fileName: first.fileName, component: 'Button', occurrence: 0, prop: 'size', value: 'lg' } } as any,
+      res as any,
+    );
+    expect(res.body?.ok).toBe(true);
+
+    // The edit was recorded as a version, so history agrees with the disk.
+    const current = new StoryHistoryManager(process.cwd()).getCurrentVersion(first.fileName);
+    expect(current?.code).toContain('size="lg"');
+    expect(current?.prompt).toContain('size');
+
+    // The conversational follow-up regenerates from the POST-edit code.
+    llm.queue.push({ content: validStoryResponse() });
+    const second = await runStoryGeneration(updateRequest(first, 'Add a subtitle'));
+    expect(second.isUpdate).toBe(true);
+    const updateCall = llm.calls.at(-1)!.map(m => m.content).join('\n');
+    expect(updateCall).toContain('size="lg"');
+  });
+
+  it('rejects a targeted edit that rewrote the page, leaving the file untouched', async () => {
+    llm.queue.push({ content: validStoryResponse() });
+    const first = await runStoryGeneration({ prompt: 'Create a stats card' });
+    const before = fs.readFileSync(first.outPath, 'utf-8');
+
+    // Pin the arithmetic the two-threshold split depends on: this rewrite
+    // scores strictly between the targeted limit (0.5) and the conversational
+    // limit (0.6).
+    const { divergence } = editDivergence(before, codeOf(moderateRewriteResponse()));
+    expect(divergence).toBeGreaterThan(0.5);
+    expect(divergence).toBeLessThan(0.6);
+
+    llm.queue.push(
+      { content: moderateRewriteResponse() },
+      { content: moderateRewriteResponse() },
+      { content: moderateRewriteResponse() },
+    );
+    await expect(runStoryGeneration({
+      ...updateRequest(first, 'Red background.'),
+      selection: 'the Button labelled "Click me"',
+    })).rejects.toMatchObject({
+      name: 'GenerationError',
+      code: 'EDIT_DIVERGENCE',
+      options: expect.objectContaining({ httpStatus: 422 }),
+    });
+
+    expect(fs.readFileSync(first.outPath, 'utf-8')).toBe(before);
+  });
+
+  it('allows the same structural change on a conversational update with no selection', async () => {
+    llm.queue.push({ content: validStoryResponse() });
+    const first = await runStoryGeneration({ prompt: 'Create a summary card' });
+
+    llm.queue.push({ content: moderateRewriteResponse() });
+    const second = await runStoryGeneration(updateRequest(first, 'Replace the card with a badge list'));
+
+    expect(second.success).toBe(true);
+    expect(fs.readFileSync(second.outPath, 'utf-8')).toContain('Badge');
+  });
+
+  it('rejects a conversational update that replaced everything', async () => {
+    llm.queue.push({ content: validStoryResponse() });
+    const first = await runStoryGeneration({ prompt: 'Create a welcome card' });
+    const before = fs.readFileSync(first.outPath, 'utf-8');
+
+    // The full replacement clears the conversational limit (0.6). A rewrite
+    // keeping the tag multiset but replacing all content caps at 0.65
+    // (content weighs 0.65), which is why the limit must sit below that.
+    expect(editDivergence(before, codeOf(totalRewriteResponse())).divergence).toBeGreaterThan(0.6);
+
+    llm.queue.push(
+      { content: totalRewriteResponse() },
+      { content: totalRewriteResponse() },
+      { content: totalRewriteResponse() },
+    );
+    await expect(runStoryGeneration(updateRequest(first, 'Improve it')))
+      .rejects.toMatchObject({ name: 'GenerationError', code: 'EDIT_DIVERGENCE' });
+
+    expect(fs.readFileSync(first.outPath, 'utf-8')).toBe(before);
+  });
+
+  it('retries after a failed generation without being divergence-blocked by the placeholder', async () => {
+    // Three responses with no code block at all — the pipeline gives up and
+    // writes the fallback placeholder, records it in history, and reports
+    // success: false. The V2 panel keeps its activeFile on failure, so the
+    // user's follow-up arrives as an UPDATE whose baseline is the error box.
+    llm.queue.push(
+      { content: 'I could not produce a story this time.' },
+      { content: 'Still nothing usable.' },
+      { content: 'No code block here either.' },
+    );
+    const failed = await runStoryGeneration({
+      prompt: 'Create an analytics dashboard',
+      conversation: [{ role: 'user', content: 'Create an analytics dashboard' }],
+    });
+    expect(failed.success).toBe(false);
+    expect(failed.isFallbackStory).toBe(true);
+    expect(fs.readFileSync(failed.outPath, 'utf-8'))
+      .toContain('Fallback story generated due to AI generation error');
+
+    // The failure is visible to recovery: the manifest conversation ends with
+    // an honest 'ai' reply (the poller requires one) and there is no
+    // completion payload to restore.
+    const entry = getManifestManager().get(failed.fileName);
+    expect(entry).toBeTruthy();
+    expect(entry!.conversation.at(-1)!.role).toBe('ai');
+    expect(entry!.conversation.at(-1)!.content).toContain('Generation failed');
+    expect(entry!.metadata.lastCompletion).toBeUndefined();
+
+    // "Try again" over the placeholder: a fresh build diverges ~1.0 from an
+    // error box, and that is the DESIRED outcome — the guard must not fire.
+    llm.queue.push({ content: validStoryResponse() });
+    const retry = await runStoryGeneration(updateRequest(failed, 'Try again'));
+    expect(retry.success).toBe(true);
+    const written = fs.readFileSync(retry.outPath, 'utf-8');
+    expect(written).toContain(`from '${FIXTURE_LIB}'`);
+    expect(written).not.toContain('Story Generation Error');
   });
 });

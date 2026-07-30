@@ -294,6 +294,28 @@ export async function chatCompletionWithImages(
     temperature?: number;
   }
 ): Promise<string> {
+  const result = await chatCompletionWithImagesDetailed(messages, options);
+  return result.content;
+}
+
+/**
+ * Vision chat completion that also returns finish reason and token usage so
+ * callers can detect truncation — image-referenced compositions are exactly
+ * the ones large enough to hit the output limit. Prefer this over
+ * chatCompletionWithImages for generation pipelines.
+ */
+export async function chatCompletionWithImagesDetailed(
+  messages: Array<{
+    role: 'user' | 'assistant';
+    content: string | MessageContent[];
+  }>,
+  options?: {
+    provider?: ProviderType;
+    model?: string;
+    maxTokens?: number;
+    temperature?: number;
+  }
+): Promise<ChatCompletionResult> {
   ensureInitialized();
 
   // Use explicitly requested provider, or fall back to first configured
@@ -346,7 +368,22 @@ export async function chatCompletionWithImages(
       temperature: options?.temperature,
     });
 
-    return response.content;
+    if (response.finishReason === 'length') {
+      logger.warn('LLM vision response was truncated at the output token limit', {
+        provider: provider.name,
+        model: model || provider.getConfig().model,
+        maxTokens: options?.maxTokens,
+      });
+    }
+
+    return {
+      content: response.content,
+      finishReason: response.finishReason,
+      usage: response.usage,
+      provider: provider.name,
+      model: response.model,
+      truncated: response.finishReason === 'length',
+    };
   } catch (error) {
     logger.error('LLM chat completion with images failed', {
       provider: provider.name,
