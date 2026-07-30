@@ -151,14 +151,64 @@ export async function runClassEffectProbe(
       return null;
     };
 
-    const seen = new Map<string, { count: number; sample: string; owner?: string }>();
+    /**
+     * A class FAMILY that no stylesheet touches is runtime-styled, not broken.
+     *
+     * Chakra v3 styles through CSS-in-JS: `chakra-stack`, `chakra-table__root`
+     * and friends are semantic markers, and no stylesheet defines any of them.
+     * Measured on one generated story, the probe emitted TEN warnings of pure
+     * noise — every Chakra class on the page — which is exactly the kind of
+     * false-positive stream that teaches someone to ignore the whole report.
+     *
+     * The discriminator is derived rather than configured: take the family
+     * prefix, and if the loaded stylesheets define NOTHING in that family, the
+     * family is not stylesheet-based and cannot be checked this way. A typo
+     * inside a family the stylesheets DO define — `cds--btn-bordered` against
+     * Carbon's 1,349 defined classes — is still caught, which is the case worth
+     * catching.
+     */
+    const familyOf = (c: string) => c.split(/[-_]/)[0];
+    const definedPerFamily = new Map<string, number>();
+    for (const d of defined) {
+      const f = familyOf(d);
+      definedPerFamily.set(f, (definedPerFamily.get(f) ?? 0) + 1);
+    }
+
+    // First pass: collect every used-but-undefined class, grouped by family.
+    const candidates = new Map<string, { count: number; sample: string; owner?: string }>();
+    const undefinedPerFamily = new Map<string, number>();
     for (const el of Array.from(root.querySelectorAll('[class]')) as HTMLElement[]) {
       for (const c of Array.from(el.classList)) {
         if (defined.has(c) || looksGenerated(c) || c.length < 3) continue;
-        const prior = seen.get(c);
+        const prior = candidates.get(c);
         if (prior) { prior.count++; continue; }
-        seen.set(c, { count: 1, sample: el.tagName.toLowerCase(), owner: ownerOf(el) || undefined });
+        candidates.set(c, { count: 1, sample: el.tagName.toLowerCase(), owner: ownerOf(el) || undefined });
+        const f = familyOf(c);
+        undefinedPerFamily.set(f, (undefinedPerFamily.get(f) ?? 0) + 1);
       }
+    }
+
+    /**
+     * Second pass: drop families the stylesheets clearly do not drive.
+     *
+     * Presence alone was not enough — Chakra emits a handful of static
+     * `chakra-*` rules, so the family looked "defined" and all ten runtime
+     * markers were still reported. The RATIO separates them cleanly:
+     *
+     *   chakra : 10 used-undefined against 2 defined  -> runtime-styled, skip
+     *   cds    :  1 used-undefined against 1,349      -> stylesheet-driven, keep
+     *
+     * A typo inside a suppressed family is lost, and that is correct rather than
+     * regrettable: if no stylesheet drives the family, being absent from the
+     * stylesheets carries no information about whether the name is right.
+     */
+    const seen = new Map<string, { count: number; sample: string; owner?: string }>();
+    for (const [c, v] of candidates) {
+      const f = familyOf(c);
+      const definedCount = definedPerFamily.get(f) ?? 0;
+      const undefinedCount = undefinedPerFamily.get(f) ?? 0;
+      if (undefinedCount >= definedCount) continue;   // the family is not stylesheet-driven
+      seen.set(c, v);
     }
 
     return {

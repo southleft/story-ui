@@ -45,6 +45,7 @@ import {
 import {
   validateStoryRuntime,
   getStorybookUrl,
+  isGuessedStorybookUrl,
   formatRuntimeErrorForHealing,
   isRuntimeValidationEnabled,
   RuntimeValidationResult,
@@ -1157,6 +1158,22 @@ export async function runStoryGeneration(
   if (!isFallbackStory) {
     try {
       const verifyUrl = config.storybookMcpUrl || storybookUrl || getStorybookUrl();
+      /**
+       * Say when the URL was a guess.
+       *
+       * With no storybookUrl from the caller and no STORYBOOK_PORT in the
+       * environment, this falls back to the conventional 6006 — which is right
+       * for a default Storybook and wrong for every project that chose another
+       * port. Verifying against the wrong Storybook does not fail loudly: the
+       * story simply is not in that index, and the report describes somebody
+       * else's page. Naming it turns a confusing result into an actionable one.
+       */
+      if (!config.storybookMcpUrl && !storybookUrl && isGuessedStorybookUrl()) {
+        logger.log(
+          `🔍 No Storybook URL was supplied and STORYBOOK_PORT is unset — verifying against ${verifyUrl} by convention. ` +
+          `If this project's Storybook runs elsewhere, set STORYBOOK_PORT so verification reaches it.`,
+        );
+      }
       if (verifyUrl) {
         // Names of the design system's own components, so a defect rendered by
         // the LIBRARY is reported against the library rather than charged to
@@ -1333,8 +1350,29 @@ export async function runStoryGeneration(
         }
       }
     } catch (verifyErr: any) {
-      // Verification is observational; never let it fail a generation.
-      logger.warn(`⚠️ Verification could not complete: ${verifyErr?.message ?? verifyErr}`);
+      /**
+       * A verification that could not run must not look like one that passed.
+       *
+       * This used to log a warning and leave `verification` undefined, so the
+       * caller — the panel, the bench, an MCP client — received exactly what it
+       * receives for a story with no findings. Silence meant both "checked and
+       * clean" and "never checked", which is the failure shape this project
+       * keeps paying for, sitting in the middle of the machinery built to
+       * prevent it.
+       *
+       * Still never fails the generation: the outcome is `not_verified`, which
+       * is reported and carries the reason, and infrastructure findings are
+       * non-repairable by construction so this cannot cost an LLM call.
+       */
+      const reason = verifyErr?.message ?? String(verifyErr);
+      logger.warn(`⚠️ Verification could not complete: ${reason}`);
+      verification = {
+        outcome: 'not_verified',
+        reason: `Verification threw before completing: ${reason}`,
+        findings: [],
+        metrics: {},
+        durationMs: 0,
+      };
     }
   }
 

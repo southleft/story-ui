@@ -62,8 +62,30 @@ export function getStorybookUrl(): string | null {
     return `http://localhost:${process.env.STORYBOOK_PORT}`;
   }
 
-  // Priority 4: Default local Storybook
+  /**
+   * Priority 4: the conventional default — a GUESS, and labelled as one.
+   *
+   * 6006 is right for a default Storybook and wrong for every project that
+   * chose another port without exporting STORYBOOK_PORT. Verifying against the
+   * wrong Storybook is worse than not verifying: the story is not there, so the
+   * report is about somebody else's page.
+   *
+   * Callers that care can ask `isGuessedStorybookUrl()` and say so.
+   */
   return 'http://localhost:6006';
+}
+
+/**
+ * True when getStorybookUrl() had nothing to go on and fell back to convention.
+ *
+ * Lets a caller distinguish "verified against the Storybook this project
+ * declares" from "verified against whatever is on 6006", which are very
+ * different claims.
+ */
+export function isGuessedStorybookUrl(): boolean {
+  return !process.env.STORYBOOK_URL
+    && process.env.STORYBOOK_PROXY_ENABLED !== 'true'
+    && !process.env.STORYBOOK_PORT;
 }
 
 /**
