@@ -96,6 +96,7 @@ const LAYOUT_PROSE = /\b(column|columns|grid|breakpoint|gutter|span|spacing|widt
 import { enrichWithSourceFacts } from '../../story-generator/knowledge/sourceFacts.js';
 import { readStylingFacts, formatStylingGuidance } from '../../story-generator/knowledge/stylingFacts.js';
 import { inheritCompoundExamples } from '../../story-generator/knowledge/storybookCatalog.js';
+import { checkConformance, formatConformanceErrors } from '../../story-generator/knowledge/conformance.js';
 import {
   writeStoryArtifacts,
   extractStylesheet,
@@ -227,6 +228,15 @@ export async function runStoryGeneration(
   request: GenerationRequest,
   events: GenerationEvents = {}
 ): Promise<GenerationOutcome> {
+  /**
+   * The component facts handed to the model, kept for the validation loop.
+   *
+   * Deliberately the SAME object the catalog was built from, so what the model
+   * was told and what it is judged against cannot drift — the divergence that
+   * once had the catalog offering a component the validator then rejected.
+   */
+  let knownProps: Awaited<ReturnType<typeof extractProps>> = null;
+
   const {
     prompt,
     fileName,
@@ -364,6 +374,10 @@ export async function runStoryGeneration(
     const extracted = homes.length > 1
       ? await extractPropsForPackages([config.importPath, ...homes], process.cwd())
       : await extractProps(config.importPath, process.cwd());
+    // Held for the validation loop below, which checks the generated code
+    // against these same facts. Same object, so the catalog the model was given
+    // and the catalog it is judged against can never drift apart.
+    knownProps = extracted;
     if (extracted) {
       let enriched = 0;
       let describedFromTypes = 0;
@@ -380,7 +394,34 @@ export async function runStoryGeneration(
           // renders, so verification passes it, and only a prop check catches
           // it. Parentheses keep the type information while making the string
           // impossible to paste into JSX and have it look right.
-          component.props = rankProps(facts.props).map(p => {
+          /**
+           * Deprecated props are WITHHELD from the list, not merely marked.
+           *
+           * They were marked `⚠DEPRECATED: Use children instead` and used anyway
+           * — measured across 207 generated stories, 16 uses of a prop the
+           * catalog explicitly warned against. `DataTable render`,
+           * `OverflowMenu ariaLabel`, `Lozenge isBold`, and Atlassian's whole
+           * `Box` padding shorthand family.
+           *
+           * The reason a warning loses: these are what the LIBRARY'S OWN DOCS
+           * showed a version ago, so the model is not reading past the marker —
+           * it is not consulting the catalog for a prop it already "knows". A
+           * prohibition competes with muscle memory; an absence does not.
+           *
+           * Withholding also buys back scarce slots. The window is 12 props, and
+           * Atlassian's `Box` has 6 of its 13 deprecated — half the budget spent
+           * describing props that must not be used. Those slots now go to props
+           * that should be.
+           *
+           * The replacement is named separately below, because "do not use X"
+           * without "use Y" leaves the model to invent the alternative, and the
+           * deprecation text usually states it.
+           *
+           * A prop written from memory anyway is caught statically after
+           * generation — see conformance.ts. Assert first, verify second.
+           */
+          const deprecatedFacts = facts.props.filter(p => p.deprecated);
+          component.props = rankProps(facts.props.filter(p => !p.deprecated)).map(p => {
             /**
              * Say REQUIRED, rather than implying it by the absence of `?`.
              *
@@ -444,13 +485,26 @@ export async function runStoryGeneration(
             // does not help: Carbon phrases them as full sentences that say
             // nothing ("Specify an optional className to add"). Serving them
             // on demand is the right shape, and is not built yet.
-            if (p.deprecated) {
-              // A bare `@deprecated` carries no replacement to name; printing
-              // the tag's own fallback text reads as `DEPRECATED: deprecated`.
-              entry += p.deprecated === 'deprecated' ? ' ⚠DEPRECATED' : ` ⚠DEPRECATED: ${p.deprecated}`;
-            }
             return entry;
           });
+          /**
+           * One compact line naming what NOT to reach for, and what instead.
+           *
+           * Grouped rather than inline: a single "do not use" list reads as a
+           * rule, where a marker buried mid-list reads as a footnote. The
+           * library's own deprecation text carries the replacement most of the
+           * time ("Use `children` instead", "use `paddingBlock`"), so the model
+           * is given the alternative rather than left to invent one.
+           */
+          if (deprecatedFacts.length) {
+            const avoid = deprecatedFacts.slice(0, 8).map(p =>
+              p.deprecated && p.deprecated !== 'deprecated'
+                ? `${p.name} (${String(p.deprecated).replace(/\s+/g, ' ').trim().slice(0, 60)})`
+                : p.name);
+            const note = `DO NOT USE these deprecated props: ${avoid.join('; ')}`
+              + (deprecatedFacts.length > 8 ? ` (+${deprecatedFacts.length - 8} more)` : '');
+            component.description = component.description ? `${component.description} — ${note}` : note;
+          }
           enriched++;
         }
         if (facts.variants?.length) {
@@ -821,11 +875,26 @@ export async function runStoryGeneration(
     const namedImportErrors = validateLocalNamedImports(
       aiText, path.resolve(process.cwd(), config.generatedStoriesPath || './src/stories/generated'), components as any,
     );
+    /**
+     * Does the output conform to the facts we handed the model?
+     *
+     * Static, free, and keyed to the knowledge layer rather than to a list of
+     * remembered bugs — so it strengthens whenever extraction learns something
+     * new, with no code change here. Fires only on facts that are closed by
+     * construction (resolved enum sets, known deprecations); see conformance.ts
+     * for why required- and unknown-prop checks are deliberately absent.
+     */
+    const conformanceErrors = formatConformanceErrors(checkConformance(aiText, knownProps));
+    if (conformanceErrors.length) {
+      logger.log(`📐 Conformance: ${conformanceErrors.length} violation(s) of the catalog we supplied`);
+    }
+
     const importErrors = [
       ...(importValidation.isValid ? [] : importValidation.errors),
       ...isolationErrors,
       ...namedImportErrors,
       ...editErrors,
+      ...conformanceErrors,
     ];
 
     const currentErrors = aggregateValidationErrors(astResult, patternErrors, importErrors);
