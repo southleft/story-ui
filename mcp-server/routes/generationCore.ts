@@ -380,7 +380,18 @@ export async function runStoryGeneration(
           // it. Parentheses keep the type information while making the string
           // impossible to paste into JSX and have it look right.
           component.props = rankProps(facts.props).map(p => {
-            let entry = `${p.name}${p.required ? '' : '?'}${p.type ? ` (${p.type})` : ''}`;
+            /**
+             * Say REQUIRED, rather than implying it by the absence of `?`.
+             *
+             * A TypeScript reader infers required from a missing question mark.
+             * A model weighing that against a strong prior from another library
+             * does not. Measured: Astryx's Switch declares `value` as REQUIRED
+             * and the catalog rendered it `value (boolean)` — visually
+             * indistinguishable from an optional prop — so the model bound state
+             * to `isSelected` instead, React Aria's name. The switch was pinned
+             * off and completely inert, and the catalog had the right answer.
+             */
+            let entry = `${p.name}${p.required ? '' : '?'}${p.type ? ` (${p.type})` : ''}${p.required ? ' REQUIRED' : ''}`;
             // A stated default stops the model restating it. `variant="text"`
             // on an MUI Button is not wrong, but it reads to the team that owns
             // the system as someone who did not know the API.

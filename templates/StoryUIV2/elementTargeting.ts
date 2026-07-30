@@ -78,8 +78,22 @@ export interface ElementTarget {
    * story wrote. React 19 removed `_debugSource` but kept this.
    */
   sourceComponent?: string;
-  /** Position of that element among all instances of it, in document order. */
+  /**
+   * Position of that element among all instances of it, in document order.
+   *
+   * Withheld entirely when `fromList` is true — see below.
+   */
   sourceOccurrence?: number;
+  /**
+   * True when this element was produced from an array (React gave the fiber a
+   * `key`), so ONE JSX element backs many rendered nodes.
+   *
+   * Two consequences the caller must honour. DOM occurrence does not correspond
+   * to source occurrence, so a positional edit would target the wrong element.
+   * And an attribute edit is still correct but applies to every row, which has
+   * to be said out loud rather than implied.
+   */
+  fromList?: boolean;
   /**
    * Every component between the click and the story, innermost first.
    *
@@ -375,6 +389,7 @@ export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFro
   let sourceComponent;
   let sourceOccurrence;
   let sourceCandidates;
+  let fromList = false;
   const key = Object.keys(target).find((k: string) =>
     k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$'));
   if (key) {
@@ -432,7 +447,37 @@ export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFro
           g = g.return;
         }
         if (!owned) continue;
-        if (node === target || (node as any).contains?.(target)) { sourceOccurrence = n; break; }
+        if (node === target || (node as any).contains?.(target)) {
+          /**
+           * A list-produced element has no meaningful source OCCURRENCE.
+           *
+           * `sourceOccurrence` counts matches in DOM document order, which only
+           * corresponds to source order when every match is a literal JSX
+           * element. With `{rows.map(r => <Card/>)}` rendering three cards and a
+           * literal `<Card/>` after them, the source holds 2 elements and the DOM
+           * holds 4 — so clicking the SECOND mapped card yields occurrence 1, and
+           * the server confidently edits source element 1, which is the literal
+           * card. A silent, wrong edit to a file someone else reviews.
+           *
+           * React hands over the discriminator for free: `key` is non-null only
+           * for children produced from an array, because React requires keys
+           * there. One property read, no round trip, no parse.
+           *
+           * When it is set, the occurrence is withheld rather than guessed. One
+           * JSX element backs every row, so an attribute edit is still correct —
+           * it just applies to all of them, which the caller must say out loud
+           * instead of implying it touched one.
+           */
+          let k: any = owned;
+          let up = 0;
+          while (k && up++ < 6) {
+            if (k.key != null) { fromList = true; break; }
+            if (k === owned.return) break;
+            k = k.return;
+          }
+          if (!fromList) sourceOccurrence = n;
+          break;
+        }
         n++;
       }
     }
@@ -451,6 +496,7 @@ export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFro
     sourceComponent,
     sourceOccurrence,
     sourceCandidates,
+    fromList,
   };
 }})`;
 

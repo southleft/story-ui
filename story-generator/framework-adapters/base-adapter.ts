@@ -146,7 +146,27 @@ export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
       // leftSection, value), which is the choice we most need it to get right.
       const ranked = rankPropsByRelevance(component.props);
       const shown = ranked.slice(0, MAX_PROPS_IN_CATALOG);
-      entry += `\n  Props: ${shown.join(', ')}${ranked.length > shown.length ? `, …${ranked.length - shown.length} more` : ''}`;
+      /**
+       * Never end the list with a bare invitation to guess.
+       *
+       * `…9 more` tells the model that nine props exist which it cannot see,
+       * which licenses inventing a plausible one. Measured: Astryx's Switch was
+       * truncated that way and the model bound state to `isSelected` — React
+       * Aria's name, absent from the component — producing a switch pinned off.
+       *
+       * When the withheld tail contains no handler and no state-shaped prop, say
+       * so: the model then knows the interactive contract is fully visible, which
+       * is the fact that actually matters. That is computable, not a guess.
+       */
+      const hidden = ranked.slice(MAX_PROPS_IN_CATALOG);
+      const hiddenHasBehaviour = hidden.some(p =>
+        /^on[A-Z]/.test(p) || /^(value|checked|selected|toggled|open|expanded|active|disabled)\b/i.test(p));
+      const tail = hidden.length === 0
+        ? ''
+        : hiddenHasBehaviour
+          ? `, …${hidden.length} more`
+          : `, …${hidden.length} more (styling and layout only — every state prop and handler this component has is listed above)`;
+      entry += `\n  Props: ${shown.join(', ')}${tail}`;
     }
 
     // A description that only restates the name — discovery's `Chip component
@@ -475,6 +495,16 @@ and any design-system considerations provided below).
    current/selected/open, drive it from a variable (component state), not a hardcoded
    literal, and wire the handler that changes it. Single-component variant stories that
    demonstrate one state in isolation should use story args instead.
+
+   BIND THE STATE TO THE PROP THE CATALOG NAMES, spelled exactly as listed — not to the
+   prop name you expect. A control's state prop and its change handler are ONE contract:
+   if you write the handler, you must also write the state prop listed beside it in the
+   catalog above. These names differ per design system — value / checked / toggled /
+   isChecked, paired with onChange / onToggle / onCheckedChange — and there is no shared
+   convention to fall back on. A plausible substitute is not ignored loudly: it lands in
+   the component's rest props, the control stays pinned to its default, and it renders
+   perfectly while being impossible to operate. If a state prop is marked REQUIRED, it is
+   not optional even when the component appears to work without it.
 
 5. Before emitting, self-check every element: is anything that looks interactive actually
    inert? is any icon unaligned or standing in for a button? is any hover/active appearance

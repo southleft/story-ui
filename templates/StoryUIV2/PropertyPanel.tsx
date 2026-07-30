@@ -81,9 +81,21 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
           // The server picks whichever actually appears in the file — the
           // fiber chain contains HOC wrappers that are not JSX elements.
           candidates: target?.sourceCandidates,
-          // The clicked element's position among all instances of it, which is
-          // what maps it to a JSX element in the source.
-          occurrence: target?.sourceOccurrence ?? target?.occurrence ?? 0,
+          /**
+           * The clicked element's position among all instances of it, which is
+           * what maps it to a JSX element in the source.
+           *
+           * OMITTED for a list-produced element. DOM order only corresponds to
+           * source order when every match is a literal JSX element; with
+           * `{rows.map(r => <Card/>)}` plus one literal `<Card/>`, the source
+           * holds 2 and the DOM holds 4, so clicking the second row resolved to
+           * source element 1 — the literal card — and edited the wrong thing
+           * silently. One JSX element backs every row, so sending no occurrence
+           * lets the server edit that single element, which is the correct target.
+           */
+          occurrence: target?.fromList
+            ? undefined
+            : target?.sourceOccurrence ?? target?.occurrence ?? 0,
           prop,
           value,
         }),
@@ -94,12 +106,16 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
       /**
        * Say when one edit affects several elements.
        *
-       * A list rendered with `.map()` is one JSX element and many DOM nodes,
-       * so changing "this row's" prop changes every row. That is usually what
-       * someone wants and always what they should be told, rather than
-       * discovering it from the canvas.
+       * Two different reasons this happens, and the `.map()` one used to go
+       * unmentioned. A list is ONE JSX element and many DOM nodes, so
+       * `occurrencesInSource` is 1 and this notice stayed silent for precisely
+       * the case where the user is most likely to be surprised — they clicked
+       * one row and every row changed. React's `key` on the fiber tells us,
+       * before the request, that we are in a list.
        */
-      if (typeof data.occurrencesInSource === 'number' && data.occurrencesInSource > 1) {
+      if (target?.fromList) {
+        setNote(`Applied to every item in this list — one ${component} in the source renders all of them.`);
+      } else if (typeof data.occurrencesInSource === 'number' && data.occurrencesInSource > 1) {
         setNote(`Applied. This ${component} appears ${data.occurrencesInSource} times in the source — check whether they all changed.`);
       }
       onApplied();

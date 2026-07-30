@@ -309,7 +309,11 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
         `🖱️ Interaction: ${interaction.controlsTested} control(s) and ${interaction.overlaysTested} overlay(s) exercised` +
         ` — ${interaction.deadControls.length} inert, ${interaction.flowBreakingOverlays.length} in-flow` +
         (interaction.controlsTested === 0 && interaction.overlaysTested === 0
-          ? ' (nothing interactive found — not a pass)' : ''),
+          ? ' (nothing interactive found — not a pass)' : '') +
+        // A cap reached is not an all-clear, and must not read like one.
+        (interaction.controlsSkippedByCap || interaction.overlaysSkippedByCap
+          ? ` · CAPPED: ${interaction.controlsSkippedByCap} control(s) and ${interaction.overlaysSkippedByCap} overlay(s) left untested`
+          : ''),
       );
     }
 

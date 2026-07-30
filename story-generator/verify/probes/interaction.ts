@@ -52,6 +52,15 @@ export interface InteractionResult {
   controlsTested: number;
   /** Overlay triggers opened. */
   overlaysTested: number;
+  /**
+   * Controls found but NOT clicked because the cap was reached.
+   *
+   * A cap reached is not an all-clear. Mantine's notification panels render 8
+   * switches against a cap of 6, so two would go unexercised and the log would
+   * have read exactly like a clean run.
+   */
+  controlsSkippedByCap: number;
+  overlaysSkippedByCap: number;
   deadControls: DeadControl[];
   flowBreakingOverlays: FlowBreakingOverlay[];
   /** True when the probe declined to run; findings are then meaningless. */
@@ -75,13 +84,38 @@ export async function runInteractionProbe(
   return page.evaluate(
     async (opts: InteractionOptions & { maxControls: number; maxOverlays: number }) => {
       const LIBRARY = new Set(opts?.libraryComponents || []);
-      const root: HTMLElement =
-        (document.querySelector('#storybook-root') as HTMLElement) ||
-        (document.querySelector('#root') as HTMLElement) ||
-        document.body;
+
+      /**
+       * Search PORTALLED roots too, not only #storybook-root.
+       *
+       * Overlays, modals and drawers portal to document.body, so scoping to the
+       * story root leaves a switch inside a drawer silently unexercised — the
+       * exact regression domCensus was already fixed for. Storybook's own chrome
+       * is excluded by id so the probe never clicks the toolbar.
+       */
+      const roots: HTMLElement[] = [];
+      const storyRoot = (document.querySelector('#storybook-root')
+        || document.querySelector('#root')) as HTMLElement | null;
+      if (storyRoot) roots.push(storyRoot);
+      for (const child of Array.from(document.body.children) as HTMLElement[]) {
+        if (storyRoot && (child === storyRoot || child.contains(storyRoot))) continue;
+        if (/^(storybook|sb-)/i.test(child.id) || child.tagName === 'SCRIPT' || child.tagName === 'STYLE') continue;
+        roots.push(child);
+      }
+      if (roots.length === 0) roots.push(document.body);
+
+      const queryAll = (selector: string): HTMLElement[] => {
+        const out: HTMLElement[] = [];
+        for (const r of roots) {
+          if (r.matches?.(selector)) out.push(r);
+          out.push(...(Array.from(r.querySelectorAll(selector)) as HTMLElement[]));
+        }
+        return [...new Set(out)];
+      };
 
       const result: InteractionResult = {
         controlsTested: 0, overlaysTested: 0,
+        controlsSkippedByCap: 0, overlaysSkippedByCap: 0,
         deadControls: [], flowBreakingOverlays: [],
         skipped: false,
       };
@@ -145,23 +179,29 @@ export async function runInteractionProbe(
 
       /* ── 1. Toggles that do not toggle ──────────────────────────────────── */
 
+      /**
+       * `''` means the control exposes NO checked state, which is a different
+       * defect from a state that refuses to change — the message must say which.
+       * The coalesce sits inside String() deliberately: `String(undefined)` would
+       * be the literal "undefined" and make that case indistinguishable.
+       */
       const toggleState = (el: Element): string =>
         el.getAttribute('aria-checked')
         ?? el.getAttribute('aria-pressed')
-        ?? String((el as HTMLInputElement).checked ?? '')
-        ?? '';
+        ?? String((el as HTMLInputElement).checked ?? '');
 
-      const toggles = (Array.from(root.querySelectorAll(
+      const allToggles = queryAll(
         '[role="switch"], [role="checkbox"], input[type="checkbox"], [role="radio"], input[type="radio"]',
-      )) as HTMLElement[])
+      )
         .filter(el => {
           const r = el.getBoundingClientRect();
           if (r.width === 0 && r.height === 0) return false;
           if ((el as HTMLInputElement).disabled) return false;
           if (el.getAttribute('aria-disabled') === 'true') return false;
           return !DESTRUCTIVE.test(nameOf(el));
-        })
-        .slice(0, opts.maxControls);
+        });
+      const toggles = allToggles.slice(0, opts.maxControls);
+      result.controlsSkippedByCap = Math.max(0, allToggles.length - toggles.length);
 
       for (const el of toggles) {
         const before = toggleState(el);
@@ -196,21 +236,20 @@ export async function runInteractionProbe(
        * in-flow menu displaces content by tens of pixels, so the signal is not
        * marginal.
        */
-      const triggers = (Array.from(root.querySelectorAll(
-        '[aria-haspopup], [aria-expanded]',
-      )) as HTMLElement[])
+      const allTriggers = queryAll('[aria-haspopup], [aria-expanded]')
         .filter(el => {
           const r = el.getBoundingClientRect();
           if (r.width === 0 && r.height === 0) return false;
           if (el.getAttribute('aria-expanded') === 'true') return false;   // already open
           if ((el as HTMLButtonElement).disabled) return false;
           return !DESTRUCTIVE.test(nameOf(el));
-        })
-        .slice(0, opts.maxOverlays);
+        });
+      const triggers = allTriggers.slice(0, opts.maxOverlays);
+      result.overlaysSkippedByCap = Math.max(0, allTriggers.length - triggers.length);
 
       for (const el of triggers) {
         // Watch everything outside the trigger's own subtree.
-        const others = (Array.from(root.querySelectorAll('*')) as HTMLElement[])
+        const others = queryAll('*')
           .filter(n => !el.contains(n) && !n.contains(el))
           .slice(0, 400);
         const before = others.map(n => {
