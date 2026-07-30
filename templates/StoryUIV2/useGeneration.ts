@@ -10,16 +10,13 @@
  * the Storybook preview iframe, and because the panel lives INSIDE that iframe,
  * the reload kills the in-flight SSE connection mid-generation.
  *
- * HALF-BUILT, AND SAYING SO. The in-flight prompt is written to sessionStorage
- * under PENDING_KEY below, and nothing reads it back — so a reload during a
- * generation still leaves an empty chat. This comment previously claimed the
- * recovery worked, which is worse than no comment: it stops anyone from
- * building the missing half.
- *
- * The pieces needed already exist. The server persists the completed reply to
- * the manifest, and `/story-ui/manifest/poll?since=<t>` is live. Recovery is:
- * on mount, read PENDING_KEY; if set, poll for an entry newer than its
- * startedAt and rebuild the turn from `metadata.lastCompletion`.
+ * The two halves of surviving it: `generate` stashes the in-flight request
+ * under PENDING_KEY before opening the stream, and `readPendingGeneration`
+ * hands the stash to whichever workspace remounts. The server persists the
+ * completed reply to the manifest whether or not the socket survived, so the
+ * remounted workspace polls the manifest for an entry newer than the stash's
+ * startedAt and rebuilds the finished turn from its conversation and
+ * `metadata.lastCompletion` (see pollForCompletedEntry in useSessions).
  */
 
 import { useCallback, useRef, useState } from 'react';
@@ -77,7 +74,26 @@ export interface GenerationRequest {
    * dashboard — and spent an extra LLM call doing it.
    */
   originalTitle?: string;
-  conversation?: Array<{ role: 'user' | 'ai'; content: string }>;
+  conversation?: Array<{
+    role: 'user' | 'ai';
+    content: string;
+    /**
+     * Small data-URL previews of the images attached to this turn (the
+     * composer thumbnails, never the full-size base64 payload). The server
+     * persists these to the manifest, which is where recovery and openSession
+     * read them back — without this field a reference image survived exactly
+     * until the first iframe reload.
+     */
+    thumbnails?: string[];
+  }>;
+  /**
+   * `updatedAt` of the manifest entry being updated, as known when this
+   * request was sent. Recovery uses it to require the completed entry to be
+   * STRICTLY newer — otherwise resending an identical prompt to the same file
+   * matches the previous completion and restores a stale conversation.
+   * Client-side only; stripped before the request goes over the wire.
+   */
+  knownUpdatedAt?: string;
   /**
    * A description of the element the instruction points at, when the user
    * selected one in the preview. Prose rather than a selector: the model edits
@@ -87,6 +103,50 @@ export interface GenerationRequest {
 }
 
 const PENDING_KEY = 'story-ui-v2-pending';
+
+/** What `generate` stashes before opening the stream — enough to find the
+ *  finished entry in the manifest and to redraw the user's turn meanwhile. */
+export interface PendingGeneration {
+  prompt: string;
+  fileName: string | null;
+  title: string | null;
+  startedAt: number;
+  /**
+   * `updatedAt` of the entry this request was updating, when there was one.
+   * Recovery requires the finished entry to be strictly newer than this, so
+   * an identical resubmit can never match the entry the PREVIOUS run wrote.
+   * Null (or absent, in stashes written before the field existed) for a
+   * brand-new story.
+   */
+  baselineUpdatedAt?: string | null;
+}
+
+/**
+ * How long a stash stays recoverable. A generation that has not landed in the
+ * manifest after this long is not landing; past it the stash is stale garbage
+ * from an abandoned tab, not work in progress.
+ */
+export const RECOVERY_WINDOW_MS = 4 * 60_000;
+
+export function readPendingGeneration(): PendingGeneration | null {
+  let raw: string | null = null;
+  try { raw = sessionStorage.getItem(PENDING_KEY); } catch { return null; }
+  if (!raw) return null;
+  let pending: PendingGeneration;
+  try { pending = JSON.parse(raw); } catch {
+    clearPendingGeneration();
+    return null;
+  }
+  if (!pending?.prompt || !pending.startedAt || Date.now() - pending.startedAt > RECOVERY_WINDOW_MS) {
+    clearPendingGeneration();
+    return null;
+  }
+  return pending;
+}
+
+export function clearPendingGeneration(): void {
+  try { sessionStorage.removeItem(PENDING_KEY); } catch { /* ignore */ }
+}
 
 /**
  * Human labels for every phase the server emits.
@@ -158,9 +218,19 @@ export function useGeneration(apiBase: string) {
       try {
         sessionStorage.setItem(
           PENDING_KEY,
-          JSON.stringify({ prompt: request.prompt, startedAt: startedRef.current }),
+          JSON.stringify({
+            prompt: request.prompt,
+            fileName: request.fileName ?? null,
+            title: request.originalTitle ?? null,
+            startedAt: startedRef.current,
+            baselineUpdatedAt: request.knownUpdatedAt ?? null,
+          } satisfies PendingGeneration),
         );
       } catch { /* private mode */ }
+
+      // knownUpdatedAt is recovery bookkeeping for THIS client, not part of
+      // the generation contract — keep it off the wire.
+      const { knownUpdatedAt: _knownUpdatedAt, ...payload } = request;
 
       let completion: any = null;
       let failure: string | null = null;
@@ -169,7 +239,7 @@ export function useGeneration(apiBase: string) {
         const res = await fetch(`${apiBase}/mcp/generate-story-stream`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(request),
+          body: JSON.stringify(payload),
           signal: controller.signal,
         });
 

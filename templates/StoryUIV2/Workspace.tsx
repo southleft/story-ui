@@ -37,8 +37,23 @@ import '@radix-ui/themes/styles.css';
 import './workspace.css';
 import { PreviewCanvas } from './PreviewCanvas';
 import { HandoffDialog } from './HandoffDialog';
-import { useGeneration, waitForStory, type Verification } from './useGeneration';
-import { useSessions, takeEditRequest, cleanReply, type SessionSummary } from './useSessions';
+import {
+  useGeneration,
+  waitForStory,
+  readPendingGeneration,
+  clearPendingGeneration,
+  type Verification,
+} from './useGeneration';
+import {
+  useSessions,
+  takeEditRequest,
+  cleanReply,
+  pollForCompletedEntry,
+  type SessionSummary,
+  type ManifestEntry,
+} from './useSessions';
+import { processImageFiles, MAX_IMAGES, type AttachedImage } from './imageAttachments';
+import { useVoiceInput } from './useVoiceInput';
 import { describeTarget, targetLabel, type ElementTarget } from './elementTargeting';
 import { PropertyPanel } from './PropertyPanel';
 import { VersionHistory, type StoryVersionSummary } from './VersionHistory';
@@ -85,6 +100,13 @@ const relativeTime = (iso: string): string => {
 };
 
 const uid = () => Math.random().toString(36).slice(2, 10);
+
+/** Append a spoken fragment to what is already typed, with exactly one space. */
+const joinDictation = (base: string, spoken: string) => {
+  const t = spoken.trim();
+  if (!t) return base;
+  return base ? `${base.replace(/\s+$/, '')} ${t}` : t;
+};
 
 /**
  * Elapsed time on the step that is currently running.
@@ -167,7 +189,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
   const [model, setModel] = useState('');
   const [considerations, setConsiderations] = useState('');
   const [connected, setConnected] = useState<boolean | null>(null);
-  const { sessions, loaded: sessionsLoaded, reload: reloadSessions, byStoryId } = useSessions(apiBase);
+  const { sessions, loaded: sessionsLoaded, reload: reloadSessions, byStoryId, byFileName } = useSessions(apiBase);
   const [activeStory, setActiveStory] = useState<{ id: string; title: string } | null>(null);
   /**
    * Set when a story was written to disk but Storybook never indexed it.
@@ -206,8 +228,35 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
    */
   const [handoffTarget, setHandoffTarget] = useState<{ fileName: string; title: string } | null>(null);
 
+  /** Images staged for the next message, already encoded for upload. */
+  const [images, setImages] = useState<AttachedImage[]>([]);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  /**
+   * True while polling the manifest for a generation whose SSE the iframe
+   * reload killed. The server finishes regardless; this is the wait for its
+   * persisted reply.
+   */
+  const [recovering, setRecovering] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const threadRef = useRef<HTMLDivElement>(null);
   const { generate, cancel, steps, busy, error } = useGeneration(apiBase);
+
+  /**
+   * Dictation. Interim results are shown in the textarea so speech feels live,
+   * but only final results are committed — the committed text is tracked in a
+   * ref so an interim fragment never contaminates what typing or the next
+   * final fragment builds on.
+   */
+  const committedInputRef = useRef('');
+  const voice = useVoiceInput({
+    onInterimTranscript: t => setInput(joinDictation(committedInputRef.current, t)),
+    onFinalTranscript: t => {
+      committedInputRef.current = joinDictation(committedInputRef.current, t);
+      setInput(committedInputRef.current);
+    },
+  });
 
   const started = turns.length > 0;
 
@@ -278,19 +327,113 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
   }, []);
 
   /**
+   * Recover a generation the iframe reload cut off.
+   *
+   * Writing the story file makes Vite reload this very page, killing the SSE
+   * stream — but the server finishes anyway and persists the reply to the
+   * manifest. On remount: redraw the user's turn from the stash immediately,
+   * poll for the finished entry, and rebuild the conversation from it exactly
+   * as openSession does. The stash is cleared on success and on giving up;
+   * giving up says so in the thread rather than leaving an empty chat.
+   */
+  const recoveryStarted = useRef(false);
+  useEffect(() => {
+    if (recoveryStarted.current) return;
+    recoveryStarted.current = true;
+    const pending = readPendingGeneration();
+    if (!pending) return;
+    let cancelled = false;
+
+    setTurns([{ id: uid(), role: 'user', text: pending.prompt }]);
+    setRecovering(true);
+    if (pending.fileName) setActiveFile({ fileName: pending.fileName, title: pending.title || 'Story' });
+
+    (async () => {
+      const entry: ManifestEntry | null = await pollForCompletedEntry(apiBase, pending, () => cancelled);
+      if (cancelled) return;
+      clearPendingGeneration();
+      setRecovering(false);
+
+      if (!entry) {
+        setTurns(prev => [...prev, {
+          id: uid(),
+          role: 'assistant',
+          text: 'The preview reloaded during that generation and the finished result never appeared. It may still be completing on the server — check Recent work in a moment, or ask again.',
+        }]);
+        return;
+      }
+
+      const completion = entry.metadata?.lastCompletion;
+      const restored: Turn[] = (entry.conversation ?? []).map((m, i, all) => ({
+        id: `${entry.fileName}-${i}`,
+        role: m.role === 'user' ? 'user' : 'assistant',
+        text: m.role === 'ai' ? cleanReply(m.content) : m.content,
+        thumbnails: m.thumbnails,
+        ...(m.role === 'ai' && i === all.length - 1
+          ? {
+              fileName: entry.fileName,
+              title: entry.title,
+              suggestions: completion?.suggestions?.length ? completion.suggestions : undefined,
+              elapsedMs: completion?.generationTimeMs,
+              storyId: completion?.storybookId,
+            }
+          : {}),
+      }));
+      // Invariant: recovery must never erase a turn the user added after it
+      // started. This effect seeded exactly one turn (the stashed prompt), so
+      // anything beyond that is new work — in that case keep the thread as it
+      // is and append only the recovered assistant reply, rather than
+      // replacing the whole thread with the manifest's version.
+      setTurns(prev => {
+        if (prev.length <= 1) return restored;
+        const lastAssistant = [...restored].reverse().find(t => t.role === 'assistant');
+        return lastAssistant ? [...prev, lastAssistant] : prev;
+      });
+      setActiveFile({ fileName: entry.fileName, title: entry.title });
+      reloadSessions();
+
+      const resolved = await waitForStory(completion?.storybookId || entry.id, entry.title);
+      if (cancelled) return;
+      if (resolved) {
+        setActiveStory({ id: resolved, title: entry.title });
+        setNotIndexed(null);
+        setReloadToken(t => t + 1);
+      } else {
+        setNotIndexed({ fileName: entry.fileName, title: entry.title });
+      }
+    })();
+
+    return () => {
+      // Two jobs, and both matter. `cancelled` stops THIS run from touching
+      // state after cleanup — including clearPendingGeneration, so the stash
+      // survives for whoever takes over. Releasing the guard lets the next
+      // run take over: under StrictMode the effect runs, is cleaned up, and
+      // runs again, and without the release the second run bailed on the
+      // guard while the first run's poll exited on `cancelled` before ever
+      // reaching setRecovering(false) — leaving the spinner stuck true and
+      // the edit-request effect blocked forever. On a genuine unmount the
+      // release is moot: the ref dies with the instance.
+      cancelled = true;
+      recoveryStarted.current = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
    * The "Edit in Story UI" toolbar button hands us a story id and expects its
    * conversation to open. Runs once sessions are loaded, since resolving the id
-   * to a session needs the manifest.
+   * to a session needs the manifest. Waits out a recovery in progress — the
+   * recovered conversation must not be clobbered by an older stashed request.
    */
   const editRequestHandled = useRef(false);
   useEffect(() => {
-    if (!sessionsLoaded || editRequestHandled.current) return;
+    if (!sessionsLoaded || recovering || editRequestHandled.current) return;
     editRequestHandled.current = true;
     const request = takeEditRequest();
     if (!request) return;
     const session = byStoryId(request.componentId);
     if (session) openSession(session);
-  }, [sessionsLoaded, byStoryId, openSession]);
+  }, [sessionsLoaded, recovering, byStoryId, openSession]);
 
   /* ---- autoscroll ----------------------------------------------------- */
 
@@ -302,14 +445,24 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
 
   const send = useCallback(async (text?: string) => {
     const prompt = (text ?? input).trim();
-    if (!prompt || busy) return;
+    // `recovering` counts as busy here: a turn sent while recovery polls
+    // would be replaced when the recovered conversation lands, and its reply
+    // would append to the wrong thread. The reconnecting row already says
+    // why the composer is waiting.
+    if (!prompt || busy || recovering) return;
 
+    if (voice.isListening) voice.stop();
+    committedInputRef.current = '';
     setInput('');
+    const sentImages = images;
+    setImages([]);
+    setImageError(null);
     // Shown on the turn so the transcript records what the instruction was
     // pointed at — six months later "make it bigger" means nothing on its own.
     const userTurn: Turn = {
       id: uid(), role: 'user', text: prompt,
       target: selection ? targetLabel(selection) : undefined,
+      thumbnails: sentImages.length ? sentImages.map(i => i.preview) : undefined,
     };
     setSelection(null);
     setTurns(prev => [...prev, userTurn]);
@@ -317,10 +470,20 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     const conversation = [...turns, userTurn].map(t => ({
       role: t.role === 'user' ? ('user' as const) : ('ai' as const),
       content: t.text,
+      // The small composer previews, not the full-size upload payload. The
+      // manifest keeps these on the message, and recovery/openSession read
+      // them back — omitting them here stripped the reference image from the
+      // turn on the very first iframe reload.
+      thumbnails: t.thumbnails,
     }));
 
     const result = await generate({
       prompt,
+      // mediaType must describe the bytes we actually encoded — after
+      // downscaling that can differ from the original file's type.
+      images: sentImages.length
+        ? sentImages.map(img => ({ type: 'base64' as const, data: img.base64, mediaType: img.mediaType }))
+        : undefined,
       provider: provider || undefined,
       model: model || undefined,
       considerations: considerations || undefined,
@@ -331,6 +494,10 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       isUpdate: !!activeFile,
       originalTitle: activeFile?.title,
       selection: selection ? describeTarget(selection) : undefined,
+      // When this updates an existing entry, record how fresh that entry is
+      // right now — recovery then demands a STRICTLY newer one, so resending
+      // an identical prompt can never re-match the previous completion.
+      knownUpdatedAt: activeFile ? byFileName(activeFile.fileName)?.entry.updatedAt : undefined,
     });
 
     if (!result) return;
@@ -369,7 +536,46 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     ]);
     if (result.fileName) setActiveFile({ fileName: result.fileName, title: result.title || 'Story' });
     reloadSessions();
-  }, [input, busy, turns, provider, model, considerations, activeFile, selection, generate, reloadSessions]);
+  }, [input, busy, recovering, turns, provider, model, considerations, activeFile, selection, images, voice, generate, reloadSessions, byFileName]);
+
+  /* ---- attachments ----------------------------------------------------- */
+
+  const addFiles = useCallback(async (files: File[]) => {
+    if (files.length === 0) return;
+    setImageError(null);
+    const { images: added, errors } = await processImageFiles(files, MAX_IMAGES - images.length);
+    if (added.length) setImages(prev => [...prev, ...added].slice(0, MAX_IMAGES));
+    if (errors.length) setImageError(errors.join(' · '));
+  }, [images.length]);
+
+  const onPaste = useCallback((e: React.ClipboardEvent) => {
+    const files = Array.from(e.clipboardData?.items ?? [])
+      .filter(item => item.type.startsWith('image/'))
+      .map(item => item.getAsFile())
+      .filter((f): f is File => !!f);
+    if (files.length === 0) return; // text pastes stay text pastes
+    e.preventDefault();
+    void addFiles(files);
+  }, [addFiles]);
+
+  const onDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    if (e.dataTransfer.types.includes('Files')) setDragging(true);
+  }, []);
+
+  const onDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); }, []);
+
+  const onDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false);
+  }, []);
+
+  const onDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+    if (files.length) void addFiles(files);
+  }, [addFiles]);
 
   const recheckIndex = useCallback(async () => {
     if (!notIndexed) return;
@@ -406,14 +612,25 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
   /* ---- composer, shared by both states -------------------------------- */
 
   const composer = (
-    <Box p="3" className="suiw-composer">
+    <Box
+      p="3"
+      className={`suiw-composer${dragging ? ' suiw-composer--drag' : ''}`}
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
       <Card size="1">
         <TextArea
           size="2"
           variant="soft"
           value={input}
-          onChange={e => setInput(e.target.value)}
+          onChange={e => {
+            setInput(e.target.value);
+            committedInputRef.current = e.target.value;
+          }}
           onKeyDown={onKeyDown}
+          onPaste={onPaste}
           placeholder={
             selection
               ? `Describe a change to that ${selection.component || 'element'}`
@@ -425,6 +642,32 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
           rows={started ? 2 : 3}
           style={{ background: 'transparent', boxShadow: 'none' }}
         />
+
+        {/* Staged attachments. Each is removable until the message is sent —
+            after that the turn keeps the thumbnails as its record. */}
+        {images.length > 0 && (
+          <Flex gap="2" wrap="wrap" mt="2">
+            {images.map(img => (
+              <span key={img.id} className="suiw-attach-thumb">
+                <img src={img.preview} alt={img.name} />
+                <button
+                  type="button"
+                  aria-label={`Remove ${img.name}`}
+                  onClick={() => setImages(prev => prev.filter(i => i.id !== img.id))}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </Flex>
+        )}
+
+        {imageError && (
+          <Text as="div" size="1" color="red" mt="1">{imageError}</Text>
+        )}
+        {voice.error && (
+          <Text as="div" size="1" color="red" mt="1">{voice.error.message}</Text>
+        )}
 
         {/* The chip is the contract: whatever it names is what the next
             instruction applies to. Without it the user cannot tell whether a
@@ -473,6 +716,52 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
         )}
 
         <Flex align="center" gap="2" mt="2" wrap="nowrap">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            onChange={e => {
+              const files = Array.from(e.target.files ?? []);
+              e.target.value = '';
+              void addFiles(files);
+            }}
+          />
+          <Button
+            size="1"
+            variant="ghost"
+            color="gray"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={busy || recovering || images.length >= MAX_IMAGES}
+            title={
+              images.length >= MAX_IMAGES
+                ? `Up to ${MAX_IMAGES} images per message`
+                : 'Attach an image — or paste or drop one here'
+            }
+          >
+            Attach
+          </Button>
+          {/* Disabled rather than hidden when the browser lacks the Web Speech
+              API: a control that exists in one browser and not another reads
+              as breakage, not absence. */}
+          <Button
+            size="1"
+            variant={voice.isListening ? 'soft' : 'ghost'}
+            color={voice.isListening ? 'red' : 'gray'}
+            onClick={voice.toggle}
+            disabled={!voice.isSupported || recovering}
+            title={
+              !voice.isSupported
+                ? 'Dictation needs a browser with the Web Speech API (Chrome, Edge or Safari)'
+                : voice.isListening
+                  ? 'Stop dictating'
+                  : 'Dictate into the prompt'
+            }
+          >
+            {voice.isListening ? 'Listening…' : 'Dictate'}
+          </Button>
+
           {/* Only on home. In the workspace the rail is 400px, and badge + two
               selects + Build does not fit — the Build button was being pushed
               clean out of the row. The header already names the active story,
@@ -546,7 +835,10 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
               size="2"
               highContrast
               onClick={() => send()}
-              disabled={!input.trim()}
+              // Recovering counts as busy: a turn sent mid-recovery would be
+              // clobbered when the recovered conversation lands. send() also
+              // guards, for the Enter key and suggestion chips.
+              disabled={!input.trim() || recovering}
               className="suiw-btn-build"
               style={{ flexShrink: 0 }}
             >
@@ -716,6 +1008,13 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                             {turn.target}
                           </Badge>
                         )}
+                        {turn.thumbnails && turn.thumbnails.length > 0 && (
+                          <Flex gap="2" wrap="wrap" mb="1" className="suiw-turn-thumbs">
+                            {turn.thumbnails.map((thumb, i) => (
+                              <img key={i} src={thumb} alt={`Attached image ${i + 1}`} />
+                            ))}
+                          </Flex>
+                        )}
                         <Text as="div" size="2" className="suiw-turn-body">{turn.text}</Text>
                       </Card>
                     ) : (
@@ -768,6 +1067,20 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                   </Flex>
                 ))}
 
+                {recovering && (
+                  <Flex align="center" gap="2" className="suiw-steps">
+                    <Box
+                      width="6px"
+                      height="6px"
+                      className="suiw-pulse"
+                      style={{ borderRadius: '50%', background: 'var(--accent-9)', flex: '0 0 auto' }}
+                    />
+                    <Text size="1" className="suiw-step-label">
+                      Reconnecting to your in-progress generation
+                    </Text>
+                  </Flex>
+                )}
+
                 {steps.length > 0 && busy && (
                   <Flex direction="column" gap="1" className="suiw-steps">
                     {steps.map(s => (
@@ -812,7 +1125,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                 apiBase={apiBase}
                 fileName={activeFile?.fileName}
                 refreshToken={reloadToken}
-                disabled={busy}
+                disabled={busy || recovering}
                 onRestored={(v: StoryVersionSummary) => {
                   // The file on disk changed underneath the canvas, so force a
                   // reload and note it in the thread — a preview that silently

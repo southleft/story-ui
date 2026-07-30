@@ -16,7 +16,12 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { fetchStoryIndex, resolveIndexedStoryId } from './useGeneration';
+import {
+  fetchStoryIndex,
+  resolveIndexedStoryId,
+  RECOVERY_WINDOW_MS,
+  type PendingGeneration,
+} from './useGeneration';
 
 export interface ManifestMessage {
   role: 'user' | 'ai';
@@ -63,6 +68,67 @@ export function cleanReply(content: string): string {
     .replace(/^\[SUCCESS\]\s*\*\*(?:Created|Updated)[^*]*\*\*\s*\n+/, '')
     .replace(/^\[(?:ERROR|FAILED)\]\s*/, '')
     .trim();
+}
+
+/**
+ * Wait for the reply of a generation whose SSE died with the preview iframe.
+ *
+ * The server finishes the generation regardless of the dead socket and
+ * persists the whole conversation — reply appended — to the manifest, with
+ * the prompt it answered in `metadata.prompt`. So the finished entry is the
+ * one whose stored prompt matches the stash (and whose fileName matches, when
+ * the stash was an update to a known file) and whose conversation ends with
+ * the assistant. Matching on fileName alone is not enough: an update's entry
+ * already existed, already ended with an older 'ai' turn, and would satisfy a
+ * looser test before the new reply ever landed.
+ *
+ * The freshness tests matter as much as the identity tests. Matching on
+ * prompt + fileName alone meant that resending an IDENTICAL prompt to the
+ * same file within the skew window matched the previous run's entry — same
+ * stored prompt, conversation already ending 'ai' — and restored a stale
+ * conversation as if it were the answer. So a candidate must also be newer
+ * than the stash's `startedAt` (minus a small skew — panel and server run on
+ * the same machine, so 2s covers stamping slop without reopening the stale
+ * window), and, when the stash recorded the entry's `updatedAt` at send time,
+ * STRICTLY newer than that baseline.
+ *
+ * Resolves null when the window closes without the reply appearing — the
+ * caller says so honestly rather than pretending nothing was in flight.
+ */
+const CLOCK_SKEW_MS = 2_000;
+
+export async function pollForCompletedEntry(
+  apiBase: string,
+  pending: PendingGeneration,
+  isCancelled: () => boolean = () => false,
+): Promise<ManifestEntry | null> {
+  const earliest = pending.startedAt - CLOCK_SKEW_MS;
+  const since = new Date(earliest).toISOString();
+  const baseline = pending.baselineUpdatedAt ? Date.parse(pending.baselineUpdatedAt) : NaN;
+  const deadline = pending.startedAt + RECOVERY_WINDOW_MS;
+  while (!isCancelled() && Date.now() < deadline) {
+    try {
+      const res = await fetch(`${apiBase}/story-ui/manifest/poll?since=${encodeURIComponent(since)}`);
+      if (res.ok) {
+        const entries: ManifestEntry[] = (await res.json())?.entries ?? [];
+        const entry = entries.find(e => {
+          if (e.metadata?.prompt !== pending.prompt) return false;
+          if (pending.fileName && e.fileName !== pending.fileName) return false;
+          if (e.conversation?.[e.conversation.length - 1]?.role !== 'ai') return false;
+          // Freshness: the server stamps updatedAt on every write, so an
+          // entry that cannot prove it is newer than this request is not
+          // this request's result.
+          const updated = Date.parse(e.updatedAt || '');
+          if (Number.isNaN(updated) || updated < earliest) return false;
+          if (!Number.isNaN(baseline) && updated <= baseline) return false;
+          return true;
+        });
+        if (entry) return entry;
+      }
+    } catch { /* server busy — keep polling */ }
+    await new Promise(r => setTimeout(r, 3000));
+  }
+  return null;
 }
 
 export function useSessions(apiBase: string) {
