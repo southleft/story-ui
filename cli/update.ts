@@ -4,7 +4,8 @@ import { execSync } from 'child_process';
 import chalk from 'chalk';
 import { fileURLToPath } from 'url';
 import inquirer from 'inquirer';
-import { ensureManagerAddonWiring } from './setup.js';
+import { createRequire } from 'module';
+import { ensureManagerAddonWiring, ensureStoriesGlobCoversMdx, missingReactStorybookDep } from './setup.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -90,6 +91,13 @@ const MANAGED_FILES = [
     source: 'templates/StoryUI/voice/types.ts',
     target: 'src/stories/StoryUI/voice/types.ts',
     description: 'Voice module type definitions'
+  },
+  // V2 workspace — a single MDX entry beside the panel dir; the workspace
+  // itself ships in the package and updates with it
+  {
+    source: 'templates/StoryUIV2/StoryUIV2.mdx',
+    target: 'src/stories/StoryUIV2/StoryUIV2.mdx',
+    description: 'Story UI workspace (V2) MDX entry'
   }
 ];
 
@@ -142,22 +150,9 @@ function detectStoryUIInstallation(): {
   storyUIDir?: string;
   configPath?: string;
   installedVersion?: string;
+  componentFramework?: string;
 } {
   const cwd = process.cwd();
-
-  // Check for Story UI directory
-  const possibleStoryUIDirs = [
-    path.join(cwd, 'src', 'stories', 'StoryUI'),
-    path.join(cwd, 'stories', 'StoryUI')
-  ];
-
-  let storyUIDir: string | undefined;
-  for (const dir of possibleStoryUIDirs) {
-    if (fs.existsSync(dir)) {
-      storyUIDir = dir;
-      break;
-    }
-  }
 
   // Check for config file
   const configFiles = [
@@ -175,8 +170,10 @@ function detectStoryUIInstallation(): {
     }
   }
 
-  // Try to read installed version from config
+  // Try to read installed version and paths from config
   let installedVersion: string | undefined;
+  let configuredStoriesPath: string | undefined;
+  let componentFramework: string | undefined;
   if (configPath) {
     try {
       const configContent = fs.readFileSync(configPath, 'utf-8');
@@ -184,8 +181,35 @@ function detectStoryUIInstallation(): {
       if (versionMatch) {
         installedVersion = versionMatch[1];
       }
+      const storiesPathMatch = configContent.match(/generatedStoriesPath:\s*['"]([^'"]+)['"]/);
+      if (storiesPathMatch) {
+        configuredStoriesPath = storiesPathMatch[1];
+      }
+      const frameworkMatch = configContent.match(/componentFramework:\s*['"]([^'"]+)['"]/);
+      if (frameworkMatch) {
+        componentFramework = frameworkMatch[1];
+      }
     } catch (error) {
       // Ignore read errors
+    }
+  }
+
+  // Check for Story UI directory. An init with a custom generatedStoriesPath
+  // installs the panel beside it, so derive that location from the config
+  // before falling back to the conventional spots.
+  const possibleStoryUIDirs = [
+    ...(configuredStoriesPath
+      ? [path.join(path.dirname(path.resolve(cwd, configuredStoriesPath)), 'StoryUI')]
+      : []),
+    path.join(cwd, 'src', 'stories', 'StoryUI'),
+    path.join(cwd, 'stories', 'StoryUI')
+  ];
+
+  let storyUIDir: string | undefined;
+  for (const dir of possibleStoryUIDirs) {
+    if (fs.existsSync(dir)) {
+      storyUIDir = dir;
+      break;
     }
   }
 
@@ -193,7 +217,8 @@ function detectStoryUIInstallation(): {
     isInstalled: !!(storyUIDir || configPath),
     storyUIDir,
     configPath,
-    installedVersion
+    installedVersion,
+    componentFramework
   };
 }
 
@@ -376,7 +401,7 @@ function updateConfigVersion(configPath: string, version: string): boolean {
  * template files (e.g. react-live for voice canvas). Installs any missing
  * packages using the detected package manager.
  */
-function ensureConsumerDependencies(options: UpdateOptions): { installed: string[]; errors: string[] } {
+function ensureConsumerDependencies(options: UpdateOptions, componentFramework?: string): { installed: string[]; errors: string[] } {
   const cwd = process.cwd();
   const packageJsonPath = path.join(cwd, 'package.json');
   const result = { installed: [] as string[], errors: [] as string[] };
@@ -395,6 +420,32 @@ function ensureConsumerDependencies(options: UpdateOptions): { installed: string
 
   const allDeps = { ...packageJson.dependencies, ...packageJson.devDependencies };
   const missing = REQUIRED_CONSUMER_DEPS.filter((pkg) => !allDeps[pkg]);
+
+  // The panel and the V2 workspace are React, rendered through addon-docs even
+  // in a non-React Storybook. react/@storybook/react are OPTIONAL peers of
+  // @tpitre/story-ui, so nothing force-installs them: npm usually hoists
+  // Storybook's own copy of react, pnpm does not — and then the /workspace
+  // export fails to resolve 'react'. Check resolution, not just declaration.
+  if (componentFramework && componentFramework !== 'react') {
+    const hostRequire = createRequire(packageJsonPath);
+    for (const pkg of ['react', 'react-dom']) {
+      if (allDeps[pkg]) continue;
+      try {
+        hostRequire.resolve(pkg);
+      } catch {
+        missing.push(`${pkg}@^18.3.1`);
+      }
+    }
+  }
+
+  // React hosts need '@storybook/react' — the type import every generated
+  // story starts with. It is an OPTIONAL peer of @tpitre/story-ui, and pnpm's
+  // auto-install-peers skips optional peers, so a React + pnpm host loses it
+  // unless it is installed explicitly, pinned to the host's Storybook major.
+  const storybookReactDep = missingReactStorybookDep(cwd, allDeps, componentFramework);
+  if (storybookReactDep) {
+    missing.push(`${storybookReactDep.name}@${storybookReactDep.range}`);
+  }
 
   if (missing.length === 0) {
     return result;
@@ -466,12 +517,14 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
 
   // Resolve managed-file targets against the DETECTED panel directory, so
   // installations at stories/StoryUI (no src/) update in place instead of
-  // getting a duplicate panel written to src/stories/StoryUI.
+  // getting a duplicate panel written to src/stories/StoryUI. The StoryUIV2
+  // dir lands beside the panel, so the shared prefix is the stories dir.
   const panelDirRel = installation.storyUIDir
     ? path.relative(process.cwd(), installation.storyUIDir).split(path.sep).join('/')
     : 'src/stories/StoryUI';
+  const storiesDirRel = path.dirname(panelDirRel).split(path.sep).join('/');
   const resolveTarget = (target: string): string =>
-    target.replace(/^src\/stories\/StoryUI/, panelDirRel);
+    target.replace(/^src\/stories/, storiesDirRel);
 
   // Step 2: Show what will be updated
   console.log(chalk.bold('\n📦 Managed files to update:'));
@@ -549,7 +602,7 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
 
   // Step 5: Ensure required consumer dependencies are installed
   // (e.g. react-live, which voice canvas templates import directly)
-  const depsResult = ensureConsumerDependencies(options);
+  const depsResult = ensureConsumerDependencies(options, installation.componentFramework);
   if (depsResult.errors.length > 0) {
     result.errors.push(...depsResult.errors);
   }
@@ -561,6 +614,19 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
       ensureManagerAddonWiring(installation.storyUIDir);
     } catch (wireError: any) {
       result.errors.push(`manager wiring: ${wireError.message}`);
+    }
+  }
+
+  // The V2 workspace is an MDX docs page — a stories glob that never matches
+  // .mdx installs it invisibly. Same check init performs, same helper.
+  if (!options.dryRun) {
+    const globResult = ensureStoriesGlobCoversMdx(path.resolve(process.cwd(), storiesDirRel));
+    if (!globResult.checked) {
+      console.log(chalk.yellow('   ⚠️  No .storybook/main.ts or main.js found — MDX glob coverage was NOT checked'));
+    } else if (globResult.added) {
+      console.log(chalk.green(`   ✅ Added ${globResult.added} to the Storybook stories array`));
+    } else if (!globResult.covered) {
+      console.log(chalk.yellow('   ⚠️  Could not extend the stories array — the V2 workspace stays hidden until a glob matches its .mdx'));
     }
   }
 

@@ -5,6 +5,7 @@ import chalk from 'chalk';
 import { autoDetectDesignSystem } from '../story-generator/configLoader.js';
 import { deriveHostContract, type HostContract } from '../story-generator/knowledge/hostContract.js';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 import net from 'net';
 import { execSync } from 'child_process';
 
@@ -152,6 +153,151 @@ export function ensureManagerAddonWiring(storyUITargetDir: string): void {
     );
     console.log(chalk.green('✅ Created .storybook/manager.ts with the "Edit in Story UI" toolbar button'));
   }
+}
+
+/**
+ * Ask whether `.mdx` is actually covered, not whether a substring appears.
+ *
+ * The V2 workspace is an MDX docs page — that is how it stays React in a
+ * Vue, Angular or Svelte project. A `stories` glob that ends in
+ * `.stories.tsx` satisfies a `src/stories` substring check while matching
+ * no `.mdx` at all, so the workspace installs correctly and never appears
+ * in the sidebar. Observed on a Carbon project, where the panel was
+ * silently absent until the glob was widened by hand.
+ */
+export function storiesGlobCoversMdx(mainContent: string): boolean {
+  return mainContent.includes('.mdx') || mainContent.includes('mdx|');
+}
+
+export interface StoriesGlobResult {
+  /** false when no .storybook/main.ts or main.js exists — coverage is UNKNOWN, not fine */
+  checked: boolean;
+  /** the stories globs reach .mdx under the stories dir (after any addition) */
+  covered: boolean;
+  /** the glob that was appended, when one was */
+  added: string | null;
+}
+
+/**
+ * Ensure Storybook's `stories` globs reach the MDX workspace under storiesDir,
+ * appending a derived glob when they do not. The glob is computed from the
+ * ACTUAL stories directory relative to `.storybook` — a hardcoded
+ * `../src/stories` left any project with a custom generatedStoriesPath
+ * uncovered. Shared by init and update so the two cannot drift.
+ */
+export function ensureStoriesGlobCoversMdx(storiesDir: string, cwd: string = process.cwd()): StoriesGlobResult {
+  const storybookDir = path.join(cwd, '.storybook');
+  const mainPath = ['main.ts', 'main.js']
+    .map(f => path.join(storybookDir, f))
+    .find(p => fs.existsSync(p));
+  if (!mainPath) return { checked: false, covered: false, added: null };
+
+  let mainContent = fs.readFileSync(mainPath, 'utf-8');
+  const relStoriesDir = path
+    .relative(storybookDir, path.resolve(cwd, storiesDir))
+    .split(path.sep)
+    .join('/');
+  if (mainContent.includes(`${relStoriesDir}/**/*`) && storiesGlobCoversMdx(mainContent)) {
+    return { checked: true, covered: true, added: null };
+  }
+
+  const storyUIStoriesPath = `'${relStoriesDir}/**/*.@(mdx|stories.@(js|jsx|ts|tsx))'`;
+
+  // Find the stories array's opening bracket and walk to its MATCHING close,
+  // tracking bracket depth and skipping string literals. A lazy regex that
+  // stopped at the FIRST `]` corrupted any glob with a character class
+  // ('*.stories.[tj]sx' was severed mid-string) and turned an empty
+  // `stories: []` into a sparse array by always inserting a leading comma.
+  const arrayStart = /stories\s*:\s*\[/.exec(mainContent);
+  if (!arrayStart) {
+    return { checked: true, covered: false, added: null };
+  }
+  const openIdx = arrayStart.index + arrayStart[0].length - 1;
+  let closeIdx = -1;
+  let depth = 0;
+  let quote: string | null = null;
+  for (let i = openIdx; i < mainContent.length; i++) {
+    const ch = mainContent[i];
+    if (quote) {
+      if (ch === '\\') i++;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') { quote = ch; continue; }
+    if (ch === '[' || ch === '{' || ch === '(') { depth++; continue; }
+    if (ch === ']' || ch === '}' || ch === ')') {
+      depth--;
+      if (depth === 0) {
+        if (ch === ']') closeIdx = i;
+        break;
+      }
+    }
+  }
+  if (closeIdx === -1) {
+    // Unbalanced or unparseable — leave the file alone rather than guess.
+    return { checked: true, covered: false, added: null };
+  }
+
+  const inner = mainContent.slice(openIdx + 1, closeIdx).trim();
+  const needsComma = inner.length > 0 && !inner.endsWith(',');
+  const insertion = `${needsComma ? ',' : ''}\n    ${storyUIStoriesPath}\n  `;
+  mainContent = mainContent.slice(0, closeIdx) + insertion + mainContent.slice(closeIdx);
+  fs.writeFileSync(mainPath, mainContent);
+  return { checked: true, covered: true, added: storyUIStoriesPath };
+}
+
+/**
+ * The host's Storybook major version — from the installed package when it can
+ * be resolved, the declared range otherwise, null when no Storybook dependency
+ * is found at all. Used to pin companion packages (@storybook/react) to the
+ * SAME major; a mismatched major is a peer conflict waiting to happen.
+ */
+export function hostStorybookMajor(cwd: string = process.cwd()): number | null {
+  const hostRequire = createRequire(path.join(cwd, 'package.json'));
+  for (const pkg of ['storybook', '@storybook/react-vite', '@storybook/react-webpack5']) {
+    try {
+      const installed = JSON.parse(fs.readFileSync(hostRequire.resolve(`${pkg}/package.json`), 'utf-8'));
+      const major = parseInt(String(installed.version).replace(/^[^\d]*/, ''), 10);
+      if (major > 0) return major;
+    } catch { /* not installed, or exports hide package.json — declared range below */ }
+  }
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf-8'));
+    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+    const declared = deps['storybook']
+      || Object.entries(deps).find(([name]) => name.startsWith('@storybook/'))?.[1]
+      || '';
+    const major = parseInt(String(declared).replace(/^[^\d]*/, ''), 10);
+    return major > 0 ? major : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Does a React host still need '@storybook/react' installed?
+ *
+ * Generated React stories all begin `import type { Meta, StoryObj } from
+ * '@storybook/react'`, but the package is an OPTIONAL peer of @tpitre/story-ui
+ * so non-React hosts never pull React's renderer in. pnpm's auto-install-peers
+ * SKIPS optional peers, so a React project on pnpm can end up unable to
+ * resolve the one import every generated story starts with. Check resolution,
+ * not just declaration (same approach as the react/react-dom check), and pin
+ * to the host's own Storybook major. Returns null when nothing is missing.
+ */
+export function missingReactStorybookDep(
+  cwd: string,
+  allDeps: Record<string, unknown>,
+  componentFramework?: string,
+): { name: string; range: string } | null {
+  if (componentFramework !== 'react') return null;
+  if (allDeps['@storybook/react']) return null;
+  const hostRequire = createRequire(path.join(cwd, 'package.json'));
+  try {
+    hostRequire.resolve('@storybook/react');
+    return null;
+  } catch { /* declared nowhere and not resolvable — install it */ }
+  return { name: '@storybook/react', range: `^${hostStorybookMajor(cwd) ?? 9}.0.0` };
 }
 
 /** Marks a preview file this tool authored, so a hand-edited one is never clobbered. */
@@ -1394,38 +1540,15 @@ export default registry;
                          fs.existsSync(mainConfigPathJs) ? mainConfigPathJs : null;
 
   if (actualMainPath) {
+    const globResult = ensureStoriesGlobCoversMdx(storiesDir);
+    if (globResult.added) {
+      console.log(chalk.green('✅ Added Story UI path to Storybook stories array'));
+    } else if (globResult.checked && !globResult.covered) {
+      console.log(chalk.yellow(`⚠️  Could not find a stories array to extend — add a glob matching .mdx under ${path.relative(process.cwd(), storiesDir)} to ${path.basename(actualMainPath)} manually`));
+    }
+
     let mainContent = fs.readFileSync(actualMainPath, 'utf-8');
     let configUpdated = false;
-
-    /**
-     * Ask whether `.mdx` is actually covered, not whether a substring appears.
-     *
-     * The V2 workspace is an MDX docs page — that is how it stays React in a
-     * Vue, Angular or Svelte project. A `stories` glob that ends in
-     * `.stories.tsx` satisfies a `src/stories` substring check while matching
-     * no `.mdx` at all, so the workspace installs correctly and never appears
-     * in the sidebar. Observed on a
-     * Carbon project, where the panel was silently absent until the glob was
-     * widened by hand.
-     */
-    const coversMdx = mainContent.includes('.mdx') || mainContent.includes('mdx|');
-    const storyUIStoriesPath = `'../src/stories/**/*.@(mdx|stories.@(js|jsx|ts|tsx))'`;
-    if (!mainContent.includes('src/stories/**/*') || !coversMdx) {
-      // Find the stories array and add our path
-      const storiesArrayPattern = /(stories\s*:\s*\[[\s\S]*?)(\],?)/;
-      const match = mainContent.match(storiesArrayPattern);
-      if (match) {
-        // Check if the array has content
-        const arrayContent = match[1];
-        // Add Story UI path at the end of the stories array
-        mainContent = mainContent.replace(
-          storiesArrayPattern,
-          `$1,\n    ${storyUIStoriesPath}\n  $2`
-        );
-        configUpdated = true;
-        console.log(chalk.green('✅ Added Story UI path to Storybook stories array'));
-      }
-    }
 
     // Check if StoryUI config already exists
     if (mainContent.includes('@tpitre/story-ui') || mainContent.includes('StoryUIPanel')) {
@@ -1711,7 +1834,42 @@ VITE_STORY_UI_PORT=${answers.mcpPort || '4001'}
       devDependencies['react-live'] = '^4.1.8';
       needsInstall = true;
     }
-    
+
+    // The panel and the V2 workspace are React, rendered through addon-docs
+    // even in a non-React Storybook. react/@storybook/react are OPTIONAL peers
+    // of @tpitre/story-ui, so nothing force-installs them: npm usually hoists
+    // Storybook's own copy of react, pnpm does not — and then the /workspace
+    // export fails to resolve 'react'. Check resolution, not just declaration.
+    if (componentFramework !== 'react') {
+      const hostRequire = createRequire(path.join(process.cwd(), 'package.json'));
+      const unresolvable = ['react', 'react-dom'].filter((pkg) => {
+        if (dependencies[pkg] || devDependencies[pkg]) return false;
+        try { hostRequire.resolve(pkg); return false; } catch { return true; }
+      });
+      if (unresolvable.length === 0) {
+        console.log(chalk.gray('ℹ️  react already resolves in this project — the Story UI panel needs no extra install'));
+      } else {
+        console.log(chalk.blue(`📦 Adding ${unresolvable.join(' + ')} (the Story UI panel is React, even in a ${componentFramework} Storybook)...`));
+        for (const pkg of unresolvable) {
+          devDependencies[pkg] = '^18.3.1';
+        }
+        needsInstall = true;
+      }
+    }
+
+    // React hosts need '@storybook/react' — the type import every generated
+    // story starts with. It is an OPTIONAL peer (so non-React hosts skip it)
+    // and pnpm's auto-install-peers skips optional peers, so on a React + pnpm
+    // host it must be installed explicitly, pinned to the host's Storybook major.
+    const storybookReactDep = missingReactStorybookDep(
+      process.cwd(), { ...dependencies, ...devDependencies }, componentFramework,
+    );
+    if (storybookReactDep) {
+      console.log(chalk.blue(`📦 Adding ${storybookReactDep.name}@${storybookReactDep.range} (generated React stories import their types from it)...`));
+      devDependencies[storybookReactDep.name] = storybookReactDep.range;
+      needsInstall = true;
+    }
+
     packageJson.dependencies = dependencies;
     packageJson.devDependencies = devDependencies;
     
@@ -1790,4 +1948,15 @@ VITE_STORY_UI_PORT=${answers.mcpPort || '4001'}
   console.log('\n🎨 Reference environments that showcase Story UI:');
   console.log('- React + Mantine · Vue 3 + Vuetify · Angular + Material');
   console.log('- Svelte 5 + Flowbite · Web Components + Shoelace');
+
+  // Rendered verification resolves Playwright from the HOST project (see
+  // story-generator/verify/hostTooling.ts) — say so now rather than letting
+  // every story report "not verified" with no explanation.
+  const verifyRequire = createRequire(path.join(process.cwd(), 'package.json'));
+  const hasPlaywright = ['playwright', 'playwright-core'].some((pkg) => {
+    try { verifyRequire.resolve(pkg); return true; } catch { return false; }
+  });
+  if (!hasPlaywright) {
+    console.log(chalk.gray('\nℹ️  playwright is not installed — generated stories will report "not verified"; installing playwright (or playwright-core) unlocks the rendered-verification tier'));
+  }
 }

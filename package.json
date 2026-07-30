@@ -125,10 +125,10 @@
   },
   "peerDependenciesMeta": {
     "react": {
-      "optional": false
+      "optional": true
     },
     "@storybook/react": {
-      "optional": false
+      "optional": true
     }
   },
   "config": {
