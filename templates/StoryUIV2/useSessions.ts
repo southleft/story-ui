@@ -21,12 +21,40 @@ import {
   resolveIndexedStoryId,
   RECOVERY_WINDOW_MS,
   type PendingGeneration,
+  type Verification,
 } from './useGeneration';
 
 export interface ManifestMessage {
   role: 'user' | 'ai';
   content: string;
   thumbnails?: string[];
+}
+
+/**
+ * Compact verification summary the server persists with a completion.
+ *
+ * The live SSE result carries the full report — findings, evidence, selectors.
+ * The manifest keeps only what the thread badge shows, because that is all a
+ * restored conversation renders: the outcome, the reason when it could not
+ * run, and the two counts. Absent on entries written before the field existed,
+ * and absent MUST render as nothing — an old entry did not pass verification,
+ * it predates it.
+ */
+export interface CompletionVerification {
+  outcome: 'verified' | 'issues' | 'not_verified';
+  reason?: string;
+  /** Number of blocker-severity findings — what the "issues" badge counts. */
+  blockers?: number;
+  /** The census's focusable-element count, shown beside the badge. */
+  focusables?: number;
+}
+
+export interface LastCompletion {
+  code?: string;
+  suggestions?: string[];
+  generationTimeMs?: number;
+  storybookId?: string;
+  verification?: CompletionVerification;
 }
 
 export interface ManifestEntry {
@@ -38,7 +66,54 @@ export interface ManifestEntry {
   createdAt: string;
   updatedAt: string;
   conversation: ManifestMessage[];
-  metadata?: Record<string, any>;
+  metadata?: {
+    prompt?: string;
+    lastCompletion?: LastCompletion;
+  } & Record<string, any>;
+}
+
+/**
+ * What a thread turn needs to draw the verification badge — the same fields
+ * whether they came from a live generation or a restored manifest entry.
+ */
+export interface VerificationSummary {
+  outcome: Verification['outcome'];
+  reason?: string;
+  blockers: number;
+  focusables?: number;
+}
+
+/** Collapse a live verification report to what the badge shows. */
+export function summarizeVerification(v: Verification | undefined | null): VerificationSummary | undefined {
+  if (!v) return undefined;
+  return {
+    outcome: v.outcome,
+    reason: v.reason,
+    blockers: (v.findings ?? []).filter(f => f.severity === 'blocker').length,
+    focusables: typeof v.metrics?.focusables === 'number' ? v.metrics.focusables : undefined,
+  };
+}
+
+/**
+ * Read the persisted summary back off a manifest entry.
+ *
+ * Strict about the outcome: anything other than the three known values —
+ * including the field simply not being there, on entries written by an older
+ * server — returns undefined, and undefined renders no badge. Defaulting a
+ * missing outcome to anything would claim a verification that never ran.
+ */
+export function verificationFromCompletion(
+  completion: LastCompletion | undefined | null,
+): VerificationSummary | undefined {
+  const v = completion?.verification;
+  if (!v) return undefined;
+  if (v.outcome !== 'verified' && v.outcome !== 'issues' && v.outcome !== 'not_verified') return undefined;
+  return {
+    outcome: v.outcome,
+    reason: typeof v.reason === 'string' ? v.reason : undefined,
+    blockers: typeof v.blockers === 'number' ? v.blockers : 0,
+    focusables: typeof v.focusables === 'number' ? v.focusables : undefined,
+  };
 }
 
 /** A past piece of work, joined to the id Storybook actually indexed it under. */

@@ -49,8 +49,11 @@ import {
   takeEditRequest,
   cleanReply,
   pollForCompletedEntry,
+  summarizeVerification,
+  verificationFromCompletion,
   type SessionSummary,
   type ManifestEntry,
+  type VerificationSummary,
 } from './useSessions';
 import { processImageFiles, MAX_IMAGES, type AttachedImage } from './imageAttachments';
 import { useVoiceInput } from './useVoiceInput';
@@ -67,7 +70,12 @@ interface Turn {
   suggestions?: string[];
   /** What this instruction was pointed at, when the user selected an element. */
   target?: string;
-  verification?: Verification;
+  /**
+   * Badge-ready summary rather than the full report, so a turn restored from
+   * the manifest (which persists only the summary) and a live turn draw the
+   * same badge from the same fields.
+   */
+  verification?: VerificationSummary;
   storyId?: string;
   fileName?: string;
   title?: string;
@@ -303,15 +311,27 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
    * picked back up days later — which is the whole point of the workspace.
    */
   const openSession = useCallback((session: SessionSummary) => {
+    const completion = session.entry.metadata?.lastCompletion;
     const restored: Turn[] = (session.entry.conversation ?? []).map((m, i, all) => ({
       id: `${session.fileName}-${i}`,
       role: m.role === 'user' ? 'user' : 'assistant',
       text: m.role === 'ai' ? cleanReply(m.content) : m.content,
       thumbnails: m.thumbnails,
       // The last assistant turn carries the file, so handoff and follow-up
-      // edits act on this story rather than starting a new one.
+      // edits act on this story rather than starting a new one. It also gets
+      // the persisted completion back — timing, suggestion chips, and the
+      // verification badge, which a reopened thread used to silently drop.
+      // An entry without the summary (older server) gets no badge: absent
+      // must not read as verified.
       ...(m.role === 'ai' && i === all.length - 1
-        ? { fileName: session.fileName, title: session.title, storyId: session.storyId ?? undefined }
+        ? {
+            fileName: session.fileName,
+            title: session.title,
+            storyId: session.storyId ?? undefined,
+            suggestions: completion?.suggestions?.length ? completion.suggestions : undefined,
+            elapsedMs: completion?.generationTimeMs,
+            verification: verificationFromCompletion(completion),
+          }
         : {}),
     }));
 
@@ -376,6 +396,10 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
               suggestions: completion?.suggestions?.length ? completion.suggestions : undefined,
               elapsedMs: completion?.generationTimeMs,
               storyId: completion?.storybookId,
+              // The badge the live path would have shown, rebuilt from the
+              // persisted summary. Undefined when the entry predates the
+              // field — no badge, never a claimed pass.
+              verification: verificationFromCompletion(completion),
             }
           : {}),
       }));
@@ -528,7 +552,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
         text: result.chatSummary || (result.success ? `Created ${result.title}.` : 'That generation did not succeed.'),
         elapsedMs: result.elapsedMs,
         suggestions: result.suggestions,
-        verification: result.verification,
+        verification: summarizeVerification(result.verification),
         storyId,
         fileName: result.fileName,
         title: result.title,
@@ -1027,12 +1051,12 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                           <Badge color={VERIFY_TONE[turn.verification.outcome]} variant="soft">
                             {turn.verification.outcome === 'verified' && 'Verified in browser'}
                             {turn.verification.outcome === 'issues' &&
-                              `${turn.verification.findings.filter(f => f.severity === 'blocker').length} issue(s) found`}
+                              `${turn.verification.blockers} issue(s) found`}
                             {turn.verification.outcome === 'not_verified' && 'Not verified'}
                           </Badge>
-                          {typeof turn.verification.metrics?.focusables === 'number' && (
+                          {typeof turn.verification.focusables === 'number' && (
                             <Text size="1" color="gray">
-                              {turn.verification.metrics.focusables} focusable
+                              {turn.verification.focusables} focusable
                             </Text>
                           )}
                           {turn.elapsedMs != null && (
@@ -1133,7 +1157,12 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                   setReloadToken(t => t + 1);
                   setTurns(prev => [...prev, {
                     id: uid(), role: 'assistant',
-                    text: `Restored the version from before "${v.prompt}".`,
+                    // Name what is now on disk. The server writes the CLICKED
+                    // version's content, and that version CONTAINS the edit its
+                    // prompt describes — "from before" named the wrong boundary,
+                    // in both directions. Ordinal plus prompt is exactly the row
+                    // the user clicked in the history list.
+                    text: `Restored version ${v.ordinal}: "${v.prompt}".`,
                     fileName: activeFile?.fileName, title: activeFile?.title,
                   }]);
                   reloadSessions();

@@ -14,7 +14,7 @@
  * eliminate.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge, Button, Flex, Select, Switch, Text, TextField } from '@radix-ui/themes';
 import type { ElementTarget } from './elementTargeting';
 
@@ -46,17 +46,52 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
 
   const component = target?.component ?? null;
 
+  /**
+   * The component whose props are actually shown — resolved by the SERVER.
+   *
+   * The click lands on whatever fiber rendered the pixel, and that is often a
+   * library internal: a Mantine Button reports `UnstyledButton`, which the
+   * story file never mentions and which declares nothing editable — a dead
+   * end. The fiber chain is a hypothesis; the file is authoritative. So the
+   * whole candidate chain goes up, the server keeps the first name that
+   * appears in the story file, and reports it back as `component`. Null until
+   * the lookup answers, and null on an older server that does not report it —
+   * then the clicked name stands, which is exactly the old behaviour.
+   */
+  const [resolved, setResolved] = useState<string | null>(null);
+
+  /**
+   * Every name between the click and the story, innermost first, with the
+   * clicked component's own name leading. Deduped because the class-name
+   * fallback and the fiber chain can agree.
+   */
+  const candidates = useMemo(() => {
+    const list = [component, ...(target?.sourceCandidates ?? [])];
+    return [...new Set(list.filter((n): n is string => !!n))];
+  }, [component, target]);
+  const candidatesKey = candidates.join(',');
+
   useEffect(() => {
+    setResolved(null);
     if (!component) { setProps([]); return; }
     let cancelled = false;
     setLoading(true);
     setError(null);
     (async () => {
       try {
-        const res = await fetch(`${apiBase}/mcp/editable-props?component=${encodeURIComponent(component)}`);
+        const params = new URLSearchParams({ component });
+        // Innermost-first; the server resolves the first that appears in the
+        // story file. An older server ignores both and answers for `component`
+        // alone — same request, same fallback rendering.
+        if (candidatesKey) params.set('candidates', candidatesKey);
+        if (fileName) params.set('fileName', fileName);
+        const res = await fetch(`${apiBase}/mcp/editable-props?${params.toString()}`);
         if (!res.ok) throw new Error('lookup failed');
         const data = await res.json();
-        if (!cancelled) setProps(Array.isArray(data.props) ? data.props : []);
+        if (!cancelled) {
+          setProps(Array.isArray(data.props) ? data.props : []);
+          setResolved(typeof data.component === 'string' && data.component ? data.component : null);
+        }
       } catch {
         if (!cancelled) setError('Could not read this component’s properties.');
       } finally {
@@ -64,7 +99,10 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
       }
     })();
     return () => { cancelled = true; };
-  }, [apiBase, component]);
+  }, [apiBase, component, candidatesKey, fileName]);
+
+  /** What the panel calls the component: the file's name for it, when known. */
+  const displayName = resolved ?? component;
 
   const apply = useCallback(async (prop: string, value: string | number | boolean | null) => {
     if (!component || !fileName) return;
@@ -76,7 +114,9 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           fileName,
-          component,
+          // The server-resolved name when the lookup reported one — that is
+          // the name the FILE contains, which is what an AST edit targets.
+          component: resolved ?? component,
           // Every component between the click and the story, innermost first.
           // The server picks whichever actually appears in the file — the
           // fiber chain contains HOC wrappers that are not JSX elements.
@@ -114,9 +154,9 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
        * before the request, that we are in a list.
        */
       if (target?.fromList) {
-        setNote(`Applied to every item in this list — one ${component} in the source renders all of them.`);
+        setNote(`Applied to every item in this list — one ${resolved ?? component} in the source renders all of them.`);
       } else if (typeof data.occurrencesInSource === 'number' && data.occurrencesInSource > 1) {
-        setNote(`Applied. This ${component} appears ${data.occurrencesInSource} times in the source — check whether they all changed.`);
+        setNote(`Applied. This ${resolved ?? component} appears ${data.occurrencesInSource} times in the source — check whether they all changed.`);
       }
       onApplied();
     } catch {
@@ -124,7 +164,7 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
     } finally {
       setPending(null);
     }
-  }, [apiBase, component, fileName, target, onApplied]);
+  }, [apiBase, component, resolved, fileName, target, onApplied]);
 
   if (!target) return null;
 
@@ -147,7 +187,11 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
     <Flex direction="column" gap="3" p="3">
       <Flex align="center" justify="between">
         <Flex align="center" gap="2">
-          <Badge color="green" variant="soft">{component}</Badge>
+          {/* The RESOLVED name — the user clicked "a button" and should read
+              "Button", not the UnstyledButton internal the fiber happened to
+              report. Falls back to the clicked name while the lookup runs and
+              on servers that do not resolve. */}
+          <Badge color="green" variant="soft">{displayName}</Badge>
           {typeof target.occurrence === 'number' && (
             <Text size="1" color="gray">#{target.occurrence + 1}</Text>
           )}
