@@ -372,3 +372,69 @@ export declare const A: (props: AProps) => JSX.Element;
     expect(out?.components?.A?.props?.some(p => p.name === 'a')).toBe(true);
   });
 });
+
+describe('option values declared in another file', () => {
+  /**
+   * Mantine's shape: the props reference aliases that live in a theme file —
+   * `size?: MantineSize | \`compact-${MantineSize}\` | (string & {})`,
+   * `color?: MantineColor` (a keyof over a conditional Record), `radius?:
+   * MantineRadius` (alias-of-alias, plus a number arm). Per-file resolution
+   * correctly found nothing, and the editable-props panel dropped exactly the
+   * props someone opens it for.
+   */
+  let button: any;
+
+  beforeAll(async () => {
+    const root = make('@fixture/factory-ds', {
+      'theme.d.ts': `
+export type ThemeSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+export interface ThemeOverride {}
+export type DefaultColor = 'red' | 'blue' | 'green' | (string & {});
+export type ThemeColors = ThemeOverride extends {
+    colors: Record<infer CustomColors, string>;
+} ? Record<CustomColors, string> : Record<DefaultColor, string>;
+export type ThemeColor = keyof ThemeColors;
+type _ThemeRadius = ThemeSize | (string & {});
+export type ThemeRadius = _ThemeRadius | number;
+`,
+      'button.d.ts': `
+export type FancyButtonVariant = 'filled' | 'outline';
+export interface FancyButtonProps {
+  size?: ThemeSize | \`compact-\${ThemeSize}\` | (string & {});
+  color?: ThemeColor;
+  radius?: ThemeRadius;
+  variant?: FancyButtonVariant;
+}
+`,
+    });
+    const facts = await extractProps('@fixture/factory-ds', root, { force: true });
+    button = facts?.components?.FancyButton;
+    expect(button).toBeTruthy();
+  });
+
+  const prop = (name: string) => button.props.find((p: any) => p.name === name);
+
+  it('resolves a cross-file alias, expanding a template-literal arm', () => {
+    expect(prop('size')?.options).toEqual([
+      'xs', 'sm', 'md', 'lg', 'xl',
+      'compact-xs', 'compact-sm', 'compact-md', 'compact-lg', 'compact-xl',
+    ]);
+    // `(string & {})` keeps the set open: options are suggestions.
+    expect(prop('size')?.optionsOpen).toBe(true);
+  });
+
+  it('resolves keyof over a conditional Record to the declared keys', () => {
+    expect(prop('color')?.options).toEqual(['red', 'blue', 'green']);
+    expect(prop('color')?.optionsOpen).toBe(true);
+  });
+
+  it('follows an alias-of-alias and marks a number arm open', () => {
+    expect(prop('radius')?.options).toEqual(['xs', 'sm', 'md', 'lg', 'xl']);
+    expect(prop('radius')?.optionsOpen).toBe(true);
+  });
+
+  it('leaves a same-file closed union closed', () => {
+    expect(prop('variant')?.options).toEqual(['filled', 'outline']);
+    expect(prop('variant')?.optionsOpen).toBeUndefined();
+  });
+});

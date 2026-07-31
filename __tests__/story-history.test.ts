@@ -12,11 +12,12 @@
  * may be stripped. Legacy records written under the collided key are split by
  * the fileName each version carries, so upgrading does not orphan them.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { StoryHistoryManager, type StoryHistory } from '../story-generator/storyHistory.js';
+import { makeListVersions, makeRestoreVersion } from '../mcp-server/routes/storyVersions.js';
 
 const FILE_A = 'pricing-cards-2b036bdd.stories.tsx';
 const FILE_B = 'pricing-cards-52a2a33e.stories.tsx';
@@ -30,6 +31,16 @@ beforeEach(() => {
 afterEach(() => {
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+/** Minimal Express response double for calling route handlers directly. */
+function mockRouteRes() {
+  return {
+    statusCode: 200,
+    body: undefined as any,
+    status(code: number) { this.statusCode = code; return this; },
+    json(payload: any) { this.body = payload; return this; },
+  };
+}
 
 describe('story history keying', () => {
   it('keeps histories separate for two files whose prompt-derived stems match', () => {
@@ -112,6 +123,71 @@ describe('story history keying', () => {
 
     // …and B's history is untouched by A's write.
     expect(reloaded.getHistory(FILE_B)!.versions.map(v => v.code)).toEqual(['code-B']);
+  });
+
+  it('flags the restored version current with its "Restored:" label after a restore', () => {
+    /**
+     * Restore writes two versions back to back: a snapshot of the rejected
+     * edit ("Superseded by restoring an earlier version"), then the restored
+     * content ("Restored: …"). Both call Date.now(), and on a fast machine
+     * they land in the SAME millisecond — a stable timestamp sort then left
+     * the snapshot on top, flagged current with the wrong label, while the
+     * "Restored:" label sat one ordinal below. Observed live; the disk was
+     * right both directions, only the listing swapped them.
+     */
+    const FILE = 'campus-events-fb39f0a6.stories.tsx';
+    const generatedRel = path.join('stories', 'generated');
+    const genDir = path.join(root, generatedRel);
+    fs.mkdirSync(genDir, { recursive: true });
+
+    const manager = new StoryHistoryManager(root);
+    const v1 = manager.addVersion(FILE, 'Create a campus events page', 'code-v1');
+    const v2 = manager.addVersion(FILE, 'Make the button red', 'code-v2', v1.id);
+    fs.writeFileSync(path.join(genDir, FILE), 'code-v2');
+
+    const originalCwd = process.cwd();
+    process.chdir(root);
+    try {
+      // Force the observed tie: snapshot and restored share one millisecond.
+      vi.spyOn(Date, 'now').mockReturnValue(v2.timestamp + 1000);
+
+      const restoreRes = mockRouteRes();
+      makeRestoreVersion({ generatedStoriesPath: generatedRel })(
+        { params: { fileName: FILE }, body: { versionId: v1.id } } as any,
+        restoreRes as any,
+      );
+      expect(restoreRes.statusCode).toBe(200);
+      // Disk got the restored content.
+      expect(fs.readFileSync(path.join(genDir, FILE), 'utf8')).toBe('code-v1');
+
+      const listRes = mockRouteRes();
+      makeListVersions({ generatedStoriesPath: generatedRel })(
+        { params: { fileName: FILE } } as any,
+        listRes as any,
+      );
+      expect(listRes.statusCode).toBe(200);
+      const versions = listRes.body.versions as Array<{ id: string; prompt: string; current: boolean; ordinal: number }>;
+      expect(versions).toHaveLength(4);
+
+      // Exactly one current, and it is the version whose content is on disk,
+      // carrying the "Restored:" label — not the snapshot beneath it.
+      const current = versions.filter(v => v.current);
+      expect(current).toHaveLength(1);
+      expect(current[0].id).toBe(restoreRes.body.currentVersionId);
+      expect(current[0].prompt).toBe('Restored: Create a campus events page');
+
+      // Newest-first: the restored version tops the list; the snapshot of the
+      // rejected edit sits one ordinal below with its own label.
+      expect(versions[0].id).toBe(current[0].id);
+      expect(versions[1].prompt).toBe('Superseded by restoring an earlier version');
+      expect(versions[0].ordinal).toBe(4);
+
+      // History's current pointer agrees with the disk byte-for-byte.
+      expect(new StoryHistoryManager(root).getCurrentVersion(FILE)!.code).toBe('code-v1');
+    } finally {
+      process.chdir(originalCwd);
+      vi.restoreAllMocks();
+    }
   });
 
   it('still finds a plain filename recorded under the old full-filename key', () => {

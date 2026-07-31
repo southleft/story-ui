@@ -33,6 +33,7 @@ import fs from 'fs';
 import path from 'path';
 import ts from 'typescript';
 import { logger } from '../logger.js';
+import type { PropFact } from './propExtractor.js';
 
 export interface VariantFacts {
   /** Prop name to its allowed values, e.g. `variant` -> [default, destructive]. */
@@ -236,6 +237,60 @@ export function readSourceFacts(componentFile: string): SourceFacts {
   } catch { /* unparseable story */ }
 
   return facts;
+}
+
+/**
+ * Merge source-derived facts into declaration-derived prop facts, field-wise.
+ *
+ * The same rule as the Carbon propTypes merge in propExtractor: neither source
+ * is authoritative for everything, so each field comes from whichever reading
+ * has it, and a present value beats an absent one. For an npm library the
+ * declarations carry types and the source usually adds nothing; for a
+ * LOCAL-SOURCE component there are often no declarations at all, and the
+ * cva()/tv() map is the only statement of what `variant` and `size` accept.
+ *
+ * A cva variant map is a CLOSED set: the keys are the lookup table the
+ * component's className resolution actually indexes, so `optionsOpen` is
+ * deliberately not set — offering free input would claim a latitude the
+ * component does not have. Openness still applies when a DECLARATION supplied
+ * the options and marked them open; those options win and are left alone.
+ */
+export function mergePropFactsFromSource(declared: PropFact[], facts: SourceFacts): PropFact[] {
+  const byName = new Map<string, PropFact>();
+  for (const p of declared) byName.set(p.name, { ...p });
+
+  const variantOptions = facts.variants?.options ?? {};
+  const variantDefaults = facts.variants?.defaults ?? {};
+  for (const [name, values] of Object.entries(variantOptions)) {
+    if (values.length === 0) continue;
+    const existing = byName.get(name);
+    if (existing) {
+      // Declarations win when they answered; the source fills the gaps.
+      if (!existing.options || existing.options.length === 0) {
+        existing.options = [...values];
+        delete existing.optionsOpen;
+      }
+      if (existing.defaultValue === undefined && variantDefaults[name] !== undefined) {
+        existing.defaultValue = variantDefaults[name];
+      }
+    } else {
+      byName.set(name, {
+        name,
+        required: false,
+        options: [...values],
+        ...(variantDefaults[name] !== undefined ? { defaultValue: variantDefaults[name] } : {}),
+      });
+    }
+  }
+
+  // The team's own prop prose, from the story's argTypes. Doc only — a
+  // description proves nothing about the values a prop accepts.
+  for (const [name, doc] of Object.entries(facts.propDocs ?? {})) {
+    const existing = byName.get(name);
+    if (existing && !existing.doc) existing.doc = doc;
+  }
+
+  return [...byName.values()];
 }
 
 /** Render variant facts as the line the model reads in the catalog. */

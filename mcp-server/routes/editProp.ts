@@ -22,7 +22,10 @@ import type { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import { editProp, occurrencesInSource } from '../../story-generator/editing/propEditor.js';
-import { extractProps, type PropFact } from '../../story-generator/knowledge/propExtractor.js';
+import { extractProps, extractPropsForPackages, type PropFact, type ComponentFacts } from '../../story-generator/knowledge/propExtractor.js';
+import { mergePropFactsFromSource, readSourceFacts } from '../../story-generator/knowledge/sourceFacts.js';
+import { EnhancedComponentDiscovery } from '../../story-generator/enhancedComponentDiscovery.js';
+import { storybookComponentDirs } from '../../story-generator/knowledge/storybookCatalog.js';
 import { loadUserConfig } from '../../story-generator/configLoader.js';
 import { readDesignTokens } from '../../story-generator/knowledge/stylingFacts.js';
 import { StoryHistoryManager } from '../../story-generator/storyHistory.js';
@@ -142,6 +145,101 @@ function storyFilePath(config: { generatedStoriesPath?: string }, fileName: stri
   return filePath;
 }
 
+/** The catalog fields this route needs from discovery. */
+interface CatalogEntry {
+  name: string;
+  /** Absolute path of a locally-defined component's source file, when known. */
+  filePath?: string;
+  /** Declared or discovered import specifier — the package a component lives in. */
+  __componentPath?: string;
+}
+
+let catalogCache: { components: CatalogEntry[]; at: number } | null = null;
+const CATALOG_TTL = 60_000; // same as /mcp/components
+
+/**
+ * The discovered component catalog, cached briefly.
+ *
+ * Discovery is the same plumbing the generation pipeline runs, and it is what
+ * knows a LOCAL component's source file — the field that decides whether this
+ * route can read a cva() map at all. A panel opens this route on every click,
+ * so the scan is cached the same way /mcp/components caches it.
+ */
+async function discoveredCatalog(config: ReturnType<typeof loadUserConfig>): Promise<CatalogEntry[]> {
+  const now = Date.now();
+  if (catalogCache && now - catalogCache.at < CATALOG_TTL) return catalogCache.components;
+  const discovery = new EnhancedComponentDiscovery(config);
+  // Where Storybook says the components are — the same widening generation
+  // applies, so a design system outside conventional directories resolves
+  // here too. Enhancement only: discovery still works without it.
+  try {
+    if (config.storybookMcpUrl) {
+      const dirs = await storybookComponentDirs({ storybookUrl: config.storybookMcpUrl, projectRoot: process.cwd() });
+      if (dirs.length) discovery.setStorybookComponentDirs(dirs);
+    }
+  } catch { /* widening only */ }
+  const components = await discovery.discoverAll();
+  catalogCache = { components: components as unknown as CatalogEntry[], at: now };
+  return catalogCache.components;
+}
+
+/**
+ * Everything knowable about one component's props, resolved the way the
+ * GENERATION pipeline resolves it — not the way this route used to.
+ *
+ * The route read `extractProps(config.importPath)` alone: the npm-declarations
+ * channel. For a local-source design system (college-town: `importPath:
+ * '@/components'`, components in `src/`) that path names no installable
+ * package, extraction resolves nothing, and the route answered `props: []`
+ * for a Button whose cva() map declares 9 variants and 6 sizes — the exact
+ * audience the branch exists to serve got the dead end. Meanwhile
+ * generationCore already merged BOTH channels: package declarations (via the
+ * homes each component actually lives in) AND `sourceFacts` read from the
+ * component's own file. This resolver reuses those channels and merges
+ * field-wise, so the panel offers what the pipeline already knows.
+ */
+async function resolveComponentKnowledge(
+  config: ReturnType<typeof loadUserConfig>,
+  componentName: string,
+): Promise<{ facts: ComponentFacts | undefined; props: PropFact[]; sources: string[] }> {
+  const sources: string[] = [];
+
+  let catalog: CatalogEntry[] = [];
+  try {
+    catalog = await discoveredCatalog(config);
+  } catch (error) {
+    logger.warn(`[edit-prop] discovery failed, falling back to importPath only: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const entry = catalog.find(c => c.name === componentName);
+
+  // Channel 1: package declarations — read from every package the components
+  // actually live in, exactly as generationCore does for package-per-component
+  // systems. For a barrel library homes collapse to the configured path.
+  const homes = [...new Set(
+    catalog.map(c => c.__componentPath).filter((p): p is string => typeof p === 'string' && p.length > 0),
+  )];
+  const extracted = homes.length > 1
+    ? await extractPropsForPackages([config.importPath, ...homes], process.cwd())
+    : await extractProps(config.importPath, process.cwd());
+  const facts = extracted?.components?.[componentName];
+  let props: PropFact[] = facts?.props ? [...facts.props] : [];
+  if (props.length > 0) sources.push(`declarations(${props.length})`);
+
+  // Channel 2: the component's own source — cva()/tv() variant maps and story
+  // argTypes docs, the only statement of legal values a local component makes.
+  const sourceFile = entry?.filePath && !entry.filePath.includes('node_modules') ? entry.filePath : null;
+  if (sourceFile) {
+    const sourceFacts = readSourceFacts(sourceFile);
+    if (sourceFacts.variants || sourceFacts.propDocs) {
+      props = mergePropFactsFromSource(props, sourceFacts);
+      const variantProps = Object.keys(sourceFacts.variants?.options ?? {});
+      sources.push(`source:${path.basename(sourceFile)}${variantProps.length ? `(${variantProps.join(',')})` : ''}`);
+    }
+  }
+
+  return { facts, props, sources };
+}
+
 export async function editablePropsHandler(req: Request, res: Response): Promise<void> {
   try {
     const component = String(req.query.component || '').trim();
@@ -179,8 +277,7 @@ export async function editablePropsHandler(req: Request, res: Response): Promise
       }
     }
 
-    const extracted = await extractProps(config.importPath, process.cwd());
-    const facts = extracted?.components?.[resolved];
+    const { facts, props: propFacts, sources } = await resolveComponentKnowledge(config, resolved);
 
     /**
      * Most-actionable first, because a panel is scanned, not read.
@@ -191,7 +288,7 @@ export async function editablePropsHandler(req: Request, res: Response): Promise
      * `dangerDescription` and `iconDescription`.
      */
     const RANK: Record<EditableProp['kind'], number> = { enum: 0, boolean: 1, number: 2, string: 3, other: 4 };
-    const classified = (facts?.props ?? [])
+    const classified = propFacts
       .map(classifyProp)
       .filter(panelWorthy);
 
@@ -224,6 +321,22 @@ export async function editablePropsHandler(req: Request, res: Response): Promise
     // #ff0000 in a Carbon app is exactly the raw-value habit this codebase
     // spends so much effort removing.
     const tokens = readDesignTokens(process.cwd(), config.importPath);
+
+    /**
+     * Log every answer, and make ABSENT and EMPTY read differently.
+     *
+     * The live failure produced no server log line at all, so `props: []`
+     * could not be told apart from "the request never ran" — and a knowledge
+     * layer that found nothing could not be told apart from one that was
+     * never consulted. Name the resolved component, where the facts came
+     * from, and how many props survived classification.
+     */
+    logger.log(
+      `🎛️ [edit-prop] editable-props: ${resolved}` +
+      `${resolved !== component ? ` (clicked ${component})` : ''}` +
+      ` → ${props.length} editable prop(s); knowledge: ` +
+      (sources.length ? sources.join(' + ') : 'NONE — no package declarations resolved and no local source file on record'),
+    );
 
     res.json({ component: resolved, props, tokens });
   } catch (error) {

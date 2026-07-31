@@ -66,17 +66,37 @@ export function makeListVersions(deps: StoryVersionDeps) {
         return;
       }
 
-      const versions = [...history.versions]
-        .sort((a, b) => b.timestamp - a.timestamp)
-        .map((v, i, all) => ({
-          id: v.id,
-          timestamp: v.timestamp,
-          prompt: v.prompt,
-          size: v.code?.length ?? 0,
-          // The newest version is what is on disk right now.
-          current: i === 0,
-          ordinal: all.length - i,
-        }));
+      /**
+       * Order: newest first, with same-millisecond ties broken by INSERTION
+       * order — later write on top.
+       *
+       * Restore writes two versions back to back: the snapshot of what was on
+       * disk ("Superseded by restoring an earlier version"), then the restored
+       * content ("Restored: …"). Both call Date.now(), and on a fast machine
+       * they land in the same millisecond; a stable sort on timestamp alone
+       * then leaves the SNAPSHOT on top. The listing flagged it current and
+       * put the "Restored:" label one ordinal below — labels and flag looked
+       * swapped while the disk was right both directions.
+       *
+       * The `current` flag itself comes from the history's own pointer rather
+       * than from sort position: addVersion maintains currentVersionId as the
+       * version whose content is on disk, so deriving "current" from ordering
+       * was re-inferring a fact the record already states.
+       */
+      const ordered = history.versions
+        .map((v, insertion) => ({ v, insertion }))
+        .sort((a, b) => (b.v.timestamp - a.v.timestamp) || (b.insertion - a.insertion));
+      const currentId = ordered.some(({ v }) => v.id === history.currentVersionId)
+        ? history.currentVersionId
+        : ordered[0]?.v.id;
+      const versions = ordered.map(({ v }, i, all) => ({
+        id: v.id,
+        timestamp: v.timestamp,
+        prompt: v.prompt,
+        size: v.code?.length ?? 0,
+        current: v.id === currentId,
+        ordinal: all.length - i,
+      }));
 
       res.json({ fileName, versions });
     } catch (error) {
