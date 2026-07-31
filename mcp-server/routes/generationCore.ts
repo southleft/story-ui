@@ -150,8 +150,15 @@ export interface GenerationEvents {
   onLLMCall?(): void;
 }
 
-/** Total steps reported through onProgress (kept for panel progress bars). */
-export const GENERATION_TOTAL_STEPS = 8;
+/**
+ * Total steps reported through onProgress (kept for panel progress bars).
+ *
+ * Steps 9–11 are the post-write phases — runtime check, browser verification,
+ * repair. They are conditional (runtime validation can be disabled, verification
+ * needs a reachable Storybook), so a generation may legitimately complete at
+ * 8/11; the completion event is what ends the progress display, not the count.
+ */
+export const GENERATION_TOTAL_STEPS = 11;
 
 /**
  * Error with transport metadata. Streaming maps it to an SSE error event;
@@ -1281,6 +1288,10 @@ async function runStoryGenerationPipeline(
 
   if (runtimeEnabled && !isFallbackStory) {
     try {
+      // Narrate the phase: everything after "saving" used to be silent, so a
+      // crash-and-heal cycle looked like one long save while the user watched
+      // a red error story with no explanation.
+      events.onProgress?.(9, totalSteps, 'runtime_check', 'Checking the story renders in Storybook...');
       runtimeResult = await validateStoryRuntime(fixedFileContents, aiTitle, config.storyPrefix);
       // Only spend a healing LLM call on genuine in-Storybook failures.
       // Infrastructure problems (Storybook not running, story not indexed
@@ -1294,6 +1305,9 @@ async function runStoryGenerationPipeline(
         logger.error(`❌ Runtime validation failed: ${runtimeResult.renderError}`);
         events.onRetry?.(attempts + 1, selfHealingOptions.maxAttempts + 1,
           'Story crashed in Storybook — regenerating with the runtime error', [runtimeResult.renderError || 'runtime error']);
+        events.onProgress?.(9, totalSteps, 'runtime_healing',
+          'The story crashed when it rendered — fixing it',
+          { error: (runtimeResult.renderError || '').slice(0, 300) });
 
         const healed = await attemptRuntimeHealing({
           runtimeResult,
@@ -1324,6 +1338,14 @@ async function runStoryGenerationPipeline(
             ? '✅ Runtime healing succeeded — story now loads in Storybook'
             : '⚠️ Runtime healing attempt did not resolve the error');
         }
+        // Healing outcome, honestly: "fixed" only when the regenerated story
+        // was re-validated and passed. No healed code, a rejected candidate,
+        // and a revalidation that still crashes all read as not fixed.
+        events.onProgress?.(9, totalSteps,
+          runtimeResult.success ? 'runtime_healed' : 'runtime_heal_failed',
+          runtimeResult.success
+            ? 'Fixed — the story renders now'
+            : 'The crash could not be fixed automatically');
         if (!runtimeResult.success) {
           hasValidationWarnings = true;
         }
@@ -1430,6 +1452,7 @@ async function runStoryGenerationPipeline(
               return result.content;
             }
           : undefined;
+        events.onProgress?.(10, totalSteps, 'verifying', 'Rendering the story in a browser and inspecting it...');
         verification = await verifyStory({
           storybookUrl: verifyUrl,
           storyIdPrefix: storyIdSlug,
@@ -1441,6 +1464,14 @@ async function runStoryGenerationPipeline(
           request: prompt,
           componentsUsed: libraryComponents,
         });
+        /**
+         * The count the narration quotes. Blockers are what gate the outcome
+         * and trigger repair; when the outcome is 'issues' with no blocker
+         * findings (defensive — shouldn't happen), fall back to the total so
+         * "found 0 issues — repairing" can never be said.
+         */
+        const blockerCount = verification.findings.filter(f => f.severity === 'blocker').length
+          || verification.findings.length;
         // Enforce mode: repair what the browser observed.
         //
         // Gated on STORY_UI_VERIFY_ENFORCE because it spends an extra LLM call
@@ -1473,7 +1504,11 @@ async function runStoryGenerationPipeline(
               `(${Date.now() - verifyPhaseStart}ms elapsed) — repair skipped, original story kept`,
           };
           logger.warn(`⚠️ ${verification.repair.note}`);
+          events.onProgress?.(11, totalSteps, 'verify_repair_failed',
+            'Out of time to repair what verification found — kept the story as written');
         } else if (enforce && verification.outcome === 'issues') {
+          events.onProgress?.(11, totalSteps, 'verify_repairing',
+            `Verification found ${blockerCount} issue${blockerCount === 1 ? '' : 's'} — repairing`);
           try {
           const repair = await attemptVerificationRepair({
             code: fixedFileContents,
@@ -1577,6 +1612,7 @@ async function runStoryGenerationPipeline(
               ...(repair.note ? { note: repair.note } : {}),
             };
             logger.log(`✅ Verification repair applied after ${repair.attempts} attempt(s)`);
+            events.onProgress?.(11, totalSteps, 'verify_repaired', 'Repaired and re-checked in the browser');
           } else {
             // Restore the original on disk — writeAndVerify may have left a
             // rejected candidate there.
@@ -1592,6 +1628,15 @@ async function runStoryGenerationPipeline(
               ...(repair.note ? { note: repair.note } : {}),
             };
             if (repair.note) logger.log(`ℹ️ No verification repair applied: ${repair.note}`);
+            // Same three dispositions the manifest persists, in words: the
+            // budget cancelled it, it never started, or it ran and did not
+            // improve the story. Never a claim of success.
+            events.onProgress?.(11, totalSteps, 'verify_repair_failed',
+              verification.repair.status === 'aborted-budget'
+                ? 'Repair ran out of time — kept the story as written'
+                : verification.repair.status === 'not-attempted'
+                  ? 'Repair was not attempted — kept the story as written'
+                  : 'Repair did not improve the story — kept the original');
           }
           } catch (repairErr: any) {
             // A repair failure — including a budget abort surfacing as a
@@ -1609,7 +1654,24 @@ async function runStoryGenerationPipeline(
                 }
               : { status: 'failed', note: `repair threw: ${msg}` };
             logger.warn(`⚠️ Verification repair ${abortedByBudget ? 'aborted by budget' : 'failed'}: ${msg}`);
+            events.onProgress?.(11, totalSteps, 'verify_repair_failed',
+              abortedByBudget
+                ? 'Repair ran out of time — kept the story as written'
+                : 'Repair failed — kept the story as written');
           }
+        }
+
+        // Final verdict, emitted only once repair (if any) has resolved — the
+        // step list must never say "verified" while a repair is still pending.
+        if (verification.outcome === 'verified') {
+          events.onProgress?.(11, totalSteps, 'verified', 'Verified in the browser');
+        } else if (verification.outcome === 'issues') {
+          const remaining = verification.findings.filter(f => f.severity === 'blocker').length
+            || verification.findings.length;
+          events.onProgress?.(11, totalSteps, 'verify_issues',
+            `Verification found ${remaining} issue${remaining === 1 ? '' : 's'} it could not fix`);
+        } else {
+          events.onProgress?.(11, totalSteps, 'verify_inconclusive', 'Could not verify the story in a browser');
         }
 
         if (verification.outcome === 'issues') {
@@ -1640,6 +1702,7 @@ async function runStoryGenerationPipeline(
         metrics: {},
         durationMs: 0,
       };
+      events.onProgress?.(11, totalSteps, 'verify_inconclusive', 'Could not verify the story in a browser');
     } finally {
       clearTimeout(verifyBudgetTimer);
     }

@@ -153,7 +153,12 @@ export function makeRestoreVersion(deps: StoryVersionDeps) {
       // The restored code becomes the current version, so the next update
       // builds on what the user is now looking at rather than on the edit they
       // just rejected.
-      const restored = manager.addVersion(fileName, `Restored: ${version.prompt}`, version.code, version.id);
+      //
+      // Label with what the version IS, not with the act of restoring it:
+      // restoring a version that was itself a restore would otherwise stack
+      // prefixes ("Restored: Restored: …") one deeper on every round trip.
+      const sourceLabel = version.prompt.replace(/^(?:Restored:\s*)+/, '');
+      const restored = manager.addVersion(fileName, `Restored: ${sourceLabel}`, version.code, version.id);
 
       // Keep the conversation in step: the manifest is what the workspace reads
       // to rebuild a thread, and leaving it describing the rejected edit would
@@ -161,7 +166,7 @@ export function makeRestoreVersion(deps: StoryVersionDeps) {
       try {
         getManifestManager().upsert(fileName, {
           source: 'panel',
-          metadata: { prompt: `Restored an earlier version: ${version.prompt}` },
+          metadata: { prompt: `Restored an earlier version: ${sourceLabel}` },
         });
       } catch (manifestError) {
         logger.warn('[versions] manifest update after restore failed (non-fatal):', manifestError);

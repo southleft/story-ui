@@ -190,6 +190,55 @@ describe('story history keying', () => {
     }
   });
 
+  it('restoring a version that was itself a restore does not stack the label', () => {
+    /**
+     * Restore labels the new current version "Restored: <source prompt>". When
+     * the source is itself a restore, its prompt already starts with
+     * "Restored: " — naively prefixing again produced
+     * "Restored: Restored: Create a campus events page", one level deeper per
+     * round trip. The label should say what the version IS, once.
+     */
+    const FILE = 'campus-events-11aa22bb.stories.tsx';
+    const generatedRel = path.join('stories', 'generated');
+    const genDir = path.join(root, generatedRel);
+    fs.mkdirSync(genDir, { recursive: true });
+
+    const manager = new StoryHistoryManager(root);
+    const v1 = manager.addVersion(FILE, 'Create a campus events page', 'code-v1');
+    manager.addVersion(FILE, 'Make the button red', 'code-v2', v1.id);
+    fs.writeFileSync(path.join(genDir, FILE), 'code-v2');
+
+    const originalCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const restore = makeRestoreVersion({ generatedStoriesPath: generatedRel });
+
+      // First restore: back to v1. Its label carries one prefix.
+      const first = mockRouteRes();
+      restore({ params: { fileName: FILE }, body: { versionId: v1.id } } as any, first as any);
+      expect(first.statusCode).toBe(200);
+      const restoredOnce = new StoryHistoryManager(root).getHistory(FILE)!
+        .versions.find(v => v.id === first.body.currentVersionId)!;
+      expect(restoredOnce.prompt).toBe('Restored: Create a campus events page');
+
+      // Move the disk elsewhere so the second restore has something to change.
+      fs.writeFileSync(path.join(genDir, FILE), 'code-v2');
+
+      // Second restore: restore the restore.
+      const second = mockRouteRes();
+      restore({ params: { fileName: FILE }, body: { versionId: restoredOnce.id } } as any, second as any);
+      expect(second.statusCode).toBe(200);
+      const restoredTwice = new StoryHistoryManager(root).getHistory(FILE)!
+        .versions.find(v => v.id === second.body.currentVersionId)!;
+
+      // Still one prefix, and the right content on disk.
+      expect(restoredTwice.prompt).toBe('Restored: Create a campus events page');
+      expect(fs.readFileSync(path.join(genDir, FILE), 'utf8')).toBe('code-v1');
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
+
   it('still finds a plain filename recorded under the old full-filename key', () => {
     // Files without a hash (voice-canvas.stories.tsx) were keyed by their FULL
     // name under the old scheme; the legacy fallback must still reach them.

@@ -208,6 +208,11 @@ app.get('/mcp/canvas-config', (_req, res) => {
     importStyle: config.importStyle || 'barrel',
     componentPrefix: config.componentPrefix || '',
     componentFramework: config.componentFramework || 'react',
+    // The design system's human name, when the config declares one — the
+    // workspace shows this to people ("Mantine"), not the import specifier.
+    // Empty when undeclared; the client falls back to importPath rather than
+    // guessing a name from a package path.
+    designSystemName: config.designSystemGuidelines?.name || '',
   });
 });
 

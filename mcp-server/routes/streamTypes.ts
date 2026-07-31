@@ -40,7 +40,23 @@ export interface ProgressUpdate {
     | 'code_extracted'
     | 'validating'
     | 'post_processing'
-    | 'saving';
+    | 'saving'
+    // Post-write phases. Everything after "saving" used to be silent, so a
+    // story that crashed at runtime, was regenerated, and was then repaired by
+    // verification all looked like one long "Saving" — the user watched a red
+    // error story with no narration. These phases make that timeline visible:
+    // written → runtime check → crashed, fixing → fixed → verifying → verified.
+    | 'runtime_check'          // runtime validation running against Storybook
+    | 'runtime_healing'        // story crashed at render; healing regeneration in flight
+    | 'runtime_healed'         // healing outcome: it renders now
+    | 'runtime_heal_failed'    // healing outcome: crash still stands
+    | 'verifying'              // browser verification running
+    | 'verify_repairing'       // blockers found; repair LLM call in flight (message carries the count)
+    | 'verify_repaired'        // repair applied and re-verified
+    | 'verify_repair_failed'   // original kept (message carries why: budget / not attempted / no improvement)
+    | 'verified'               // final outcome: verified clean
+    | 'verify_issues'          // final outcome: issues remain (message carries the count)
+    | 'verify_inconclusive';   // final outcome: verification could not run
   message: string;
   details?: Record<string, unknown>;
 }
