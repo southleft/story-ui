@@ -86,6 +86,23 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
   }, [component, target]);
   const candidatesKey = candidates.join(',');
 
+  /**
+   * Each candidate's fiber-reported AUTHOR, keyed by name. The server prefers
+   * a candidate whose owner the file DECLARES — that is what tells `<Button>`
+   * (owner PricingPage, declared) from the internal Box a label click lands
+   * on (owner Button, imported). And once the server names the winner, its
+   * detail carries the occurrence and owner the edit must use — the TOP
+   * candidate's numbers describe a different element entirely.
+   */
+  const detailByName = useMemo(() => {
+    const map: Record<string, { owner?: string; occurrence?: number; fromList?: boolean }> = {};
+    for (const d of target?.sourceCandidateDetails ?? []) {
+      if (d?.name && !(d.name in map)) map[d.name] = d;
+    }
+    return map;
+  }, [target]);
+  const ownersKey = candidates.map(n => detailByName[n]?.owner ?? '').join(',');
+
   useEffect(() => {
     setResolved(null);
     if (!component) { setProps([]); return; }
@@ -103,6 +120,10 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
         // story file. An older server ignores both and answers for `component`
         // alone — same request, same fallback rendering.
         if (candidatesKey) params.set('candidates', candidatesKey);
+        // Positional with `candidates`: each one's fiber-reported author, so
+        // the server can prefer the candidate the STORY wrote. An older
+        // server ignores it.
+        if (candidatesKey && ownersKey.replace(/,/g, '')) params.set('owners', ownersKey);
         if (fileName) params.set('fileName', fileName);
         const res = await fetch(`${apiBase}/mcp/editable-props?${params.toString()}`);
         if (!res.ok) throw new Error('lookup failed');
@@ -118,7 +139,7 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
       }
     })();
     return () => { cancelled = true; };
-  }, [apiBase, component, candidatesKey, fileName]);
+  }, [apiBase, component, candidatesKey, ownersKey, fileName]);
 
   /** What the panel calls the component: the file's name for it, when known. */
   const displayName = resolved ?? component;
@@ -127,37 +148,60 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
     if (!component || !fileName) return;
     setPending(prop);
     setNote(null);
+    /**
+     * The element the edit targets — the server-resolved name when the lookup
+     * reported one (the name the FILE contains), else the owner-sorted top
+     * candidate. Its DETAIL carries the owner and occurrence for THAT
+     * element: a label click resolves past an internal Box to `Button`, and
+     * sending the Box's numbers with Button's name would edit the wrong one.
+     */
+    const targetName = resolved ?? candidates[0] ?? component;
+    const detail = detailByName[targetName];
+    const isList = detail ? !!detail.fromList : !!target?.fromList;
     try {
       const res = await fetch(`${apiBase}/mcp/edit-prop`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           fileName,
-          // The server-resolved name when the lookup reported one — that is
-          // the name the FILE contains, which is what an AST edit targets.
-          // Otherwise the owner-sorted top candidate, never the raw clicked
-          // fiber name: the server tries `component` first.
-          component: resolved ?? candidates[0] ?? component,
+          component: targetName,
           // Every component between the click and the story, owner-sorted:
           // implementation details after the component that owns them. The
           // server picks whichever actually appears in the file — the fiber
           // chain contains HOC wrappers that are not JSX elements.
           candidates: target?.sourceCandidates,
           /**
-           * The clicked element's position among all instances of it, which is
-           * what maps it to a JSX element in the source.
-           *
-           * OMITTED for a list-produced element. DOM order only corresponds to
-           * source order when every match is a literal JSX element; with
-           * `{rows.map(r => <Card/>)}` plus one literal `<Card/>`, the source
-           * holds 2 and the DOM holds 4, so clicking the second row resolved to
-           * source element 1 — the literal card — and edited the wrong thing
-           * silently. One JSX element backs every row, so sending no occurrence
-           * lets the server edit that single element, which is the correct target.
+           * Each candidate's fiber-reported author, so the server prefers a
+           * candidate the STORY wrote (owner declared in the file) and can
+           * re-derive the right owner if its resolution differs from ours.
            */
-          occurrence: target?.fromList
-            ? undefined
-            : target?.sourceOccurrence ?? target?.occurrence ?? 0,
+          owners: Object.keys(detailByName).length
+            ? Object.fromEntries(Object.entries(detailByName).map(([n, d]) => [n, d.owner]))
+            : undefined,
+          /**
+           * The component whose render authored the target element. The
+           * server locates this name's declaration in the file and reads
+           * `occurrence` as a position INSIDE it — the only region where DOM
+           * order and JSX order are known to agree. Measured without it: a
+           * banner component defined first but rendered last put its Button
+           * at whole-page DOM position 8 in a file holding 3 Buttons.
+           */
+          owner: detail?.owner ?? target?.sourceOwner,
+          /**
+           * The target element's position among elements of the same name
+           * with the same owner. A whole `.map()` list counts ONCE, so the
+           * number stays meaningful for list rows: clicking any row maps to
+           * the single JSX element that renders them all. (Omitting the
+           * occurrence for lists let the server default to the FIRST element
+           * of that name in the file — measured editing the Alert's button
+           * when a Register button inside a list was clicked.)
+           *
+           * OMITTED, never defaulted, when the browser could not compute it;
+           * the server answers ambiguity with a 409 carrying the count.
+           */
+          occurrence: detail
+            ? detail.occurrence
+            : target?.sourceOccurrence ?? target?.occurrence,
           prop,
           value,
         }),
@@ -175,10 +219,10 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
        * one row and every row changed. React's `key` on the fiber tells us,
        * before the request, that we are in a list.
        */
-      if (target?.fromList) {
-        setNote(`Applied to every item in this list — one ${resolved ?? component} in the source renders all of them.`);
+      if (isList) {
+        setNote(`Applied to every item in this list — one ${targetName} in the source renders all of them.`);
       } else if (typeof data.occurrencesInSource === 'number' && data.occurrencesInSource > 1) {
-        setNote(`Applied. This ${resolved ?? component} appears ${data.occurrencesInSource} times in the source — check whether they all changed.`);
+        setNote(`Applied. This ${targetName} appears ${data.occurrencesInSource} times in the source — check whether they all changed.`);
       }
       onApplied();
     } catch {
@@ -186,7 +230,7 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
     } finally {
       setPending(null);
     }
-  }, [apiBase, component, candidates, resolved, fileName, target, onApplied]);
+  }, [apiBase, component, candidates, detailByName, resolved, fileName, target, onApplied]);
 
   if (!target) return null;
 
@@ -214,9 +258,20 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
               report. Falls back to the clicked name while the lookup runs and
               on servers that do not resolve. */}
           <Badge color="green" variant="soft">{displayName}</Badge>
-          {typeof target.occurrence === 'number' && (
-            <Text size="1" color="gray">#{target.occurrence + 1}</Text>
-          )}
+          {/* The RESOLVED element's position, not the clicked fiber's: a
+              label click resolves past an internal Box whose own count is a
+              different (and wrong-looking) number — measured "#3" beside a
+              Button the file holds once. */}
+          {(() => {
+            const d = displayName ? detailByName[displayName] : undefined;
+            // A detail for the resolved name is authoritative even when it
+            // holds no occurrence — falling back to the top candidate's
+            // number would reintroduce the wrong "#3".
+            const at = d ? d.occurrence : target.sourceOccurrence ?? target.occurrence;
+            return typeof at === 'number'
+              ? <Text size="1" color="gray">#{at + 1}</Text>
+              : null;
+          })()}
         </Flex>
         {onAskInstead && (
           <Button size="1" variant="ghost" onClick={onAskInstead}>Ask instead</Button>

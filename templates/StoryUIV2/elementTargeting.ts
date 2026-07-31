@@ -56,22 +56,27 @@ export interface ElementTarget {
   /** Chain of enclosing components, outermost last. Gives the model context. */
   ancestors: string[];
   /**
-   * 0-based position among every instance of the AUTHORED component in the
-   * story, in document order — not among siblings, and not among raw fiber
-   * names.
+   * 0-based position among instances of the AUTHORED component that share
+   * this element's OWNER, in document order — not among siblings, not among
+   * raw fiber names, and NOT a whole-file position.
    *
-   * The population is elements whose owner-sorted top candidate matches this
-   * element's (see `orderSourceCandidates`), counted once per component
-   * instance. Counting raw fiber names counted the wrong population: a page
-   * with 13 UnstyledButton-derived controls and 2 literal `<Button>`s reported
-   * occurrence 13, and the server rightly refused it. `index` answers a
-   * different question (which of these adjacent twins) and cannot be used for
-   * this. React 19 removed `_debugSource`, so there is no file-and-line to
-   * read instead.
+   * Scoping to the owner is what makes the number honest. A whole-page census
+   * was measured wrong on both live environments: on a Radix/Tailwind story
+   * the Alert's literal Button counted 8 list-rendered Buttons ahead of it and
+   * reported occurrence 8 against a file containing 3 — DOM order simply is
+   * not file order when one component (VolunteerBanner) is DEFINED first but
+   * RENDERED last. Within a single owner's render, JSX order and DOM order do
+   * correspond, and the server maps the scoped index to a file position using
+   * `sourceOwner` (the file states where the owner's declaration begins and
+   * ends).
+   *
+   * Elements produced from one `.map()` count ONCE — they are one JSX element
+   * — so a literal sibling after a list keeps the right index (see
+   * `fromList`).
    *
    * OMITTED when it cannot be computed confidently — a missing occurrence and
-   * a zero occurrence must not look alike, and the server treats absence as
-   * first-element-or-explicit-ambiguity.
+   * a zero occurrence must not look alike, and the server refuses an
+   * ambiguous edit rather than defaulting to the first element.
    */
   occurrence?: number;
   /**
@@ -87,19 +92,38 @@ export interface ElementTarget {
    */
   sourceComponent?: string;
   /**
-   * Position of that element among all instances of it, in document order.
-   *
-   * Withheld entirely when `fromList` is true — see below.
+   * Position of that element among instances sharing its owner — the same
+   * number as `occurrence`, kept as a separate field for compatibility.
    */
   sourceOccurrence?: number;
   /**
-   * True when this element was produced from an array (React gave the fiber a
-   * `key`), so ONE JSX element backs many rendered nodes.
+   * The component whose render AUTHORED this element, from `_debugOwner` —
+   * "PricingPage" for a Button the page wrote, "VolunteerBanner" for the one
+   * inside the banner. The server locates this name's declaration in the
+   * story file and resolves `occurrence` WITHIN it, which is what makes a
+   * scoped index meaningful against the file.
+   */
+  sourceOwner?: string;
+  /**
+   * True when this element was produced from an array THE STORY wrote, so ONE
+   * JSX element backs many rendered nodes.
    *
-   * Two consequences the caller must honour. DOM occurrence does not correspond
-   * to source occurrence, so a positional edit would target the wrong element.
-   * And an attribute edit is still correct but applies to every row, which has
-   * to be said out loud rather than implied.
+   * Detection is by fiber `key` — but not `key != null`, which was measured
+   * wrong on live Mantine 8: `React.Children.map`/`toArray` inside a library
+   * (Card wrapping its sections, Group filtering its children) stamps
+   * POSITIONAL keys of the form `.0`/`.1` on elements the story authored as
+   * plain children. React's own convention separates the two: keys minted by
+   * Children processing always begin with `.`, wrapping an authored key as
+   * `.$<key>`, while a key from `array.map(x => <X key={k}>)` is the bare
+   * authored value. Only an authored key (bare, or `.$`-wrapped) is list
+   * evidence. The walk runs from the element to its OWNER's fiber — the
+   * region whose keys the owner authored — not a fixed number of hops, which
+   * both missed real list keys (Mantine's Card puts 6 fibers between a CTA
+   * and its keyed row) and would swallow Storybook's own keyed ErrorBoundary.
+   *
+   * The consequence the caller must honour: an attribute edit is still
+   * correct but applies to every row, which has to be said out loud. The
+   * occurrence stays MEANINGFUL — the whole list counts once in it.
    */
   fromList?: boolean;
   /**
@@ -119,6 +143,30 @@ export interface ElementTarget {
    * has to encode who implements whom.
    */
   sourceCandidates?: string[];
+  /**
+   * Per-candidate facts, aligned with `sourceCandidates`: each entry's OWNER
+   * (the component whose render authored it), its owner-scoped occurrence,
+   * and whether it came from a story-authored list.
+   *
+   * The owner is what lets the server tell an authored element from a
+   * library internal WITHOUT any ordering heuristic. Measured live: clicking
+   * the LABEL inside a Mantine Button yields a chain whose innermost entry is
+   * an internal Box owned by Button at a different host depth — a shape the
+   * owner-sort cannot reorder (Button legitimately owns two entries there,
+   * which is also what a page composing content looks like). The fact that
+   * separates them is not in the fiber at all: an authored element's owner
+   * (PricingPage, PromoBanner) is DECLARED in the story file, an internal's
+   * owner (Button, UnstyledButton) is imported. The server has the file, so
+   * it prefers the first candidate whose owner the file declares — and then
+   * needs that candidate's own occurrence and owner, which is why every
+   * candidate carries them.
+   */
+  sourceCandidateDetails?: Array<{
+    name: string;
+    owner?: string;
+    occurrence?: number;
+    fromList?: boolean;
+  }>;
 }
 
 /**
@@ -278,6 +326,33 @@ export function orderSourceCandidates(chain: ChainEntry[]): string[] {
   return [...clusterNames, ...rest];
 }
 
+/**
+ * Does this fiber key say "the STORY rendered me from an array"?
+ *
+ * Measured on live Mantine 8: a plain `<Button>` child of `<Card>` carries key
+ * `'.2'` and one inside `<Group>` carries `'.1'` — stamped by the library's
+ * own `React.Children.map`/`toArray` processing, not by any list the story
+ * wrote. Treating `key != null` as list evidence marked those buttons
+ * "from a list", the browser withheld their occurrence, and the server's
+ * default-to-first edited a different element entirely.
+ *
+ * React's own convention keeps the two origins distinguishable: keys minted by
+ * Children processing always begin with `.` — positional `.0`, `.1`, or `.$k`
+ * wrapping a key the author DID write — while a key from
+ * `rows.map(r => <X key={r.id}>)` is the bare authored value (`'Pro'`,
+ * `'evt-1'`, both measured live). So a bare key, or a `.$`-wrapped one, is
+ * list evidence; a bare `.`-positional key is only a library reshuffling the
+ * children it was handed.
+ *
+ * Pure and exported so the rule is testable without a browser; its SOURCE is
+ * passed into the extractor below, exactly like `orderSourceCandidates`.
+ */
+export function isAuthoredListKey(key: unknown): boolean {
+  if (key == null) return false;
+  const s = String(key);
+  return !s.startsWith('.') || s.startsWith('.$');
+}
+
 /** Render a target as the sentence the model actually receives. */
 /**
  * Only used by the class-name FALLBACK, where the token is not self-describing.
@@ -320,11 +395,14 @@ export function targetLabel(t: ElementTarget): string {
  * because the preview is a separate document with its own module graph — the
  * workspace's bundle does not exist in there.
  */
-export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFromMarkupSrc: string, orderCandidatesSrc: string): any {
+export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFromMarkupSrc: string, orderCandidatesSrc: string, authoredKeySrc: string): any {
   const componentFrom = eval(`(${componentFromMarkupSrc})`);
   // The owner-sort rule, shared with the workspace bundle so the unit tests
   // and the preview document run the SAME code. See orderSourceCandidates.
   const orderCandidates = eval(`(${orderCandidatesSrc})`);
+  // Authored-key vs Children-key rule, shared the same way. See
+  // isAuthoredListKey.
+  const authoredListKey = eval(`(${authoredKeySrc})`);
 
   /**
    * The component that React says produced this node.
@@ -531,9 +609,36 @@ export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFro
 
   let sourceComponent;
   let sourceOccurrence;
+  let sourceOwner;
   let sourceCandidates;
+  let sourceCandidateDetails;
   let fromList = false;
   let occurrence;
+
+  /**
+   * Walk from a component's fiber up to (exclusive) its OWNER's fiber looking
+   * for an authored list key; report the keyed fiber's parent as the list's
+   * GROUP identity — every row of one `.map()` shares it, so a census can
+   * count the whole list once.
+   *
+   * The owner bound matters at both ends, measured live: Mantine's Card puts
+   * 6 fibers between a CTA Button and its keyed row `<div key="Pro">`, so a
+   * fixed 6-hop walk only just reached it, and Storybook's ErrorBoundary
+   * carries an authored-looking story-id key that must never be reached. When
+   * the owner is unknown the walk keeps the old conservative 6-hop bound.
+   */
+  const listInfo = (fromFiber: any, ownerNm: string | null): { fromList: boolean; groupFiber: any } => {
+    let k: any = fromFiber;
+    let up = 0;
+    const limit = ownerNm ? 30 : 6;
+    while (k && up++ < limit) {
+      if (ownerNm && typeof k.type !== 'string' && fiberTypeName(k.type) === ownerNm) break;
+      if (authoredListKey(k.key)) return { fromList: true, groupFiber: k.return || null };
+      if (k === k.return) break;
+      k = k.return;
+    }
+    return { fromList: false, groupFiber: null };
+  };
 
   const chain = chainOf(target);
   if (chain.length) {
@@ -553,59 +658,122 @@ export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFro
       sourceComponent = top;
 
       /**
-       * A list-produced element has no meaningful source OCCURRENCE.
-       *
-       * React hands over the discriminator for free: `key` is non-null only
-       * for children produced from an array, because React requires keys
-       * there. When set, the occurrence is withheld rather than guessed — one
-       * JSX element backs every row, so an attribute edit is still correct, it
-       * just applies to all of them, which the caller must say out loud.
+       * Per-candidate facts — owner, owner-scoped occurrence, list membership
+       * — because the CLICKED entry is not always the element the file
+       * contains. Measured live: a click on the label inside a Mantine Button
+       * makes the innermost entry an internal Box owned by Button, which no
+       * ordering rule can sink (Button legitimately owns two chain entries
+       * there — the same shape as a page composing content). The server
+       * settles it against the file by preferring a candidate whose OWNER the
+       * file declares; it then needs that candidate's own occurrence, so
+       * every candidate carries its facts.
        */
-      let k: any = topEntry.fiber;
-      let up = 0;
-      while (k && up++ < 6) {
-        if (k.key != null) { fromList = true; break; }
-        if (k === k.return) break;
-        k = k.return;
+      const details: any[] = [];
+      for (const nm of sourceCandidates as string[]) {
+        const e = chain.find((c) => c.name === nm);
+        if (!e) { details.push({ name: nm }); continue; }
+        const li = listInfo(e.fiber, e.owner || null);
+        details.push({ name: nm, owner: e.owner || undefined, fromList: li.fromList, _fiber: e.fiber, _group: li.groupFiber });
       }
 
-      if (!fromList) {
-        /**
-         * Position among instances of the SAME AUTHORED COMPONENT, counted by
-         * fiber identity in document order.
-         *
-         * The population must match what the file contains. Counting DOM
-         * elements by raw fiber name counted every UnstyledButton-derived
-         * control on the page — 13 of them against 2 literal <Button>s in the
-         * source, so the server rightly refused the edit. An element belongs
-         * to this population only when its own owner-sorted top candidate is
-         * the same authored name; deduping by fiber keeps one count per
-         * component instance rather than one per DOM node it rendered.
-         */
-        const scope = document.querySelector('#storybook-root') || document.body;
-        const instances: any[] = [];
-        for (const node of Array.from(scope.querySelectorAll('*'))) {
-          const ch = chainOf(node);
-          if (!ch.length) continue;
-          let mentionsTop = false;
-          for (const c of ch) { if (c.name === top) { mentionsTop = true; break; } }
-          if (!mentionsTop) continue;
-          const ord: string[] = orderCandidates(ch.map((c) => ({ name: c.name, owner: c.owner, hostDepth: c.hostDepth })));
-          if (ord[0] !== top) continue;
-          const inst = ch.find((c) => c.name === top);
-          if (inst && instances.indexOf(inst.fiber) === -1) instances.push(inst.fiber);
+      /**
+       * One DOM scan censuses every candidate at once. Position is counted
+       * among elements of the same NAME with the same OWNER, in document
+       * order, one count per `.map()` list. Three population rules, each a
+       * measured correction:
+       *
+       *   - owner match, by NAME + OWNER rather than by top candidate: the
+       *     owner separates an authored element from a library internal, and
+       *     the earlier top-candidate rule undercounted the file — a
+       *     component's ROOT element (PromoBanner's own <Box>) resolves to
+       *     the component that delegated to it, so the census skipped a Box
+       *     the file plainly contains and every later Box shifted a position.
+       *   - owner SCOPE: a whole-page census reported the Alert's Button at
+       *     occurrence 8 in a file holding 3 — the banner was DEFINED first
+       *     but RENDERED last. DOM order only tracks JSX order inside a
+       *     single component's render, so that is the only region counted.
+       *   - one count per list group: rows of one `.map()` are one JSX
+       *     element; counting each row shifted every later literal element.
+       *
+       * Deduping by fiber keeps one count per component instance rather than
+       * one per DOM node it rendered.
+       */
+      const scope = document.querySelector('#storybook-root') || document.body;
+      const sameFiber = (a: any, b: any) =>
+        a && b && (a === b || a === b.alternate || a.alternate === b);
+      const pops: Array<Array<{ f?: any; g?: any }>> = details.map(() => []);
+      /** Global fallback population for a top entry with NO owner. */
+      const topOwner: string | null = topEntry.owner || null;
+      const globalPopulation: Array<{ f?: any; g?: any }> = [];
+      for (const node of Array.from(scope.querySelectorAll('*'))) {
+        const ch2 = chainOf(node);
+        if (!ch2.length) continue;
+        for (let i = 0; i < details.length; i++) {
+          const d = details[i];
+          if (!d.owner) continue;
+          let inst: any = null;
+          for (const c of ch2) { if (c.name === d.name && c.owner === d.owner) { inst = c; break; } }
+          if (!inst) continue;
+          const il = listInfo(inst.fiber, inst.owner || null);
+          const pop = pops[i];
+          if (il.fromList && il.groupFiber) {
+            if (!pop.some(e2 => e2.g && sameFiber(e2.g, il.groupFiber))) pop.push({ g: il.groupFiber });
+          } else {
+            if (!pop.some(e2 => e2.f && sameFiber(e2.f, inst.fiber))) pop.push({ f: inst.fiber });
+          }
         }
-        let at = instances.indexOf(topEntry.fiber);
-        if (at === -1 && topEntry.fiber.alternate) at = instances.indexOf(topEntry.fiber.alternate);
+        if (!topOwner) {
+          // The pre-owner population rule, kept for a click whose author is
+          // unknown: membership by owner-sorted top candidate.
+          let mentionsTop = false;
+          for (const c of ch2) { if (c.name === top) { mentionsTop = true; break; } }
+          if (mentionsTop) {
+            const ord2: string[] = orderCandidates(ch2.map((c) => ({ name: c.name, owner: c.owner, hostDepth: c.hostDepth })));
+            if (ord2[0] === top) {
+              const inst = ch2.find((c) => c.name === top);
+              if (inst && !globalPopulation.some(e2 => e2.f && sameFiber(e2.f, inst.fiber))) {
+                globalPopulation.push({ f: inst.fiber });
+              }
+            }
+          }
+        }
+      }
+      for (let i = 0; i < details.length; i++) {
+        const d = details[i];
+        if (d.owner) {
+          const at = d.fromList && d._group
+            ? pops[i].findIndex(e2 => e2.g && sameFiber(e2.g, d._group))
+            : pops[i].findIndex(e2 => e2.f && sameFiber(e2.f, d._fiber));
+          if (at !== -1) d.occurrence = at;
+        }
+        delete d._fiber;
+        delete d._group;
+      }
+      sourceCandidateDetails = details;
+
+      /**
+       * The top candidate's facts double as the target-level fields, which
+       * older servers and the composer chip read.
+       */
+      const d0 = details[0];
+      fromList = !!(d0 && d0.fromList);
+      if (d0 && d0.owner) {
+        sourceOwner = d0.owner;
+        if (typeof d0.occurrence === 'number') {
+          sourceOccurrence = d0.occurrence;
+          occurrence = d0.occurrence;
+        }
+      } else if (!fromList) {
+        let at = globalPopulation.findIndex(e2 => e2.f && sameFiber(e2.f, topEntry.fiber));
         if (at !== -1) {
           sourceOccurrence = at;
           occurrence = at;
         }
-        // Otherwise OMITTED, never defaulted: a portalled target (a menu item
-        // rendered under document.body) is not in the census, and a wrong
-        // occurrence is a silent edit to the wrong element. Absent and zero
-        // must not look alike.
       }
+      // Otherwise OMITTED, never defaulted: a portalled target (a menu item
+      // rendered under document.body) is not in the census, and a wrong
+      // occurrence is a silent edit to the wrong element. Absent and zero
+      // must not look alike.
     }
   } else if (found) {
     /**
@@ -635,7 +803,9 @@ export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFro
     occurrence,
     sourceComponent,
     sourceOccurrence,
+    sourceOwner,
     sourceCandidates,
+    sourceCandidateDetails,
     fromList,
   };
 }})`;
@@ -690,6 +860,7 @@ export function attachElementPicker(
       el,
       componentFromMarkup.toString(),
       orderSourceCandidates.toString(),
+      isAuthoredListKey.toString(),
     );
 
   let current: Element | null = null;

@@ -27,15 +27,50 @@ import {
 const cls = (s: string) => s.split(/\s+/).filter(Boolean);
 
 /**
- * Measured live on react-mantine (Button "Save changes"): the fiber type chain
- * innermost-out is Box → UnstyledButton → Button, and the owners the fiber
- * records are Box(owner UnstyledButton), UnstyledButton(owner Button),
- * Button(owner PricingPage — the story's own page component).
+ * FIXTURES MIRROR LIVE FIBERS AS MEASURED on 2026-07-30 against the running
+ * environments — react-mantine (Mantine 8, story pricing-cards-52a2a33e,
+ * "Start free trial" CTA) and college-town (Radix/Tailwind local source,
+ * story campus-events-fb39f0a6). Every name, owner and hostDepth below was
+ * read from a real fiber chain in the preview iframe, not invented:
+ *
+ *   Mantine CTA <button> chain (innermost first, hostDepth = HOST fibers
+ *   crossed): Box(o:UnstyledButton,hd1) UnstyledButton(o:Button,hd1)
+ *   Button(o:PricingPage,hd1,key'.2') · Paper(o:Card,hd2) Card(o:PricingPage,hd2)
+ *   · Box(o:SimpleGrid,hd4) SimpleGrid(o:PricingPage,hd4) ·
+ *   PricingPage(o:hookified,hd5) hookified(o:unboundStoryFn,hd5) …
+ *
+ *   college-town Register <button> chain: Button(o:CampusEventsPage,hd1)
+ *   CardFooter(o:CampusEventsPage,hd2) Card(o:CampusEventsPage,hd3)
+ *   [host div key='evt-1'] CampusEventsPage(hd6) hookified …
+ *
+ * The owner hops resolve through Mantine's displayName ("@mantine/core/…",
+ * cleaned to the last segment) exactly as the extractor cleans them.
  */
 const MANTINE_BUTTON: ChainEntry[] = [
   { name: 'Box', owner: 'UnstyledButton' },
   { name: 'UnstyledButton', owner: 'Button' },
   { name: 'Button', owner: 'PricingPage' },
+];
+
+/** The full measured Mantine 8 CTA chain, deduped, with measured hostDepths. */
+const MANTINE_CTA_FULL: ChainEntry[] = [
+  { name: 'Box', owner: 'UnstyledButton', hostDepth: 1 },
+  { name: 'UnstyledButton', owner: 'Button', hostDepth: 1 },
+  { name: 'Button', owner: 'PricingPage', hostDepth: 1 },
+  { name: 'Paper', owner: 'Card', hostDepth: 2 },
+  { name: 'Card', owner: 'PricingPage', hostDepth: 2 },
+  { name: 'SimpleGrid', owner: 'PricingPage', hostDepth: 4 },
+  { name: 'PricingPage', owner: 'hookified', hostDepth: 5 },
+  { name: 'hookified', owner: 'unboundStoryFn', hostDepth: 5 },
+];
+
+/** The full measured college-town Register chain, deduped. */
+const COLLEGE_TOWN_REGISTER: ChainEntry[] = [
+  { name: 'Button', owner: 'CampusEventsPage', hostDepth: 1 },
+  { name: 'CardFooter', owner: 'CampusEventsPage', hostDepth: 2 },
+  { name: 'Card', owner: 'CampusEventsPage', hostDepth: 3 },
+  { name: 'CampusEventsPage', owner: 'hookified', hostDepth: 6 },
+  { name: 'hookified', owner: 'unboundStoryFn', hostDepth: 6 },
 ];
 
 describe('orderSourceCandidates', () => {
@@ -126,6 +161,46 @@ describe('orderSourceCandidates', () => {
     ])).toEqual(['Button', 'UnstyledButton', 'Box']);
   });
 
+  it('sorts the FULL measured Mantine 8 CTA chain: Button leads, both delegation pairs behave', () => {
+    // The chain as read from a live fiber, including the second delegation
+    // pair (Card renders Paper renders the same div). Only the CLICKED
+    // cluster inverts — Paper stays before Card, which is safe because the
+    // server resolves the first name that appears in the FILE and a Mantine
+    // story authors <Card>, not <Paper>.
+    expect(orderSourceCandidates(MANTINE_CTA_FULL)).toEqual(
+      ['Button', 'UnstyledButton', 'Box', 'Paper', 'Card', 'SimpleGrid', 'PricingPage', 'hookified'],
+    );
+  });
+
+  it('cannot reorder the measured LABEL-click chain — the owners carry that case instead', () => {
+    // Measured live: clicking the label INSIDE the button, the innermost
+    // entry is Button's internal label Box (owner Button, hostDepth 1 —
+    // separated from Button at hostDepth 3 by the label span and the button
+    // element). Button owns two entries here (label Box and UnstyledButton),
+    // which is indistinguishable, in fiber terms, from a page composing
+    // authored content — so the sort must NOT fire, and pinning that is the
+    // point of this test. Resolution still lands on <Button> because every
+    // candidate travels with its OWNER and the server prefers the first
+    // whose owner the FILE declares (PricingPage) — see
+    // resolveComponentInSource and the prop-editor tests.
+    expect(orderSourceCandidates([
+      { name: 'Box', owner: 'Button', hostDepth: 1 },
+      { name: 'UnstyledButton', owner: 'Button', hostDepth: 3 },
+      { name: 'Button', owner: 'PricingPage', hostDepth: 3 },
+      { name: 'Paper', owner: 'Card', hostDepth: 4 },
+      { name: 'Card', owner: 'PricingPage', hostDepth: 4 },
+    ])).toEqual(['Box', 'UnstyledButton', 'Button', 'Paper', 'Card']);
+  });
+
+  it('leaves the measured college-town chain in innermost-first order', () => {
+    // Button, CardFooter and Card are all authored by the page (their shared
+    // owner composes several entries), so nothing reorders and the clicked
+    // Button stays first.
+    expect(orderSourceCandidates(COLLEGE_TOWN_REGISTER)).toEqual(
+      ['Button', 'CardFooter', 'Card', 'CampusEventsPage', 'hookified'],
+    );
+  });
+
   it('terminates on an ownership cycle', () => {
     expect(() => orderSourceCandidates([
       { name: 'A', owner: 'B' },
@@ -141,14 +216,18 @@ describe('orderSourceCandidates', () => {
 
 describe('occurrence population', () => {
   /**
-   * Mirrors the extractor's population rule: an element belongs to the
-   * clicked element's population iff its own owner-sorted TOP candidate is
-   * the same authored name.
+   * Mirrors the extractor's population rule WHEN THE OWNER IS UNKNOWN: an
+   * element belongs to the clicked element's population iff its own
+   * owner-sorted TOP candidate is the same authored name. (With a known
+   * owner the extractor scopes by name + owner instead — verified live on
+   * both environments, since it needs real fibers — because DOM order only
+   * corresponds to file order inside one component's render: measured, an
+   * Alert's Button counted 8 list Buttons ahead of it in a file holding 3.)
    *
-   * The measured failure: the page had 13 UnstyledButton-derived controls
-   * (Buttons, ActionIcons, Menu targets…) but only 2 literal <Button>s, and
-   * counting raw fiber names sent occurrence 13 — which the server rightly
-   * refused ("occurrence 13 vs 2 in file") and the edit failed end-to-end.
+   * The measured failure this rule fixed: the page had 13 UnstyledButton-
+   * derived controls (Buttons, ActionIcons, Menu targets…) but only 2 literal
+   * <Button>s, and counting raw fiber names sent occurrence 13 — which the
+   * server rightly refused ("occurrence 13 vs 2 in file").
    */
   const topOf = (chain: ChainEntry[]) => orderSourceCandidates(chain)[0];
 
