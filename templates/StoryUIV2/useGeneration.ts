@@ -122,11 +122,21 @@ export interface PendingGeneration {
 }
 
 /**
- * How long a stash stays recoverable. A generation that has not landed in the
- * manifest after this long is not landing; past it the stash is stale garbage
- * from an abandoned tab, not work in progress.
+ * How long recovery waits on no evidence. A generation that has not landed in
+ * the manifest after this long — and that the server does not claim to still
+ * be running — is not landing. This is the BASE window: the poller extends
+ * past it only while `/story-ui/active-generations` proves the generation is
+ * still in flight (see pollForCompletedEntry in useSessions).
  */
 export const RECOVERY_WINDOW_MS = 4 * 60_000;
+
+/**
+ * Absolute cap on recovery, evidence or no evidence. Verification-repair
+ * passes legitimately run long past the base window — the active-generations
+ * list proves the server is still working and the poller keeps waiting on
+ * that proof — but never forever.
+ */
+export const RECOVERY_HARD_CEILING_MS = 15 * 60_000;
 
 export function readPendingGeneration(): PendingGeneration | null {
   let raw: string | null = null;
@@ -137,7 +147,13 @@ export function readPendingGeneration(): PendingGeneration | null {
     clearPendingGeneration();
     return null;
   }
-  if (!pending?.prompt || !pending.startedAt || Date.now() - pending.startedAt > RECOVERY_WINDOW_MS) {
+  // Staleness is judged against the HARD ceiling, not the base window: a
+  // long verification-repair pass writes the story file mid-flight, Vite
+  // reloads the iframe again, and the stash reaches this remount many
+  // minutes after startedAt while the server is still legitimately working.
+  // The poller decides whether that is true; a stash older than anything the
+  // poller could still accept is abandoned-tab garbage.
+  if (!pending?.prompt || !pending.startedAt || Date.now() - pending.startedAt > RECOVERY_HARD_CEILING_MS) {
     clearPendingGeneration();
     return null;
   }

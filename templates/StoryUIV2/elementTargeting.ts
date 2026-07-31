@@ -56,14 +56,22 @@ export interface ElementTarget {
   /** Chain of enclosing components, outermost last. Gives the model context. */
   ancestors: string[];
   /**
-   * 0-based position among EVERY instance of this component in the story, in
-   * document order — not among siblings.
+   * 0-based position among every instance of the AUTHORED component in the
+   * story, in document order — not among siblings, and not among raw fiber
+   * names.
    *
-   * This is what maps a clicked element to a JSX element in the source: the
-   * Nth <Button> on screen is the Nth <Button> in the file. `index` answers a
+   * The population is elements whose owner-sorted top candidate matches this
+   * element's (see `orderSourceCandidates`), counted once per component
+   * instance. Counting raw fiber names counted the wrong population: a page
+   * with 13 UnstyledButton-derived controls and 2 literal `<Button>`s reported
+   * occurrence 13, and the server rightly refused it. `index` answers a
    * different question (which of these adjacent twins) and cannot be used for
-   * it. React 19 removed `_debugSource`, so there is no file-and-line to read
-   * instead.
+   * this. React 19 removed `_debugSource`, so there is no file-and-line to
+   * read instead.
+   *
+   * OMITTED when it cannot be computed confidently — a missing occurrence and
+   * a zero occurrence must not look alike, and the server treats absence as
+   * first-element-or-explicit-ambiguity.
    */
   occurrence?: number;
   /**
@@ -95,14 +103,20 @@ export interface ElementTarget {
    */
   fromList?: boolean;
   /**
-   * Every component between the click and the story, innermost first.
+   * Every component between the click and the story, OWNER-SORTED: an entry
+   * owned by another entry in the chain is its implementation detail and
+   * sorts after it (see `orderSourceCandidates`); everything else keeps
+   * innermost-first order.
    *
    * The fiber chain contains names that are not JSX elements — Carbon wraps
-   * its components in a `hookified` HOC, and no list of wrapper names could
-   * cover every design system. Rather than guess which entry the source
-   * contains, the candidates are sent and the SERVER picks the first that
-   * actually appears in the file. The file is authoritative; the chain is a
-   * hypothesis.
+   * its components in a `hookified` HOC, Mantine renders a Button through
+   * UnstyledButton and Box — and no list of wrapper names could cover every
+   * design system. Rather than guess which entry the source contains, the
+   * candidates are sent and the SERVER picks the first that actually appears
+   * in the file. The file is authoritative; the chain is a hypothesis — but an
+   * innermost-first hypothesis put the library's internal Box ahead of the
+   * Button whenever the story authored a Box anywhere, so the ordering itself
+   * has to encode who implements whom.
    */
   sourceCandidates?: string[];
 }
@@ -159,6 +173,111 @@ export function componentFromMarkup(
   return null;
 }
 
+/** One named component fiber on the path from a click to the root. */
+export interface ChainEntry {
+  /** The component's own name, as React reports it. */
+  name: string;
+  /** The nearest NAMED component whose render authored it, via `_debugOwner`. */
+  owner: string | null;
+  /**
+   * How many HOST (DOM-producing) fibers sit between the clicked node and this
+   * entry. Two entries with the same depth render the same DOM element — the
+   * outer delegated its render to the inner, which is what an implementation
+   * detail looks like. Optional: when absent the ownership relation is trusted
+   * on its own.
+   */
+  hostDepth?: number;
+}
+
+/**
+ * Order source candidates so the file resolves the element the user meant.
+ *
+ * The fiber chain under a click is innermost-first: for a Mantine Button it is
+ * `Box → UnstyledButton → Button`, and the server picks the FIRST candidate
+ * that appears in the story file. Innermost-first therefore breaks the moment
+ * the story ALSO authors a `<Box>` somewhere else — the internal Box outranks
+ * the Button and the edit lands on the wrong element. Blacklisting `Box` by
+ * name is the anti-pattern this repo bans: it would break the story where the
+ * user genuinely clicked an authored Box.
+ *
+ * The fiber already states the fact that matters: `_debugOwner`. Box's owner
+ * is UnstyledButton and UnstyledButton's owner is Button — each is the next
+ * one's implementation detail, so each must sort AFTER its owner. That sinks
+ * the internals (`Button, UnstyledButton, Box`) without naming any of them.
+ *
+ * The sink grows outward from the CLICKED entry only, and stops where the
+ * ownership stops meaning "implements":
+ *
+ *   - the owner is absent from the chain — authored by something outside this
+ *     path, nothing to reorder;
+ *   - the owner owns MORE than one entry along this path — it composed them
+ *     (a page nesting a Button inside a Card inside a Grid), and authored
+ *     content keeps its innermost-first order;
+ *   - a HOST fiber sits between the entry and its owner (`hostDepth` differs)
+ *     — the owner rendered its own DOM element and placed this entry inside
+ *     it, which is composition. A delegate renders the SAME DOM node as its
+ *     owner: Button → UnstyledButton → Box all produce the one <button>.
+ *
+ * Without these stops, ownership would cascade through the story's own page
+ * component into Storybook's wrappers and invert the whole list. The host
+ * stop carries the common case: any page that renders its own markup — a
+ * layout div, a Container — puts a DOM element between its content and
+ * itself. A page whose render is a bare fragment with library components as
+ * direct children can still cascade one level into the page name; the server
+ * still resolves against the file, so the cost is a weaker candidate order,
+ * not an invented element.
+ *
+ * Pure and exported so the rule is testable without a browser; its SOURCE is
+ * passed into the extractor below, which runs in the preview document.
+ */
+export function orderSourceCandidates(chain: ChainEntry[]): string[] {
+  // Dedupe by name, keeping the innermost entry — that is the fiber the click
+  // actually landed in, and its owner is the relationship that matters.
+  const entries: ChainEntry[] = [];
+  const seen = new Set<string>();
+  for (const e of chain) {
+    if (!e || !e.name || seen.has(e.name)) continue;
+    seen.add(e.name);
+    entries.push(e);
+  }
+  if (entries.length < 2) return entries.map(e => e.name);
+
+  // How many entries along this path each candidate owns.
+  const ownedCount = new Map<string, number>();
+  for (const e of entries) {
+    if (e.owner) ownedCount.set(e.owner, (ownedCount.get(e.owner) || 0) + 1);
+  }
+  const byName = new Map<string, ChainEntry>();
+  for (const e of entries) byName.set(e.name, e);
+
+  // Grow the implementation cluster from the clicked entry outward.
+  const cluster: ChainEntry[] = [entries[0]];
+  let head = entries[0];
+  let guard = 0;
+  while (guard++ < entries.length) {
+    const o = head.owner;
+    if (!o || o === head.name) break;
+    const ownerEntry = byName.get(o);
+    if (!ownerEntry) break;                    // owner is not on this path: authored content
+    if ((ownedCount.get(o) || 0) > 1) break;   // owner composes several entries: authored content
+    if (
+      typeof head.hostDepth === 'number' && typeof ownerEntry.hostDepth === 'number'
+      && head.hostDepth !== ownerEntry.hostDepth
+    ) break;                                   // a DOM element intervenes: composition, not delegation
+    if (cluster.indexOf(ownerEntry) !== -1) break; // ownership cycle
+    cluster.push(ownerEntry);
+    head = ownerEntry;
+  }
+  if (cluster.length < 2) return entries.map(e => e.name);
+
+  // The cluster inverts — its outermost member is the element the source
+  // wrote, its inner members are that element's implementation. Everything
+  // outside the cluster keeps innermost-first order, unchanged.
+  const clusterNames = cluster.map(e => e.name).reverse();
+  const rest = entries.map(e => e.name).filter(n => clusterNames.indexOf(n) === -1);
+  return [...clusterNames, ...rest];
+}
+
 /** Render a target as the sentence the model actually receives. */
 /**
  * Only used by the class-name FALLBACK, where the token is not self-describing.
@@ -201,8 +320,11 @@ export function targetLabel(t: ElementTarget): string {
  * because the preview is a separate document with its own module graph — the
  * workspace's bundle does not exist in there.
  */
-export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFromMarkupSrc: string): any {
+export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFromMarkupSrc: string, orderCandidatesSrc: string): any {
   const componentFrom = eval(`(${componentFromMarkupSrc})`);
+  // The owner-sort rule, shared with the workspace bundle so the unit tests
+  // and the preview document run the SAME code. See orderSourceCandidates.
+  const orderCandidates = eval(`(${orderCandidatesSrc})`);
 
   /**
    * The component that React says produced this node.
@@ -349,137 +471,155 @@ export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFro
     : [];
 
   /**
-   * Where this element sits among all instances of the same component.
-   *
-   * Walks the whole story in document order and counts elements whose OWN
-   * component resolves to the same name, so the count matches what the source
-   * contains. Only meaningful when the component was identified; without a
-   * name there is nothing to count.
+   * Structural noise that is never a JSX element in a story file. Kept ONLY as
+   * a cheap prefilter for genuinely anonymous names — everything real is
+   * judged by the owner relationship below, never by its name. Adding a real
+   * component (Box) here would break the story that authors one.
    */
-  let occurrence;
-  if (found) {
-    const scope = document.querySelector('#storybook-root') || document.body;
-    const all = Array.from(scope.querySelectorAll('*'));
-    let n = 0;
-    for (const node of all) {
-      if (node === target) { occurrence = n; break; }
-      const f = fiberInfo(node);
-      const name = (f && f.name)
-        ? f.name
-        : (componentFrom(node.tagName.toLowerCase(), classesOf(node)) || {}).name;
-      if (name && name === found.c.name) n++;
-    }
-  }
+  const ANON = /^(Fragment|ForwardRef|Memo|Anonymous|Slot|Provider|_c\d*)$/;
+
+  const fiberTypeName = (t: any): string | null => {
+    if (!t || typeof t === 'string') return null;
+    const n = t.displayName || t.name || null;
+    return n ? String(n).replace(/^.*\//, '') : null;
+  };
 
   /**
-   * The element the story's own source actually contains.
+   * The nearest NAMED component that authored this fiber's element.
    *
-   * Walks outward collecting component fibers, and keeps the LAST one whose
-   * `_debugOwner` is the story's own component. That is the boundary between
-   * what the story wrote and what the design system rendered underneath —
-   * `<Dropdown>` rather than the `ListBox` inside it.
+   * `_debugOwner` survives React 19 (unlike `_debugSource`) but often lands on
+   * an anonymous forwardRef or memo wrapper first. Walking through the unnamed
+   * links keeps the relationship usable without inventing anything — every hop
+   * is still React's own record of who wrote whom.
    */
-  const ownerName = (f: any) => {
-    const o = f && f._debugOwner;
-    if (!o) return null;
-    const t = o.type;
-    return typeof t === 'string' ? t : (t && (t.displayName || t.name)) || null;
+  const ownerName = (f: any): string | null => {
+    let o = f && f._debugOwner;
+    let hops = 0;
+    while (o && hops++ < 10) {
+      const nm = fiberTypeName(o.type);
+      if (nm && !ANON.test(nm)) return nm;
+      o = o._debugOwner;
+    }
+    return null;
+  };
+
+  /**
+   * Every named component fiber from a node outward, innermost first, each
+   * carrying the number of HOST fibers crossed to reach it — the fact that
+   * separates a component that DELEGATED its render (same DOM node, same
+   * count) from one that COMPOSED content inside its own markup.
+   */
+  const chainOf = (node: any): Array<{ name: string; owner: string | null; hostDepth: number; fiber: any }> => {
+    const nk = Object.keys(node).find((x: string) =>
+      x.startsWith('__reactFiber$') || x.startsWith('__reactInternalInstance$'));
+    if (!nk) return [];
+    const out: Array<{ name: string; owner: string | null; hostDepth: number; fiber: any }> = [];
+    let f: any = (node as any)[nk];
+    let guard = 0;
+    let hosts = 0;
+    while (f && guard++ < 40) {
+      if (typeof f.type === 'string') {
+        hosts++;
+      } else if (f.type) {
+        const nm = fiberTypeName(f.type);
+        if (nm && !ANON.test(nm)) out.push({ name: nm, owner: ownerName(f), hostDepth: hosts, fiber: f });
+      }
+      f = f.return;
+    }
+    return out;
   };
 
   let sourceComponent;
   let sourceOccurrence;
   let sourceCandidates;
   let fromList = false;
-  const key = Object.keys(target).find((k: string) =>
-    k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$'));
-  if (key) {
-    // The story component is whatever owns the outermost element in the tree,
-    // so it is the owner name that appears furthest up this chain.
-    const chain: Array<{ name: string; owner: string | null }> = [];
-    let f: any = (target as any)[key];
-    let guard = 0;
-    while (f && guard++ < 40) {
-      if (typeof f.type !== 'string' && f.type) {
-        const nm = (f.type.displayName || f.type.name || '').replace(/^.*\//, '');
-        if (nm && !/^(Fragment|ForwardRef|Memo|Anonymous|Slot|Provider|_c\d*)$/.test(nm)) {
-          chain.push({ name: nm, owner: ownerName(f) });
-        }
-      }
-      f = f.return;
-    }
-    /**
-     * The story's own component is the OUTERMOST non-null owner.
-     *
-     * Above it sit Storybook's wrappers, which own nothing; below it sits the
-     * design system's internals, owned by each other. Observed chain for a
-     * button inside a Carbon table:
-     *   TableContainer(owner DataTable) -> DataTable(owner UserPermissionsPage)
-     * so UserPermissionsPage is the story and DataTable is what it wrote.
-     */
-    const owners = chain.map(c => c.owner).filter(Boolean);
-    const storyComponent = owners.length ? owners[owners.length - 1] : null;
+  let occurrence;
 
+  const chain = chainOf(target);
+  if (chain.length) {
     /**
-     * INNERMOST element the story authored, not outermost.
-     *
-     * Both `<DataTable>` and the `<Button>` inside its render prop are owned by
-     * the story, and the user clicked the button. Taking the outermost match
-     * would aim every edit at the largest container on the page.
+     * Owner-sorted, not innermost-first — see orderSourceCandidates. Measured
+     * on a Mantine Button the raw chain is [Box, UnstyledButton, Button], and
+     * the server resolves the first name that appears in the file; any story
+     * that also authors a Box sent every edit to the wrong element. The
+     * owners the fiber already records (Box→UnstyledButton→Button) sink each
+     * implementation below the component that owns it.
      */
-    const authored = chain.find(c => c.owner === storyComponent);
-    // Innermost-first, deduped. The server resolves which of these is real.
-    sourceCandidates = [...new Set(chain.map(c => c.name).filter(Boolean))].slice(0, 8);
-    if (authored) {
-      sourceComponent = authored.name;
-      const scope = document.querySelector('#storybook-root') || document.body;
-      let n = 0;
-      for (const node of Array.from(scope.querySelectorAll('*'))) {
-        const nk = Object.keys(node).find((k: string) => k.startsWith('__reactFiber$'));
-        if (!nk) continue;
-        let g: any = (node as any)[nk];
-        let steps = 0;
-        let owned = null;
-        while (g && steps++ < 40) {
-          if (typeof g.type !== 'string' && g.type) {
-            const nm2 = (g.type.displayName || g.type.name || '').replace(/^.*\//, '');
-            if (nm2 === authored.name && ownerName(g) === storyComponent) { owned = g; break; }
-          }
-          g = g.return;
-        }
-        if (!owned) continue;
-        if (node === target || (node as any).contains?.(target)) {
-          /**
-           * A list-produced element has no meaningful source OCCURRENCE.
-           *
-           * `sourceOccurrence` counts matches in DOM document order, which only
-           * corresponds to source order when every match is a literal JSX
-           * element. With `{rows.map(r => <Card/>)}` rendering three cards and a
-           * literal `<Card/>` after them, the source holds 2 elements and the DOM
-           * holds 4 — so clicking the SECOND mapped card yields occurrence 1, and
-           * the server confidently edits source element 1, which is the literal
-           * card. A silent, wrong edit to a file someone else reviews.
-           *
-           * React hands over the discriminator for free: `key` is non-null only
-           * for children produced from an array, because React requires keys
-           * there. One property read, no round trip, no parse.
-           *
-           * When it is set, the occurrence is withheld rather than guessed. One
-           * JSX element backs every row, so an attribute edit is still correct —
-           * it just applies to all of them, which the caller must say out loud
-           * instead of implying it touched one.
-           */
-          let k: any = owned;
-          let up = 0;
-          while (k && up++ < 6) {
-            if (k.key != null) { fromList = true; break; }
-            if (k === owned.return) break;
-            k = k.return;
-          }
-          if (!fromList) sourceOccurrence = n;
-          break;
-        }
-        n++;
+    const ordered: string[] = orderCandidates(chain.map((c) => ({ name: c.name, owner: c.owner, hostDepth: c.hostDepth })));
+    sourceCandidates = ordered.slice(0, 8);
+    const top = ordered[0];
+    const topEntry = chain.find((c) => c.name === top);
+    if (topEntry) {
+      sourceComponent = top;
+
+      /**
+       * A list-produced element has no meaningful source OCCURRENCE.
+       *
+       * React hands over the discriminator for free: `key` is non-null only
+       * for children produced from an array, because React requires keys
+       * there. When set, the occurrence is withheld rather than guessed — one
+       * JSX element backs every row, so an attribute edit is still correct, it
+       * just applies to all of them, which the caller must say out loud.
+       */
+      let k: any = topEntry.fiber;
+      let up = 0;
+      while (k && up++ < 6) {
+        if (k.key != null) { fromList = true; break; }
+        if (k === k.return) break;
+        k = k.return;
       }
+
+      if (!fromList) {
+        /**
+         * Position among instances of the SAME AUTHORED COMPONENT, counted by
+         * fiber identity in document order.
+         *
+         * The population must match what the file contains. Counting DOM
+         * elements by raw fiber name counted every UnstyledButton-derived
+         * control on the page — 13 of them against 2 literal <Button>s in the
+         * source, so the server rightly refused the edit. An element belongs
+         * to this population only when its own owner-sorted top candidate is
+         * the same authored name; deduping by fiber keeps one count per
+         * component instance rather than one per DOM node it rendered.
+         */
+        const scope = document.querySelector('#storybook-root') || document.body;
+        const instances: any[] = [];
+        for (const node of Array.from(scope.querySelectorAll('*'))) {
+          const ch = chainOf(node);
+          if (!ch.length) continue;
+          let mentionsTop = false;
+          for (const c of ch) { if (c.name === top) { mentionsTop = true; break; } }
+          if (!mentionsTop) continue;
+          const ord: string[] = orderCandidates(ch.map((c) => ({ name: c.name, owner: c.owner, hostDepth: c.hostDepth })));
+          if (ord[0] !== top) continue;
+          const inst = ch.find((c) => c.name === top);
+          if (inst && instances.indexOf(inst.fiber) === -1) instances.push(inst.fiber);
+        }
+        let at = instances.indexOf(topEntry.fiber);
+        if (at === -1 && topEntry.fiber.alternate) at = instances.indexOf(topEntry.fiber.alternate);
+        if (at !== -1) {
+          sourceOccurrence = at;
+          occurrence = at;
+        }
+        // Otherwise OMITTED, never defaulted: a portalled target (a menu item
+        // rendered under document.body) is not in the census, and a wrong
+        // occurrence is a silent edit to the wrong element. Absent and zero
+        // must not look alike.
+      }
+    }
+  } else if (found) {
+    /**
+     * No fiber at all (non-React preview, or names minified away): fall back
+     * to counting elements whose MARKUP resolves to the same component name.
+     * Same population rule, weaker evidence — which is exactly the standing of
+     * the class-name fallback everywhere else in this file.
+     */
+    const scope = document.querySelector('#storybook-root') || document.body;
+    let n = 0;
+    for (const node of Array.from(scope.querySelectorAll('*'))) {
+      if (node === target) { occurrence = n; break; }
+      const c = componentFrom(node.tagName.toLowerCase(), classesOf(node));
+      if (c && c.name === found.c.name) n++;
     }
   }
 
@@ -546,7 +686,11 @@ export function attachElementPicker(
 
   const describe = (el: Element): ElementTarget =>
     // eslint-disable-next-line no-eval
-    (doc.defaultView as any).eval(`(${EXTRACTOR_SOURCE})`)(el, componentFromMarkup.toString());
+    (doc.defaultView as any).eval(`(${EXTRACTOR_SOURCE})`)(
+      el,
+      componentFromMarkup.toString(),
+      orderSourceCandidates.toString(),
+    );
 
   let current: Element | null = null;
 

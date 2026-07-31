@@ -226,6 +226,24 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
   const [selection, setSelection] = useState<ElementTarget | null>(null);
   const [showProperties, setShowProperties] = useState(false);
   /**
+   * The FILE's name for the selected element, resolved by the server.
+   *
+   * The click lands on whatever fiber rendered the pixel, which is often a
+   * library internal — a Mantine Button reports "UnstyledButton". The property
+   * lookup resolves the candidate chain against the story file and reports the
+   * name the file contains; the chip and placeholder must say THAT name, or
+   * the panel reads "Button" while the chip reads "UnstyledButton" and one of
+   * them looks wrong. Null until resolved, and reset on every new pick so a
+   * stale resolution can never label a different element.
+   */
+  const [resolvedName, setResolvedName] = useState<string | null>(null);
+  /** What the chip, placeholder and transcript call the selection. */
+  const labeledSelection = selection
+    ? (resolvedName && resolvedName !== selection.component
+        ? { ...selection, component: resolvedName }
+        : selection)
+    : null;
+  /**
    * The story the handoff dialog is acting on.
    *
    * Owned here rather than driven by the `onHandoff` prop, because that prop was
@@ -357,6 +375,11 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
    * giving up says so in the thread rather than leaving an empty chat.
    */
   const recoveryStarted = useRef(false);
+  // When the recovered generation actually started, so the reconnecting row
+  // can show elapsed time. Recovery now waits out long verification-repair
+  // passes (the server proves it is still working via active-generations),
+  // and a row that sits unchanged for ten minutes reads as frozen.
+  const recoveringSince = useRef(0);
   useEffect(() => {
     if (recoveryStarted.current) return;
     recoveryStarted.current = true;
@@ -365,6 +388,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     let cancelled = false;
 
     setTurns([{ id: uid(), role: 'user', text: pending.prompt }]);
+    recoveringSince.current = pending.startedAt;
     setRecovering(true);
     if (pending.fileName) setActiveFile({ fileName: pending.fileName, title: pending.title || 'Story' });
 
@@ -485,10 +509,12 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     // pointed at — six months later "make it bigger" means nothing on its own.
     const userTurn: Turn = {
       id: uid(), role: 'user', text: prompt,
-      target: selection ? targetLabel(selection) : undefined,
+      // The label the chip showed — the resolved name when the lookup answered.
+      target: labeledSelection ? targetLabel(labeledSelection) : undefined,
       thumbnails: sentImages.length ? sentImages.map(i => i.preview) : undefined,
     };
     setSelection(null);
+    setResolvedName(null);
     setTurns(prev => [...prev, userTurn]);
 
     const conversation = [...turns, userTurn].map(t => ({
@@ -560,7 +586,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     ]);
     if (result.fileName) setActiveFile({ fileName: result.fileName, title: result.title || 'Story' });
     reloadSessions();
-  }, [input, busy, recovering, turns, provider, model, considerations, activeFile, selection, images, voice, generate, reloadSessions, byFileName]);
+  }, [input, busy, recovering, turns, provider, model, considerations, activeFile, selection, resolvedName, images, voice, generate, reloadSessions, byFileName]);
 
   /* ---- attachments ----------------------------------------------------- */
 
@@ -657,7 +683,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
           onPaste={onPaste}
           placeholder={
             selection
-              ? `Describe a change to that ${selection.component || 'element'}`
+              ? `Describe a change to that ${resolvedName || selection.component || 'element'}`
               : started
                 ? 'Describe a change, or ask for something new'
                 : 'Describe the interface you want to build'
@@ -700,13 +726,16 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
           <Flex direction="column" gap="2" mb="2">
             <Flex align="center" gap="2">
               <Badge color="jade" variant="soft" className="suiw-ellipsis">
-                {targetLabel(selection)}
+                {/* The FILE's name for the element once the server resolves it
+                    — "Button", not the "UnstyledButton" internal the fiber
+                    reported. The raw name stands until then. */}
+                {targetLabel(labeledSelection ?? selection)}
               </Badge>
               <Button
                 size="1"
                 variant="ghost"
                 color="gray"
-                onClick={() => setSelection(null)}
+                onClick={() => { setSelection(null); setResolvedName(null); }}
                 title="Apply the next instruction to the whole story instead"
               >
                 Clear
@@ -733,6 +762,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                   fileName={activeFile?.fileName}
                   onApplied={() => setReloadToken(t => t + 1)}
                   onAskInstead={() => setShowProperties(false)}
+                  onResolved={setResolvedName}
                 />
               </div>
             )}
@@ -1102,6 +1132,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                     <Text size="1" className="suiw-step-label">
                       Reconnecting to your in-progress generation
                     </Text>
+                    <StepClock since={recoveringSince.current} />
                   </Flex>
                 )}
 
@@ -1169,7 +1200,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                 }}
               />
             }
-            onSelectElement={setSelection}
+            onSelectElement={t => { setResolvedName(null); setSelection(t); }}
             hasSelection={!!selection}
             storyId={activeStory?.id}
             title={activeStory?.title}

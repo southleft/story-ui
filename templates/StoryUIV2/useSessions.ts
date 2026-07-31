@@ -20,6 +20,7 @@ import {
   fetchStoryIndex,
   resolveIndexedStoryId,
   RECOVERY_WINDOW_MS,
+  RECOVERY_HARD_CEILING_MS,
   type PendingGeneration,
   type Verification,
 } from './useGeneration';
@@ -169,8 +170,38 @@ export function cleanReply(content: string): string {
  *
  * Resolves null when the window closes without the reply appearing — the
  * caller says so honestly rather than pretending nothing was in flight.
+ *
+ * The window is not fixed. A verification-repair pass legitimately runs far
+ * past the base window, and giving up at four minutes showed the gave-up
+ * message for a generation that later completed fine. So each cycle also
+ * asks `/story-ui/active-generations` whether the server still claims this
+ * generation (prompt equality, plus fileName when the stash has one) and,
+ * while it does, keeps polling past the base window — the server is provably
+ * still working. The decision table:
+ *
+ *   - before the base window elapses: keep polling (exactly as before).
+ *   - past the base window, active entry still matches: keep polling.
+ *   - past the base window, active entry gone: keep polling for a short
+ *     grace (the manifest write lands just before the entry is removed in
+ *     the server's `finally`, so the next poll or two needs to see it),
+ *     then give up.
+ *   - past the base window, no active entry ever seen: give up — the base
+ *     window alone decides, exactly the old behaviour.
+ *   - endpoint 404s (older server): feature off for the rest of the poll;
+ *     base window alone decides, exactly the old behaviour.
+ *   - the hard ceiling elapses: give up regardless. Never poll forever.
  */
 const CLOCK_SKEW_MS = 2_000;
+
+/** How long past the last active-generations sighting the poller keeps
+ *  waiting for the manifest write to land. */
+export const ACTIVE_GRACE_MS = 15_000;
+
+interface ActiveGeneration {
+  prompt: string;
+  fileName: string | null;
+  startedAt: number;
+}
 
 export async function pollForCompletedEntry(
   apiBase: string,
@@ -180,8 +211,17 @@ export async function pollForCompletedEntry(
   const earliest = pending.startedAt - CLOCK_SKEW_MS;
   const since = new Date(earliest).toISOString();
   const baseline = pending.baselineUpdatedAt ? Date.parse(pending.baselineUpdatedAt) : NaN;
-  const deadline = pending.startedAt + RECOVERY_WINDOW_MS;
-  while (!isCancelled() && Date.now() < deadline) {
+  const baseDeadline = pending.startedAt + RECOVERY_WINDOW_MS;
+  const hardDeadline = pending.startedAt + RECOVERY_HARD_CEILING_MS;
+
+  // Whether this server has /story-ui/active-generations at all. A 404 turns
+  // the extension off for the rest of the poll — absence of the endpoint must
+  // not break recovery, it must merely not extend it.
+  let activeSupported = true;
+  // When the server's active list last contained this generation. 0 = never.
+  let lastActiveMatchAt = 0;
+
+  while (!isCancelled() && Date.now() < hardDeadline) {
     try {
       const res = await fetch(`${apiBase}/story-ui/manifest/poll?since=${encodeURIComponent(since)}`);
       if (res.ok) {
@@ -201,6 +241,33 @@ export async function pollForCompletedEntry(
         if (entry) return entry;
       }
     } catch { /* server busy — keep polling */ }
+
+    if (activeSupported && !isCancelled()) {
+      try {
+        const res = await fetch(`${apiBase}/story-ui/active-generations`);
+        if (res.status === 404) {
+          activeSupported = false;
+        } else if (res.ok) {
+          const active: ActiveGeneration[] = (await res.json())?.active ?? [];
+          const match = active.some(a =>
+            a?.prompt === pending.prompt &&
+            (!pending.fileName || a.fileName === pending.fileName),
+          );
+          if (match) lastActiveMatchAt = Date.now();
+        }
+      } catch {
+        // Transient failure says nothing either way — decide on what we last
+        // knew. lastActiveMatchAt persists, so a blip while the server is
+        // working costs at most the grace window, not the recovery.
+      }
+    }
+
+    const now = Date.now();
+    if (now >= baseDeadline) {
+      if (!activeSupported) return null;
+      const stillWorking = lastActiveMatchAt > 0 && now - lastActiveMatchAt < ACTIVE_GRACE_MS;
+      if (!stillWorking) return null;
+    }
     await new Promise(r => setTimeout(r, 3000));
   }
   return null;

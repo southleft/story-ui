@@ -18,11 +18,160 @@ import { describe, it, expect } from 'vitest';
 import {
   componentFromMarkup,
   describeTarget,
+  orderSourceCandidates,
   targetLabel,
+  type ChainEntry,
   type ElementTarget,
 } from '../templates/StoryUIV2/elementTargeting.js';
 
 const cls = (s: string) => s.split(/\s+/).filter(Boolean);
+
+/**
+ * Measured live on react-mantine (Button "Save changes"): the fiber type chain
+ * innermost-out is Box → UnstyledButton → Button, and the owners the fiber
+ * records are Box(owner UnstyledButton), UnstyledButton(owner Button),
+ * Button(owner PricingPage — the story's own page component).
+ */
+const MANTINE_BUTTON: ChainEntry[] = [
+  { name: 'Box', owner: 'UnstyledButton' },
+  { name: 'UnstyledButton', owner: 'Button' },
+  { name: 'Button', owner: 'PricingPage' },
+];
+
+describe('orderSourceCandidates', () => {
+  it('sinks each library internal below the component that owns it', () => {
+    // The server resolves the FIRST candidate that appears in the file.
+    // Innermost-first sent [Box, UnstyledButton, Button], so any story that
+    // also authored a <Box> — the measured one had a banner — got its edits
+    // aimed at "Box #4". The owners the fiber already records fix the order
+    // without blacklisting any name.
+    expect(orderSourceCandidates(MANTINE_BUTTON))
+      .toEqual(['Button', 'UnstyledButton', 'Box']);
+  });
+
+  it('keeps an AUTHORED Box first — the fix must not be a name blacklist', () => {
+    // The user genuinely clicked a <Box> the story wrote. Its owner is the
+    // page, not another candidate, so it is content and stays first.
+    expect(orderSourceCandidates([
+      { name: 'Box', owner: 'PricingPage' },
+      { name: 'Card', owner: 'PricingPage' },
+    ])).toEqual(['Box', 'Card']);
+  });
+
+  it('preserves innermost-first for a Button clicked inside a Card', () => {
+    // Both authored by the page: neither owns the other, so the click means
+    // the inner one. Sorting Card first would aim every edit at the container.
+    expect(orderSourceCandidates([
+      { name: 'Button', owner: 'PricingPage' },
+      { name: 'Card', owner: 'PricingPage' },
+    ])).toEqual(['Button', 'Card']);
+  });
+
+  it('sinks internals but leaves the authored composition order intact', () => {
+    // The full measured shape: internals under the Button, containers above
+    // it, the page at the end. Only the implementation cluster reorders.
+    expect(orderSourceCandidates([
+      ...MANTINE_BUTTON,
+      { name: 'Card', owner: 'PricingPage' },
+      { name: 'SimpleGrid', owner: 'PricingPage' },
+      { name: 'PricingPage', owner: 'unboundStoryFn' },
+    ])).toEqual(['Button', 'UnstyledButton', 'Box', 'Card', 'SimpleGrid', 'PricingPage']);
+  });
+
+  it('does not cascade ownership through a component that composes several entries', () => {
+    // PricingPage owns Button AND Card along this path — it is nesting
+    // authored elements, not delegating its render. Without this stop the
+    // sink would run through the page into Storybook's wrappers and put the
+    // page ahead of the element the user clicked.
+    const ordered = orderSourceCandidates([
+      ...MANTINE_BUTTON,
+      { name: 'Card', owner: 'PricingPage' },
+      { name: 'PricingPage', owner: 'unboundStoryFn' },
+      { name: 'unboundStoryFn', owner: null },
+    ]);
+    expect(ordered[0]).toBe('Button');
+    expect(ordered.indexOf('Button')).toBeLessThan(ordered.indexOf('PricingPage'));
+  });
+
+  it('sinks only within one DOM node — delegation shares the host, composition does not', () => {
+    // Box, UnstyledButton and Button all render the SAME <button> (hostDepth
+    // 1); the page sits beyond its own root markup (hostDepth 2). Ownership
+    // cascades through the delegation run and stops at the DOM boundary, so
+    // the page can never outrank the element the user clicked.
+    expect(orderSourceCandidates([
+      { name: 'Box', owner: 'UnstyledButton', hostDepth: 1 },
+      { name: 'UnstyledButton', owner: 'Button', hostDepth: 1 },
+      { name: 'Button', owner: 'PricingPage', hostDepth: 1 },
+      { name: 'PricingPage', owner: 'unboundStoryFn', hostDepth: 2 },
+    ])).toEqual(['Button', 'UnstyledButton', 'Box', 'PricingPage']);
+  });
+
+  it('does not sink an authored element below a page separated by rendered markup', () => {
+    // The page authored this Box directly — its owner is the page, and the
+    // page's own root element sits between them. That is composition, and the
+    // Box the user clicked must stay first even though the page is the sole
+    // owner on this path.
+    expect(orderSourceCandidates([
+      { name: 'Box', owner: 'PricingPage', hostDepth: 1 },
+      { name: 'PricingPage', owner: null, hostDepth: 2 },
+    ])).toEqual(['Box', 'PricingPage']);
+  });
+
+  it('dedupes a repeated name, keeping the innermost entry', () => {
+    expect(orderSourceCandidates([
+      { name: 'Box', owner: 'UnstyledButton' },
+      { name: 'UnstyledButton', owner: 'Button' },
+      { name: 'Box', owner: 'Stack' },
+      { name: 'Button', owner: 'PricingPage' },
+    ])).toEqual(['Button', 'UnstyledButton', 'Box']);
+  });
+
+  it('terminates on an ownership cycle', () => {
+    expect(() => orderSourceCandidates([
+      { name: 'A', owner: 'B' },
+      { name: 'B', owner: 'A' },
+    ])).not.toThrow();
+  });
+
+  it('handles empty and single-entry chains', () => {
+    expect(orderSourceCandidates([])).toEqual([]);
+    expect(orderSourceCandidates([{ name: 'Button', owner: 'PricingPage' }])).toEqual(['Button']);
+  });
+});
+
+describe('occurrence population', () => {
+  /**
+   * Mirrors the extractor's population rule: an element belongs to the
+   * clicked element's population iff its own owner-sorted TOP candidate is
+   * the same authored name.
+   *
+   * The measured failure: the page had 13 UnstyledButton-derived controls
+   * (Buttons, ActionIcons, Menu targets…) but only 2 literal <Button>s, and
+   * counting raw fiber names sent occurrence 13 — which the server rightly
+   * refused ("occurrence 13 vs 2 in file") and the edit failed end-to-end.
+   */
+  const topOf = (chain: ChainEntry[]) => orderSourceCandidates(chain)[0];
+
+  it('a Button and an ActionIcon share UnstyledButton but are different populations', () => {
+    const actionIcon: ChainEntry[] = [
+      { name: 'UnstyledButton', owner: 'ActionIcon' },
+      { name: 'ActionIcon', owner: 'PricingPage' },
+    ];
+    expect(topOf(MANTINE_BUTTON)).toBe('Button');
+    expect(topOf(actionIcon)).toBe('ActionIcon');
+    // So the 13 UnstyledButton-derived controls collapse to the Buttons only:
+    expect(topOf(actionIcon)).not.toBe(topOf(MANTINE_BUTTON));
+  });
+
+  it('every literal Button resolves to the same population regardless of container', () => {
+    const buttonInCard: ChainEntry[] = [
+      ...MANTINE_BUTTON,
+      { name: 'Card', owner: 'PricingPage' },
+    ];
+    expect(topOf(buttonInCard)).toBe('Button');
+    expect(topOf(MANTINE_BUTTON)).toBe(topOf(buttonInCard));
+  });
+});
 
 describe('componentFromMarkup', () => {
   it('recovers a Mantine component from its semantic class', () => {

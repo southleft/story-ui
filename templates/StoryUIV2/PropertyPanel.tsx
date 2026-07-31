@@ -35,9 +35,16 @@ interface PropertyPanelProps {
   onApplied: () => void;
   /** Escape hatch to the model for anything structural. */
   onAskInstead?: () => void;
+  /**
+   * Reports the server-resolved component name (null while unresolved), so
+   * the composer chip can call the selection what the FILE calls it. The
+   * clicked fiber is often a library internal — "UnstyledButton" on a chip
+   * whose edits target `<Button>` reads as targeting the wrong element.
+   */
+  onResolved?: (name: string | null) => void;
 }
 
-export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInstead }: PropertyPanelProps) {
+export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInstead, onResolved }: PropertyPanelProps) {
   const [props, setProps] = useState<EditableProp[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,13 +67,21 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
    */
   const [resolved, setResolved] = useState<string | null>(null);
 
+  /** The chip and placeholder follow this, so the whole panel agrees. */
+  useEffect(() => { onResolved?.(resolved); }, [resolved, onResolved]);
+
   /**
-   * Every name between the click and the story, innermost first, with the
-   * clicked component's own name leading. Deduped because the class-name
-   * fallback and the fiber chain can agree.
+   * Every name between the click and the story, owner-sorted (implementation
+   * details after the component that owns them — see orderSourceCandidates).
+   * The chain already contains the clicked component, in its sorted place;
+   * appending the raw clicked name keeps it as a FALLBACK, not a leader —
+   * leading with it re-created the defect this ordering fixes whenever a
+   * story authored the internal's name (an intentional <UnstyledButton>)
+   * while the user clicked a component built on it. Deduped because the
+   * class-name fallback and the fiber chain can agree.
    */
   const candidates = useMemo(() => {
-    const list = [component, ...(target?.sourceCandidates ?? [])];
+    const list = [...(target?.sourceCandidates ?? []), component];
     return [...new Set(list.filter((n): n is string => !!n))];
   }, [component, target]);
   const candidatesKey = candidates.join(',');
@@ -79,8 +94,12 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
     setError(null);
     (async () => {
       try {
-        const params = new URLSearchParams({ component });
-        // Innermost-first; the server resolves the first that appears in the
+        // The server tries `component` FIRST, so it must carry the best
+        // hypothesis — the owner-sorted top candidate, which is the element
+        // the story authored. The raw clicked name rides at the end of the
+        // candidate list as a fallback.
+        const params = new URLSearchParams({ component: candidates[0] || component });
+        // Owner-sorted; the server resolves the first that appears in the
         // story file. An older server ignores both and answers for `component`
         // alone — same request, same fallback rendering.
         if (candidatesKey) params.set('candidates', candidatesKey);
@@ -116,10 +135,13 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
           fileName,
           // The server-resolved name when the lookup reported one — that is
           // the name the FILE contains, which is what an AST edit targets.
-          component: resolved ?? component,
-          // Every component between the click and the story, innermost first.
-          // The server picks whichever actually appears in the file — the
-          // fiber chain contains HOC wrappers that are not JSX elements.
+          // Otherwise the owner-sorted top candidate, never the raw clicked
+          // fiber name: the server tries `component` first.
+          component: resolved ?? candidates[0] ?? component,
+          // Every component between the click and the story, owner-sorted:
+          // implementation details after the component that owns them. The
+          // server picks whichever actually appears in the file — the fiber
+          // chain contains HOC wrappers that are not JSX elements.
           candidates: target?.sourceCandidates,
           /**
            * The clicked element's position among all instances of it, which is
@@ -164,7 +186,7 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
     } finally {
       setPending(null);
     }
-  }, [apiBase, component, resolved, fileName, target, onApplied]);
+  }, [apiBase, component, candidates, resolved, fileName, target, onApplied]);
 
   if (!target) return null;
 
