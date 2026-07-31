@@ -26,6 +26,7 @@ import {
 import { claudeProxy } from './routes/claude.js';
 import { generateStoryFromPrompt } from './routes/generateStory.js';
 import { generateStoryFromPromptStream } from './routes/generateStoryStream.js';
+import { activeGenerationsHandler } from './routes/activeGenerations.js';
 import { loadUserConfig } from '../story-generator/configLoader.js';
 import { loadConsiderations, considerationsToPrompt } from '../story-generator/considerationsLoader.js';
 import { DocumentationLoader } from '../story-generator/documentationLoader.js';
@@ -187,6 +188,11 @@ app.post('/mcp/canvas-ensure', (_req, res) => {
     return res.json({ ok: false });
   }
 });
+
+// In-flight generations — lets a reconnecting poller distinguish "the server
+// is still working on my prompt" from "the generation was lost". Registered in
+// generationCore at pipeline start, removed in a finally on every outcome.
+app.get('/story-ui/active-generations', activeGenerationsHandler);
 
 // Manifest — story ↔ chat source of truth
 // NOTE: /reconcile must be registered BEFORE /:fileName to avoid route conflict

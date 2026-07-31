@@ -172,6 +172,10 @@ export class OpenAIProvider extends BaseLLMProvider {
       requestBody.stop = options.stopSequences;
     }
 
+    // One wall-clock budget for the whole call, retries included; on timeout
+    // the error reports MEASURED elapsed, never just the configured number.
+    const timeoutMs = this.config.timeout || 120000;
+    const requestStartedAt = Date.now();
     try {
       const response = await fetchWithRetry(this.config.baseUrl || OPENAI_API_URL, {
         method: 'POST',
@@ -181,8 +185,7 @@ export class OpenAIProvider extends BaseLLMProvider {
           ...(this.config.organizationId && { 'OpenAI-Organization': this.config.organizationId }),
         },
         body: JSON.stringify(requestBody),
-        signal: AbortSignal.timeout(this.config.timeout || 120000),
-      });
+      }, { timeoutMs, signal: options?.signal });
 
       if (!response.ok) {
         const errorBody = await response.text();
@@ -196,7 +199,10 @@ export class OpenAIProvider extends BaseLLMProvider {
       return chatResponse;
     } catch (error) {
       if (error instanceof Error && error.name === 'TimeoutError') {
-        throw new Error(`OpenAI API request timed out after ${this.config.timeout}ms`);
+        const elapsedMs = Date.now() - requestStartedAt;
+        throw new Error(
+          `OpenAI API request timed out after ${elapsedMs}ms of wall time (configured timeout ${timeoutMs}ms)`,
+        );
       }
       throw error;
     }
@@ -247,8 +253,7 @@ export class OpenAIProvider extends BaseLLMProvider {
           ...(this.config.organizationId && { 'OpenAI-Organization': this.config.organizationId }),
         },
         body: JSON.stringify(requestBody),
-        signal: AbortSignal.timeout(this.config.timeout || 120000),
-      });
+      }, { timeoutMs: this.config.timeout || 120000, signal: options?.signal });
 
       if (!response.ok) {
         const errorBody = await response.text();

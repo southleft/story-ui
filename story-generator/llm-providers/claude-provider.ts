@@ -169,6 +169,13 @@ export class ClaudeProvider extends BaseLLMProvider {
       requestBody.stop_sequences = options.stopSequences;
     }
 
+    // One wall-clock budget for the whole call, retries included, enforced by
+    // fetchWithRetry against Date.now(). The old per-call AbortSignal.timeout
+    // was a fire-once timer whose error message reported the CONFIGURED number
+    // — a "timed out after 120000ms" was once logged for a call that had
+    // actually held the pipeline for 17 minutes.
+    const timeoutMs = this.config.timeout || 120000;
+    const requestStartedAt = Date.now();
     try {
       const response = await fetchWithRetry(ANTHROPIC_API_URL, {
         method: 'POST',
@@ -178,8 +185,7 @@ export class ClaudeProvider extends BaseLLMProvider {
           'anthropic-version': ANTHROPIC_VERSION,
         },
         body: JSON.stringify(requestBody),
-        signal: AbortSignal.timeout(this.config.timeout || 120000),
-      });
+      }, { timeoutMs, signal: options?.signal });
 
       if (!response.ok) {
         const errorBody = await response.text();
@@ -193,7 +199,12 @@ export class ClaudeProvider extends BaseLLMProvider {
       return chatResponse;
     } catch (error) {
       if (error instanceof Error && error.name === 'TimeoutError') {
-        throw new Error(`Claude API request timed out after ${this.config.timeout}ms`);
+        // Measured elapsed, not the configured number — so the log can never
+        // again claim 120s for a call that took 17 minutes.
+        const elapsedMs = Date.now() - requestStartedAt;
+        throw new Error(
+          `Claude API request timed out after ${elapsedMs}ms of wall time (configured timeout ${timeoutMs}ms)`,
+        );
       }
       throw error;
     }
@@ -239,8 +250,7 @@ export class ClaudeProvider extends BaseLLMProvider {
           'anthropic-version': ANTHROPIC_VERSION,
         },
         body: JSON.stringify(requestBody),
-        signal: AbortSignal.timeout(this.config.timeout || 120000),
-      });
+      }, { timeoutMs: this.config.timeout || 120000, signal: options?.signal });
 
       if (!response.ok) {
         const errorBody = await response.text();

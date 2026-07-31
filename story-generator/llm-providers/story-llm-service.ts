@@ -200,6 +200,8 @@ export async function chatCompletionDetailed(
     model?: string;
     maxTokens?: number;
     temperature?: number;
+    /** Caller-side abort (e.g. a phase budget) — cancels the in-flight HTTP call. */
+    signal?: AbortSignal;
   }
 ): Promise<ChatCompletionResult> {
   ensureInitialized();
@@ -250,6 +252,7 @@ export async function chatCompletionDetailed(
       maxTokens: options?.maxTokens,
       temperature: options?.temperature,
       systemPrompt,
+      signal: options?.signal,
     });
 
     if (response.finishReason === 'length') {
@@ -314,6 +317,8 @@ export async function chatCompletionWithImagesDetailed(
     model?: string;
     maxTokens?: number;
     temperature?: number;
+    /** Caller-side abort (e.g. a phase budget) — cancels the in-flight HTTP call. */
+    signal?: AbortSignal;
   }
 ): Promise<ChatCompletionResult> {
   ensureInitialized();
@@ -366,6 +371,7 @@ export async function chatCompletionWithImagesDetailed(
       model,
       maxTokens: options?.maxTokens,
       temperature: options?.temperature,
+      signal: options?.signal,
     });
 
     if (response.finishReason === 'length') {

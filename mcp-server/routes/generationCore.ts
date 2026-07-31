@@ -103,7 +103,8 @@ import {
   sweepOrphanedArtifacts,
 } from '../../story-generator/storyArtifacts.js';
 import { attemptVerificationRepair } from './verifyRepair.js';
-import type { VerifyReport } from '../../story-generator/verify/findings.js';
+import type { VerifyReport, RepairSummary } from '../../story-generator/verify/findings.js';
+import { registerActiveGeneration, unregisterActiveGeneration } from './activeGenerations.js';
 
 // ============================================================
 // Public interface
@@ -229,6 +230,32 @@ export async function runStoryGeneration(
   events: GenerationEvents = {}
 ): Promise<GenerationOutcome> {
   /**
+   * Make the in-flight request visible to GET /story-ui/active-generations.
+   *
+   * Registered before ANY pipeline work and removed in a finally, so success,
+   * fallback stories, and throws all leave the list clean — a stale entry
+   * would make a poller wait forever, which is worse than the silence this
+   * registry exists to fix.
+   */
+  const startedAt = Date.now();
+  const activeKey = registerActiveGeneration({
+    prompt: request?.prompt ?? '',
+    fileName: request?.fileName ?? null,
+    startedAt,
+  });
+  try {
+    return await runStoryGenerationPipeline(request, events, startedAt);
+  } finally {
+    unregisterActiveGeneration(activeKey);
+  }
+}
+
+async function runStoryGenerationPipeline(
+  request: GenerationRequest,
+  events: GenerationEvents,
+  startedAt: number,
+): Promise<GenerationOutcome> {
+  /**
    * The component facts handed to the model, kept for the validation loop.
    *
    * Deliberately the SAME object the catalog was built from, so what the model
@@ -259,7 +286,6 @@ export async function runStoryGeneration(
   } = request;
 
   const totalSteps = GENERATION_TOTAL_STEPS;
-  const startedAt = Date.now();
 
   if (!prompt) {
     throw new GenerationError('MISSING_PROMPT', 'No prompt provided', {
@@ -1321,6 +1347,32 @@ export async function runStoryGeneration(
   // blocker here would make the model damage correct code.
   let verification: VerifyReport | undefined;
   if (!isFallbackStory) {
+    /**
+     * One wall-clock budget for the ENTIRE post-write verification+repair
+     * phase, default 3 minutes, `STORY_UI_VERIFY_BUDGET_MS` to override.
+     *
+     * Without it this phase was unbounded: one blocker finding triggered a
+     * repair LLM call that pushed a generation to ~18 minutes, and the
+     * user-facing completion landed 13 minutes after the client's recovery
+     * window had given up. Verification is report-only and repair is
+     * strictly-better-or-nothing, so on exhaustion the honest outcome is
+     * cheap: keep the original story on disk, report what verification found
+     * and why repair was skipped or aborted, and COMPLETE the generation.
+     *
+     * The controller's signal is threaded into every LLM call this phase
+     * makes (visual critique, repair), so the timer cancels an in-flight
+     * request mid-call rather than waiting politely for it to finish.
+     */
+    const budgetRaw = Number(process.env.STORY_UI_VERIFY_BUDGET_MS);
+    const verifyBudgetMs = Number.isFinite(budgetRaw) && budgetRaw > 0 ? budgetRaw : 180_000;
+    const verifyPhaseStart = Date.now();
+    const verifyDeadline = verifyPhaseStart + verifyBudgetMs;
+    const verifyBudget = new AbortController();
+    const verifyBudgetTimer = setTimeout(
+      () => verifyBudget.abort(new Error(`verification budget of ${verifyBudgetMs}ms exhausted`)),
+      verifyBudgetMs,
+    );
+    verifyBudgetTimer.unref?.();
     try {
       const verifyUrl = config.storybookMcpUrl || storybookUrl || getStorybookUrl();
       /**
@@ -1371,7 +1423,9 @@ export async function runStoryGeneration(
                   type: 'image',
                   source: { type: 'base64', mediaType: 'image/png', data: screenshot.toString('base64') },
                 }],
-                { provider, model },
+                // The phase budget can cancel the critique mid-call too — it
+                // is part of the same bounded phase as repair.
+                { provider, model, signal: verifyBudget.signal },
               );
               return result.content;
             }
@@ -1409,10 +1463,23 @@ export async function runStoryGeneration(
          * unchanged, which is reported rather than silently skipped.
          */
         const enforce = process.env.STORY_UI_VERIFY_ENFORCE !== 'false';
-        if (enforce && verification.outcome === 'issues') {
+        if (enforce && verification.outcome === 'issues' && Date.now() >= verifyDeadline) {
+          // Verification itself consumed the whole budget. Its findings stand
+          // and are reported; repair never started, and saying "not attempted"
+          // is a different fact from "attempted and failed".
+          verification.repair = {
+            status: 'not-attempted',
+            note: `verification used the whole ${verifyBudgetMs}ms budget ` +
+              `(${Date.now() - verifyPhaseStart}ms elapsed) — repair skipped, original story kept`,
+          };
+          logger.warn(`⚠️ ${verification.repair.note}`);
+        } else if (enforce && verification.outcome === 'issues') {
+          try {
           const repair = await attemptVerificationRepair({
             code: fixedFileContents,
             report: verification,
+            signal: verifyBudget.signal,
+            deadline: verifyDeadline,
             staticallyValid: (candidate) => {
               const patternErrors = validateStory(candidate);
               const ast = validateStoryCode(candidate, finalFileName, config);
@@ -1421,7 +1488,10 @@ export async function runStoryGeneration(
             callModel: async (prompt) => {
               events.onLLMCall?.();
               // Fresh, minimal context — not the growing generate transcript.
-              const result = await callLLM([{ role: 'user', content: prompt }], undefined, { provider, model });
+              // The budget signal reaches the provider's fetch, so exhaustion
+              // aborts this call mid-flight instead of waiting it out.
+              const result = await callLLM([{ role: 'user', content: prompt }], undefined,
+                { provider, model, signal: verifyBudget.signal });
               /**
                * Say when the model ran out of room rather than reporting it as
                * "no code".
@@ -1501,12 +1571,44 @@ export async function runStoryGeneration(
             outPath = writeStory(fixedFileContents);
             verification = repair.report;
             selfHealingUsed = true;
+            verification.repair = {
+              status: 'applied',
+              attempts: repair.attempts,
+              ...(repair.note ? { note: repair.note } : {}),
+            };
             logger.log(`✅ Verification repair applied after ${repair.attempts} attempt(s)`);
           } else {
             // Restore the original on disk — writeAndVerify may have left a
             // rejected candidate there.
             writeStory(fixedFileContents);
+            // Three distinct dispositions, persisted as such: the budget
+            // cancelled it, it never started, or it ran and did not improve
+            // the story. Conflating them makes the next diagnosis a guess.
+            verification.repair = {
+              status: repair.abortedByBudget
+                ? 'aborted-budget'
+                : repair.attempts === 0 ? 'not-attempted' : 'failed',
+              attempts: repair.attempts,
+              ...(repair.note ? { note: repair.note } : {}),
+            };
             if (repair.note) logger.log(`ℹ️ No verification repair applied: ${repair.note}`);
+          }
+          } catch (repairErr: any) {
+            // A repair failure — including a budget abort surfacing as a
+            // thrown error — must not void the verification that already ran.
+            // Without this catch the outer handler rewrote the outcome to
+            // not_verified, erasing real findings because repair broke.
+            writeStory(fixedFileContents);
+            const abortedByBudget = verifyBudget.signal.aborted;
+            const msg = repairErr?.message ?? String(repairErr);
+            verification.repair = abortedByBudget
+              ? {
+                  status: 'aborted-budget',
+                  note: `repair aborted by the ${verifyBudgetMs}ms verification budget after ` +
+                    `${Date.now() - verifyPhaseStart}ms: ${msg}`,
+                }
+              : { status: 'failed', note: `repair threw: ${msg}` };
+            logger.warn(`⚠️ Verification repair ${abortedByBudget ? 'aborted by budget' : 'failed'}: ${msg}`);
           }
         }
 
@@ -1538,6 +1640,8 @@ export async function runStoryGeneration(
         metrics: {},
         durationMs: 0,
       };
+    } finally {
+      clearTimeout(verifyBudgetTimer);
     }
   }
 
@@ -1656,6 +1760,18 @@ export async function runStoryGeneration(
               ...(typeof verification.metrics?.focusables === 'number'
                 ? { focusables: verification.metrics.focusables }
                 : {}),
+              // Repair disposition survives the iframe reload with the rest of
+              // the badge data. `not-attempted`, `aborted-budget` and `failed`
+              // are deliberately distinct statuses — see RepairSummary.
+              ...(verification.repair ? {
+                repair: {
+                  status: verification.repair.status,
+                  ...(typeof verification.repair.attempts === 'number'
+                    ? { attempts: verification.repair.attempts }
+                    : {}),
+                  ...(verification.repair.note ? { note: verification.repair.note.slice(0, 300) } : {}),
+                },
+              } : {}),
             },
           } : {}),
         },
@@ -2077,7 +2193,7 @@ async function callLLMStreaming(
 async function callLLM(
   messages: { role: 'user' | 'assistant'; content: string }[],
   images?: ImageContent[],
-  options?: { provider?: string; model?: string }
+  options?: { provider?: string; model?: string; signal?: AbortSignal }
 ): Promise<{ content: string; truncated: boolean }> {
   if (!isProviderConfigured()) {
     throw new Error('No LLM provider configured');
@@ -2093,10 +2209,11 @@ async function callLLM(
   // monitoring layouts) are exactly the ones that truncate, burn a repair
   // attempt, and come back smaller than the user asked for.
   const providerInfo = getProviderInfo({ provider: options?.provider as any, model: options?.model });
-  const llmOptions: { provider?: any; model?: string; maxTokens: number } = {
+  const llmOptions: { provider?: any; model?: string; maxTokens: number; signal?: AbortSignal } = {
     maxTokens: providerInfo.maxOutputTokens ?? 8192,
     provider: options?.provider,
     model: options?.model,
+    ...(options?.signal ? { signal: options.signal } : {}),
   };
 
   if (images && images.length > 0) {

@@ -30,6 +30,18 @@ export interface RepairAttemptArgs {
   /** Static gate; a repair that fails static validation is discarded. */
   staticallyValid: (code: string) => boolean;
   maxAttempts?: number;
+  /**
+   * The verification phase's budget abort. When it fires the in-flight LLM
+   * call is cancelled (the signal reaches the provider's fetch), and this loop
+   * stops at the next step boundary instead of starting more work.
+   */
+  signal?: AbortSignal;
+  /**
+   * Wall-clock deadline (`Date.now()` ms) for the whole verify+repair phase.
+   * Checked between steps so a step that finished just under the wire cannot
+   * start another whole browser pass over the line.
+   */
+  deadline?: number;
 }
 
 export interface RepairOutcome {
@@ -39,6 +51,12 @@ export interface RepairOutcome {
   attempts: number;
   /** Why no repair was applied, for logging and the panel. */
   note?: string;
+  /**
+   * True when the verification budget — not the model, not validation — ended
+   * the attempt. Callers report this as its own outcome: a repair the budget
+   * cancelled must not read like a repair that failed on the merits.
+   */
+  abortedByBudget?: boolean;
 }
 
 const REPAIR_PREAMBLE = [
@@ -49,7 +67,7 @@ const REPAIR_PREAMBLE = [
 ].join('\n');
 
 export async function attemptVerificationRepair(args: RepairAttemptArgs): Promise<RepairOutcome> {
-  const { code, report, callModel, writeAndVerify, staticallyValid, maxAttempts = 1 } = args;
+  const { code, report, callModel, writeAndVerify, staticallyValid, maxAttempts = 1, signal, deadline } = args;
 
   const targets = repairable(report.findings);
   if (targets.length === 0) {
@@ -60,7 +78,23 @@ export async function attemptVerificationRepair(args: RepairAttemptArgs): Promis
   let bestReport = report;
   let attempts = 0;
 
+  /** Budget exhaustion — the signal fired, or the wall clock passed the deadline. */
+  const outOfBudget = (): boolean =>
+    Boolean(signal?.aborted) || (deadline !== undefined && Date.now() >= deadline);
+
+  /** The outcome so far, with whatever improvement (if any) was already banked. */
+  const partial = (note: string, abortedByBudget = false): RepairOutcome => ({
+    code: bestCode === code ? null : bestCode,
+    report: bestReport,
+    attempts,
+    note,
+    ...(abortedByBudget ? { abortedByBudget: true } : {}),
+  });
+
   while (attempts < maxAttempts) {
+    if (outOfBudget()) {
+      return partial('verification budget exhausted before the repair attempt could start', true);
+    }
     attempts++;
     const baselineBlockers = blockers(bestReport.findings).length;
 
@@ -73,14 +107,31 @@ export async function attemptVerificationRepair(args: RepairAttemptArgs): Promis
       bestCode,
     ].join('\n');
 
-    const candidate = await callModel(prompt);
+    let candidate: string | null;
+    try {
+      candidate = await callModel(prompt);
+    } catch (error) {
+      // A budget abort mid-LLM-call and a model failure are different facts,
+      // and reporting them the same way is how three diagnoses on this branch
+      // went wrong. The abort is the budget's doing; say so.
+      if (outOfBudget()) {
+        return partial('repair aborted mid-LLM-call: verification budget exhausted', true);
+      }
+      return partial(`repair model call failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
     if (!candidate) {
-      return { code: bestCode === code ? null : bestCode, report: bestReport, attempts, note: 'model returned no code' };
+      return partial('model returned no code');
     }
 
     if (!staticallyValid(candidate)) {
       logger.log('🔧 Repair candidate failed static validation — keeping the previous story');
-      return { code: bestCode === code ? null : bestCode, report: bestReport, attempts, note: 'repair failed static validation' };
+      return partial('repair failed static validation');
+    }
+
+    // The next step is a whole write-recompile-render pass; never start it
+    // after the deadline.
+    if (outOfBudget()) {
+      return partial('verification budget exhausted after the model call — candidate discarded unverified', true);
     }
 
     const candidateReport = await writeAndVerify(candidate);

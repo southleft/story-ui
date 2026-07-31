@@ -53,7 +53,18 @@ export function createFixtureProject(): FixtureProject {
   );
   fs.writeFileSync(
     path.join(libDir, 'index.d.ts'),
-    FIXTURE_COMPONENTS.map(name => `export declare function ${name}(props: Record<string, unknown>): unknown;`).join('\n') + '\n'
+    [
+      // Mantine-shaped declarations for Button: a props interface, plus a
+      // `<Name>Variant` alias beside the component rather than a `variant`
+      // member inside it — the shape the editable-props route must serve.
+      `export type ButtonVariant = 'primary' | 'secondary' | 'ghost';`,
+      `export interface ButtonProps {`,
+      `  /** Visual size of the control. */`,
+      `  size?: 'sm' | 'md' | 'lg';`,
+      `  disabled?: boolean;`,
+      `}`,
+      ...FIXTURE_COMPONENTS.map(name => `export declare function ${name}(props: Record<string, unknown>): unknown;`),
+    ].join('\n') + '\n'
   );
 
   const generatedDir = path.join(root, 'stories', 'generated');

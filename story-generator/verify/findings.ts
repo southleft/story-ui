@@ -41,6 +41,21 @@ export type VerifyOutcome =
   /** We could not check. Never reported as success. */
   | 'not_verified';
 
+/**
+ * What the repair phase did about the findings. Four outcomes, deliberately
+ * distinct: `applied` (a strictly-better story shipped), `not-attempted`
+ * (nothing repairable, or the budget was spent before repair could start),
+ * `aborted-budget` (the phase budget cancelled it mid-flight), and `failed`
+ * (attempted on the merits and did not improve the story). A repair the
+ * budget cancelled must never be reported as one that failed.
+ */
+export interface RepairSummary {
+  status: 'applied' | 'not-attempted' | 'aborted-budget' | 'failed';
+  /** Human-readable reason string, always present for non-applied outcomes. */
+  note?: string;
+  attempts?: number;
+}
+
 export interface VerifyReport {
   outcome: VerifyOutcome;
   /** Why verification was skipped, when outcome is not_verified. */
@@ -50,6 +65,8 @@ export interface VerifyReport {
   metrics: Record<string, number | string | boolean>;
   durationMs: number;
   storyId?: string;
+  /** Repair disposition, when verification found issues and enforce mode ran. */
+  repair?: RepairSummary;
 }
 
 export const blockers = (f: Finding[]): Finding[] => f.filter(x => x.severity === 'blocker');

@@ -82,6 +82,12 @@ export interface ChatOptions {
   systemPrompt?: string;
   stream?: boolean;
   tools?: ToolDefinition[];
+  /**
+   * Caller-side abort — e.g. a verification-phase budget cancelling an
+   * in-flight repair call. Combined with the provider's own wall-clock
+   * timeout; an abort is never retried.
+   */
+  signal?: AbortSignal;
 }
 
 // Tool/Function calling support
