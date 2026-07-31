@@ -44,7 +44,7 @@ vi.mock('../../story-generator/llm-providers/story-llm-service.js', () => ({
 }));
 
 import { runStoryGeneration } from '../../mcp-server/routes/generationCore.js';
-import { editPropHandler } from '../../mcp-server/routes/editProp.js';
+import { editPropHandler, editablePropsHandler } from '../../mcp-server/routes/editProp.js';
 import { editDivergence } from '../../story-generator/postProcessStory.js';
 import { getManifestManager } from '../../story-generator/manifestManager.js';
 import { StoryHistoryManager } from '../../story-generator/storyHistory.js';
@@ -235,6 +235,19 @@ describe('generation pipeline (integration)', () => {
     expect(lastCompletion!.generationTimeMs).toBeGreaterThanOrEqual(0);
     expect(lastCompletion!.storybookId).toBe(outcome.storybookId);
 
+    // The verification summary is persisted too, so a recovered thread can
+    // rebuild the badge. In this suite Storybook is unreachable (port 1), so
+    // the honest outcome is not_verified WITH a reason — absent must not look
+    // like never-ran, and never-ran must not look like passed.
+    const verification = lastCompletion!.verification;
+    expect(verification).toBeTruthy();
+    expect(verification!.outcome).toBe('not_verified');
+    expect(verification!.reason).toBeTruthy();
+    expect(verification!.blockers).toBe(0);
+    expect(verification!.warnings).toBe(0);
+    // And it agrees with what the generation itself reported.
+    expect(outcome.verification?.outcome).toBe('not_verified');
+
     // All 8 pipeline steps reported
     expect(progressPhases).toContain('config_loaded');
     expect(progressPhases).toContain('components_discovered');
@@ -368,6 +381,53 @@ describe('generation pipeline (integration)', () => {
     expect(second.isUpdate).toBe(true);
     const updateCall = llm.calls.at(-1)!.map(m => m.content).join('\n');
     expect(updateCall).toContain('size="lg"');
+  });
+
+  it('resolves editable props through the candidate chain to the element the file contains', async () => {
+    llm.queue.push({ content: validStoryResponse() });
+    const first = await runStoryGeneration({ prompt: 'Create a card with a button' });
+
+    // Clicking a button in the preview names the LIBRARY's inner component
+    // (Mantine: UnstyledButton) — a name the story file never contains. The
+    // GET must resolve the chain exactly as POST /mcp/edit-prop does, and
+    // answer for the element an edit would actually target.
+    const res = mockRes();
+    await editablePropsHandler(
+      { query: {
+          component: 'UnstyledButton',
+          candidates: 'UnstyledButton,Button',
+          fileName: first.fileName,
+      } } as any,
+      res as any,
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.component).toBe('Button');
+
+    const byName = Object.fromEntries(res.body.props.map((p: any) => [p.name, p]));
+    // Declared in ButtonProps: a closed union and a boolean.
+    expect(byName.size).toMatchObject({ kind: 'enum', options: ['sm', 'md', 'lg'] });
+    expect(byName.size.open).toBeUndefined();
+    expect(byName.disabled).toMatchObject({ kind: 'boolean' });
+    // Declared BESIDE the component as `type ButtonVariant`: offered as
+    // suggestions (open), not a closed set.
+    expect(byName.variant).toMatchObject({
+      kind: 'enum',
+      options: ['primary', 'secondary', 'ghost'],
+      open: true,
+    });
+  });
+
+  it('answers for the named component unchanged when no candidates are sent', async () => {
+    llm.queue.push({ content: validStoryResponse() });
+    await runStoryGeneration({ prompt: 'Create another card' });
+
+    const res = mockRes();
+    await editablePropsHandler({ query: { component: 'UnstyledButton' } } as any, res as any);
+    expect(res.statusCode).toBe(200);
+    // No resolution requested: the dead end is honest, not silently redirected.
+    expect(res.body.component).toBe('UnstyledButton');
+    expect(res.body.props).toEqual([]);
   });
 
   it('rejects a targeted edit that rewrote the page, leaving the file untouched', async () => {

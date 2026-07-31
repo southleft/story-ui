@@ -69,6 +69,23 @@ export interface ManifestEntry {
       suggestions?: string[];
       generationTimeMs?: number;
       storybookId?: string;
+      /**
+       * Compact browser-verification summary, so a recovered or reopened
+       * conversation can rebuild the verification badge. Without it a reload
+       * silently dropped "verified — 2 warnings", and absent looked exactly
+       * like never-ran — the failure shape this codebase keeps paying for.
+       * Counts only, never findings: the full report is a working artifact,
+       * not something to persist per story.
+       */
+      verification?: {
+        outcome: 'verified' | 'issues' | 'not_verified';
+        /** Why verification could not run, when outcome is `not_verified`. */
+        reason?: string;
+        blockers?: number;
+        warnings?: number;
+        /** The badge's headline metric ("Verified in browser · 6 focusable"). */
+        focusables?: number;
+      };
     };
   };
 }

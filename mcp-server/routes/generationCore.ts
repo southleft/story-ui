@@ -1638,6 +1638,26 @@ export async function runStoryGeneration(
           suggestions: suggestions?.slice(0, 5),
           generationTimeMs: Date.now() - startedAt,
           storybookId,
+          /**
+           * The verification badge's data survives the iframe reload.
+           *
+           * The server logged "verified — 2 warnings" and then persisted
+           * nothing about it, so a recovered thread showed no badge — absent
+           * looked exactly like never-ran. A compact summary (outcome, reason,
+           * the counts the badge renders) is enough to rebuild it; the full
+           * findings list is deliberately not persisted.
+           */
+          ...(verification ? {
+            verification: {
+              outcome: verification.outcome,
+              ...(verification.reason ? { reason: verification.reason.slice(0, 300) } : {}),
+              blockers: verification.findings.filter(f => f.severity === 'blocker').length,
+              warnings: verification.findings.filter(f => f.severity === 'warning').length,
+              ...(typeof verification.metrics?.focusables === 'number'
+                ? { focusables: verification.metrics.focusables }
+                : {}),
+            },
+          } : {}),
         },
       },
     });

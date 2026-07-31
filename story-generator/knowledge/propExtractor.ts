@@ -64,6 +64,15 @@ export interface PropFact {
    * advantage of editing a prop instead of asking a model to.
    */
   options?: string[];
+  /**
+   * True when the declared type ALSO admits values beyond `options`.
+   *
+   * Mantine writes `size?: MantineSize | (string & {})` — the five sizes are
+   * real, enumerated by the library's own alias, and any other string is legal
+   * too. `options` are then suggestions rather than a closed set, and a control
+   * built from them must accept free input as well. Absent means closed.
+   */
+  optionsOpen?: boolean;
 }
 
 export interface ComponentFacts {
@@ -267,6 +276,45 @@ function propsTypeCandidates(typeNode: ts.Node, source: ts.SourceFile): string[]
   return found;
 }
 
+/**
+ * Cross-file literal knowledge: pass 1 records what each file DECLARES, pass 2
+ * follows a prop's type name into it.
+ *
+ * The per-file `literalOptions` resolver can only follow names declared in the
+ * SAME file, so Mantine's Button — `size?: MantineSize | ...` with MantineSize
+ * five literals away in theme.types.d.ts — reported no options at all, and the
+ * editable-props panel dropped the very props someone opens it for. Text is
+ * stored rather than AST nodes so the registry does not pin every source file
+ * in memory; each alias is a short line, re-parsed only if a prop points at it.
+ */
+interface TypeTextRegistry {
+  /** Type alias name → its right-hand side, as written. First declaration wins. */
+  aliases: Map<string, string>;
+  /** `const X = [...] as const` values, across the whole package. */
+  tuples: Map<string, string[]>;
+}
+
+/** Longer than any real variant/size alias; guards against pathological types. */
+const MAX_REGISTRY_ALIAS_TEXT = 600;
+
+/** Record a file's type aliases and const tuples into the shared registry. */
+function harvestRegistry(source: ts.SourceFile, registry: TypeTextRegistry): void {
+  ts.forEachChild(source, node => {
+    if (ts.isTypeAliasDeclaration(node)) {
+      if (!registry.aliases.has(node.name.text)) {
+        const text = node.type.getText(source).replace(/\s+/g, ' ').trim();
+        if (text.length <= MAX_REGISTRY_ALIAS_TEXT) registry.aliases.set(node.name.text, text);
+      }
+    } else if (ts.isVariableStatement(node)) {
+      for (const decl of node.declarationList.declarations) {
+        if (!ts.isIdentifier(decl.name) || registry.tuples.has(decl.name.text)) continue;
+        const literals = stringLiteralsIn(decl.type ?? decl.initializer, source);
+        if (literals.length) registry.tuples.set(decl.name.text, literals);
+      }
+    }
+  });
+}
+
 function collectFromFile(
   filePath: string,
   out: Record<string, ComponentFacts>,
@@ -274,6 +322,7 @@ function collectFromFile(
   /** Every named type with members, so a link can be resolved across files. */
   allTypes: Record<string, PropFact[]> = {},
   links: PropsTypeLink[] = [],
+  registry?: TypeTextRegistry,
 ): void {
   let text: string;
   try {
@@ -300,7 +349,17 @@ function collectFromFile(
     // `Prop`, not `Props`: a type named `AvatarPropTypes` contains no "Props"
     // substring, so the file declaring it was skipped entirely and the
     // component that pointed at it resolved to nothing.
-    if (!text.includes('Prop') && !text.includes('Variant')) return;
+    if (!text.includes('Prop') && !text.includes('Variant')) {
+      // A theme file often mentions neither word, yet holds exactly the
+      // aliases other files' props point into (`type ThemeSize = 'xs' | …`).
+      // Skipping it whole silently emptied the registry, and cross-file
+      // option resolution reported "no values declared" — the pre-filter is a
+      // props optimisation, not a statement that the file declares nothing.
+      if (registry && (text.includes('type ') || text.includes('const '))) {
+        harvestRegistry(ts.createSourceFile(filePath, text, ts.ScriptTarget.Latest, true), registry);
+      }
+      return;
+    }
   } else if (!text.includes('.propTypes')) {
     return;
   }
@@ -368,6 +427,7 @@ function collectFromFile(
    * knowable values at all.
    */
   const constTuples = new Map<string, string[]>();
+  if (registry) harvestRegistry(source, registry);
   ts.forEachChild(source, node => {
     if (ts.isTypeAliasDeclaration(node)) namedTypes.set(node.name.text, node.type);
     else if (ts.isInterfaceDeclaration(node)) namedTypes.set(node.name.text, node);
@@ -683,9 +743,187 @@ function mergeProps(a: PropFact[], b: PropFact[]): PropFact[] {
       defaultValue: prior.defaultValue ?? p.defaultValue,
       deprecated: prior.deprecated ?? p.deprecated,
       options: prior.options ?? p.options,
+      // Openness belongs to whichever reading supplied the options.
+      optionsOpen: prior.options ? prior.optionsOpen : p.options ? p.optionsOpen : (prior.optionsOpen ?? p.optionsOpen),
     });
   }
   return [...byName.values()];
+}
+
+/**
+ * Resolve a prop's declared type TEXT to the string values it admits, following
+ * names into the package-wide registry.
+ *
+ * This is the cross-file completion of `literalOptions`, still a lookup and
+ * never type resolution — the same boundary the rest of this file keeps. It
+ * exists because a design system's variant/size/color values almost always
+ * live behind a named alias in a theme file, not inline where the prop is
+ * declared, and those are exactly the props a direct-manipulation panel is
+ * opened for.
+ *
+ * Openness is tracked honestly: any arm we cannot enumerate — `(string & {})`,
+ * a bare `number`, an `infer`red branch, an alias the package never declares —
+ * marks the set OPEN, so a control offers the enumerated values as suggestions
+ * rather than claiming the library rejects everything else.
+ */
+/**
+ * Structural depth, not hop count: every union, parenthesis and conditional
+ * spends one level, so Mantine's `radius` — `MantineRadius` → `_MantineRadius
+ * | number` → a parenthesised conditional → `MantineSize` → the literals — is
+ * already seven levels deep. A budget of 6 returned NOTHING for it while
+ * looking exactly like "no values declared". Cycles are guarded by name, so
+ * this bound only needs to beat real nesting, with room.
+ */
+const MAX_OPTION_TEXT_DEPTH = 16;
+
+function parseTypeText(text: string): { node: ts.TypeNode; source: ts.SourceFile } | null {
+  const source = ts.createSourceFile('t.ts', `type __T = ${text};`, ts.ScriptTarget.Latest, true);
+  const stmt = source.statements[0];
+  if (!stmt || !ts.isTypeAliasDeclaration(stmt)) return null;
+  return { node: stmt.type, source };
+}
+
+function resolveOptionsFromTypeText(
+  typeText: string,
+  registry: TypeTextRegistry,
+): { options: string[]; open: boolean } | null {
+  const parsed = parseTypeText(typeText);
+  if (!parsed) return null;
+
+  interface Acc { values: string[]; open: boolean; }
+
+  const walk = (
+    node: ts.Node,
+    source: ts.SourceFile,
+    mode: 'values' | 'keys',
+    depth: number,
+    seen: Set<string>,
+    acc: Acc,
+  ): void => {
+    if (depth > MAX_OPTION_TEXT_DEPTH) { acc.open = true; return; }
+
+    if (ts.isParenthesizedTypeNode(node)) return walk(node.type, source, mode, depth + 1, seen, acc);
+    if (ts.isUnionTypeNode(node)) {
+      for (const t of node.types) walk(t, source, mode, depth + 1, seen, acc);
+      return;
+    }
+    // A conditional genuinely admits either branch depending on facts we do
+    // not track (theme overrides, another prop); both are honest.
+    if (ts.isConditionalTypeNode(node)) {
+      walk(node.trueType, source, mode, depth + 1, seen, acc);
+      walk(node.falseType, source, mode, depth + 1, seen, acc);
+      return;
+    }
+
+    if (mode === 'keys') {
+      // keyof Record<K, V> — the keys ARE K's values.
+      if (ts.isTypeReferenceNode(node)) {
+        const name = node.typeName.getText(source);
+        if (name === 'Record' && node.typeArguments?.length) {
+          return walk(node.typeArguments[0], source, 'values', depth + 1, seen, acc);
+        }
+        if (name === 'Partial' && node.typeArguments?.length) {
+          return walk(node.typeArguments[0], source, 'keys', depth + 1, seen, acc);
+        }
+        if (!seen.has(name)) {
+          const aliasText = registry.aliases.get(name);
+          if (aliasText) {
+            const sub = parseTypeText(aliasText);
+            // Path-local guard: a cycle must stop, but a sibling union arm
+            // resolving the same alias again must not be blocked by it.
+            if (sub) return walk(sub.node, sub.source, 'keys', depth + 1, new Set(seen).add(name), acc);
+          }
+        }
+        acc.open = true;
+        return;
+      }
+      if (ts.isTypeLiteralNode(node)) {
+        for (const m of node.members) {
+          if (ts.isPropertySignature(m) && m.name) acc.values.push(m.name.getText(source).replace(/^['"]|['"]$/g, ''));
+        }
+        return;
+      }
+      acc.open = true;
+      return;
+    }
+
+    // values mode
+    if (ts.isLiteralTypeNode(node)) {
+      if (ts.isStringLiteral(node.literal)) acc.values.push(node.literal.text);
+      // Numeric and other literals: not offerable as string options, but a
+      // finite literal is not an OPEN set either — contribute nothing.
+      return;
+    }
+    if (node.kind === ts.SyntaxKind.StringKeyword || node.kind === ts.SyntaxKind.NumberKeyword) {
+      acc.open = true;
+      return;
+    }
+    if (node.kind === ts.SyntaxKind.UndefinedKeyword || node.kind === ts.SyntaxKind.NullKeyword
+      || node.kind === ts.SyntaxKind.NeverKeyword) {
+      return;
+    }
+    // `(string & {})` — the widen-proof idiom. The intersection contributes no
+    // literal; it says arbitrary strings are legal.
+    if (ts.isIntersectionTypeNode(node)) {
+      if (node.types.some(t => t.kind === ts.SyntaxKind.StringKeyword || t.kind === ts.SyntaxKind.NumberKeyword)) {
+        acc.open = true;
+      }
+      return;
+    }
+    // `compact-${MantineSize}` — expandable when the single placeholder
+    // resolves to a finite set; otherwise it names an open family.
+    if (ts.isTemplateLiteralTypeNode(node)) {
+      if (node.templateSpans.length === 1) {
+        const span = node.templateSpans[0];
+        const sub: Acc = { values: [], open: false };
+        walk(span.type, source, 'values', depth + 1, seen, sub);
+        if (sub.values.length && !sub.open) {
+          for (const v of sub.values) acc.values.push(node.head.text + v + span.literal.text);
+          return;
+        }
+      }
+      acc.open = true;
+      return;
+    }
+    if (ts.isTypeOperatorNode(node) && node.operator === ts.SyntaxKind.KeyOfKeyword) {
+      return walk(node.type, source, 'keys', depth + 1, seen, acc);
+    }
+    if (ts.isTypeQueryNode(node)) {
+      const tuple = registry.tuples.get(node.exprName.getText(source));
+      if (tuple) acc.values.push(...tuple);
+      else acc.open = true;
+      return;
+    }
+    // `(typeof ButtonKinds)[number]`
+    if (ts.isIndexedAccessTypeNode(node)) {
+      return walk(node.objectType, source, 'values', depth + 1, seen, acc);
+    }
+    if (ts.isInferTypeNode(node)) { acc.open = true; return; }
+    if (ts.isTypeReferenceNode(node)) {
+      const name = node.typeName.getText(source);
+      if (seen.has(name)) return; // cycle along this path: contributes nothing new
+      const aliasText = registry.aliases.get(name);
+      if (aliasText) {
+        const sub = parseTypeText(aliasText);
+        // Path-local guard — see the keys-mode note above.
+        if (sub) return walk(sub.node, sub.source, 'values', depth + 1, new Set(seen).add(name), acc);
+      }
+      const tuple = registry.tuples.get(name);
+      if (tuple) { acc.values.push(...tuple); return; }
+      // Declared elsewhere or not at all — we cannot claim the set is closed.
+      acc.open = true;
+      return;
+    }
+    // Anything else (functions, object shapes, mapped types): unknowable here.
+    acc.open = true;
+  };
+
+  const acc: Acc = { values: [], open: false };
+  walk(parsed.node, parsed.source, 'values', 0, new Set(), acc);
+
+  const unique = [...new Set(acc.values)];
+  if (unique.length < 2 || unique.length > 24) return null;
+  return { options: unique, open: acc.open };
 }
 
 function packageRoot(projectRoot: string, importPath: string): string | null {
@@ -944,8 +1182,11 @@ function collectPropTypes(source: ts.SourceFile, out: Record<string, ComponentFa
  * existed, reported them as absent, and would have kept doing so until the
  * design system itself published a release. A stale cache that looks like a
  * measurement is how a knowledge layer silently stops improving.
+ *
+ * 4: cross-file option resolution (`options` filled from aliases declared in
+ *    other files, `optionsOpen` for sets the type leaves open).
  */
-const EXTRACTOR_SCHEMA = 3;
+const EXTRACTOR_SCHEMA = 4;
 
 function cachePath(projectRoot: string, importPath: string, version?: string): string {
   const safe = importPath.replace(/[^a-z0-9]+/gi, '-');
@@ -984,7 +1225,8 @@ async function readOnePackage(
   const inheritedOnly: string[] = [];
   const allTypes: Record<string, PropFact[]> = {};
   const links: PropsTypeLink[] = [];
-  for (const file of files) collectFromFile(file, components, inheritedOnly, allTypes, links);
+  const registry: TypeTextRegistry = { aliases: new Map(), tuples: new Map() };
+  for (const file of files) collectFromFile(file, components, inheritedOnly, allTypes, links, registry);
 
   /**
    * Fill components whose props type is not named after them.
@@ -1008,6 +1250,34 @@ async function readOnePackage(
       doc: existing?.doc,
     };
     linked++;
+  }
+
+  /**
+   * Phase 2: options whose values live in ANOTHER file.
+   *
+   * Mantine's Button declares `size?: MantineSize | \`compact-${MantineSize}\`
+   * | (string & {})` and `radius?: MantineRadius`; the literals sit in
+   * theme.types.d.ts. The per-file resolver correctly found nothing, so the
+   * editable-props panel classified these as `other` and dropped them — the
+   * very props a design-system picker exists to offer. The registry knows what
+   * every file in the package declared; following a name into it is still a
+   * lookup, not type resolution.
+   */
+  let crossFilled = 0;
+  for (const facts of Object.values(components)) {
+    for (const prop of facts.props) {
+      if (prop.options || !prop.type) continue;
+      if (!/[A-Z]/.test(prop.type)) continue; // no type name to follow
+      const resolved = resolveOptionsFromTypeText(prop.type, registry);
+      if (resolved) {
+        prop.options = resolved.options;
+        if (resolved.open) prop.optionsOpen = true;
+        crossFilled++;
+      }
+    }
+  }
+  if (crossFilled > 0) {
+    logger.log(`🧠 Resolved option values across files for ${crossFilled} prop(s) in ${importPath}`);
   }
 
   const entry = typesEntryFile(root);
