@@ -181,7 +181,7 @@ export function clearPendingGeneration(): void {
  * a story that crashed at runtime, was regenerated, and then repaired read as
  * one long "Saving" while the user watched a red error story. The step list
  * now narrates that timeline, and never claims success while a repair is
- * pending — "Verified in the browser" is only ever the final verdict.
+ * pending — "Verified in browser" is only ever the final verdict.
  */
 export const PHASE_LABEL: Record<string, string> = {
   config_loaded: 'Reading your project',
@@ -198,7 +198,7 @@ export const PHASE_LABEL: Record<string, string> = {
   runtime_heal_failed: 'The crash could not be fixed automatically',
   verifying: 'Rendering it in the browser',
   verify_repaired: 'Repaired and re-checked',
-  verified: 'Verified in the browser',
+  verified: 'Verified in browser',
   verify_inconclusive: 'Could not verify in a browser',
 };
 
