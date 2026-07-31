@@ -74,6 +74,91 @@ export function occurrencesInSource(code: string, component: string): number {
 }
 
 /**
+ * The names the file declares at top level — functions, variables, classes.
+ *
+ * This is the file's statement of which components are ITS OWN. It settles a
+ * question no fiber fact can: whether a chain entry is an element the story
+ * authored or a library internal. Measured live, a click on a Mantine
+ * Button's label yields an internal Box owned by `Button` — imported, not
+ * declared here — while the story's own elements are owned by `PricingPage`
+ * or `PromoBanner`, which this set contains.
+ */
+export function topLevelDeclarations(code: string): Set<string> {
+  const source = ts.createSourceFile('story.tsx', code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const names = new Set<string>();
+  for (const stmt of source.statements) {
+    if ((ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) && stmt.name) {
+      names.add(stmt.name.text);
+    } else if (ts.isVariableStatement(stmt)) {
+      for (const decl of stmt.declarationList.declarations) {
+        if (ts.isIdentifier(decl.name)) names.add(decl.name.text);
+      }
+    }
+  }
+  return names;
+}
+
+/**
+ * Whole-file occurrence indices of `<component>` that sit inside the
+ * declaration of the top-level component named `owner`.
+ *
+ * This is the file's answer to the browser's owner-scoped occurrence. The
+ * fiber's `_debugOwner` names the component whose render authored a clicked
+ * element — "VolunteerBanner", "PricingPage" — and DOM order only corresponds
+ * to source order INSIDE one component's render: measured live, a banner
+ * component DEFINED first but RENDERED last put its Button at whole-page DOM
+ * position 8 in a file containing 3. The owner's declaration span is stated
+ * by the file itself, so "the Nth <Button> inside VolunteerBanner" resolves
+ * without any whole-page assumption.
+ *
+ * Indices are into the same pre-order walk `editProp` and
+ * `occurrencesInSource` use, so a returned index can be passed straight to
+ * `editProp`. Empty when the file declares no top-level function, variable or
+ * class named `owner` — the caller must treat that as "cannot place", not as
+ * "first one".
+ */
+export function occurrencesWithinOwner(code: string, component: string, owner: string): number[] {
+  const source = ts.createSourceFile('story.tsx', code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+
+  let span: { start: number; end: number } | null = null;
+  for (const stmt of source.statements) {
+    if (ts.isFunctionDeclaration(stmt) && stmt.name?.text === owner) {
+      span = { start: stmt.getStart(source), end: stmt.getEnd() };
+      break;
+    }
+    if (ts.isClassDeclaration(stmt) && stmt.name?.text === owner) {
+      span = { start: stmt.getStart(source), end: stmt.getEnd() };
+      break;
+    }
+    if (ts.isVariableStatement(stmt)) {
+      for (const decl of stmt.declarationList.declarations) {
+        if (ts.isIdentifier(decl.name) && decl.name.text === owner) {
+          span = { start: decl.getStart(source), end: decl.getEnd() };
+          break;
+        }
+      }
+      if (span) break;
+    }
+  }
+  if (!span) return [];
+
+  const inside: number[] = [];
+  let index = 0;
+  const visit = (node: ts.Node) => {
+    if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+      if (node.tagName.getText(source) === component) {
+        const pos = node.getStart(source);
+        if (pos >= span!.start && pos < span!.end) inside.push(index);
+        index++;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return inside;
+}
+
+/**
  * Set, replace or remove one attribute on one JSX element.
  *
  * Uses the TypeScript printer on a transformed AST rather than string surgery.

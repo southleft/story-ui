@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { editProp, occurrencesInSource } from '../story-generator/editing/propEditor.js';
+import { editProp, occurrencesInSource, occurrencesWithinOwner, topLevelDeclarations } from '../story-generator/editing/propEditor.js';
 
 const story = `import { Button, Tile, Column } from '@carbon/react';
 
@@ -151,5 +151,201 @@ describe('candidate resolution', () => {
   it('resolves nothing when no candidate is real', () => {
     const candidates = ['hookified', 'ListBox'];
     expect(candidates.find(c => occurrencesInSource(file, c) > 0)).toBeUndefined();
+  });
+
+  /**
+   * The owners-aware rule (resolveComponentInSource with `owners`), mirrored:
+   * prefer the first candidate that appears in the file AND whose fiber-
+   * reported OWNER the file declares; fall back to plain first-appears.
+   *
+   * MEASURED (Mantine 8, live): clicking the LABEL inside a Button puts an
+   * internal Box at the head of the chain — owner `Button`, different DOM
+   * node, a shape no ordering rule can demote, because Button legitimately
+   * owns two chain entries there (exactly what a page composing content looks
+   * like). The file settles it: the internal's owner is IMPORTED, the
+   * authored Button's owner (PricingPage) is DECLARED.
+   */
+  describe('authored-owner preference (measured Mantine label-click chain)', () => {
+    const resolveWithOwners = (
+      source: string, ordered: string[], owners: Record<string, string | undefined>,
+    ) => {
+      const declared = topLevelDeclarations(source);
+      return ordered.find(n => {
+        const o = owners[n];
+        return o && declared.has(o) && occurrencesInSource(source, n) > 0;
+      }) ?? ordered.find(n => occurrencesInSource(source, n) > 0);
+    };
+
+    const pricing = `
+const PromoBanner = () => (<Box mb={48}><Button>Claim discount</Button></Box>);
+const PricingPage = () => (<div><PromoBanner /><Card><Button>Start free trial</Button></Card></div>);
+`;
+
+    it('declares what the file declares', () => {
+      const d = topLevelDeclarations(pricing);
+      expect(d.has('PromoBanner')).toBe(true);
+      expect(d.has('PricingPage')).toBe(true);
+      expect(d.has('Button')).toBe(false);
+      expect(d.has('UnstyledButton')).toBe(false);
+    });
+
+    it('resolves the label click to Button, past the internal Box the file also contains', () => {
+      // The measured span-click chain, verbatim: [Box, UnstyledButton,
+      // Button, …] with owners Box→Button, UnstyledButton→Button,
+      // Button→PricingPage. The story authors a <Box> too, so plain
+      // first-appears picked Box — the wrong element.
+      const ordered = ['Box', 'UnstyledButton', 'Button', 'Paper', 'Card', 'SimpleGrid', 'PricingPage'];
+      const owners = {
+        Box: 'Button', UnstyledButton: 'Button', Button: 'PricingPage',
+        Paper: 'Card', Card: 'PricingPage', SimpleGrid: 'PricingPage', PricingPage: 'hookified',
+      };
+      expect(resolveWithOwners(pricing, ordered, owners)).toBe('Button');
+    });
+
+    it('still resolves an authored Box when its owner is declared', () => {
+      const ordered = ['Box', 'PromoBanner', 'PricingPage'];
+      const owners = { Box: 'PromoBanner', PromoBanner: 'PricingPage', PricingPage: 'hookified' };
+      expect(resolveWithOwners(pricing, ordered, owners)).toBe('Box');
+    });
+
+    it('falls back to first-appears when no owner is declared in the file', () => {
+      // A story-render arrow owns its elements under an anonymous name; the
+      // old contract must hold exactly.
+      const ordered = ['Box', 'Button'];
+      const owners = { Box: 'unboundStoryFn', Button: 'unboundStoryFn' };
+      expect(resolveWithOwners(pricing, ordered, owners)).toBe('Box');
+    });
+  });
+});
+
+describe('occurrencesWithinOwner', () => {
+  /**
+   * Shaped like the MEASURED college-town failure (campus-events story): the
+   * banner component is DEFINED first but RENDERED last, so whole-page DOM
+   * order and whole-file source order disagree — the live census reported the
+   * banner's Button at DOM position 8 in a file holding 3. The fiber's
+   * `_debugOwner` names the component that authored the click
+   * (VolunteerBanner / CampusEventsPage), and the FILE states where each
+   * declaration begins and ends, so "the Nth <Button> inside <owner>" is
+   * derivable without any whole-page assumption.
+   */
+  const campus = `
+const VolunteerBanner = () => (
+  <Alert>
+    <Button variant="secondary">Sign Up to Volunteer</Button>
+  </Alert>
+);
+
+function CampusEventsPage() {
+  return (
+    <div>
+      {EVENTS.map((event) => (
+        <Card key={event.id}>
+          <CardFooter>
+            <Button variant="secondary">Register</Button>
+          </CardFooter>
+        </Card>
+      ))}
+      <VolunteerBanner />
+    </div>
+  );
+}
+
+export const SportsFilterApplied = {
+  render: () => <div><Button>Register</Button></div>,
+};
+`;
+
+  it('narrows to the Button each owner authored, by whole-file index', () => {
+    expect(occurrencesInSource(campus, 'Button')).toBe(3);
+    expect(occurrencesWithinOwner(campus, 'Button', 'VolunteerBanner')).toEqual([0]);
+    expect(occurrencesWithinOwner(campus, 'Button', 'CampusEventsPage')).toEqual([1]);
+    // The story-object's Button belongs to the exported const declaration.
+    expect(occurrencesWithinOwner(campus, 'Button', 'SportsFilterApplied')).toEqual([2]);
+  });
+
+  it('returns [] for an owner the file does not declare — absence, not "first one"', () => {
+    // The route must treat this as "cannot place" and 409 with the count.
+    // Interpreting a within-owner position as a whole-file position is how a
+    // click on a Register button edited the Alert's button.
+    expect(occurrencesWithinOwner(campus, 'Button', 'render')).toEqual([]);
+    expect(occurrencesWithinOwner(campus, 'Button', 'SomethingElse')).toEqual([]);
+  });
+
+  it('finds every occurrence inside one owner, in file order', () => {
+    const promo = `
+const PromoBanner = () => (
+  <Box mb={48}>
+    <Box bg="blue.8"><Text>save 20%</Text></Box>
+    <Box bg="yellow.5"><Button>Claim discount</Button></Box>
+  </Box>
+);
+const PricingPage = () => (<div><PromoBanner /><Button>Start free trial</Button></div>);
+`;
+    // Matches the live Mantine measurement: the yellow Box is the third
+    // authored Box inside PromoBanner (index 2), and the browser's
+    // owner-scoped census reported occurrence 2 for it.
+    expect(occurrencesWithinOwner(promo, 'Box', 'PromoBanner')).toEqual([0, 1, 2]);
+    expect(occurrencesWithinOwner(promo, 'Button', 'PromoBanner')).toEqual([0]);
+    expect(occurrencesWithinOwner(promo, 'Button', 'PricingPage')).toEqual([1]);
+  });
+
+  it('returned indices drive editProp directly', () => {
+    const scoped = occurrencesWithinOwner(campus, 'Button', 'CampusEventsPage');
+    const r = editProp(campus, { component: 'Button', occurrence: scoped[0], prop: 'variant', value: 'destructive' });
+    expect(r.changed).toBe(true);
+    // The list's Button changed; the banner's did not.
+    expect(r.code).toContain('<Button variant="destructive">Register</Button>');
+    expect(r.code).toContain('<Button variant="secondary">Sign Up to Volunteer</Button>');
+  });
+});
+
+describe('ambiguity is refused, never defaulted', () => {
+  /**
+   * Mirrors the route's resolution rule (editPropHandler): with several
+   * matches in the file and no occurrence, the answer is a 409 carrying the
+   * count — `Number(undefined) || 0` silently editing element[0] is the
+   * measured wrong-element edit this exists to prevent.
+   */
+  const resolveTarget = (
+    code: string, component: string,
+    req: { occurrence?: number; owner?: string },
+  ): number | { refuse: string } => {
+    const total = occurrencesInSource(code, component);
+    if (total <= 1) return 0;
+    if (req.owner) {
+      const scoped = occurrencesWithinOwner(code, component, req.owner);
+      if (!scoped.length) return { refuse: `no owner ${req.owner} to narrow by (${total} in file)` };
+      if (req.occurrence === undefined) {
+        return scoped.length === 1 ? scoped[0] : { refuse: `${scoped.length} inside ${req.owner}` };
+      }
+      return req.occurrence >= 0 && req.occurrence < scoped.length
+        ? scoped[req.occurrence]
+        : { refuse: `no position ${req.occurrence} inside ${req.owner}` };
+    }
+    if (req.occurrence !== undefined) return req.occurrence;
+    return { refuse: `${total} in file, none specified` };
+  };
+
+  const file = `<A/><B/><A/>`;
+
+  it('a single match needs no occurrence', () => {
+    expect(resolveTarget(file, 'B', {})).toBe(0);
+  });
+
+  it('several matches with no occurrence and no owner is a refusal with the count', () => {
+    expect(resolveTarget(file, 'A', {})).toEqual({ refuse: '2 in file, none specified' });
+  });
+
+  it('an owner that narrows to one match resolves without an occurrence', () => {
+    const code = `const Banner = () => <A/>;\nconst Page = () => (<div><Banner/><A/></div>);`;
+    expect(resolveTarget(code, 'A', { owner: 'Page' })).toBe(1);
+    expect(resolveTarget(code, 'A', { owner: 'Banner' })).toBe(0);
+  });
+
+  it('an unknown owner refuses rather than falling back to whole-file counting', () => {
+    const code = `const Banner = () => <A/>;\nconst Page = () => (<div><Banner/><A/></div>);`;
+    expect(resolveTarget(code, 'A', { owner: 'render', occurrence: 0 }))
+      .toEqual({ refuse: 'no owner render to narrow by (2 in file)' });
   });
 });

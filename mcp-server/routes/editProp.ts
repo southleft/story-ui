@@ -21,7 +21,7 @@
 import type { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
-import { editProp, occurrencesInSource } from '../../story-generator/editing/propEditor.js';
+import { editProp, occurrencesInSource, occurrencesWithinOwner, topLevelDeclarations } from '../../story-generator/editing/propEditor.js';
 import { extractProps, extractPropsForPackages, type PropFact, type ComponentFacts } from '../../story-generator/knowledge/propExtractor.js';
 import { mergePropFactsFromSource, readSourceFacts } from '../../story-generator/knowledge/sourceFacts.js';
 import { EnhancedComponentDiscovery } from '../../story-generator/enhancedComponentDiscovery.js';
@@ -122,13 +122,36 @@ function panelWorthy(p: EditableProp): boolean {
  * are not JSX elements at all — clicking a Mantine Button yields
  * `UnstyledButton`, the component that authored the DOM node, while the story
  * says `<Button>`; Carbon wraps components in a `hookified` HOC — and no list
- * of wrapper names could cover every design system. The FILE knows, so the
- * first candidate that appears in it wins. Innermost-first order means the
- * most specific real element is chosen. Shared by GET /mcp/editable-props and
- * POST /mcp/edit-prop so the props offered are the props of the element the
- * edit will actually target.
+ * of wrapper names could cover every design system. The FILE knows. Shared by
+ * GET /mcp/editable-props and POST /mcp/edit-prop so the props offered are
+ * the props of the element the edit will actually target.
+ *
+ * When the browser also reports each candidate's OWNER — the component whose
+ * render authored it, from the fiber — the file settles a harder question
+ * first: which candidates are elements the STORY wrote at all. An authored
+ * element's owner is a component the file DECLARES (`PricingPage`,
+ * `PromoBanner`); a library internal's owner is imported (`Button`,
+ * `UnstyledButton`). Measured live: clicking the label inside a Mantine
+ * Button puts an internal Box (owner `Button`, a different DOM node) at the
+ * head of the chain, where no ordering rule can demote it — but its owner is
+ * not declared in the file, and `<Button>`'s owner is. Preferring the first
+ * candidate that appears in the file AND has a declared owner picks the
+ * element the user meant; the plain first-appears rule remains the fallback,
+ * so requests without owner facts behave exactly as before.
  */
-export function resolveComponentInSource(source: string, ordered: string[]): string | undefined {
+export function resolveComponentInSource(
+  source: string,
+  ordered: string[],
+  owners?: Record<string, string | undefined>,
+): string | undefined {
+  if (owners) {
+    const declared = topLevelDeclarations(source);
+    const authored = ordered.find(name => {
+      const owner = name ? owners[name] : undefined;
+      return name && owner && declared.has(owner) && occurrencesInSource(source, name) > 0;
+    });
+    if (authored) return authored;
+  }
   return ordered.find(name => name && occurrencesInSource(source, name) > 0);
 }
 
@@ -266,13 +289,23 @@ export async function editablePropsHandler(req: Request, res: Response): Promise
     let resolved = component;
     const candidatesRaw = String(req.query.candidates || '').trim();
     if (candidatesRaw) {
-      const ordered = [...new Set([
-        component,
-        ...candidatesRaw.split(',').map(s => s.trim()).filter(Boolean),
-      ])];
+      const names = candidatesRaw.split(',').map(s => s.trim());
+      const ordered = [...new Set([component, ...names.filter(Boolean)])];
+      /**
+       * `owners` is positional with `candidates`: the fiber-reported author
+       * of each candidate, empty when unknown. It lets resolution prefer the
+       * candidate the STORY authored — see resolveComponentInSource.
+       */
+      const ownersRaw = String(req.query.owners || '').trim();
+      let owners: Record<string, string | undefined> | undefined;
+      if (ownersRaw) {
+        const ownerList = ownersRaw.split(',').map(s => s.trim());
+        owners = {};
+        names.forEach((n, i) => { if (n && ownerList[i]) owners![n] = ownerList[i]; });
+      }
       const filePath = storyFilePath(config, String(req.query.fileName || '').trim());
       if (filePath && fs.existsSync(filePath)) {
-        const hit = resolveComponentInSource(fs.readFileSync(filePath, 'utf-8'), ordered);
+        const hit = resolveComponentInSource(fs.readFileSync(filePath, 'utf-8'), ordered, owners);
         if (hit) resolved = hit;
       }
     }
@@ -347,7 +380,7 @@ export async function editablePropsHandler(req: Request, res: Response): Promise
 
 export async function editPropHandler(req: Request, res: Response): Promise<void> {
   try {
-    const { fileName, component, candidates, occurrence, prop, value } = req.body ?? {};
+    const { fileName, component, candidates, owners, occurrence, owner, prop, value } = req.body ?? {};
     if (!fileName || (!component && !Array.isArray(candidates)) || !prop) {
       res.status(400).json({ error: 'fileName, component and prop are required' });
       return;
@@ -374,7 +407,16 @@ export async function editPropHandler(req: Request, res: Response): Promise<void
       ...(component ? [String(component)] : []),
       ...(Array.isArray(candidates) ? candidates.map(String) : []),
     ];
-    const resolved = resolveComponentInSource(before, ordered);
+    /** name → fiber-reported author, for authored-element preference. */
+    const ownersMap: Record<string, string | undefined> | undefined =
+      owners && typeof owners === 'object' && !Array.isArray(owners)
+        ? Object.fromEntries(
+            Object.entries(owners as Record<string, unknown>)
+              .filter(([, v]) => typeof v === 'string' && (v as string).trim())
+              .map(([k, v]) => [k, String(v)]),
+          )
+        : undefined;
+    const resolved = resolveComponentInSource(before, ordered, ownersMap);
     if (!resolved) {
       res.status(409).json({
         error: `None of these appear in the story: ${ordered.join(', ') || '(nothing offered)'}`,
@@ -382,9 +424,81 @@ export async function editPropHandler(req: Request, res: Response): Promise<void
       return;
     }
 
+    /**
+     * Which of the file's `<resolved>` elements the edit lands on.
+     *
+     * The request's `occurrence` is scoped: when `owner` accompanies it, it
+     * counts positions INSIDE that component's declaration — the only region
+     * where the browser's DOM order and the file's JSX order are known to
+     * correspond (measured: a banner defined first but rendered last put its
+     * Button at whole-page position 8 in a file holding 3). Without `owner`
+     * it is a whole-file position, the pre-owner contract.
+     *
+     * THE RULE THAT MUST HOLD: a missing occurrence never silently edits
+     * element[0] when the file holds more than one. That default is exactly
+     * how clicking a Register button inside a list edited the Alert's button
+     * instead — the browser withheld the position it could not compute, and
+     * the server treated absence as zero. Absent and zero must not look
+     * alike: ambiguity is answered with a 409 carrying the count.
+     */
+    const total = occurrencesInSource(before, resolved);
+    const hasOccurrence = occurrence !== undefined && occurrence !== null && occurrence !== '';
+    const requested = hasOccurrence ? Number(occurrence) : undefined;
+    if (requested !== undefined && !Number.isInteger(requested)) {
+      res.status(400).json({ error: `occurrence must be an integer, got ${JSON.stringify(occurrence)}` });
+      return;
+    }
+    // The RESOLVED candidate's author wins: the panel's standalone `owner`
+    // field describes its top candidate, which is not always the element the
+    // file resolution just chose (a label click resolves past an internal).
+    const ownerName = ownersMap?.[resolved]
+      ?? (typeof owner === 'string' && owner.trim() ? owner.trim() : undefined);
+
+    let targetOccurrence: number;
+    if (total <= 1) {
+      targetOccurrence = 0;
+    } else if (ownerName) {
+      const scoped = occurrencesWithinOwner(before, resolved, ownerName);
+      if (!scoped.length) {
+        // The client counted within this owner; reading its number as a
+        // whole-file position would be a guess at a different question.
+        res.status(409).json({
+          error: `Cannot place this <${resolved}>: the file has ${total} of them and no top-level component named ${ownerName} to narrow by.`,
+          occurrencesInSource: total,
+        });
+        return;
+      }
+      if (requested === undefined) {
+        if (scoped.length !== 1) {
+          res.status(409).json({
+            error: `<${resolved}> appears ${scoped.length} times inside ${ownerName} (${total} in the file) and no occurrence was given — refusing to guess.`,
+            occurrencesInSource: total,
+          });
+          return;
+        }
+        targetOccurrence = scoped[0];
+      } else if (requested >= 0 && requested < scoped.length) {
+        targetOccurrence = scoped[requested];
+      } else {
+        res.status(409).json({
+          error: `No <${resolved}> at position ${requested} inside ${ownerName} — it contains ${scoped.length}.`,
+          occurrencesInSource: total,
+        });
+        return;
+      }
+    } else if (requested !== undefined) {
+      targetOccurrence = requested;
+    } else {
+      res.status(409).json({
+        error: `<${resolved}> appears ${total} times in ${fileName} and no occurrence was given — refusing to guess which one.`,
+        occurrencesInSource: total,
+      });
+      return;
+    }
+
     const result = editProp(before, {
       component: resolved,
-      occurrence: Number(occurrence) || 0,
+      occurrence: targetOccurrence,
       prop: String(prop),
       value: value === null ? null : value,
     });
@@ -395,7 +509,10 @@ export async function editPropHandler(req: Request, res: Response): Promise<void
     }
 
     fs.writeFileSync(filePath, result.code, 'utf-8');
-    logger.log(`✏️ ${resolved}[${occurrence ?? 0}].${prop} = ${JSON.stringify(value)} in ${fileName}`);
+    logger.log(
+      `✏️ ${resolved}[${targetOccurrence}].${prop} = ${JSON.stringify(value)} in ${fileName}` +
+      (ownerName ? ` (position ${requested ?? 0} inside ${ownerName})` : ''),
+    );
 
     /**
      * Record the edit as a version, exactly as a generation would.
@@ -407,8 +524,8 @@ export async function editPropHandler(req: Request, res: Response): Promise<void
      * rebuilds agrees with the canvas.
      */
     const editDescription = value === null
-      ? `Reset ${resolved}[${Number(occurrence) || 0}].${prop} to its default`
-      : `Set ${resolved}[${Number(occurrence) || 0}].${prop} = ${JSON.stringify(value)}`;
+      ? `Reset ${resolved}[${targetOccurrence}].${prop} to its default`
+      : `Set ${resolved}[${targetOccurrence}].${prop} = ${JSON.stringify(value)}`;
     try {
       const historyManager = new StoryHistoryManager(process.cwd());
       const currentVersion = historyManager.getCurrentVersion(String(fileName));
