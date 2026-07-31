@@ -165,14 +165,25 @@ export function clearPendingGeneration(): void {
 }
 
 /**
- * Human labels for every phase the server emits.
+ * Human labels for every FIXED-text phase the server emits.
  *
  * Must cover all of them: an unmapped phase falls through to the raw server
  * message, and those carry trailing ellipses ("Processing generated code...")
  * which read as a different voice sitting next to these. Verified against
  * generationCore's onProgress calls.
+ *
+ * Deliberately absent: `verify_repairing`, `verify_repair_failed` and
+ * `verify_issues`. Their server messages carry facts a static label cannot —
+ * the issue count, and WHY the original was kept — so those render the server
+ * message verbatim (written ellipsis-free, in this same voice).
+ *
+ * The post-write entries exist because the pipeline's late phases were silent:
+ * a story that crashed at runtime, was regenerated, and then repaired read as
+ * one long "Saving" while the user watched a red error story. The step list
+ * now narrates that timeline, and never claims success while a repair is
+ * pending — "Verified in the browser" is only ever the final verdict.
  */
-const PHASE_LABEL: Record<string, string> = {
+export const PHASE_LABEL: Record<string, string> = {
   config_loaded: 'Reading your project',
   components_discovered: 'Reading your design system',
   prompt_built: 'Planning the composition',
@@ -181,7 +192,14 @@ const PHASE_LABEL: Record<string, string> = {
   validating: 'Checking the code',
   post_processing: 'Tidying imports and titles',
   saving: 'Saving',
+  runtime_check: 'Checking the story renders',
+  runtime_healing: 'The story crashed when it rendered — fixing it',
+  runtime_healed: 'Fixed — the story renders now',
+  runtime_heal_failed: 'The crash could not be fixed automatically',
   verifying: 'Rendering it in the browser',
+  verify_repaired: 'Repaired and re-checked',
+  verified: 'Verified in the browser',
+  verify_inconclusive: 'Could not verify in a browser',
 };
 
 export function useGeneration(apiBase: string) {

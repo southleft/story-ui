@@ -11,7 +11,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Badge, Button, Callout, Flex, SegmentedControl, Text } from '@radix-ui/themes';
+import { Badge, Button, Callout, DropdownMenu, Flex, Text } from '@radix-ui/themes';
 import { attachElementPicker, type ElementTarget } from './elementTargeting';
 
 export type Viewport = 'fit' | 'desktop' | 'tablet' | 'mobile';
@@ -187,15 +187,35 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
   return (
     <div className="suiw-canvas">
       <Flex align="center" gap="3" px="3" py="2" style={{ borderBottom: '1px solid var(--gray-a5)' }}>
-        <SegmentedControl.Root size="1" value={viewport} onValueChange={v => setViewport(v as Viewport)}>
-          {(Object.keys(VIEWPORTS) as Viewport[]).map(v => (
-            <SegmentedControl.Item key={v} value={v}>
-              {VIEWPORTS[v].label}
-            </SegmentedControl.Item>
-          ))}
-        </SegmentedControl.Root>
+        {/* One quiet trigger instead of a four-way segmented row: the device
+            widths are a deliberate act, not a default, so they can live a click
+            away — and the toolbar stops fighting the right-side actions for
+            room in a narrow pane. Styling matches the workspace's other
+            compact pickers (soft gray, size 1). */}
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger>
+            <Button size="1" variant="soft" color="gray" aria-label="Viewport" style={{ flexShrink: 0 }}>
+              {VIEWPORTS[viewport].label}
+              <DropdownMenu.TriggerIcon />
+            </Button>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Content size="1">
+            <DropdownMenu.RadioGroup value={viewport} onValueChange={v => setViewport(v as Viewport)}>
+              {(Object.keys(VIEWPORTS) as Viewport[]).map(v => (
+                <DropdownMenu.RadioItem key={v} value={v}>
+                  <Flex align="center" justify="between" gap="4" width="100%">
+                    <Text size="1">{VIEWPORTS[v].label}</Text>
+                    <Text size="1" color="gray">
+                      {VIEWPORTS[v].w ? `${VIEWPORTS[v].w}` : 'auto'}
+                    </Text>
+                  </Flex>
+                </DropdownMenu.RadioItem>
+              ))}
+            </DropdownMenu.RadioGroup>
+          </DropdownMenu.Content>
+        </DropdownMenu.Root>
 
-        <Button size="1" variant="ghost" color="gray" onClick={cycleZoom} title="Zoom">
+        <Button size="1" variant="ghost" color="gray" onClick={cycleZoom} title="Zoom" style={{ flexShrink: 0 }}>
           {Math.round(scale * 100)}%
         </Button>
 
@@ -245,7 +265,12 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
         </Button>
       </Flex>
 
-      <div className={`suiw-stage${viewport === 'fit' ? ' suiw-stage--fit' : ''}`} ref={stageRef}>
+      {/* `--fit` only when a frame is actually mounted: it swaps the stage's
+          `place-items: center` for `stretch`, which is right for a full-bleed
+          frame and wrong for every placeholder state — with the default
+          viewport being `fit`, the Building/empty states were stretched and
+          their content pinned to the top instead of dead-centre. */}
+      <div className={`suiw-stage${viewport === 'fit' && src ? ' suiw-stage--fit' : ''}`} ref={stageRef}>
         {src ? (
           <div
             className={`suiw-frame${busy ? ' suiw-frame--stale' : ''}`}
@@ -277,7 +302,7 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
         ) : notIndexed ? (
           // The generation SUCCEEDED. Saying "nothing to preview" here read as
           // failure and sent the user hunting for a bug in the wrong place.
-          <Callout.Root color="amber" size="1" style={{ maxWidth: 520 }}>
+          <Callout.Root color="amber" size="1" style={{ maxWidth: 'min(520px, 100%)' }}>
             <Callout.Text>
               <Text weight="medium">Your story was created, but Storybook has not picked it up.</Text>
               <br />

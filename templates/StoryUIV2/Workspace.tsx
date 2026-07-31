@@ -305,7 +305,15 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       }
       try {
         const res = await fetch(`${apiBase}/mcp/canvas-config`);
-        if (res.ok && !cancelled) setDesignSystem((await res.json()).importPath || '');
+        if (res.ok && !cancelled) {
+          const data = await res.json();
+          // The design system's own name ("Mantine") when the config declares
+          // one, the import path ("@mantine/core") when it does not — an import
+          // specifier is a fact, not a name, and the home subtitle reads it to
+          // people. Older servers don't send designSystemName; the fallback
+          // keeps them working.
+          setDesignSystem(data.designSystemName || data.importPath || '');
+        }
       } catch { /* optional */ }
       try {
         const res = await fetch(`${apiBase}/story-ui/considerations`);
@@ -390,7 +398,25 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     setTurns([{ id: uid(), role: 'user', text: pending.prompt }]);
     recoveringSince.current = pending.startedAt;
     setRecovering(true);
-    if (pending.fileName) setActiveFile({ fileName: pending.fileName, title: pending.title || 'Story' });
+    if (pending.fileName) {
+      setActiveFile({ fileName: pending.fileName, title: pending.title || 'Story' });
+      // The story being updated is already on disk and indexed, so show it in
+      // the canvas now — "Nothing to preview yet" beside "Reconnecting…" read
+      // as a broken tool when the story was sitting one lookup away. Resolved
+      // by title because the stash carries no story id; when nothing resolves
+      // (or for a brand-new story with no fileName) the empty state stays —
+      // never fabricate a preview. `prev ??` keeps a later, authoritative id
+      // from the completed poll from being clobbered by this slower lookup.
+      const title = pending.title;
+      if (title) {
+        void (async () => {
+          const known = await waitForStory('', title, 8000);
+          if (!cancelled && known) {
+            setActiveStory(prev => prev ?? { id: known, title });
+          }
+        })();
+      }
+    }
 
     (async () => {
       const entry: ManifestEntry | null = await pollForCompletedEntry(apiBase, pending, () => cancelled);

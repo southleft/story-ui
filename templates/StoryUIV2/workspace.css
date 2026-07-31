@@ -100,6 +100,12 @@
  * read as an artifact sitting on a surface. At full width there is no surface
  * left to show, and every pixel spent on it is preview the reviewer cannot
  * see — which was the complaint.
+ *
+ * Applied ONLY while a frame is mounted (see PreviewCanvas). `stretch` is
+ * right for a full-bleed frame and wrong for every placeholder state: with
+ * `fit` as the default viewport, the Building/empty states were stretched
+ * across the stage and their content pinned to the top instead of centred by
+ * the base rule above.
  */
 .suiw-stage--fit {
   padding: 0;
