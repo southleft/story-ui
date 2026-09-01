@@ -29,10 +29,12 @@
     "templates/StoryUIV2",
     ".env.sample",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "templates/story-ui-considerations.md",
+    "templates/story-ui-docs-README.md"
   ],
   "scripts": {
-    "build": "tsc && npm run copy-templates",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc && npm run copy-templates",
     "copy-templates": "node -e \"const fs=require('fs');const path=require('path');const copyDir=(src,dst)=>{if(!fs.existsSync(src))return;fs.mkdirSync(dst,{recursive:true});for(const e of fs.readdirSync(src,{withFileTypes:true})){const s=path.join(src,e.name),t=path.join(dst,e.name);if(e.isDirectory())copyDir(s,t);else if(/\\\\.(css|mdx|tsx|ts)$/.test(e.name))fs.copyFileSync(s,t);}};copyDir('templates/StoryUI','dist/templates/StoryUI');copyDir('templates/StoryUIV2','dist/templates/StoryUIV2');console.log('Template files copied to dist/')\"",
     "start": "npm run build && node dist/mcp-server/index.js",
     "mcp": "npm run build && node dist/mcp-server/mcp-stdio-server.js",

@@ -84,19 +84,27 @@ Use "blocker" ONLY when the result fails the request or is visibly broken. Every
  * must never block a generation that otherwise verified. This is additional
  * judgement, not a gate.
  */
+export interface VisualCritiqueResult {
+  findings: VisualFinding[];
+  /** False when the model call itself failed. "No findings" and "never looked" are different answers. */
+  ran: boolean;
+  reason?: string;
+}
+
 export async function runVisualCritique(
   input: VisualCritiqueInput,
   model: CritiqueModel,
-): Promise<VisualFinding[]> {
+): Promise<VisualCritiqueResult> {
   try {
     const raw = await model(
       CRITIQUE_PROMPT(input.request, input.componentsUsed ?? []),
       input.screenshot,
     );
-    return parseCritique(raw);
+    return { findings: parseCritique(raw), ran: true };
   } catch (error) {
-    logger.warn(`[visual-critique] skipped: ${error instanceof Error ? error.message : String(error)}`);
-    return [];
+    const reason = error instanceof Error ? error.message : String(error);
+    logger.warn(`[visual-critique] did not run: ${reason}`);
+    return { findings: [], ran: false, reason };
   }
 }
 

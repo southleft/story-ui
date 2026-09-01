@@ -12,6 +12,7 @@ const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 import express from 'express';
 import cors from 'cors';
+import { resolveAccessPolicy, accessControl } from './auth.js';
 import { getComponents, getProps } from './routes/components.js';
 import { editablePropsHandler, editPropHandler } from './routes/editProp.js';
 import { makeHandoff, makeHandoffStatus } from './routes/handoff.js';
@@ -143,11 +144,25 @@ const corsOptions = {
   credentials: true,
 };
 app.use(cors(corsOptions));
+
+// Who may talk to this server at all. Resolved before any route is mounted and
+// refuses to start a public deployment with no token — see auth.ts.
+let accessPolicy: ReturnType<typeof resolveAccessPolicy>;
+try {
+  accessPolicy = resolveAccessPolicy();
+} catch (err) {
+  console.error(`\n❌ ${err instanceof Error ? err.message : String(err)}\n`);
+  process.exit(1);
+}
+app.get('/health', (_req, res) => { res.json({ ok: true }); });
+app.use(accessControl(accessPolicy));
 // Vision requests carry base64 image payloads. The panel downscales before
 // upload, but keep headroom above the per-image ceiling (4 images x 20MB raw,
 // ~33% base64 inflation) so an oversized attachment produces a clear error
 // from the image validator rather than an opaque 413 from body-parser.
-app.use(express.json({ limit: process.env.STORY_UI_MAX_BODY || '120mb' }));
+// The panel downscales images to 1568px JPEG before upload (well under 1MB
+// each, four at most), so 25MB is generous headroom, not a memory hazard.
+app.use(express.json({ limit: process.env.STORY_UI_MAX_BODY || '25mb' }));
 
 // Turn body-parser's 413 into a JSON error the panel can actually display.
 // Without this the panel sees a non-OK response, assumes the stream failed,
@@ -1088,8 +1103,15 @@ if (storybookProxyEnabled) {
 }
 
 // Start server
-app.listen(PORT, () => {
-  console.error(`MCP server running on port ${PORT}`);
+app.listen(PORT, accessPolicy.host, () => {
+  console.error(`MCP server running on ${accessPolicy.host}:${PORT}`);
+  if (accessPolicy.token) {
+    console.error('🔐 Token required: send "Authorization: Bearer <STORY_UI_TOKEN>" or open once with ?token=');
+  } else if (accessPolicy.unauthenticatedPublic) {
+    console.error('⚠️  Reachable from other machines with NO authentication (STORY_UI_ALLOW_UNAUTHENTICATED=true)');
+  } else {
+    console.error('🔒 Loopback only. Set STORY_UI_TOKEN to expose it to other machines.');
+  }
   console.error(`Stories will be generated to: ${config.generatedStoriesPath}`);
   // Ensure voice-canvas scratchpad story file exists before client polling starts.
   // Only for React projects — voice-canvas.stories.tsx imports react-live which

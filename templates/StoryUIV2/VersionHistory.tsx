@@ -12,6 +12,7 @@
  * or put one back. This is that missing surface.
  */
 
+import { apiFetch } from './api';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Badge, Button, Callout, Flex, Popover, ScrollArea, Text } from '@radix-ui/themes';
 
@@ -61,7 +62,7 @@ export const VersionHistory: React.FC<VersionHistoryProps> = ({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${apiBase}/story-ui/versions/${encodeURIComponent(fileName)}`);
+      const res = await apiFetch(`${apiBase}/story-ui/versions/${encodeURIComponent(fileName)}`);
       if (!res.ok) throw new Error(`Could not load history (${res.status})`);
       setVersions((await res.json())?.versions ?? []);
     } catch (e: any) {
@@ -81,7 +82,7 @@ export const VersionHistory: React.FC<VersionHistoryProps> = ({
     setBusyId(version.id);
     setError(null);
     try {
-      const res = await fetch(`${apiBase}/story-ui/versions/${encodeURIComponent(fileName)}/restore`, {
+      const res = await apiFetch(`${apiBase}/story-ui/versions/${encodeURIComponent(fileName)}/restore`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ versionId: version.id }),

@@ -440,7 +440,10 @@ export async function validateStoryRuntime(
     };
   }
 
-  const storybookUrl = getStorybookUrl();
+  // The panel tells the server which Storybook it lives in. Env is the
+  // fallback, not the source: a fresh install has no STORYBOOK_PORT and would
+  // otherwise check 6006 for a story living on 6101.
+  const storybookUrl = customConfig?.storybookUrl || getStorybookUrl();
   if (!storybookUrl) {
     logger.warn('Could not determine Storybook URL for runtime validation');
     return {

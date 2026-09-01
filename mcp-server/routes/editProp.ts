@@ -519,6 +519,13 @@ export async function editPropHandler(req: Request, res: Response): Promise<void
       return;
     }
 
+    if (!(value === null || ['string', 'number', 'boolean'].includes(typeof value))) {
+      // An object or array would render as null, which is the REMOVE branch —
+      // a malformed edit deleting the attribute and reporting success.
+      res.status(400).json({ error: `A prop value must be a string, number, boolean, or null to reset; got ${Array.isArray(value) ? 'array' : typeof value}` });
+      return;
+    }
+
     const result = editProp(before, {
       component: resolved,
       occurrence: targetOccurrence,

@@ -17,8 +17,20 @@ const __dirname = path.dirname(__filename);
  */
 function getStoryUIVersion(): string {
   try {
-    const pkgRoot = path.resolve(__dirname, '..');
-    const packageJsonPath = path.join(pkgRoot, 'package.json');
+    // Walk up from wherever this file was compiled to (cli/ in source,
+    // dist/cli/ in a build) until the package's own manifest is found. The
+    // old `__dirname/..` resolved to dist/package.json, which does not exist
+    // in a clean build and was stale when it did.
+    let dir = __dirname;
+    for (let i = 0; i < 4; i++) {
+      const candidate = path.join(dir, 'package.json');
+      if (fs.existsSync(candidate)) {
+        const pkg = JSON.parse(fs.readFileSync(candidate, 'utf-8'));
+        if (pkg.name === '@tpitre/story-ui') return pkg.version || 'unknown';
+      }
+      dir = path.dirname(dir);
+    }
+    const packageJsonPath = path.join(path.resolve(__dirname, '..', '..'), 'package.json');
     if (fs.existsSync(packageJsonPath)) {
       const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
       return packageJson.version || 'unknown';
@@ -52,7 +64,17 @@ async function findAvailablePort(startPort: number): Promise<number> {
 }
 
 /**
- * Clean up default Storybook template components that could conflict with design system discovery
+ * Storybook's scaffold files all carry its name: `storybook-button` class
+ * names in the components and CSS, `storybook.js.org` links in the stories and
+ * MDX. A file that does not mention Storybook is not its scaffold.
+ */
+export function isStorybookScaffold(content: string): boolean {
+  return /storybook/i.test(content);
+}
+
+/**
+ * Remove Storybook's own scaffold components, which otherwise show up in
+ * component discovery. Never removes a file it cannot prove is the scaffold.
  */
 export function cleanupDefaultStorybookComponents() {
   const possibleDirs = [
@@ -80,25 +102,34 @@ export function cleanupDefaultStorybookComponents() {
   ];
 
   let cleanedFiles = 0;
+  const kept: string[] = [];
 
   for (const storiesDir of possibleDirs) {
     if (!fs.existsSync(storiesDir)) continue;
 
     for (const fileName of defaultFiles) {
       const filePath = path.join(storiesDir, fileName);
-      if (fs.existsSync(filePath)) {
-        try {
-          fs.unlinkSync(filePath);
-          cleanedFiles++;
-        } catch (error) {
-          console.warn(`Could not remove ${fileName}: ${error}`);
-        }
+      if (!fs.existsSync(filePath)) continue;
+      // Only Storybook's own scaffold goes. A project's own Button.tsx that
+      // happens to share the name is the user's code and stays.
+      let content = '';
+      try { content = fs.readFileSync(filePath, 'utf-8'); } catch { kept.push(filePath); continue; }
+      if (!isStorybookScaffold(content)) { kept.push(filePath); continue; }
+      try {
+        fs.unlinkSync(filePath);
+        cleanedFiles++;
+      } catch (error) {
+        console.warn(`Could not remove ${fileName}: ${error}`);
       }
     }
   }
 
   if (cleanedFiles > 0) {
-    console.log(chalk.green(`✅ Cleaned up ${cleanedFiles} default Storybook template files to prevent component discovery conflicts`));
+    console.log(chalk.green(`✅ Removed ${cleanedFiles} Storybook scaffold file(s) so they do not appear in component discovery`));
+  }
+  if (kept.length > 0) {
+    console.log(chalk.yellow(`ℹ️  Left ${kept.length} file(s) that share a scaffold name but are not Storybook's scaffold:`));
+    for (const f of kept) console.log(chalk.yellow(`   ${path.relative(process.cwd(), f)}`));
   }
 }
 
@@ -896,6 +927,8 @@ export interface SetupOptions {
   llmProvider?: 'claude' | 'openai' | 'gemini';
   yes?: boolean;
   skipInstall?: boolean;
+  /** Overwrite an existing config and panel files. Without it, init keeps what is there. */
+  force?: boolean;
 }
 
 export async function setupCommand(options: SetupOptions = {}) {
@@ -1406,8 +1439,12 @@ Material UI (MUI) is a React component library implementing Material Design.
   const configContent = `module.exports = ${JSON.stringify(config, null, 2)};`;
   const configPath = path.join(process.cwd(), 'story-ui.config.js');
 
-  fs.writeFileSync(configPath, configContent);
-  console.log(chalk.green('✅ Created story-ui.config.js'));
+  if (fs.existsSync(configPath) && !options.force) {
+    console.log(chalk.yellow('ℹ️  story-ui.config.js already exists — kept as is. Re-run with --force to replace it.'));
+  } else {
+    fs.writeFileSync(configPath, configContent);
+    console.log(chalk.green(fs.existsSync(configPath) && options.force ? '✅ Replaced story-ui.config.js' : '✅ Created story-ui.config.js'));
+  }
 
   /**
    * Derive the host contract now that the design system's specifier is known.
@@ -1477,6 +1514,10 @@ Material UI (MUI) is a React component library implementing Material Design.
         );
       }
 
+      if (fs.existsSync(targetPath) && !options.force) {
+        console.log(chalk.yellow(`ℹ️  ${file} already exists — kept. Run \`story-ui update\` to refresh it, or init with --force.`));
+        continue;
+      }
       fs.writeFileSync(targetPath, content);
       console.log(chalk.green(`✅ Copied ${file}`));
     } else {
@@ -1500,8 +1541,13 @@ Material UI (MUI) is a React component library implementing Material Design.
   const v2Source = path.resolve(__dirname, '../../templates/StoryUIV2/StoryUIV2.mdx');
   if (fs.existsSync(v2Source)) {
     if (!fs.existsSync(v2TargetDir)) fs.mkdirSync(v2TargetDir, { recursive: true });
-    fs.copyFileSync(v2Source, path.join(v2TargetDir, 'StoryUIV2.mdx'));
-    console.log(chalk.green('✅ Installed Story UI workspace (V2)'));
+    const v2Target = path.join(v2TargetDir, 'StoryUIV2.mdx');
+    if (fs.existsSync(v2Target) && !options.force) {
+      console.log(chalk.yellow('ℹ️  StoryUIV2.mdx already exists — kept. Run `story-ui update` to refresh it.'));
+    } else {
+      fs.copyFileSync(v2Source, v2Target);
+      console.log(chalk.green('✅ Installed Story UI workspace (V2)'));
+    }
   } else {
     console.warn(chalk.yellow('⚠️  V2 workspace template not found — only the classic panel was installed'));
   }
@@ -1820,7 +1866,7 @@ export default registry;
 # Generated by: npx story-ui init
 
 # LLM Provider: ${providerConfig?.name || selectedProvider}
-LLM_PROVIDER=${selectedProvider}
+DEFAULT_PROVIDER=${selectedProvider}
 
 # API Key for ${providerConfig?.name || selectedProvider}
 # Get your key from: ${providerConfig?.docsUrl || 'your provider dashboard'}

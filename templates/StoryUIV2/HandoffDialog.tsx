@@ -13,6 +13,7 @@
  * branch or to stage anything but the one named story file.
  */
 
+import { apiFetch } from './api';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Badge,
@@ -80,7 +81,7 @@ export const HandoffDialog: React.FC<HandoffDialogProps> = ({ apiBase, target, o
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`${apiBase}/story-ui/handoff/status`);
+        const res = await apiFetch(`${apiBase}/story-ui/handoff/status`);
         const data = await res.json();
         if (!cancelled) setStatus(data);
       } catch {
@@ -97,7 +98,7 @@ export const HandoffDialog: React.FC<HandoffDialogProps> = ({ apiBase, target, o
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`${apiBase}/story-ui/handoff`, {
+      const res = await apiFetch(`${apiBase}/story-ui/handoff`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

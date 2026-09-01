@@ -463,10 +463,10 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
          * about the picture and the picture was wrong about the page.
          */
         const screenshot: Buffer = await render.page.screenshot({ type: 'png', fullPage: true });
-        const visual = await runVisualCritique(
+        const critique = await runVisualCritique(
           { screenshot, request, componentsUsed }, visualCritic,
         );
-        for (const v of visual) {
+        for (const v of critique.findings) {
           findings.push({
             id: `visual-${findings.length}`,
             severity: v.severity,
@@ -478,9 +478,13 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
             repairable: v.severity === 'blocker',
           });
         }
-        coverage.visual = { ran: true };
+        coverage.visual = critique.ran
+          ? { ran: true }
+          : { ran: false, reason: `critic call failed: ${critique.reason ?? 'unknown'}` };
         // Logged either way: "no findings" and "never ran" must not look alike.
-        logger.log(`👁️ Visual critique: ${visual.length} finding(s)`);
+        logger.log(critique.ran
+          ? `👁️ Visual critique: ${critique.findings.length} finding(s)`
+          : `👁️ Visual critique: DID NOT RUN (${critique.reason})`);
       } catch (err) {
         const why = err instanceof Error ? err.message : String(err);
         coverage.visual = { ran: false, reason: why };

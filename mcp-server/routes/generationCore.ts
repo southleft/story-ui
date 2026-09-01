@@ -97,7 +97,7 @@ import { enrichWithSourceFacts } from '../../story-generator/knowledge/sourceFac
 import { readStylingFacts, formatStylingGuidance } from '../../story-generator/knowledge/stylingFacts.js';
 import { inheritCompoundExamples } from '../../story-generator/knowledge/storybookCatalog.js';
 import { checkConformance, formatConformanceErrors } from '../../story-generator/knowledge/conformance.js';
-import {
+import { isSafeStoryFileName,
   writeStoryArtifacts,
   extractStylesheet,
   sweepOrphanedArtifacts,
@@ -312,6 +312,18 @@ async function runStoryGenerationPipeline(
     storybookUrl,
     voiceMode,
   } = request;
+
+  /**
+   * The one client-controlled path in the pipeline. Rejected before any work
+   * so a bad name cannot even reach the model.
+   */
+  if (fileName !== undefined && fileName !== null && fileName !== '' && !isSafeStoryFileName(fileName)) {
+    throw new GenerationError(
+      'INVALID_FILE_NAME',
+      `"${String(fileName)}" is not a story file name. Use the bare name of a generated story, like my-story-1a2b3c4d.stories.tsx.`,
+      { httpStatus: 400, recoverable: false },
+    );
+  }
 
   const totalSteps = GENERATION_TOTAL_STEPS;
 
@@ -578,8 +590,10 @@ async function runStoryGenerationPipeline(
       }
       logger.log(`🧠 Enriched ${enriched} components with extracted prop signatures${describedFromTypes ? `, ${describedFromTypes} with descriptions` : ""}`);
     }
-  } catch {
-    // Enrichment is additive; generation proceeds with names alone.
+  } catch (enrichError) {
+    // Enrichment is additive, so generation proceeds — but a names-only catalog
+    // must not look like a library with no types.
+    logger.warn(`⚠️ Component enrichment failed; the catalog carries names only: ${enrichError instanceof Error ? enrichError.message : String(enrichError)}`);
   }
   events.onProgress?.(2, totalSteps, 'components_discovered',
     `Found ${components.length} components from ${config.importPath}`,
@@ -660,7 +674,22 @@ async function runStoryGenerationPipeline(
   const redirectService = new UrlRedirectService(path.dirname(config.generatedStoriesPath));
 
   // Refinement resolution — find the prior story when this is an update
-  const isActualUpdate = Boolean(isUpdate || (fileName && conversation && conversation.length > 2));
+  /**
+   * An update is whatever names a story that already exists.
+   *
+   * The flag used to be the only signal, so an API client (the stdio MCP
+   * server, a script) that sent `fileName` without `isUpdate` got a FRESH
+   * generation written over the existing file. The file on disk is the fact;
+   * the flag can only add to it, or explicitly opt out with `isUpdate: false`.
+   */
+  const namedFileExists = Boolean(fileName) && (() => {
+    try {
+      return fs.existsSync(path.resolve(process.cwd(), config.generatedStoriesPath, fileName as string));
+    } catch { return false; }
+  })();
+  const isActualUpdate = isUpdate === false
+    ? false
+    : Boolean(isUpdate || namedFileExists || (fileName && conversation && conversation.length > 2));
   let previousCode: string | undefined;
   /**
    * True when the baseline is the placeholder a FAILED generation wrote.
@@ -984,7 +1013,14 @@ async function runStoryGenerationPipeline(
         logger.log('🔧 Auto-fix applied for syntax issues');
       }
     } catch (astError) {
+      // A validator that crashed has not passed. Leaving astResult null here
+      // made the aggregator read "no syntax errors" and write the story.
       logger.error('AST validation error:', astError);
+      astResult = {
+        isValid: false,
+        errors: [`The syntax validator crashed on this code: ${astError instanceof Error ? astError.message : String(astError)}`],
+        warnings: [],
+      };
     }
     lastAstResult = astResult;
 
@@ -1350,7 +1386,8 @@ async function runStoryGenerationPipeline(
       // a red error story with no explanation.
       events.onProgress?.(9, totalSteps, 'runtime_check', 'Checking the story renders in Storybook...');
       runtimeResult = await validateStoryRuntime(fixedFileContents, aiTitle, config.storyPrefix,
-        { storyId: computeStorybookId(fixedFileContents, storyIdSlug), projectRoot: process.cwd() });
+        { storyId: computeStorybookId(fixedFileContents, storyIdSlug), projectRoot: process.cwd(),
+          storybookUrl: config.storybookMcpUrl || storybookUrl || undefined });
       // Only spend a healing LLM call on genuine in-Storybook failures.
       // Infrastructure problems (Storybook not running, story not indexed
       // yet, timeouts) are not code errors and can't be healed.
@@ -1389,7 +1426,8 @@ async function runStoryGenerationPipeline(
           selfHealingUsed = true;
           try {
             runtimeResult = await validateStoryRuntime(fixedFileContents, aiTitle, config.storyPrefix,
-              { storyId: computeStorybookId(fixedFileContents, storyIdSlug), projectRoot: process.cwd() });
+              { storyId: computeStorybookId(fixedFileContents, storyIdSlug), projectRoot: process.cwd(),
+                storybookUrl: config.storybookMcpUrl || storybookUrl || undefined });
             runtimeHealed = runtimeResult.success;
           } catch {
             // Leave the last known result in place.

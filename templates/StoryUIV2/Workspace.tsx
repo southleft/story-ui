@@ -18,6 +18,7 @@
  * styling.
  */
 
+import { apiFetch } from './api';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Badge,
@@ -302,7 +303,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`${apiBase}/mcp/providers`);
+        const res = await apiFetch(`${apiBase}/mcp/providers`);
         if (!cancelled) {
           if (res.ok) {
             const data = await res.json();
@@ -320,7 +321,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
         if (!cancelled) setConnected(false);
       }
       try {
-        const res = await fetch(`${apiBase}/mcp/canvas-config`);
+        const res = await apiFetch(`${apiBase}/mcp/canvas-config`);
         if (res.ok && !cancelled) {
           const data = await res.json();
           // The design system's own name ("Mantine") when the config declares
@@ -332,7 +333,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
         }
       } catch { /* optional */ }
       try {
-        const res = await fetch(`${apiBase}/story-ui/considerations`);
+        const res = await apiFetch(`${apiBase}/story-ui/considerations`);
         if (res.ok && !cancelled) {
           const data = await res.json();
           if (data.hasConsiderations) setConsiderations(data.considerations || '');

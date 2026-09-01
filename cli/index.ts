@@ -42,6 +42,7 @@ program
   .option('-l, --llm-provider <provider>', 'LLM provider to use (claude, openai, gemini)')
   .option('-y, --yes', 'Skip interactive prompts and use defaults')
   .option('--skip-install', 'Skip package installation')
+  .option('--force', 'Overwrite an existing story-ui.config.js and panel files')
   .action(async (options) => {
     await setupCommand(options);
   });

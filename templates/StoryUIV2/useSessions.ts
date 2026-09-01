@@ -15,6 +15,7 @@
  * reaches the person you hand the work to.
  */
 
+import { apiFetch } from './api';
 import { useCallback, useEffect, useState } from 'react';
 import {
   fetchStoryIndex,
@@ -223,7 +224,7 @@ export async function pollForCompletedEntry(
 
   while (!isCancelled() && Date.now() < hardDeadline) {
     try {
-      const res = await fetch(`${apiBase}/story-ui/manifest/poll?since=${encodeURIComponent(since)}`);
+      const res = await apiFetch(`${apiBase}/story-ui/manifest/poll?since=${encodeURIComponent(since)}`);
       if (res.ok) {
         const entries: ManifestEntry[] = (await res.json())?.entries ?? [];
         const entry = entries.find(e => {
@@ -244,7 +245,7 @@ export async function pollForCompletedEntry(
 
     if (activeSupported && !isCancelled()) {
       try {
-        const res = await fetch(`${apiBase}/story-ui/active-generations`);
+        const res = await apiFetch(`${apiBase}/story-ui/active-generations`);
         if (res.status === 404) {
           activeSupported = false;
         } else if (res.ok) {
@@ -280,7 +281,7 @@ export function useSessions(apiBase: string) {
   const reload = useCallback(async () => {
     try {
       const [res, index] = await Promise.all([
-        fetch(`${apiBase}/story-ui/manifest`),
+        apiFetch(`${apiBase}/story-ui/manifest`),
         fetchStoryIndex(),
       ]);
       if (!res.ok) { setLoaded(true); return; }

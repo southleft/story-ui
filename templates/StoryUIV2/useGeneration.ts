@@ -19,6 +19,7 @@
  * `metadata.lastCompletion` (see pollForCompletedEntry in useSessions).
  */
 
+import { apiFetch } from './api';
 import { useCallback, useRef, useState } from 'react';
 
 /**
@@ -272,7 +273,7 @@ export function useGeneration(apiBase: string) {
     abortRef.current = null;
     setBusy(false);
     if (id) {
-      fetch(`${apiBase}/story-ui/active-generations/${encodeURIComponent(id)}`, { method: 'DELETE' })
+      apiFetch(`${apiBase}/story-ui/active-generations/${encodeURIComponent(id)}`, { method: 'DELETE' })
         .catch(() => { /* best effort; the notice already warns it may finish */ });
     }
   }, [apiBase]);
@@ -312,7 +313,7 @@ export function useGeneration(apiBase: string) {
       generationIdRef.current = null;
 
       try {
-        const res = await fetch(`${apiBase}/mcp/generate-story-stream`, {
+        const res = await apiFetch(`${apiBase}/mcp/generate-story-stream`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),

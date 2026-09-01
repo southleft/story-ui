@@ -14,6 +14,7 @@
  * eliminate.
  */
 
+import { apiFetch } from './api';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge, Button, Flex, Select, Switch, Text, TextField } from '@radix-ui/themes';
 import type { ElementTarget } from './elementTargeting';
@@ -139,7 +140,7 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
         const occ = detailByName[candidates[0] || component]?.occurrence
           ?? target?.sourceOccurrence ?? target?.occurrence;
         if (occ !== undefined && occ !== null) params.set('occurrence', String(occ));
-        const res = await fetch(`${apiBase}/mcp/editable-props?${params.toString()}`);
+        const res = await apiFetch(`${apiBase}/mcp/editable-props?${params.toString()}`);
         if (!res.ok) throw new Error('lookup failed');
         const data = await res.json();
         if (!cancelled) {
@@ -182,7 +183,7 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
     const detail = detailByName[targetName];
     const isList = detail ? !!detail.fromList : !!target?.fromList;
     try {
-      const res = await fetch(`${apiBase}/mcp/edit-prop`, {
+      const res = await apiFetch(`${apiBase}/mcp/edit-prop`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
