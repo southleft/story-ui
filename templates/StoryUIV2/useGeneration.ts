@@ -21,7 +21,16 @@
 
 import { useCallback, useRef, useState } from 'react';
 
-export type StepState = 'active' | 'done';
+/**
+ * A step that failed is not a step that finished.
+ *
+ * `finishSteps()` used to mark every step `done` unconditionally, and it was
+ * called on the SSE error path too — so a run that died during verification
+ * rendered a full column of ticks beside a red banner. That is the same
+ * "absent looks like success" shape the pipeline was just fixed for, in the
+ * one place the user actually looks.
+ */
+export type StepState = 'active' | 'done' | 'failed';
 
 export interface GenStep {
   id: string;
@@ -206,12 +215,21 @@ export function useGeneration(apiBase: string) {
   const [steps, setSteps] = useState<GenStep[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Something the user should know that is not a failure — currently only
+   * "you stopped this, but the server did not". Kept apart from `error` so a
+   * deliberate action is not painted as a fault.
+   */
+  const [notice, setNotice] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const startedRef = useRef(0);
+  /** Server-side id for the in-flight generation, so Stop can cancel it. */
+  const generationIdRef = useRef<string | null>(null);
 
   const reset = useCallback(() => {
     setSteps([]);
     setError(null);
+    setNotice(null);
   }, []);
 
   const pushStep = useCallback((id: string, label: string, detail?: string) => {
@@ -221,22 +239,43 @@ export function useGeneration(apiBase: string) {
       const existing = closed.findIndex(s => s.id === id);
       if (existing >= 0) {
         const next = [...closed];
-        next[existing] = { ...next[existing], label, detail, state: 'active' };
+        // Reset the clock. `validating` is re-emitted on every healing attempt,
+        // and preserving the original startedAt made a step that had just begun
+        // read "2:47" — time since attempt one.
+        next[existing] = { ...next[existing], label, detail, state: 'active', startedAt: Date.now() };
         return next;
       }
       return [...closed, { id, label, detail, state: 'active', startedAt: Date.now() }];
     });
   }, []);
 
-  const finishSteps = useCallback(() => {
-    setSteps(prev => prev.map(s => ({ ...s, state: 'done' as const })));
+  const finishSteps = useCallback((ok: boolean = true) => {
+    setSteps(prev => prev.map(s => {
+      if (s.state !== 'active') return { ...s, state: s.state };
+      // Whatever was still running when the generation died is the step that
+      // failed; everything before it genuinely did complete.
+      return { ...s, state: ok ? ('done' as const) : ('failed' as const) };
+    }));
   }, []);
 
+  /**
+   * Stop.
+   *
+   * Aborting the fetch only closes OUR end. Ask the server to stand down too,
+   * best-effort — without that the generation runs to completion, writes the
+   * story and persists the reply, so a story would appear in Storybook half a
+   * minute after the user thought they had cancelled.
+   */
   const cancel = useCallback(() => {
+    const id = generationIdRef.current;
     abortRef.current?.abort();
     abortRef.current = null;
     setBusy(false);
-  }, []);
+    if (id) {
+      fetch(`${apiBase}/story-ui/active-generations/${encodeURIComponent(id)}`, { method: 'DELETE' })
+        .catch(() => { /* best effort; the notice already warns it may finish */ });
+    }
+  }, [apiBase]);
 
   const generate = useCallback(
     async (request: GenerationRequest): Promise<GenerationResult | null> => {
@@ -268,6 +307,9 @@ export function useGeneration(apiBase: string) {
 
       let completion: any = null;
       let failure: string | null = null;
+      /** True only for a rejection that means the server never started work. */
+      let neverStarted = false;
+      generationIdRef.current = null;
 
       try {
         const res = await fetch(`${apiBase}/mcp/generate-story-stream`, {
@@ -283,6 +325,7 @@ export function useGeneration(apiBase: string) {
           const detail = res.status === 413
             ? 'That image is too large for the server to accept. Try a smaller one.'
             : `Generation request failed (${res.status})`;
+          neverStarted = true;
           throw Object.assign(new Error(detail), { status: res.status });
         }
 
@@ -325,6 +368,10 @@ export function useGeneration(apiBase: string) {
               case 'completion':
                 completion = data;
                 break;
+              case 'started':
+                // The server names the run so Stop can cancel it.
+                if (data.generationId) generationIdRef.current = data.generationId;
+                break;
               case 'error':
                 failure = data.message || 'Generation failed';
                 break;
@@ -333,16 +380,36 @@ export function useGeneration(apiBase: string) {
         }
       } catch (e: any) {
         if (e?.name === 'AbortError') {
+          // Stopping used to render as nothing at all: the step list is gated
+          // on `busy`, so it vanished, no error was set, and no turn was
+          // appended — then the story appeared in Storybook anyway.
+          finishSteps(false);
+          setNotice('Stopped. The server was asked to stand down — if it had already finished, the story will appear in Recent work.');
           setBusy(false);
+          try { sessionStorage.removeItem(PENDING_KEY); } catch { /* ignore */ }
+          abortRef.current = null;
           return null;
         }
         failure = e?.message || String(e);
       } finally {
-        try { sessionStorage.removeItem(PENDING_KEY); } catch { /* ignore */ }
+        /**
+         * Keep the stash unless we KNOW there is nothing to recover.
+         *
+         * Clearing unconditionally is right for the hazard this was built for
+         * — the preview iframe reloading kills the JS context before `finally`
+         * can run, so the stash survives on its own. It is wrong for every
+         * other disconnect: a proxy idle timeout or a dropped socket during
+         * the silent stretch of an LLM call would throw away the only record
+         * of a generation that in fact completed.
+         */
+        if (completion || neverStarted) {
+          try { sessionStorage.removeItem(PENDING_KEY); } catch { /* ignore */ }
+        }
         abortRef.current = null;
+        generationIdRef.current = null;
       }
 
-      finishSteps();
+      finishSteps(!!completion);
       setBusy(false);
 
       if (failure && !completion) {
@@ -369,7 +436,7 @@ export function useGeneration(apiBase: string) {
     [apiBase, pushStep, finishSteps, reset],
   );
 
-  return { generate, cancel, steps, busy, error, reset };
+  return { generate, cancel, steps, busy, error, notice, reset };
 }
 
 /**

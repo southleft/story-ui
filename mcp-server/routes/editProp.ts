@@ -21,7 +21,7 @@
 import type { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
-import { editProp, occurrencesInSource, occurrencesWithinOwner, topLevelDeclarations } from '../../story-generator/editing/propEditor.js';
+import { editProp, readProps, occurrencesInSource, occurrencesWithinOwner, topLevelDeclarations } from '../../story-generator/editing/propEditor.js';
 import { extractProps, extractPropsForPackages, type PropFact, type ComponentFacts } from '../../story-generator/knowledge/propExtractor.js';
 import { mergePropFactsFromSource, readSourceFacts } from '../../story-generator/knowledge/sourceFacts.js';
 import { EnhancedComponentDiscovery } from '../../story-generator/enhancedComponentDiscovery.js';
@@ -287,6 +287,8 @@ export async function editablePropsHandler(req: Request, res: Response): Promise
      * `candidates` (or when nothing matches) behaviour is unchanged.
      */
     let resolved = component;
+    /** The story's source, read once and reused to report current values. */
+    let storySource: string | null = null;
     const candidatesRaw = String(req.query.candidates || '').trim();
     if (candidatesRaw) {
       const names = candidatesRaw.split(',').map(s => s.trim());
@@ -305,10 +307,31 @@ export async function editablePropsHandler(req: Request, res: Response): Promise
       }
       const filePath = storyFilePath(config, String(req.query.fileName || '').trim());
       if (filePath && fs.existsSync(filePath)) {
-        const hit = resolveComponentInSource(fs.readFileSync(filePath, 'utf-8'), ordered, owners);
+        storySource = fs.readFileSync(filePath, 'utf-8');
+        const hit = resolveComponentInSource(storySource, ordered, owners);
         if (hit) resolved = hit;
       }
     }
+
+    // Read the file even when no candidates were sent, so current values are
+    // available on the simple path too.
+    if (!storySource) {
+      const filePath = storyFilePath(config, String(req.query.fileName || '').trim());
+      if (filePath && fs.existsSync(filePath)) storySource = fs.readFileSync(filePath, 'utf-8');
+    }
+
+    /**
+     * What the element ALREADY has, so the panel can show it.
+     *
+     * Without this every control is uncontrolled and shows its placeholder
+     * regardless of what the source says, which makes a landed edit and a
+     * dropped one look identical. Same occurrence semantics as the edit, so
+     * what is displayed and what will be changed cannot disagree.
+     */
+    const occurrenceRaw = String(req.query.occurrence || '').trim();
+    const currentValues = storySource
+      ? readProps(storySource, resolved, occurrenceRaw === '' ? 0 : Number(occurrenceRaw) || 0)
+      : null;
 
     const { facts, props: propFacts, sources } = await resolveComponentKnowledge(config, resolved);
 
@@ -371,7 +394,7 @@ export async function editablePropsHandler(req: Request, res: Response): Promise
       (sources.length ? sources.join(' + ') : 'NONE — no package declarations resolved and no local source file on record'),
     );
 
-    res.json({ component: resolved, props, tokens });
+    res.json({ component: resolved, props, tokens, current: currentValues ?? {} });
   } catch (error) {
     logger.warn(`[edit-prop] editable props failed: ${error instanceof Error ? error.message : String(error)}`);
     res.status(500).json({ error: 'Could not read props for that component' });

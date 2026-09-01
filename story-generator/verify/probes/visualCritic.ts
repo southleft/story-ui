@@ -110,16 +110,26 @@ export async function runVisualCritique(
  * dropped rather than passed on to spend a repair attempt.
  */
 export function parseCritique(raw: string): VisualFinding[] {
-  if (!raw) return [];
+  if (!raw) {
+    // A silent `[]` here is indistinguishable from "the model looked and
+    // found nothing", which is the exact confusion this codebase keeps
+    // paying for. The outer catch already warns; these paths did not.
+    logger.warn('[visual-critique] model returned an empty reply — no findings, and nothing was judged');
+    return [];
+  }
 
   // Models wrap JSON in prose or fences no matter how firmly asked not to.
   const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) return [];
+  if (!match) {
+    logger.warn(`[visual-critique] no JSON object in the reply — not judged. First 120 chars: ${raw.slice(0, 120)}`);
+    return [];
+  }
 
   let parsed: any;
   try {
     parsed = JSON.parse(match[0]);
-  } catch {
+  } catch (err) {
+    logger.warn(`[visual-critique] reply was not parseable JSON — not judged: ${err instanceof Error ? err.message : String(err)}`);
     return [];
   }
 

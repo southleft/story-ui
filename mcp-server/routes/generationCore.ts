@@ -104,7 +104,7 @@ import {
 } from '../../story-generator/storyArtifacts.js';
 import { attemptVerificationRepair } from './verifyRepair.js';
 import type { VerifyReport, RepairSummary } from '../../story-generator/verify/findings.js';
-import { registerActiveGeneration, unregisterActiveGeneration } from './activeGenerations.js';
+import { registerActiveGeneration, unregisterActiveGeneration, isGenerationCancelled } from './activeGenerations.js';
 
 // ============================================================
 // Public interface
@@ -148,6 +148,8 @@ export interface GenerationEvents {
   onValidation?(validation: ValidationFeedback): void;
   onRetry?(attempt: number, maxAttempts: number, reason: string, errors: string[]): void;
   onLLMCall?(): void;
+  /** Fired once with the run's id, so a client can cancel this specific run. */
+  onStarted?(generationId: string): void;
 }
 
 /**
@@ -250,8 +252,10 @@ export async function runStoryGeneration(
     fileName: request?.fileName ?? null,
     startedAt,
   });
+  // Name the run to the client so Stop can address it.
+  events.onStarted?.(activeKey);
   try {
-    return await runStoryGenerationPipeline(request, events, startedAt);
+    return await runStoryGenerationPipeline(request, events, startedAt, activeKey);
   } finally {
     unregisterActiveGeneration(activeKey);
   }
@@ -261,7 +265,24 @@ async function runStoryGenerationPipeline(
   request: GenerationRequest,
   events: GenerationEvents,
   startedAt: number,
+  generationId?: string,
 ): Promise<GenerationOutcome> {
+  /**
+   * Stop, honoured.
+   *
+   * Aborting the client fetch closes one socket and nothing else: the pipeline
+   * ran on, wrote the story and persisted the reply, so a story appeared in
+   * Storybook half a minute after the user thought they had cancelled. Checked
+   * at phase boundaries rather than pre-empted, because there is no safe point
+   * to kill a pipeline mid-write.
+   */
+  const throwIfCancelled = (phase: string) => {
+    if (isGenerationCancelled(generationId)) {
+      throw new GenerationError('CANCELLED', `Generation stopped by the user during ${phase}`, {
+        httpStatus: 499, recoverable: false,
+      });
+    }
+  };
   /**
    * The component facts handed to the model, kept for the validation loop.
    *
@@ -772,6 +793,7 @@ async function runStoryGenerationPipeline(
   ];
 
   // Step 4: Self-healing generation loop
+  throwIfCancelled('generation');
   events.onProgress?.(4, totalSteps, 'llm_thinking', 'AI is generating your story...');
 
   // Combined AI-considerations text (request-provided + project file). Used
@@ -1270,6 +1292,20 @@ async function runStoryGenerationPipeline(
       suggestion: 'This is a bug in Story UI. Please report this issue with your prompt.',
     });
   }
+
+  /**
+   * Last point at which stopping costs nothing.
+   *
+   * Placed here rather than inside the runtime-check block, where an earlier
+   * attempt put it: that block is wrapped in a try/catch which swallowed the
+   * cancellation and the pipeline ran to completion anyway — verified live,
+   * a DELETE at 0.7s still produced a finished story 232s later.
+   *
+   * Before the write is also the only boundary a user would recognise as
+   * "nothing happened": after it, the file is on disk and Storybook has
+   * already picked it up.
+   */
+  throwIfCancelled('saving');
 
   // Step 8: Save story
   events.onProgress?.(8, totalSteps, 'saving', 'Saving your story...');

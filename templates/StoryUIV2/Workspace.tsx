@@ -267,7 +267,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const threadRef = useRef<HTMLDivElement>(null);
-  const { generate, cancel, steps, busy, error } = useGeneration(apiBase);
+  const { generate, cancel, steps, busy, error, notice } = useGeneration(apiBase);
 
   /**
    * Dictation. Interim results are shown in the textarea so speech feels live,
@@ -293,12 +293,18 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     (async () => {
       try {
         const res = await fetch(`${apiBase}/mcp/providers`);
-        if (res.ok && !cancelled) {
-          const data = await res.json();
-          setProviders(data.providers?.filter((p: any) => p.configured) ?? []);
-          setProvider(data.current?.provider?.toLowerCase?.() ?? '');
-          setModel(data.current?.model ?? '');
-          setConnected(true);
+        if (!cancelled) {
+          if (res.ok) {
+            const data = await res.json();
+            setProviders(data.providers?.filter((p: any) => p.configured) ?? []);
+            setProvider(data.current?.provider?.toLowerCase?.() ?? '');
+            setModel(data.current?.model ?? '');
+            setConnected(true);
+          } else {
+            // A reachable server that answers 500 is not "connected", and
+            // leaving this null would sit on "Checking…" indefinitely.
+            setConnected(false);
+          }
         }
       } catch {
         if (!cancelled) setConnected(false);
@@ -591,9 +597,23 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
         setNotIndexed(null);
         storyId = resolved;
       } else {
-        // The file is on disk; Storybook simply has not noticed it.
+        /**
+         * The file is on disk; Storybook simply has not noticed it.
+         *
+         * Clearing activeStory matters as much as setting notIndexed. The
+         * canvas renders `src ? iframe : busy ? … : notIndexed ? …`, so while
+         * a previous story was still showing, the amber "not picked up"
+         * callout was unreachable and the canvas kept displaying the OLD
+         * composition — the assistant said "Updated X" over a preview that
+         * had not changed, which reads as the tool ignoring the request.
+         */
+        setActiveStory(null);
         setNotIndexed({ fileName: result.fileName, title: result.title });
       }
+    } else if (result.success) {
+      // No storybookId came back at all: no lookup, no callout, no reload —
+      // the canvas simply never changed and nothing explained why.
+      setNotIndexed({ fileName: result.fileName, title: result.title });
     }
 
     setTurns(prev => [
@@ -610,7 +630,11 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
         title: result.title,
       },
     ]);
-    if (result.fileName) setActiveFile({ fileName: result.fileName, title: result.title || 'Story' });
+    // Only adopt a story that actually succeeded. A failed generation used to
+    // become the file every subsequent edit was applied to.
+    if (result.fileName && result.success) {
+      setActiveFile({ fileName: result.fileName, title: result.title || 'Story' });
+    }
     reloadSessions();
   }, [input, busy, recovering, turns, provider, model, considerations, activeFile, selection, resolvedName, images, voice, generate, reloadSessions, byFileName]);
 
@@ -862,7 +886,21 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
 
           {providers.length > 0 && (
             <>
-              <Select.Root value={provider} onValueChange={setProvider} size="1">
+              {/*
+                * Changing provider must move the model with it. `setProvider`
+                * alone left the previous provider's model id selected — the
+                * trigger rendered blank (no matching item) and `send()` posted
+                * {provider:'openai', model:'claude-sonnet-5'}.
+                */}
+              <Select.Root
+                value={provider}
+                onValueChange={next => {
+                  setProvider(next);
+                  const models = providers.find(p => p.type === next)?.models ?? [];
+                  setModel(models[0] ?? '');
+                }}
+                size="1"
+              >
                 <Select.Trigger
                   variant="soft"
                   color="gray"
@@ -975,14 +1013,29 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
             setActiveStory(null);
             setActiveFile(null);
             setNotIndexed(null);
+            // Left behind before, which is how you could end up on the home
+            // screen with a live selection chip and an open property panel
+            // pointing at a story that is no longer active — where every
+            // control silently did nothing.
+            setSelection(null);
+            setShowProperties(false);
+            setImages([]);
+            setInput('');
             reloadSessions();
           }}
         >
           New
         </Button>
       ) : (
-        <Badge color={connected === false ? 'red' : 'green'} variant="soft">
-          {connected === false ? 'Server unreachable' : 'Connected'}
+        // Three states, not two. `connected` starts null and is only set true
+        // on a successful probe — so a 500, or a probe that had not returned
+        // yet, used to render a green "Connected" badge for a server we had
+        // heard nothing from.
+        <Badge
+          color={connected === false ? 'red' : connected === true ? 'green' : 'gray'}
+          variant="soft"
+        >
+          {connected === false ? 'Server unreachable' : connected === true ? 'Connected' : 'Checking…'}
         </Badge>
       )}
     </Flex>
@@ -1065,7 +1118,17 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
   /* ---- workspace -------------------------------------------------------- */
 
   return (
-    <div className="suiw-root suiw">
+    /**
+     * `sb-unstyled` is not optional here.
+     *
+     * addon-docs injects a global typography reset scoped as
+     * `:where(div, span, p, a, h1..h6, ...):not(.sb-unstyled, .sb-unstyled *)`
+     * at the same specificity as Radix Themes' own size classes, and it is
+     * injected LATER, so it wins every tie. Home carried the class and the
+     * workspace did not — the same components rendering correctly on one
+     * screen and reset on the other.
+     */
+    <div className="suiw-root suiw sb-unstyled">
       <Theme appearance="dark" accentColor="jade" radius="medium">
         {header}
 
@@ -1138,7 +1201,16 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                     {turn.suggestions && turn.suggestions.length > 0 && (
                       <Flex gap="2" wrap="wrap" className="suiw-turn-actions">
                         {turn.suggestions.slice(0, 3).map(s => (
-                          <Button key={s} size="1" variant="surface" color="gray" onClick={() => send(s)}>
+                          <Button
+                            key={s}
+                            size="1"
+                            variant="surface"
+                            color="gray"
+                            // `send()` hard-returns while busy or recovering,
+                            // so an enabled chip did nothing and read as broken.
+                            disabled={busy || recovering}
+                            onClick={() => send(s)}
+                          >
                             {s}
                           </Button>
                         ))}
@@ -1159,10 +1231,32 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                       Reconnecting to your in-progress generation
                     </Text>
                     <StepClock since={recoveringSince.current} />
+                    {/*
+                      * An exit. Recovery disables Build, Attach, Dictate and
+                      * History and can hold them for up to fifteen minutes,
+                      * with no way to abandon it — if the poll never resolves
+                      * the workspace was simply unusable until then.
+                      */}
+                    <Button
+                      size="1"
+                      variant="ghost"
+                      color="gray"
+                      onClick={() => {
+                        clearPendingGeneration();
+                        setRecovering(false);
+                      }}
+                    >
+                      Start over
+                    </Button>
                   </Flex>
                 )}
 
-                {steps.length > 0 && busy && (
+                {/*
+                  * Kept after the run ends: gating on `busy` erased the whole
+                  * narration the moment it finished, so nothing recorded what
+                  * the pipeline did — least of all on the failure path.
+                  */}
+                {steps.length > 0 && (
                   <Flex direction="column" gap="1" className="suiw-steps">
                     {steps.map(s => (
                       <Flex key={s.id} align="center" gap="2" className={`suiw-step suiw-step--${s.state}`}>
@@ -1172,17 +1266,26 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                           className={s.state === 'active' ? 'suiw-pulse' : undefined}
                           style={{
                             borderRadius: '50%',
-                            background: s.state === 'active' ? 'var(--accent-9)' : 'var(--gray-a7)',
+                            // A step that failed must not wear the same dot as
+                            // one that finished.
+                            background: s.state === 'active'
+                              ? 'var(--accent-9)'
+                              : s.state === 'failed' ? 'var(--red-9)' : 'var(--gray-a7)',
                             flex: '0 0 auto',
                           }}
                         />
                         <Text
                           size="1"
-                          color={s.state === 'active' ? undefined : 'gray'}
+                          color={s.state === 'active' ? undefined : s.state === 'failed' ? 'red' : 'gray'}
                           className="suiw-step-label"
                         >
                           {s.label}
                         </Text>
+                        {s.detail && (
+                          <Text size="1" color="gray" className="suiw-step-detail">
+                            {s.detail}
+                          </Text>
+                        )}
                         {s.state === 'active' && <StepClock since={s.startedAt} />}
                       </Flex>
                     ))}
@@ -1192,6 +1295,13 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                 {error && (
                   <Callout.Root color="red" size="1" role="alert">
                     <Callout.Text>{error}</Callout.Text>
+                  </Callout.Root>
+                )}
+
+                {/* A deliberate stop is not a fault, and gets its own tone. */}
+                {notice && !error && (
+                  <Callout.Root color="gray" size="1" role="status">
+                    <Callout.Text>{notice}</Callout.Text>
                   </Callout.Root>
                 )}
               </Flex>

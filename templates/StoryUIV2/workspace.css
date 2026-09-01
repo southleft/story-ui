@@ -261,3 +261,50 @@
   max-height: 320px;
   overflow-y: auto;
 }
+
+/* ---------------------------------------------------------------------------
+ * Classes the markup applies that nothing defined.
+ *
+ * Each of these was referenced in Workspace.tsx and had no rule, so the
+ * element rendered with whatever it inherited. The chat body is the one that
+ * mattered: an assistant reply carrying line breaks collapsed into a single
+ * run-on paragraph, and a long unbroken token could push the rail wider than
+ * its column.
+ * ------------------------------------------------------------------------- */
+
+/* Model replies arrive as prose with real line breaks. Honour them, and never
+   let an unbroken token (a class name, a URL) widen the rail. */
+.suiw-turn-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The primary navigation on the home screen had no hover or focus treatment
+   at all, so nothing indicated the cards were clickable. */
+.suiw-recent-card {
+  border-radius: 8px;
+  transition: box-shadow 120ms ease, transform 120ms ease;
+}
+.suiw-recent-card:hover {
+  box-shadow: 0 2px 10px -2px var(--gray-a6);
+  transform: translateY(-1px);
+}
+.suiw-recent-card:focus-visible {
+  outline: 2px solid var(--accent-8);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .suiw-recent-card { transition: none; }
+  .suiw-recent-card:hover { transform: none; }
+}
+
+/* A step's captured reason, rendered beside its label. */
+.suiw-step-detail {
+  opacity: 0.8;
+}
+
+/* A step that failed keeps its label readable rather than greying out with
+   the completed ones. */
+.suiw-step--failed .suiw-step-label {
+  font-weight: 500;
+}

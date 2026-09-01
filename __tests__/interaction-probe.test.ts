@@ -181,6 +181,43 @@ describe.runIf(tooling)('absent is not a pass', { retry: 2 }, () => {
     expect(r.deadControls).toEqual([]);
   });
 
+  it('exercises a switch whose real input is visually hidden', async () => {
+    const page = await browser.newPage();
+    // Exactly how Mantine, MUI, Carbon and Chakra all render a Switch: the
+    // native input is clipped to nothing and a styled track is painted over
+    // it. Filtering on the input's own box made the probe skip every one of
+    // them — measured live as "0 controls exercised" on a panel with three
+    // working switches.
+    await page.setContent(
+      '<style>.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}' +
+      '.track{display:inline-block;width:36px;height:20px;background:#ccc}</style>' +
+      '<div id="storybook-root">' +
+      '<label class="track"><input class="vh" type="checkbox" aria-label="Email notifications"><span>Email notifications</span></label>' +
+      '</div>'
+    );
+    const r = await runInteractionProbe(page);
+    await page.close();
+
+    expect(r.skipped).toBe(false);
+    expect(r.controlsTested).toBe(1);
+    expect(r.deadControls).toEqual([]);
+  });
+
+  it('still ignores a control that is genuinely not rendered', async () => {
+    const page = await browser.newPage();
+    // display:none collapses the ancestors too, so the fallback finds nothing
+    // visible and the control is correctly skipped.
+    await page.setContent(
+      '<div id="storybook-root">' +
+      '<div style="display:none"><input type="checkbox" aria-label="Hidden option"></div>' +
+      '</div>'
+    );
+    const r = await runInteractionProbe(page);
+    await page.close();
+
+    expect(r.controlsTested).toBe(0);
+  });
+
   it('catches a toggle that does not change state', async () => {
     const page = await browser.newPage();
     await page.setContent(

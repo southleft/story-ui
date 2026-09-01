@@ -339,43 +339,73 @@ export function buildSelfHealingPrompt(
     sections.push('Think creatively - almost any UI can be approximated with basic layout and display components.');
     sections.push('');
     sections.push('**Common approximation strategies:**');
-    sections.push('- **Calendar/DatePicker** → Use Grid/SimpleGrid with Text components to create a calendar-like grid layout');
-    sections.push('- **Chart/Graph** → Use Progress, RingProgress, or Stack with colored Box components');
-    sections.push('- **Timeline** → Use Stack/Timeline with Card or Paper components for each event');
-    sections.push('- **Carousel/Slider** → Use Grid or Group with Image and navigation Button components');
-    sections.push('- **DataTable** → Use Table components or Stack of Card/Paper rows');
-    sections.push('- **TreeView** → Use nested Stack/Accordion with NavLink or List components');
-    sections.push('- **Rating/Stars** → Use Group of ActionIcon or ThemeIcon components');
-    sections.push('- **Map** → Use Image with a placeholder map image and overlaid markers using Box');
+    // Described as SHAPES, not as component names. Naming Mantine's
+    // `SimpleGrid`/`RingProgress`/`ThemeIcon` here told a Carbon or MUI
+    // project to reach for components it does not have, in the very prompt
+    // whose job is to stop it importing things that do not exist.
+    sections.push('- **Calendar / DatePicker** → a grid of text cells, one per day');
+    sections.push('- **Chart / Graph** → progress indicators, or a row of boxes with proportional heights');
+    sections.push('- **Timeline** → a vertical stack, one card or surface per event');
+    sections.push('- **Carousel / Slider** → a row of images with previous/next buttons');
+    sections.push('- **DataTable** → the table primitives, or a stack of row surfaces');
+    sections.push('- **TreeView** → nested stacks or an accordion, with links for leaves');
+    sections.push('- **Rating / Stars** → a row of icon buttons');
+    sections.push('- **Map** → an image placeholder with absolutely positioned markers');
     sections.push('');
     sections.push('**The goal is visual similarity, not exact functionality.**');
     sections.push('Users want to see what a UI could look like - use basic components creatively!');
     sections.push('');
 
-    // Show available components (design-system agnostic)
     if (options.availableComponents.length > 0) {
-      sections.push('**Available components you MUST use instead:**');
-      // Group by likely use case for easier reference
-      const layoutComponents = options.availableComponents.filter(c =>
-        /^(Box|Stack|Group|Grid|SimpleGrid|Flex|Container|Center|Space|Paper|Card|Divider)$/i.test(c)
-      );
-      const displayComponents = options.availableComponents.filter(c =>
-        /^(Text|Title|Badge|Avatar|Image|ThemeIcon|ActionIcon|Button|Anchor)$/i.test(c)
-      );
-      const otherComponents = options.availableComponents.filter(c =>
-        !layoutComponents.includes(c) && !displayComponents.includes(c)
-      );
+      /**
+       * Rank by relevance to what was actually missing, then truncate.
+       *
+       * This used to group by regexes matching Mantine identifiers
+       * (`SimpleGrid`, `ThemeIcon`, `RingProgress`), so on Carbon, MUI or
+       * Atlassian both groups came back EMPTY and everything fell through to
+       * an arbitrary first-30 slice. The model was told "you MUST use these
+       * instead" from a list that frequently did not contain the answer.
+       *
+       * Relevance is computed against the names that failed, so a missing
+       * `DatePicker` surfaces `DatePickerInput` and `Calendar` at the top
+       * whatever the design system calls them.
+       */
+      const missing = errors.importErrors
+        .map(e => (e.match(/[A-Z][A-Za-z0-9_]*/g) || []).join(' '))
+        .join(' ')
+        .toLowerCase();
+      const missingWords = [...new Set(missing.split(/\s+/).filter(w => w.length > 2))];
 
-      if (layoutComponents.length > 0) {
-        sections.push(`- **Layout:** ${layoutComponents.join(', ')}`);
+      /** Crude but stable: shared prefix, containment, and shared word stems. */
+      const relevance = (name: string): number => {
+        const lower = name.toLowerCase();
+        let score = 0;
+        for (const w of missingWords) {
+          if (lower === w) score += 100;
+          else if (lower.startsWith(w) || w.startsWith(lower)) score += 40;
+          else if (lower.includes(w) || w.includes(lower)) score += 20;
+        }
+        return score;
+      };
+
+      const ranked = [...options.availableComponents]
+        .map(name => ({ name, score: relevance(name) }))
+        .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+
+      const closest = ranked.filter(r => r.score > 0).slice(0, 12).map(r => r.name);
+      const rest = ranked.filter(r => !closest.includes(r.name)).map(r => r.name);
+
+      sections.push('**Available components you MUST use instead:**');
+      if (closest.length > 0) {
+        sections.push(`- **Closest to what you tried to import:** ${closest.join(', ')}`);
       }
-      if (displayComponents.length > 0) {
-        sections.push(`- **Display:** ${displayComponents.join(', ')}`);
-      }
-      if (otherComponents.length > 0) {
-        const displayOthers = otherComponents.slice(0, 30);
-        sections.push(`- **Other:** ${displayOthers.join(', ')}${otherComponents.length > 30 ? ` ... and ${otherComponents.length - 30} more` : ''}`);
-      }
+      // The full list still ships, capped, so the model is never asked to
+      // choose from a set that excludes the right answer.
+      const CAP = 120;
+      sections.push(
+        `- **All available:** ${rest.slice(0, CAP).join(', ')}` +
+        (rest.length > CAP ? ` ... and ${rest.length - CAP} more` : ''),
+      );
       sections.push('');
     }
   }

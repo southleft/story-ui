@@ -7,6 +7,7 @@
 
 // Event types for SSE stream
 export type StreamEventType =
+  | 'started'          // Names the run, so the client can cancel this one
   | 'intent'           // Initial plan/intent before execution
   | 'progress'         // Step-by-step progress updates
   | 'validation'       // Validation results (errors, warnings)
@@ -170,11 +171,16 @@ export interface ErrorFeedback {
   suggestion?: string;
 }
 
+/** Names the in-flight run so a client can cancel this specific generation. */
+export interface GenerationStarted {
+  generationId: string;
+}
+
 // Union type for all stream events
 export interface StreamEvent {
   type: StreamEventType;
   timestamp: number;
-  data: IntentPreview | ProgressUpdate | ValidationFeedback | RetryInfo | CompletionFeedback | ErrorFeedback;
+  data: GenerationStarted | IntentPreview | ProgressUpdate | ValidationFeedback | RetryInfo | CompletionFeedback | ErrorFeedback;
 }
 
 // Request body for streaming endpoint

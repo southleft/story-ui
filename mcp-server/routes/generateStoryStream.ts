@@ -30,6 +30,7 @@ class StreamWriter {
   private res: Response;
   private startTime: number;
   private llmCalls: number = 0;
+  private heartbeat?: ReturnType<typeof setInterval>;
 
   constructor(res: Response) {
     this.res = res;
@@ -38,6 +39,37 @@ class StreamWriter {
 
   send(event: StreamEvent): void {
     this.res.write(formatSSE(event));
+  }
+
+  /** Tell the client which run this is, so Stop can cancel it. */
+  sendStarted(generationId: string): void {
+    this.send(createStreamEvent('started', { generationId }));
+  }
+
+  /**
+   * Keep the socket warm while the pipeline is silent.
+   *
+   * Between "AI is generating your story" and the next phase, nothing is
+   * written for the whole LLM call, and verification adds a further budget of
+   * browser work plus a vision call. Any proxy with an idle timeout — and most
+   * have one around 60s — drops the stream in that gap, which the client can
+   * only read as a failed generation for work that in fact completed.
+   *
+   * A comment line is the SSE-native no-op: it keeps the connection alive and
+   * is ignored by every parser, including ours.
+   */
+  startHeartbeat(everyMs = 15000): void {
+    this.stopHeartbeat();
+    this.heartbeat = setInterval(() => {
+      try { this.res.write(': keep-alive\n\n'); } catch { this.stopHeartbeat(); }
+    }, everyMs);
+    // Never hold the process open for a heartbeat.
+    this.heartbeat.unref?.();
+  }
+
+  stopHeartbeat(): void {
+    if (this.heartbeat) clearInterval(this.heartbeat);
+    this.heartbeat = undefined;
   }
 
   sendIntent(intent: IntentPreview): void {
@@ -112,6 +144,10 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
     return;
   }
 
+  // The pipeline goes silent for the whole LLM call and again through
+  // verification; without this a proxy idle timeout reads as a failure.
+  stream.startHeartbeat();
+
   try {
     const outcome = await runStoryGeneration(
       {
@@ -141,6 +177,7 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
         onValidation: (validation) => stream.sendValidation(validation),
         onRetry: (attempt, maxAttempts, reason, errors) =>
           stream.sendRetry(attempt, maxAttempts, reason, errors),
+        onStarted: (generationId) => stream.sendStarted(generationId),
         onLLMCall: () => stream.trackLLMCall(),
       }
     );
@@ -196,8 +233,10 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
       code: outcome.code,
     });
 
+    stream.stopHeartbeat();
     res.end();
   } catch (err: any) {
+    stream.stopHeartbeat();
     if (err instanceof GenerationError) {
       stream.sendError({
         code: err.code,

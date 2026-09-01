@@ -102,6 +102,15 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
     return map;
   }, [target]);
   const ownersKey = candidates.map(n => detailByName[n]?.owner ?? '').join(',');
+  /**
+   * The attributes the element already carries, keyed by prop name.
+   *
+   * Every control below binds to this. Without it they were uncontrolled: a
+   * Select showed "choose…" for a prop the source explicitly set, and a Switch
+   * rendered off for a boolean that was already on — so applying a change and
+   * failing to apply one looked exactly the same.
+   */
+  const [current, setCurrent] = useState<Record<string, string | undefined>>({});
 
   useEffect(() => {
     setResolved(null);
@@ -125,12 +134,20 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
         // server ignores it.
         if (candidatesKey && ownersKey.replace(/,/g, '')) params.set('owners', ownersKey);
         if (fileName) params.set('fileName', fileName);
+        // The occurrence the edit would use, so the values shown describe the
+        // element that would actually change rather than the first of its name.
+        const occ = detailByName[candidates[0] || component]?.occurrence
+          ?? target?.sourceOccurrence ?? target?.occurrence;
+        if (occ !== undefined && occ !== null) params.set('occurrence', String(occ));
         const res = await fetch(`${apiBase}/mcp/editable-props?${params.toString()}`);
         if (!res.ok) throw new Error('lookup failed');
         const data = await res.json();
         if (!cancelled) {
           setProps(Array.isArray(data.props) ? data.props : []);
           setResolved(typeof data.component === 'string' && data.component ? data.component : null);
+          // Absent on an older server, which simply means "no current values
+          // to show" — the controls fall back to their placeholders.
+          setCurrent(data.current && typeof data.current === 'object' ? data.current : {});
         }
       } catch {
         if (!cancelled) setError('Could not read this component’s properties.');
@@ -145,7 +162,13 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
   const displayName = resolved ?? component;
 
   const apply = useCallback(async (prop: string, value: string | number | boolean | null) => {
-    if (!component || !fileName) return;
+    if (!component || !fileName) {
+      // Reachable: "New" does not clear the selection or close this panel, so
+      // you can sit on the home screen with a live chip over a story that is
+      // no longer active. Returning silently made every control look broken.
+      setNote('No story is open to edit — pick one from Recent work first.');
+      return;
+    }
     setPending(prop);
     setNote(null);
     /**
@@ -207,7 +230,28 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
         }),
       });
       const data = await res.json();
-      if (!res.ok) { setNote(data?.error || 'That change could not be applied.'); return; }
+      if (!res.ok) {
+        /**
+         * A 409 is the server refusing to GUESS, and it hands back the count
+         * it refused to guess between. That number was read only on the
+         * success branch, so the one case the server was carefully built to
+         * detect reached the user as a bare error with no way forward.
+         */
+        const ambiguous = typeof data?.occurrencesInSource === 'number' && data.occurrencesInSource > 1;
+        setNote(
+          ambiguous
+            ? `${data.error || 'That change is ambiguous.'} Click the exact ${targetName} you mean in the preview and try again.`
+            : (data?.error || 'That change could not be applied.'),
+        );
+        return;
+      }
+
+      // Optimistic local echo so the control shows the new value immediately;
+      // the authoritative values arrive with the next fetch.
+      setCurrent(prev => ({
+        ...prev,
+        [prop]: value === null ? undefined : String(value),
+      }));
 
       /**
        * Say when one edit affects several elements.
@@ -223,6 +267,10 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
         setNote(`Applied to every item in this list — one ${targetName} in the source renders all of them.`);
       } else if (typeof data.occurrencesInSource === 'number' && data.occurrencesInSource > 1) {
         setNote(`Applied. This ${targetName} appears ${data.occurrencesInSource} times in the source — check whether they all changed.`);
+      } else {
+        // The ordinary case said nothing at all, so a subtle change — a size
+        // bump, a variant swap — was indistinguishable from a dead control.
+        setNote(`Set ${prop}${value === null ? ' back to its default' : ` to ${String(value)}`}.`);
       }
       onApplied();
     } catch {
@@ -231,6 +279,21 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
       setPending(null);
     }
   }, [apiBase, component, candidates, detailByName, resolved, fileName, target, onApplied]);
+
+  /**
+   * Commit a text/number field, on Enter OR blur, and only when it changed.
+   *
+   * Enter-only was a silent dead end: type a value, click elsewhere, nothing
+   * happens and nothing says why. Comparing against the current value keeps a
+   * blur from re-sending an unchanged prop on every focus change.
+   */
+  const commitText = (p: { name: string; kind: string }, raw: string) => {
+    const next = raw.trim();
+    const now = current[p.name] ?? '';
+    if (next === now) return;
+    if (!next) { apply(p.name, null); return; }   // empty means reset, not ""
+    apply(p.name, p.kind === 'number' ? Number(next) : next);
+  };
 
   if (!target) return null;
 
@@ -294,6 +357,10 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
 
           {p.kind === 'enum' && p.options && (
             <Select.Root
+              // Controlled: show what the source actually says. `undefined`
+              // falls back to the placeholder, which now genuinely means
+              // "this prop is not set" rather than "we did not look".
+              value={current[p.name] ?? undefined}
               disabled={pending === p.name}
               onValueChange={v => apply(p.name, v === '__default__' ? null : v)}
             >
@@ -309,6 +376,8 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
 
           {p.kind === 'boolean' && (
             <Switch
+              // A bare `<X loading />` reads back as the string "true".
+              checked={current[p.name] === 'true' || current[p.name] === p.name}
               disabled={pending === p.name}
               onCheckedChange={c => apply(p.name, c ? true : null)}
             />
@@ -317,16 +386,19 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
           {(p.kind === 'number' || p.kind === 'string') && (
             <TextField.Root
               size="1"
+              // Keyed on the value so a fresh fetch re-seeds the input without
+              // making it fully controlled (which would fight typing).
+              key={`${p.name}:${current[p.name] ?? ''}`}
+              defaultValue={current[p.name] ?? ''}
               placeholder={p.defaultValue || (p.kind === 'number' ? 'number' : 'text')}
               disabled={pending === p.name}
               onKeyDown={e => {
                 if (e.key !== 'Enter') return;
-                const raw = (e.target as HTMLInputElement).value.trim();
-                // Empty means "reset", which is a removal rather than an
-                // empty string — `size=""` is not the same as no size.
-                if (!raw) { apply(p.name, null); return; }
-                apply(p.name, p.kind === 'number' ? Number(raw) : raw);
+                commitText(p, (e.target as HTMLInputElement).value);
               }}
+              // Committing on blur too. Enter-only meant typing a value and
+              // clicking away did nothing, with no hint that it would.
+              onBlur={e => commitText(p, e.target.value)}
             />
           )}
         </Flex>

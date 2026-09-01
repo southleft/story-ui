@@ -18,36 +18,75 @@
  *   → { "active": [ { "prompt": string, "fileName": string | null, "startedAt": number } ] }
  */
 
+import crypto from 'crypto';
 import type { Request, Response } from 'express';
 
 export interface ActiveGeneration {
+  /** Stable id, so a client can name this run when it wants to cancel it. */
+  id: string;
   /** The user's prompt, verbatim — the poller matches on it. */
   prompt: string;
   /** Target fileName when the request named one (updates); null for new stories. */
   fileName: string | null;
   /** Pipeline start, epoch ms — the same timestamp the pipeline itself uses. */
   startedAt: number;
+  /** Set by DELETE; the pipeline checks it between phases and stands down. */
+  cancelled?: boolean;
 }
 
-const active = new Map<symbol, ActiveGeneration>();
+const active = new Map<string, ActiveGeneration>();
 
-/** Register at pipeline start. Returns the key for the matching unregister. */
-export function registerActiveGeneration(entry: ActiveGeneration): symbol {
-  const key = Symbol('story-ui-generation');
-  active.set(key, entry);
-  return key;
+/**
+ * Register at pipeline start. Returns the id, which is also sent to the client
+ * so Stop can address this specific run.
+ *
+ * Keyed by a string rather than a Symbol because the id has to survive a trip
+ * over HTTP — a Symbol cannot be named by the client that wants to cancel.
+ */
+export function registerActiveGeneration(entry: Omit<ActiveGeneration, 'id'>): string {
+  const id = crypto.randomUUID();
+  active.set(id, { ...entry, id });
+  return id;
 }
 
 /** Remove in a finally — success, fallback and throw must all end here. */
-export function unregisterActiveGeneration(key: symbol): void {
-  active.delete(key);
+export function unregisterActiveGeneration(id: string): void {
+  active.delete(id);
 }
 
 export function listActiveGenerations(): ActiveGeneration[] {
   return [...active.values()];
 }
 
+/**
+ * Ask a running generation to stand down.
+ *
+ * Cooperative rather than forceful: there is no safe way to kill a pipeline
+ * mid-write, so this sets a flag the pipeline reads at phase boundaries. An
+ * unknown id is not an error — the run most likely just finished.
+ */
+export function cancelActiveGeneration(id: string): boolean {
+  const entry = active.get(id);
+  if (!entry) return false;
+  entry.cancelled = true;
+  return true;
+}
+
+/** Has this run been asked to stop? False for an id that is already gone. */
+export function isGenerationCancelled(id: string | undefined): boolean {
+  return !!(id && active.get(id)?.cancelled);
+}
+
 /** GET /story-ui/active-generations */
 export function activeGenerationsHandler(_req: Request, res: Response): void {
   res.json({ active: listActiveGenerations() });
+}
+
+/** DELETE /story-ui/active-generations/:id */
+export function cancelGenerationHandler(req: Request, res: Response): void {
+  const id = String(req.params.id || '');
+  const found = cancelActiveGeneration(id);
+  // 200 either way: "already finished" is a perfectly good outcome for a
+  // cancel request, and a 404 would make the client report a failure for it.
+  res.json({ cancelled: found, reason: found ? 'asked to stand down' : 'no such generation in flight' });
 }

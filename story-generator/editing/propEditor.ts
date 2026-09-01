@@ -167,6 +167,64 @@ export function occurrencesWithinOwner(code: string, component: string, owner: s
  * been bitten by a regex that spanned two statements and by one that treated
  * `/**\/` as a comment.
  */
+/**
+ * Read the attributes an element already carries.
+ *
+ * The property panel had no way to ask this, so every control rendered
+ * uncontrolled: a `Select` with no `value` showed its placeholder even for a
+ * prop the source explicitly sets, and a `Switch` with no `checked` rendered
+ * off for a boolean that was already on. The panel was a write-only form over
+ * state it could not read — you set `variant="outline"`, the canvas reloaded,
+ * and the control still said "choose…", which is indistinguishable from the
+ * edit not having landed.
+ *
+ * Same traversal and the same occurrence semantics as `editProp`, so what the
+ * panel displays and what an edit will target cannot disagree.
+ *
+ * Values come back as the SOURCE text: a string literal without quotes, an
+ * expression verbatim, and `true` for a bare shorthand flag.
+ */
+export function readProps(
+  code: string,
+  component: string,
+  occurrence: number = 0,
+): Record<string, string> | null {
+  const source = ts.createSourceFile('story.tsx', code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+
+  let seen = 0;
+  let result: Record<string, string> | null = null;
+
+  const visit = (node: ts.Node): void => {
+    if (result) return;
+    const isOpening = ts.isJsxOpeningElement(node);
+    const isSelfClosing = ts.isJsxSelfClosingElement(node);
+
+    if ((isOpening || isSelfClosing) && (node as any).tagName.getText(source) === component) {
+      if (seen++ === occurrence) {
+        const element = node as ts.JsxOpeningElement | ts.JsxSelfClosingElement;
+        const found: Record<string, string> = {};
+        for (const attr of element.attributes.properties) {
+          if (!ts.isJsxAttribute(attr)) continue;   // spread — nothing to show
+          const name = attr.name.getText(source);
+          if (!attr.initializer) { found[name] = 'true'; continue; }
+          if (ts.isStringLiteral(attr.initializer)) { found[name] = attr.initializer.text; continue; }
+          if (ts.isJsxExpression(attr.initializer)) {
+            found[name] = attr.initializer.expression?.getText(source) ?? '';
+            continue;
+          }
+          found[name] = attr.initializer.getText(source);
+        }
+        result = found;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  ts.forEachChild(source, visit);
+  return result;
+}
+
 export function editProp(code: string, edit: PropEdit): PropEditResult {
   const source = ts.createSourceFile('story.tsx', code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 

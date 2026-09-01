@@ -194,10 +194,39 @@ export async function runInteractionProbe(
         '[role="switch"], [role="checkbox"], input[type="checkbox"], [role="radio"], input[type="radio"]',
       )
         .filter(el => {
-          const r = el.getBoundingClientRect();
-          if (r.width === 0 && r.height === 0) return false;
           if ((el as HTMLInputElement).disabled) return false;
           if (el.getAttribute('aria-disabled') === 'true') return false;
+          /**
+           * A zero-size control is not necessarily an absent one.
+           *
+           * Almost every design system renders a switch or checkbox as a
+           * visually-hidden native `input` with a styled element painted over
+           * it, so the real control measures 0×0 (or 1×1 under a clip rect)
+           * while being perfectly operable. Filtering on its own box meant the
+           * probe skipped every toggle on Mantine, MUI, Carbon and Chakra
+           * alike — measured live: a panel with three working Switches
+           * reported "0 controls exercised", which reads as "nothing to test"
+           * and is the silence this probe exists to prevent.
+           *
+           * What actually matters is whether SOMETHING visible represents it,
+           * so fall back to the nearest labelled/rendered ancestor before
+           * concluding the control is not on the page.
+           */
+          const isRendered = (node: Element): boolean => {
+            // `checkVisibility` has precisely the semantics wanted here: false
+            // for display:none and visibility:hidden anywhere up the tree, true
+            // for an element that is merely clipped to a pixel. Walking
+            // ancestors for a non-zero box does NOT work — a display:none child
+            // still sits inside a full-width parent.
+            const anyNode = node as any;
+            if (typeof anyNode.checkVisibility === 'function') {
+              return anyNode.checkVisibility({ checkVisibilityCSS: true });
+            }
+            // Fallback for older engines: offsetParent is null for display:none.
+            const box = node.getBoundingClientRect();
+            return (node as HTMLElement).offsetParent !== null || box.width > 0 || box.height > 0;
+          };
+          if (!isRendered(el)) return false;
           return !DESTRUCTIVE.test(nameOf(el));
         });
       const toggles = allToggles.slice(0, opts.maxControls);
