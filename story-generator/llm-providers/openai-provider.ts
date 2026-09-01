@@ -271,6 +271,9 @@ export class OpenAIProvider extends BaseLLMProvider {
       let buffer = '';
       let promptTokens = 0;
       let completionTokens = 0;
+      // null until the API sends one, so a cut stream reports "unknown".
+      let finishReason: string | null = null;
+      let servedModel: string | undefined;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -292,6 +295,13 @@ export class OpenAIProvider extends BaseLLMProvider {
                 yield { type: 'text', content: event.choices[0].delta.content };
               }
 
+              // finish_reason is null on every chunk but the last content one;
+              // the usage-only chunk after it has an empty choices array.
+              if (event.choices?.[0]?.finish_reason) {
+                finishReason = event.choices[0].finish_reason;
+              }
+              if (typeof event.model === 'string') servedModel = event.model;
+
               // Usage may be included in the final message
               if (event.usage) {
                 promptTokens = event.usage.prompt_tokens || 0;
@@ -306,6 +316,8 @@ export class OpenAIProvider extends BaseLLMProvider {
 
       yield {
         type: 'done',
+        finishReason: finishReason === null ? undefined : this.mapFinishReason(finishReason),
+        model: servedModel,
         usage: {
           promptTokens,
           completionTokens,

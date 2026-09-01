@@ -11,6 +11,7 @@
  */
 
 import * as crypto from 'crypto';
+import os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
 import { loadConsiderations, considerationsToPrompt } from '../../story-generator/considerationsLoader.js';
@@ -28,6 +29,7 @@ import { isBlacklistedComponent, isBlacklistedIcon, getBlacklistErrorMessage, IC
 import { StoryTracker, StoryMapping } from '../../story-generator/storyTracker.js';
 import { getManifestManager } from '../../story-generator/manifestManager.js';
 import { reapplyPins, pinsForPrompt, describePin, type PropPin } from '../../story-generator/editing/pins.js';
+import { closeBrowserSession } from '../../story-generator/verify/browserSession.js';
 import type { PreviewReady } from './streamTypes.js';
 import { getDocumentation } from '../../story-generator/documentation-sources.js';
 import { postProcessStory, fixBarrelImports, splitScopeImports, editDivergence } from '../../story-generator/postProcessStory.js';
@@ -68,7 +70,7 @@ import {
   isProviderConfigured,
   getProviderInfo,
   chatCompletionWithImagesDetailed,
-  buildMessageWithImages,
+  buildMessageWithImages, chatCompletionStreamDetailed,
 } from '../../story-generator/llm-providers/story-llm-service.js';
 import { processImageInputs, ImageInput } from '../../story-generator/imageProcessor.js';
 import { VisionPromptType, buildVisionAwarePrompt } from '../../story-generator/visionPrompts.js';
@@ -266,6 +268,8 @@ export async function runStoryGeneration(
     return await runStoryGenerationPipeline(request, events, startedAt, activeKey);
   } finally {
     unregisterActiveGeneration(activeKey);
+    // Verification and repair share one Chromium per run; it ends with the run.
+    await closeBrowserSession().catch(() => undefined);
   }
 }
 
@@ -835,9 +839,30 @@ async function runStoryGenerationPipeline(
     initialPrompt = VOICE_MODE_PREAMBLE + '\n\n' + initialPrompt;
   }
 
-  const messages: { role: 'user' | 'assistant'; content: string }[] = [
-    { role: 'user', content: initialPrompt },
-  ];
+  /**
+   * Everything above "User request:" — the catalog, the docs, the rules, the
+   * considerations — is the same for every attempt of this request and for
+   * every repair of this story. Sent as the system block, which the Claude
+   * provider marks cacheable, so retries and repairs stop paying for the
+   * 15k-token catalog. The request itself stays in the user turn.
+   */
+  const split = splitAtUserRequest(initialPrompt);
+  logger.log(split
+    ? `🧱 Prompt: system ${split.system.length} chars (cacheable), user ${split.user.length} chars`
+    : `🧱 Prompt: ${initialPrompt.length} chars in one user turn (no "User request:" marker)`);
+  if (process.env.STORY_UI_DUMP_PROMPT) {
+    // The exact prompt, for reading with eyes. Opt-in; it is large.
+    try {
+      const dumpDir = path.join(os.tmpdir(), 'story-ui-prompts');
+      fs.mkdirSync(dumpDir, { recursive: true });
+      const dumpPath = path.join(dumpDir, `${Date.now()}.prompt.txt`);
+      fs.writeFileSync(dumpPath, split ? `=== SYSTEM ===\n${split.system}\n\n=== USER ===\n${split.user}` : initialPrompt, 'utf-8');
+      logger.log(`🧱 Prompt written to ${dumpPath}`);
+    } catch { /* diagnostics only */ }
+  }
+  const messages: { role: 'user' | 'assistant' | 'system'; content: string }[] = split
+    ? [{ role: 'system', content: split.system }, { role: 'user', content: split.user }]
+    : [{ role: 'user', content: initialPrompt }];
 
   // Step 4: Self-healing generation loop
   throwIfCancelled('generation');
@@ -905,7 +930,18 @@ async function runStoryGenerationPipeline(
       logger.log(`🔄 Self-healing attempt ${attempts}/${selfHealingOptions.maxAttempts}`);
     }
 
-    const llmResult = await callLLM(messages, processedImages.length > 0 ? processedImages : undefined, { provider, model });
+    // Streamed when there are no images (the streaming path carries text
+    // only). The one-per-second progress event is the only evidence of life
+    // the user gets during the longest phase of the run.
+    let lastStreamEmit = 0;
+    const llmResult = processedImages.length > 0
+      ? await callLLM(messages, processedImages, { provider, model })
+      : await callLLMStreaming(messages, { provider, model }, (chars) => {
+          const now = Date.now();
+          if (now - lastStreamEmit < 1000) return;
+          lastStreamEmit = now;
+          events.onProgress?.(4, totalSteps, 'llm_thinking', 'AI is generating your story...', { charsWritten: chars });
+        });
     const claudeResponse = llmResult.content;
 
     // Truncated responses can't validate — ask the model to complete the block.
@@ -1016,6 +1052,22 @@ async function runStoryGenerationPipeline(
         logger.warn(
           `⚠️ ${selection ? 'Targeted edit' : 'Update'} diverged ${Math.round(divergence * 100)}% from the original ` +
           `(limit ${Math.round(limit * 100)}%) — treating as a failed edit`,
+        );
+        // What came back, so a rejection can be diagnosed from the log alone:
+        // a fragment, a truncation and a genuine rewrite look identical above.
+        try {
+          // The reply itself, so the next diagnosis does not need a re-run.
+          const dumpDir = path.join(os.tmpdir(), 'story-ui-rejected');
+          fs.mkdirSync(dumpDir, { recursive: true });
+          const dumpPath = path.join(dumpDir, `${fileName || 'story'}.${Date.now()}.attempt${attempts + 1}.txt`);
+          fs.writeFileSync(dumpPath, aiText, 'utf-8');
+          logger.warn(`   rejected reply saved to ${dumpPath}`);
+        } catch { /* diagnostics only */ }
+        logger.warn(
+          `   reply: ${aiText.length} chars, ${aiText.split('\n').length} lines, ` +
+          `${/export\s+default/.test(aiText) ? 'has' : 'NO'} default export, ` +
+          `${/^\s*import\s/m.test(aiText) ? 'has' : 'NO'} imports; ` +
+          `previous: ${previousCode.length} chars. First line: ${JSON.stringify(aiText.split('\n').find(l => l.trim()) ?? '')}`,
         );
       }
     }
@@ -2187,6 +2239,25 @@ CRITICAL VOICE MODE RULES:
  * a fallback, so a "User request:" string appearing inside component docs or
  * the user's own prompt can no longer hijack the injection point.
  */
+/**
+ * Split a built prompt into the static prefix and the request, at the last
+ * "User request:" marker. Null when the marker is missing, in which case the
+ * whole prompt travels as one user turn exactly as before.
+ */
+function splitAtUserRequest(prompt: string): { system: string; user: string } | null {
+  // An update rewrites the closing marker to "Current modification request:"
+  // (see buildClaudePromptWithContext). Whichever comes LAST is the request;
+  // splitting at an earlier "User request:" put the request itself into the
+  // system block and left a stray fragment as the user turn.
+  const markers = ['Current modification request:', 'User request:'];
+  const idx = Math.max(...markers.map(m => prompt.lastIndexOf(m)));
+  if (idx === -1) return null;
+  const system = prompt.slice(0, idx).trimEnd();
+  const user = prompt.slice(idx);
+  if (system.length < 200) return null;
+  return { system, user };
+}
+
 function injectBeforeUserRequest(prompt: string, section: string): string {
   const marker = 'User request:';
   const idx = prompt.lastIndexOf(marker);
@@ -2381,16 +2452,30 @@ async function buildClaudePromptWithContext(
       `📋 DESIGN SYSTEM CONSIDERATIONS (project-specific rules — these OVERRIDE any conflicting general guidance, including any example code shown above):\n${options.considerations}`);
   }
 
-  if (!conversation || conversation.length <= 1) {
+  /**
+   * The previous code is the object of an update, whether or not a
+   * conversation came with it. This used to return early on a short or absent
+   * conversation, so an update from the stdio MCP server or any API client
+   * (fileName + isUpdate, no chat history) reached the model with NO previous
+   * code: it generated a fresh story, the divergence guard rejected it, and
+   * the user was told the change "replaced too much" of a story the model had
+   * never seen. Observed live, 1 Sept 2026, three runs in a row.
+   */
+  const hasConversation = Boolean(conversation && conversation.length > 1);
+  if (!hasConversation && !previousCode) {
     return prompt;
   }
 
-  const conversationContext = conversation
-    .slice(0, -1)
-    .map((msg) => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
-    .join('\n\n');
+  const conversationContext = hasConversation
+    ? conversation!
+        .slice(0, -1)
+        .map((msg) => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
+        .join('\n\n')
+    : '';
 
-  let contextSection = `CONVERSATION CONTEXT (for modifications/updates):\n${conversationContext}`;
+  let contextSection = hasConversation
+    ? `CONVERSATION CONTEXT (for modifications/updates):\n${conversationContext}`
+    : 'MODIFICATION OF AN EXISTING STORY:';
   if (previousCode) {
     contextSection += `\n\nPREVIOUS GENERATED CODE (this is what you're modifying):\n\`\`\`tsx\n${previousCode}\n\`\`\`\n\nCRITICAL INSTRUCTIONS FOR MODIFICATIONS:\n1. DO NOT regenerate the entire story from scratch\n2. PRESERVE all existing styling, components, and structure\n3. ONLY change what the user specifically requests`;
   }
@@ -2435,37 +2520,42 @@ function providerMaxTokens(provider?: string, model?: string): number {
 }
 
 async function callLLMStreaming(
-  messages: { role: 'user' | 'assistant'; content: string }[],
-  options: { provider?: string; model?: string; maxTokens: number },
+  messages: { role: 'user' | 'assistant' | 'system'; content: string }[],
+  options: { provider?: string; model?: string; maxTokens?: number; signal?: AbortSignal },
   onDelta: (charsWritten: number) => void,
 ): Promise<{ content: string; truncated: boolean }> {
-  let content = '';
-  let lastEmit = 0;
-
-  for await (const chunk of chatCompletionStream(messages, {
+  if (!isProviderConfigured()) {
+    throw new Error('No LLM provider configured');
+  }
+  if (options.provider) {
+    logger.log(`🎯 Explicit provider requested: ${options.provider} (model: ${options.model || 'default'})`);
+  }
+  const providerInfo = getProviderInfo({ provider: options.provider as any, model: options.model });
+  const result = await chatCompletionStreamDetailed(messages, {
     provider: options.provider as any,
     model: options.model,
-    maxTokens: options.maxTokens,
-  })) {
-    content += chunk;
-    // Throttled: the point is evidence of life, not a character counter.
-    const now = Date.now();
-    if (now - lastEmit > 250) {
-      lastEmit = now;
-      onDelta(content.length);
-    }
+    maxTokens: options.maxTokens ?? providerInfo.maxOutputTokens ?? 8192,
+    ...(options.signal ? { signal: options.signal } : {}),
+  }, (_delta, accumulated) => onDelta(accumulated.length));
+  onDelta(result.content.length);
+  if (result.usage) {
+    const u = result.usage as Record<string, number | undefined>;
+    logger.log(
+      `🧾 Tokens: in ${u.promptTokens ?? '?'} (cache read ${u.cacheReadInputTokens ?? 0}, ` +
+      `cache write ${u.cacheCreationInputTokens ?? 0}), out ${u.completionTokens ?? '?'}, stop=${result.finishReason ?? 'unknown'}`,
+    );
   }
-  onDelta(content.length);
-
-  // The streaming path does not surface stop_reason, so infer truncation the
-  // same way the retry prompt describes it: the response was cut off before the
-  // code block closed. An odd number of fences means the block never ended.
-  const fences = (content.match(/```/g) || []).length;
-  return { content, truncated: fences > 0 && fences % 2 !== 0 };
+  // The provider says whether it stopped on its own. When it did not say —
+  // a stream cut before message_delta — fall back to the fence heuristic
+  // rather than call an unknown ending a clean one.
+  const truncated = result.finishReason !== undefined
+    ? result.truncated
+    : (() => { const fences = (result.content.match(/```/g) || []).length; return fences > 0 && fences % 2 !== 0; })();
+  return { content: result.content, truncated };
 }
 
 async function callLLM(
-  messages: { role: 'user' | 'assistant'; content: string }[],
+  messages: { role: 'user' | 'assistant' | 'system'; content: string }[],
   images?: ImageContent[],
   options?: { provider?: string; model?: string; signal?: AbortSignal }
 ): Promise<{ content: string; truncated: boolean }> {
@@ -2529,7 +2619,7 @@ async function callLLM(
  */
 async function attemptRuntimeHealing(args: {
   runtimeResult: RuntimeValidationResult;
-  messages: { role: 'user' | 'assistant'; content: string }[];
+  messages: { role: 'user' | 'assistant' | 'system'; content: string }[];
   images: ImageContent[];
   provider?: string;
   model?: string;

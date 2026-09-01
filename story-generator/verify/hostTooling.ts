@@ -15,6 +15,7 @@ import { createRequire } from 'module';
 import path from 'path';
 import fs from 'fs';
 import { logger } from '../logger.js';
+import { warmBrowser } from './browserSession.js';
 
 export interface HostTooling {
   /** Playwright's module namespace, loaded from the host project. */
@@ -94,11 +95,14 @@ export function resolveHostTooling(projectRoot: string = process.cwd()): HostToo
  * Confirm a browser can actually launch. Playwright resolving does not mean its
  * browser binaries were downloaded, and that failure must surface as
  * "not verified" rather than as a defect in the user's story.
+ *
+ * The launch is the shared session's launch, not a throwaway: the browser this
+ * proves can start is the one every subsequent render in the process reuses.
+ * It stays open until `closeBrowserSession()` (see browserSession.ts).
  */
 export async function canLaunchBrowser(tooling: HostTooling): Promise<{ ok: boolean; error?: string }> {
   try {
-    const browser = await tooling.playwright.chromium.launch({ headless: true });
-    await browser.close();
+    await warmBrowser(tooling);
     return { ok: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

@@ -279,6 +279,10 @@ export class GeminiProvider extends BaseLLMProvider {
       let buffer = '';
       let promptTokens = 0;
       let completionTokens = 0;
+      // Gemini's SSE puts finishReason on the candidate of its final chunk
+      // (STOP, MAX_TOKENS, SAFETY, ...); earlier chunks omit it. If no chunk
+      // ever carries one this stays undefined and is reported as unknown.
+      let finishReason: string | undefined;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -306,6 +310,9 @@ export class GeminiProvider extends BaseLLMProvider {
                 yield { type: 'text', content: text };
               }
 
+              const candidateFinish = event.candidates?.[0]?.finishReason;
+              if (candidateFinish) finishReason = candidateFinish;
+
               // Extract usage metadata
               if (event.usageMetadata) {
                 promptTokens = event.usageMetadata.promptTokenCount || 0;
@@ -320,6 +327,8 @@ export class GeminiProvider extends BaseLLMProvider {
 
       yield {
         type: 'done',
+        finishReason: finishReason ? this.mapFinishReason(finishReason) : undefined,
+        model,
         usage: {
           promptTokens,
           completionTokens,

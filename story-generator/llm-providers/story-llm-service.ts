@@ -16,6 +16,7 @@ import {
   ProviderType,
   ImageContent,
   MessageContent,
+  StreamFinishReason,
 } from './index.js';
 import { logger } from '../logger.js';
 
@@ -124,19 +125,49 @@ export async function chatCompletion(
 }
 
 /**
- * Streaming chat completion — yields text deltas as the model generates them.
- * Used by the Voice Canvas to render code in real time. Throws on stream
- * errors; callers should surface them to the user.
+ * What a completed stream reports beyond the text the caller already saw.
+ * Same field names as the buffered path's ChatCompletionResult so a call site
+ * can swap between them; `finishReason` is optional because a stream can end
+ * without the provider ever saying why.
+ */
+export interface ChatStreamResult {
+  /** The whole reply — the concatenation of every delta. */
+  content: string;
+  /**
+   * Undefined when the provider never reported a stop reason (a stream cut
+   * mid-flight), so "unknown" and "stopped cleanly" are distinguishable.
+   */
+  finishReason?: StreamFinishReason;
+  usage?: ChatResponse['usage'];
+  provider: string;
+  model: string;
+  /** True only when the provider REPORTED hitting its output ceiling. */
+  truncated: boolean;
+}
+
+export interface ChatStreamOptions {
+  provider?: ProviderType;
+  model?: string;
+  maxTokens?: number;
+  temperature?: number;
+  /** Caller-side abort (e.g. a phase budget) — cancels the in-flight HTTP call. */
+  signal?: AbortSignal;
+  /** Send the system prompt as a cacheable block (default true; Claude only). */
+  cacheSystemPrompt?: boolean;
+}
+
+/**
+ * Streaming chat completion — yields text deltas as the model generates them,
+ * and RETURNS the stop reason and usage when the stream ends. A plain
+ * `for await` sees only the deltas (the Voice Canvas path); call `.next()`
+ * yourself, or use chatCompletionStreamDetailed, to read the result.
+ *
+ * Throws on stream errors; callers should surface them to the user.
  */
 export async function* chatCompletionStream(
   messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
-  options?: {
-    provider?: ProviderType;
-    model?: string;
-    maxTokens?: number;
-    temperature?: number;
-  }
-): AsyncGenerator<string> {
+  options?: ChatStreamOptions
+): AsyncGenerator<string, ChatStreamResult> {
   ensureInitialized();
 
   let provider: LLMProvider;
@@ -161,30 +192,83 @@ export async function* chatCompletionStream(
   }));
 
   const model = options?.model ? resolveModelAlias(options.model) : undefined;
-
-  if (!provider.chatStream) {
-    // Provider without streaming support — degrade to a single final chunk.
-    const result = await provider.chat(chatMessages, {
-      model,
-      maxTokens: options?.maxTokens,
-      temperature: options?.temperature,
-      systemPrompt,
-    });
-    yield result.content;
-    return;
-  }
-
-  for await (const chunk of provider.chatStream(chatMessages, {
+  const chatOptions = {
     model,
     maxTokens: options?.maxTokens,
     temperature: options?.temperature,
     systemPrompt,
-  })) {
+    signal: options?.signal,
+    cacheSystemPrompt: options?.cacheSystemPrompt,
+  };
+
+  if (!provider.chatStream) {
+    // Provider without streaming support — degrade to a single final chunk.
+    const result = await provider.chat(chatMessages, chatOptions);
+    yield result.content;
+    return {
+      content: result.content,
+      finishReason: result.finishReason,
+      usage: result.usage,
+      provider: provider.name,
+      model: result.model,
+      truncated: result.finishReason === 'length',
+    };
+  }
+
+  let content = '';
+  let finishReason: StreamFinishReason | undefined;
+  let usage: ChatResponse['usage'] | undefined;
+  let servedModel: string | undefined;
+
+  for await (const chunk of provider.chatStream(chatMessages, chatOptions)) {
     if (chunk.type === 'text' && chunk.content) {
+      content += chunk.content;
       yield chunk.content;
+    } else if (chunk.type === 'done') {
+      finishReason = chunk.finishReason;
+      usage = chunk.usage;
+      servedModel = chunk.model;
     } else if (chunk.type === 'error') {
       throw new Error(chunk.error || 'LLM stream error');
     }
+  }
+
+  if (finishReason === 'length') {
+    logger.warn('LLM stream was truncated at the output token limit', {
+      provider: provider.name,
+      model: servedModel || model || provider.getConfig().model,
+      maxTokens: options?.maxTokens,
+    });
+  }
+
+  return {
+    content,
+    finishReason,
+    usage,
+    provider: provider.name,
+    model: servedModel || model || provider.getConfig().model,
+    truncated: finishReason === 'length',
+  };
+}
+
+/**
+ * The streaming path with the result handed back as a value: every delta goes
+ * to `onDelta` as it arrives, and the promise resolves with the full text,
+ * the provider's stop reason and usage. This is the shape a generation loop
+ * wants — the buffered path's answer, plus evidence of life along the way.
+ */
+export async function chatCompletionStreamDetailed(
+  messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
+  options?: ChatStreamOptions,
+  onDelta?: (delta: string, accumulated: string) => void,
+): Promise<ChatStreamResult> {
+  const stream = chatCompletionStream(messages, options);
+  let accumulated = '';
+  while (true) {
+    const next = await stream.next();
+    if (next.done) return next.value;
+    accumulated += next.value;
+    onDelta?.(next.value, accumulated);
   }
 }
 

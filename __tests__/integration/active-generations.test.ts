@@ -30,6 +30,13 @@ vi.mock('../../story-generator/llm-providers/story-llm-service.js', () => ({
     if (llm.gate) await llm.gate;
     return { content: validStoryResponse(), truncated: false };
   }),
+  // The generation loop streams when there are no images; the gate applies
+  // to this entry point too, or the in-flight window this test measures
+  // closes before it can be observed.
+  chatCompletionStreamDetailed: vi.fn(async (messages: Array<{ role: string; content: string }>) => {
+    if (llm.gate) await llm.gate;
+    return { content: validStoryResponse(), truncated: false, finishReason: 'stop', provider: 'mock', model: 'mock' };
+  }),
   chatCompletion: vi.fn(async () => ''),
   chatCompletionStream: vi.fn(),
   chatCompletionWithImages: vi.fn(async () => { throw new Error('vision not used in these tests'); }),

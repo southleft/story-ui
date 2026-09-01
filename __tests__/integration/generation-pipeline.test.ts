@@ -17,7 +17,34 @@ const llm = vi.hoisted(() => ({
   calls: [] as Array<Array<{ role: string; content: string }>>,
 }));
 
+const answer = async (messages: Array<{ role: string; content: string }>) => {
+  const first = typeof messages[0]?.content === 'string' ? messages[0].content : '';
+  // The post-generation conversational summary is a separate LLM call —
+  // answer it out-of-band so it never consumes the scripted queue.
+  if (first.includes('You are Story UI, an assistant that just')) {
+    return {
+      content: 'I put together the layout you asked for.\nSUGGESTIONS:\nMake the button larger\nAdd a second card\nCenter the content',
+      truncated: false,
+    };
+  }
+  llm.calls.push(messages.map(m => ({ role: m.role, content: m.content })));
+  const next = llm.queue.shift();
+  if (!next) throw new Error('Mock LLM queue exhausted — test did not script enough responses');
+  return { content: next.content, truncated: !!next.truncated };
+};
+
 vi.mock('../../story-generator/llm-providers/story-llm-service.js', () => ({
+  // The generation loop streams when there are no images; both entry points
+  // answer from the same scripted queue.
+  chatCompletionStreamDetailed: vi.fn(async (
+    messages: Array<{ role: string; content: string }>,
+    _options: unknown,
+    onDelta?: (delta: string, accumulated: string) => void,
+  ) => {
+    const r = await answer(messages);
+    onDelta?.(r.content, r.content);
+    return { ...r, finishReason: r.truncated ? 'length' : 'stop', provider: 'mock', model: 'mock' };
+  }),
   chatCompletionDetailed: vi.fn(async (messages: Array<{ role: string; content: string }>) => {
     const first = typeof messages[0]?.content === 'string' ? messages[0].content : '';
     // The post-generation conversational summary is a separate LLM call —
@@ -356,6 +383,36 @@ describe('generation pipeline (integration)', () => {
     // Refinement prompt carried the previous code as modification context
     const updateCall = llm.calls[1].map(m => m.content).join('\n');
     expect(updateCall).toContain('PREVIOUS GENERATED CODE');
+  });
+
+  it('carries the previous code into an update that arrives with no conversation', async () => {
+    // The stdio MCP server and API clients send fileName + isUpdate and no chat
+    // history. The prompt builder returned early on a short conversation and
+    // dropped the previous code, so the model regenerated from scratch and the
+    // divergence guard rejected the result — three live runs in a row.
+    llm.queue.push({ content: validStoryResponse() });
+    const first = await runStoryGeneration({
+      prompt: 'Create a pricing card',
+      conversation: [{ role: 'user', content: 'Create a pricing card' }],
+    });
+
+    llm.queue.push({ content: validStoryResponse() });
+    const second = await runStoryGeneration({
+      prompt: 'Make the button say Subscribe',
+      fileName: first.fileName,
+      isUpdate: true,
+      originalTitle: first.title,
+    });
+    expect(second.isUpdate).toBe(true);
+
+    const call = llm.calls.at(-1)!;
+    expect(call.map(m => m.content).join('\n')).toContain('PREVIOUS GENERATED CODE');
+    // The static prefix travels as the system block and the request as the
+    // user turn — the split must not strand the request inside the prefix.
+    expect(call[0].role).toBe('system');
+    const user = call.filter(m => m.role === 'user').map(m => m.content).join('\n');
+    expect(user).toContain('Make the button say Subscribe');
+    expect(call[0].content).not.toContain('Make the button say Subscribe');
   });
 
   it('builds the next update on the file a prop edit wrote, not the pre-edit history', async () => {

@@ -80,6 +80,13 @@ export interface ChatOptions {
   topK?: number;
   stopSequences?: string[];
   systemPrompt?: string;
+  /**
+   * Send the system prompt as a cacheable block so the static prefix of a
+   * prompt is read from the provider's prompt cache on repeat calls instead
+   * of being re-billed in full. Defaults to true. Only Claude acts on it
+   * today; other providers ignore it.
+   */
+  cacheSystemPrompt?: boolean;
   stream?: boolean;
   tools?: ToolDefinition[];
   /**
@@ -113,10 +120,29 @@ export interface ChatResponse {
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
+    /** Prompt tokens served from the provider's prompt cache (Claude). */
+    cacheReadInputTokens?: number;
+    /** Prompt tokens written to the provider's prompt cache on this call (Claude). */
+    cacheCreationInputTokens?: number;
   };
   toolCalls?: ToolCall[];
   raw?: any; // Original response from provider
 }
+
+/**
+ * Why a stream ended, normalised across providers. The named members are the
+ * ones callers branch on ('length' is the truncation signal); the open string
+ * lets a provider pass through a value this union has not learned yet rather
+ * than mislabel it as a clean stop.
+ */
+export type StreamFinishReason =
+  | 'stop'
+  | 'length'
+  | 'content_filter'
+  | 'tool_use'
+  | 'tool_calls'
+  | 'error'
+  | (string & {});
 
 // Streaming response
 export interface StreamChunk {
@@ -125,6 +151,14 @@ export interface StreamChunk {
   toolCall?: Partial<ToolCall>;
   error?: string;
   usage?: ChatResponse['usage'];
+  /**
+   * On the 'done' chunk only: the provider's stop reason. Left undefined when
+   * the stream ended without the provider ever saying why (a cut connection),
+   * so "absent" and "stopped cleanly" never look the same to a caller.
+   */
+  finishReason?: StreamFinishReason;
+  /** On the 'done' chunk: the model that actually served the request. */
+  model?: string;
 }
 
 // Image analysis response

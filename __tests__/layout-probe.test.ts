@@ -14,7 +14,8 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 
-import { resolveHostTooling, canLaunchBrowser } from '../story-generator/verify/hostTooling.js';
+import { resolveHostTooling } from '../story-generator/verify/hostTooling.js';
+import { acquireBrowser, closeBrowserSession } from '../story-generator/verify/browserSession.js';
 import { runLayoutProbe } from '../story-generator/verify/probes/layout.js';
 
 /**
@@ -35,11 +36,11 @@ let browser: any;
 
 beforeAll(async () => {
   if (!tooling) return;
-  const ok = await canLaunchBrowser(tooling);
-  if (ok.ok) browser = await tooling.playwright.chromium.launch({ headless: true });
+  // The shared session browser — the same one the pipeline renders in.
+  browser = await acquireBrowser(tooling).catch(() => undefined);
 }, 60_000);
 
-afterAll(async () => { try { await browser?.close(); } catch { /* already gone */ } });
+afterAll(async () => { await closeBrowserSession(); });
 
 /** Render bare markup and run the probe against it. */
 async function probe(html: string) {

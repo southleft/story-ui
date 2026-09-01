@@ -11,6 +11,7 @@
 import fs from 'fs';
 import { logger } from '../logger.js';
 import type { HostTooling } from './hostTooling.js';
+import { currentBrowser } from './browserSession.js';
 
 export interface RenderResult {
   ok: boolean;
@@ -50,6 +51,13 @@ export interface RenderOptions {
   tooling: HostTooling;
   /** Budget for navigation + first paint. */
   timeoutMs?: number;
+  /**
+   * A browser to render in; its lifetime is the caller's. When omitted, the
+   * process-wide session browser is used if one is open (browserSession.ts),
+   * else a private one is launched and closed with the page — the original
+   * behaviour, for callers that never opt in.
+   */
+  browser?: any;
 }
 
 /**
@@ -66,16 +74,30 @@ export async function renderStory(options: RenderOptions): Promise<RenderResult>
   const pageErrors: string[] = [];
   const consoleErrors: string[] = [];
   let browser: any;
+  let context: any;
   let page: any;
+  // True only when this call launched the browser itself. A borrowed browser
+  // belongs to whoever acquired it; we give back the context and nothing more.
+  let ownsBrowser = false;
 
   const dispose = async () => {
     try { await page?.close(); } catch { /* already gone */ }
-    try { await browser?.close(); } catch { /* already gone */ }
+    try { await context?.close(); } catch { /* already gone */ }
+    if (ownsBrowser) {
+      try { await browser?.close(); } catch { /* already gone */ }
+    }
   };
 
   try {
-    browser = await tooling.playwright.chromium.launch({ headless: true });
-    page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    browser = options.browser ?? currentBrowser();
+    if (!browser) {
+      browser = await tooling.playwright.chromium.launch({ headless: true });
+      ownsBrowser = true;
+    }
+    // A fresh context per render: the isolation a new browser gave (storage,
+    // cookies, no shared state) at a few milliseconds instead of a second.
+    context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    page = await context.newPage();
 
     page.on('pageerror', (err: Error) => pageErrors.push(err.message));
     page.on('console', (msg: any) => {

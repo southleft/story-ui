@@ -109,10 +109,21 @@ interface AnthropicResponse {
   model: string;
   stop_reason: string | null;
   stop_sequence: string | null;
-  usage: {
-    input_tokens: number;
-    output_tokens: number;
-  };
+  usage: AnthropicUsage;
+}
+
+interface AnthropicUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+}
+
+/** The block form of the `system` parameter, which is what carries a cache breakpoint. */
+interface AnthropicSystemBlock {
+  type: 'text';
+  text: string;
+  cache_control?: { type: 'ephemeral'; ttl?: '5m' | '1h' };
 }
 
 export class ClaudeProvider extends BaseLLMProvider {
@@ -151,7 +162,7 @@ export class ClaudeProvider extends BaseLLMProvider {
 
     // Add optional parameters
     if (systemPrompt) {
-      requestBody.system = systemPrompt;
+      requestBody.system = this.buildSystemParam(systemPrompt, options);
     }
     // Claude Sonnet 5 / Opus 4.7+ / Fable reject sampling parameters with a 400.
     if (supportsSamplingParams(model)) {
@@ -194,6 +205,7 @@ export class ClaudeProvider extends BaseLLMProvider {
       }
 
       const data = (await response.json()) as AnthropicResponse;
+      this.logCacheUsage(data.usage, 'chat');
       const chatResponse = this.convertResponse(data);
       this.logResponse(chatResponse);
       return chatResponse;
@@ -235,7 +247,7 @@ export class ClaudeProvider extends BaseLLMProvider {
     };
 
     if (systemPrompt) {
-      requestBody.system = systemPrompt;
+      requestBody.system = this.buildSystemParam(systemPrompt, options);
     }
     if (supportsSamplingParams(model) && options?.temperature !== undefined) {
       requestBody.temperature = options.temperature;
@@ -268,6 +280,13 @@ export class ClaudeProvider extends BaseLLMProvider {
       let buffer = '';
       let inputTokens = 0;
       let outputTokens = 0;
+      let cacheReadTokens: number | undefined;
+      let cacheCreationTokens: number | undefined;
+      // Undefined until the API says so. A stream that dies before its
+      // message_delta must report "unknown", never "stopped cleanly".
+      let stopReason: string | undefined;
+      let servedModel: string | undefined;
+      let streamError: string | undefined;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -287,10 +306,30 @@ export class ClaudeProvider extends BaseLLMProvider {
 
               if (event.type === 'content_block_delta' && event.delta?.text) {
                 yield { type: 'text', content: event.delta.text };
-              } else if (event.type === 'message_start' && event.message?.usage) {
-                inputTokens = event.message.usage.input_tokens || 0;
-              } else if (event.type === 'message_delta' && event.usage) {
-                outputTokens = event.usage.output_tokens || 0;
+              } else if (event.type === 'message_start' && event.message) {
+                // message_start carries the served model and the INPUT side
+                // of usage, including the prompt-cache counters.
+                if (typeof event.message.model === 'string') servedModel = event.message.model;
+                const usage = event.message.usage;
+                if (usage) {
+                  inputTokens = usage.input_tokens || 0;
+                  cacheReadTokens = usage.cache_read_input_tokens;
+                  cacheCreationTokens = usage.cache_creation_input_tokens;
+                }
+              } else if (event.type === 'message_delta') {
+                // stop_reason rides on message_delta's delta, beside the
+                // cumulative output usage. This is the one event that says
+                // WHY the model stopped; the old parser read only the count.
+                if (typeof event.delta?.stop_reason === 'string') {
+                  stopReason = event.delta.stop_reason;
+                }
+                if (event.usage) {
+                  outputTokens = event.usage.output_tokens || 0;
+                }
+              } else if (event.type === 'error') {
+                // Anthropic reports a mid-stream failure (overloaded, etc.) as
+                // an SSE event on a 200 response, not as an HTTP status.
+                streamError = event.error?.message || event.error?.type || 'Claude stream error';
               }
             } catch {
               // Skip malformed JSON
@@ -299,12 +338,28 @@ export class ClaudeProvider extends BaseLLMProvider {
         }
       }
 
+      if (streamError) {
+        yield { type: 'error', error: `Claude API stream error: ${streamError}` };
+        return;
+      }
+
+      this.logCacheUsage({
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        cache_read_input_tokens: cacheReadTokens,
+        cache_creation_input_tokens: cacheCreationTokens,
+      }, 'stream');
+
       yield {
         type: 'done',
+        finishReason: stopReason === undefined ? undefined : this.mapStopReason(stopReason),
+        model: servedModel,
         usage: {
           promptTokens: inputTokens,
           completionTokens: outputTokens,
           totalTokens: inputTokens + outputTokens,
+          ...(cacheReadTokens !== undefined && { cacheReadInputTokens: cacheReadTokens }),
+          ...(cacheCreationTokens !== undefined && { cacheCreationInputTokens: cacheCreationTokens }),
         },
       };
     } catch (error) {
@@ -419,9 +474,55 @@ export class ClaudeProvider extends BaseLLMProvider {
         promptTokens: data.usage.input_tokens,
         completionTokens: data.usage.output_tokens,
         totalTokens: data.usage.input_tokens + data.usage.output_tokens,
+        ...(data.usage.cache_read_input_tokens !== undefined && {
+          cacheReadInputTokens: data.usage.cache_read_input_tokens,
+        }),
+        ...(data.usage.cache_creation_input_tokens !== undefined && {
+          cacheCreationInputTokens: data.usage.cache_creation_input_tokens,
+        }),
       },
       raw: data,
     };
+  }
+
+  /**
+   * The system prompt in the API's block form, with a cache breakpoint on the
+   * last block.
+   *
+   * Prompt caching is a prefix match over tools → system → messages, so a
+   * breakpoint on the final system block caches everything up to it. The
+   * default ephemeral TTL is 5 minutes and every cache read refreshes the
+   * timer, which suits a generate → verify → repair loop whose calls are
+   * seconds apart. Below the model's minimum cacheable prefix (1024 tokens on
+   * Sonnet 5 / Opus 4.8, 4096 on Haiku 4.5, 512 on Opus 5) the marker is
+   * harmless: the API returns cache_creation_input_tokens: 0 and bills as
+   * usual. That silence is why both call paths log the counters — a prompt
+   * that never caches should be visible in the log, not assumed to work.
+   */
+  private buildSystemParam(
+    systemPrompt: string,
+    options?: ChatOptions,
+  ): string | AnthropicSystemBlock[] {
+    if (options?.cacheSystemPrompt === false) return systemPrompt;
+    return [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }];
+  }
+
+  /** Make the cache's effect observable. Absent counters are logged as absent, not as 0. */
+  private logCacheUsage(usage: Partial<AnthropicUsage> | undefined, mode: 'chat' | 'stream'): void {
+    if (!usage) return;
+    const read = usage.cache_read_input_tokens;
+    const created = usage.cache_creation_input_tokens;
+    if (read === undefined && created === undefined) {
+      logger.debug(`Claude prompt cache (${mode}): no cache counters in usage`, {
+        inputTokens: usage.input_tokens ?? 0,
+      });
+      return;
+    }
+    logger.debug(`Claude prompt cache (${mode})`, {
+      cacheReadInputTokens: read ?? 0,
+      cacheCreationInputTokens: created ?? 0,
+      uncachedInputTokens: usage.input_tokens ?? 0,
+    });
   }
 
   private mapStopReason(
@@ -435,6 +536,8 @@ export class ClaudeProvider extends BaseLLMProvider {
         return 'length';
       case 'tool_use':
         return 'tool_calls';
+      case 'refusal':
+        return 'content_filter';
       default:
         return 'stop';
     }
