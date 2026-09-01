@@ -1283,7 +1283,14 @@ async function runStoryGenerationPipeline(
   // Requires the file on disk (Storybook must rebuild it), so it runs after
   // the first write; a failure triggers one bounded regeneration attempt.
   const runtimeEnabled = isRuntimeValidationEnabled();
-  let runtimeResult: RuntimeValidationResult = { success: true, storyExists: true } as RuntimeValidationResult;
+  // Seeded as NOT RUN, not as a pass. When the block below is skipped this
+  // value is what `generateStory.ts` reports as `runtimeValidation.success`,
+  // so seeding `true` meant a check that never happened claimed the story
+  // renders.
+  let runtimeResult: RuntimeValidationResult = {
+    success: false, storyExists: false, errorType: 'not_run',
+    details: 'Runtime validation did not run for this generation',
+  };
   let runtimeHealed = false;
 
   if (runtimeEnabled && !isFallbackStory) {
@@ -1292,14 +1299,16 @@ async function runStoryGenerationPipeline(
       // crash-and-heal cycle looked like one long save while the user watched
       // a red error story with no explanation.
       events.onProgress?.(9, totalSteps, 'runtime_check', 'Checking the story renders in Storybook...');
-      runtimeResult = await validateStoryRuntime(fixedFileContents, aiTitle, config.storyPrefix);
+      runtimeResult = await validateStoryRuntime(fixedFileContents, aiTitle, config.storyPrefix,
+        { storyId: computeStorybookId(fixedFileContents, storyIdSlug), projectRoot: process.cwd() });
       // Only spend a healing LLM call on genuine in-Storybook failures.
       // Infrastructure problems (Storybook not running, story not indexed
       // yet, timeouts) are not code errors and can't be healed.
       const isCodeFailure = !runtimeResult.success &&
         (runtimeResult.errorType === 'module_error' || runtimeResult.errorType === 'render_error');
       if (!runtimeResult.success && !isCodeFailure) {
-        logger.warn(`⚠️ Runtime validation inconclusive (${runtimeResult.errorType}): ${runtimeResult.renderError} — skipping healing`);
+        const why = runtimeResult.renderError || runtimeResult.details || 'no reason reported';
+        logger.warn(`⚠️ Runtime validation inconclusive (${runtimeResult.errorType}): ${why} — skipping healing`);
       }
       if (isCodeFailure) {
         logger.error(`❌ Runtime validation failed: ${runtimeResult.renderError}`);
@@ -1329,7 +1338,8 @@ async function runStoryGenerationPipeline(
           outPath = writeStory(fixedFileContents);
           selfHealingUsed = true;
           try {
-            runtimeResult = await validateStoryRuntime(fixedFileContents, aiTitle, config.storyPrefix);
+            runtimeResult = await validateStoryRuntime(fixedFileContents, aiTitle, config.storyPrefix,
+              { storyId: computeStorybookId(fixedFileContents, storyIdSlug), projectRoot: process.cwd() });
             runtimeHealed = runtimeResult.success;
           } catch {
             // Leave the last known result in place.

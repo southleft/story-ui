@@ -66,6 +66,27 @@ const MANAGED_FILES = [
     target: 'src/stories/StoryUI/manager.tsx',
     description: '"Edit in Story UI" manager toolbar button'
   },
+  // Panel siblings. StoryUIPanel.tsx imports each of these by relative path,
+  // so shipping the panel without them leaves the consumer with three
+  // unresolvable imports. `init` has always copied them; `update` did not,
+  // which meant updating an existing project BROKE the V1 panel.
+  // `__tests__/update-managed-files.test.ts` derives this list from the
+  // panel's own imports so the two cannot drift again.
+  {
+    source: 'templates/StoryUI/DesignContextPanel.tsx',
+    target: 'src/stories/StoryUI/DesignContextPanel.tsx',
+    description: 'Design context panel'
+  },
+  {
+    source: 'templates/StoryUI/VerificationBadge.tsx',
+    target: 'src/stories/StoryUI/VerificationBadge.tsx',
+    description: 'Verification result badge'
+  },
+  {
+    source: 'templates/StoryUI/HandoffDialog.tsx',
+    target: 'src/stories/StoryUI/HandoffDialog.tsx',
+    description: 'Handoff dialog'
+  },
   // Voice Canvas files
   {
     source: 'templates/StoryUI/voice/VoiceCanvas.tsx',

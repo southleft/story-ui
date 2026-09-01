@@ -93,4 +93,36 @@ describe('updateCommand', () => {
     expect(result.errors).toEqual([]);
     expect(fs.existsSync(path.join(root, 'src', 'stories', 'StoryUIV2', 'StoryUIV2.mdx'))).toBe(true);
   });
+  /**
+   * The regression this pins: `StoryUIPanel.tsx` grew three sibling imports
+   * (DesignContextPanel, VerificationBadge, HandoffDialog). `init` copied
+   * them; MANAGED_FILES did not list them. So `story-ui update` delivered a
+   * panel with three unresolvable imports — a broken V1 panel for every
+   * existing user who updated.
+   *
+   * Derived from the panel's own imports rather than hardcoded, so adding a
+   * fourth sibling and forgetting `update` fails here instead of in a user's
+   * project.
+   */
+  it('delivers every sibling the panel imports by relative path', async () => {
+    scaffoldProject('src/stories');
+
+    const panelSource = fs.readFileSync(
+      path.join(repoRoot, 'templates', 'StoryUI', 'StoryUIPanel.tsx'), 'utf-8'
+    );
+    const siblings = [...panelSource.matchAll(/^import\s[^;]*?from\s+'\.\/([^']+)';/gm)]
+      .map(m => m[1])
+      .filter(spec => !spec.startsWith('voice/'));
+
+    // Guard the guard: if the regex stops matching, an empty list would make
+    // this test pass while checking nothing.
+    expect(siblings.length).toBeGreaterThanOrEqual(3);
+
+    await updateCommand({ force: true, backup: false });
+
+    for (const spec of siblings) {
+      const onDisk = path.join(root, 'src', 'stories', 'StoryUI', `${spec}.tsx`);
+      expect(fs.existsSync(onDisk), `update did not deliver ${spec}.tsx, which StoryUIPanel.tsx imports`).toBe(true);
+    }
+  });
 });
