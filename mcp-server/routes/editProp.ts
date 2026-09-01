@@ -273,6 +273,17 @@ export async function editablePropsHandler(req: Request, res: Response): Promise
     }
 
     const config = await loadUserConfig();
+    if (config.componentFramework && config.componentFramework !== 'react') {
+      // The editor parses JSX and targets React fibers. For any other
+      // framework it answered 409 "none of these appear in the story", which
+      // reads as a bug in the story rather than a limit of the tool.
+      res.status(501).json({
+        error: `Direct prop editing is React-only today (the editor works on JSX). For ${config.componentFramework}, describe the change in chat instead.`,
+        code: 'UNSUPPORTED_FRAMEWORK',
+        framework: config.componentFramework,
+      });
+      return;
+    }
 
     /**
      * Resolve the clicked name against the story file, exactly as the edit
@@ -411,6 +422,17 @@ export async function editPropHandler(req: Request, res: Response): Promise<void
     }
 
     const config = await loadUserConfig();
+    if (config.componentFramework && config.componentFramework !== 'react') {
+      // The editor parses JSX and targets React fibers. For any other
+      // framework it answered 409 "none of these appear in the story", which
+      // reads as a bug in the story rather than a limit of the tool.
+      res.status(501).json({
+        error: `Direct prop editing is React-only today (the editor works on JSX). For ${config.componentFramework}, describe the change in chat instead.`,
+        code: 'UNSUPPORTED_FRAMEWORK',
+        framework: config.componentFramework,
+      });
+      return;
+    }
 
     // Confine writes to the generated stories directory.
     const filePath = storyFilePath(config, String(fileName));

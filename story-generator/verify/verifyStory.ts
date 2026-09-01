@@ -44,6 +44,14 @@ export interface VerifyStoryOptions {
    */
   libraryComponents?: string[];
   /**
+   * The component framework of the story. Ownership of a rendered node is
+   * read from React's fiber; for anything else it is unknown, and a finding
+   * that cannot be attributed must not block or trigger repair — the only
+   * repair a model can make to a library's own markup is to stop using the
+   * component.
+   */
+  framework?: string;
+  /**
    * Where generated stories are written, so "not indexed" can be told apart
    * from "Storybook's watcher has stopped noticing files".
    */
@@ -152,7 +160,7 @@ export function censusFindings(problems: Awaited<ReturnType<typeof runDomCensus>
 
 export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyReport> {
   const started = Date.now();
-  const { storybookUrl, storyIdPrefix, title, projectRoot = process.cwd(), timeoutMs = 20000, libraryComponents, generatedDir, visualCritic, request, componentsUsed } = options;
+  const { storybookUrl, storyIdPrefix, title, projectRoot = process.cwd(), timeoutMs = 20000, libraryComponents, generatedDir, visualCritic, request, componentsUsed, framework } = options;
 
   if (!storybookUrl) {
     return notVerified('No Storybook URL available to verify against', started);
@@ -492,6 +500,27 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
       }
     }
 
+    /**
+     * Outside React nothing here can say who rendered a node, so every
+     * blocker is an unattributed one. Reported, never enforced: the finding
+     * stays, at warning, with the reason, and cannot spend an LLM call.
+     */
+    let attributionNote: string | undefined;
+    if (framework && framework !== 'react') {
+      let downgraded = 0;
+      for (const f of findings) {
+        if (f.severity === 'blocker' && f.class !== 'infrastructure') {
+          f.severity = 'warning';
+          f.repairable = false;
+          f.evidence = `${f.evidence ? `${f.evidence}; ` : ''}unattributed: element ownership is only readable for React, so this may be the design system's own markup`;
+          downgraded++;
+        }
+      }
+      if (downgraded) {
+        attributionNote = `${downgraded} finding(s) reported at warning: attribution is React-only and this is a ${framework} story`;
+        logger.log(`🔍 ${attributionNote}`);
+      }
+    }
     const outcome = blockers(findings).length > 0 ? 'issues' : 'verified';
     const ratio = coverageRatio(coverage);
     const gaps = missingLayers(coverage);
@@ -508,6 +537,7 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
     }
 
     return {
+      ...(attributionNote ? { reason: attributionNote } : {}),
       outcome,
       coverage,
       findings,

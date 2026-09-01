@@ -1125,7 +1125,11 @@ async function runStoryGenerationPipeline(
      * construction (resolved enum sets, known deprecations); see conformance.ts
      * for why required- and unknown-prop checks are deliberately absent.
      */
-    const conformanceErrors = formatConformanceErrors(checkConformance(aiText, knownProps));
+    // JSX only: the checker walks JSX attributes, so on a Vue, Svelte, Angular
+    // or Lit story it found nothing and looked like a pass.
+    const conformanceErrors = detectedFramework === 'react'
+      ? formatConformanceErrors(checkConformance(aiText, knownProps))
+      : (logger.log(`📐 Conformance: not applicable to ${detectedFramework} (JSX-only check) — skipped, not passed`), []);
     if (conformanceErrors.length) {
       logger.log(`📐 Conformance: ${conformanceErrors.length} violation(s) of the catalog we supplied`);
     }
@@ -1724,6 +1728,7 @@ async function runStoryGenerationPipeline(
           visualCritic,
           request: prompt,
           componentsUsed: libraryComponents,
+          framework: detectedFramework,
         });
         /**
          * The count the narration quotes. Blockers are what gate the outcome
@@ -1857,6 +1862,7 @@ async function runStoryGenerationPipeline(
                 // No critique on the repair pass: it judged the previous
                 // render, and re-judging mid-repair invites an opinion loop
                 // where each pass chases the last one's aesthetic note.
+                framework: detectedFramework,
               });
             },
           });
