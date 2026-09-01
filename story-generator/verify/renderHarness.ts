@@ -40,6 +40,9 @@ export interface RenderResult {
 }
 
 /** Text of the fallback story Story UI writes when generation fails. */
+/** How long a story is allowed to stay in Storybook's 'preparing' state before that is reported as infrastructure. */
+const PREPARING_CAP_MS = 60_000;
+
 const ERROR_PLACEHOLDER_MARKERS = [
   'Story Generation Error',
   'The AI-generated story contained syntax errors',
@@ -107,23 +110,89 @@ export async function renderStory(options: RenderOptions): Promise<RenderResult>
     const url = `${storybookUrl.replace(/\/+$/, '')}/iframe.html?id=${encodeURIComponent(storyId)}&viewMode=story`;
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
 
-    // Storybook mounts into #storybook-root. Waiting for non-empty content is
-    // the earliest reliable signal that the story itself rendered.
+    /**
+     * Wait for the story to mount, and know WHY it has not yet.
+     *
+     * Storybook mounts into #storybook-root. An empty root is three
+     * different situations, and they must not share a verdict:
+     *
+     *  - Storybook is still PREPARING the story (body carries
+     *    `sb-show-preparing-story`, or its loader is on screen). A brand-new
+     *    story that imports modules Vite has not seen yet can take longer
+     *    than the render timeout to compile; observed: a fresh table story
+     *    was reported "did not mount" after 20s and rendered in the user's
+     *    own iframe ten seconds later, which cost a repair call that could
+     *    only make correct code worse. Preparing is waited out to a hard cap
+     *    and, past it, is an infrastructure verdict.
+     *  - Storybook shows its ERROR display (`sb-show-errordisplay`): the story
+     *    threw. That is the code's failure, and the message is right there.
+     *  - Nothing is preparing and nothing errored, and the root is still
+     *    empty at the timeout: the story rendered nothing. Code failure.
+     */
+    const prepareCapMs = Math.max(timeoutMs, PREPARING_CAP_MS);
+    const mountStarted = Date.now();
+    const isMounted = () => {
+      const root = document.querySelector('#storybook-root') || document.querySelector('#root');
+      return !!root && root.childElementCount > 0;
+    };
+    const classify = async (): Promise<{ preparing: boolean; errored: boolean; errorText: string }> => {
+      try {
+        const r = await page.evaluate(() => {
+          const cls = document.body?.className || '';
+          const errorEl = document.querySelector('#error-message, .sb-errordisplay');
+          const errored = /sb-show-errordisplay/.test(cls) || (!!errorEl && (errorEl as HTMLElement).offsetParent !== null);
+          const preparing = /sb-show-preparing-(story|docs)/.test(cls)
+            || !!document.querySelector('.sb-preparing-story, .sb-preparing-docs, .sb-loader');
+          return { preparing, errored, errorText: errored ? (errorEl?.textContent || '').trim().slice(0, 500) : '' };
+        });
+        return r && typeof r === 'object' ? r : { preparing: false, errored: false, errorText: '' };
+      } catch {
+        return { preparing: false, errored: false, errorText: '' };
+      }
+    };
+    let mountState: 'mounted' | 'empty' | 'preparing' | 'errored' = 'empty';
+    let storybookError = '';
+    // First wait: the render timeout, as before.
     try {
-      await page.waitForFunction(
-        () => {
-          const root = document.querySelector('#storybook-root') || document.querySelector('#root');
-          return !!root && root.childElementCount > 0;
-        },
-        { timeout: timeoutMs },
-      );
+      await page.waitForFunction(isMounted, { timeout: timeoutMs });
+      mountState = 'mounted';
     } catch {
+      const state = await classify();
+      if (state.errored) {
+        mountState = 'errored'; storybookError = state.errorText;
+      } else if (state.preparing) {
+        // Storybook is still compiling. Wait it out to the cap, re-checking
+        // that it is still preparing rather than quietly empty.
+        const remaining = prepareCapMs - (Date.now() - mountStarted);
+        try {
+          await page.waitForFunction(isMounted, { timeout: Math.max(1000, remaining) });
+          mountState = 'mounted';
+        } catch {
+          const again = await classify();
+          if (again.errored) { mountState = 'errored'; storybookError = again.errorText; }
+          else mountState = again.preparing ? 'preparing' : 'empty';
+        }
+      } else {
+        mountState = 'empty';
+      }
+    }
+
+    if (mountState !== 'mounted') {
       await dispose();
-      // The page loaded and Storybook mounted nothing into it. That is the
-      // story's failure, whether it threw or simply rendered nothing.
+      if (mountState === 'preparing') {
+        return {
+          ok: false,
+          reason: `Storybook was still preparing the story after ${Math.round(prepareCapMs / 1000)}s (a cold compile of new imports, or a stalled dev server)`,
+          failureClass: 'infrastructure',
+          pageErrors, consoleErrors, isErrorPlaceholder: false,
+          dispose: async () => {}, navMs: Date.now() - started,
+        };
+      }
       return {
         ok: false,
-        reason: 'Story did not mount — #storybook-root stayed empty',
+        reason: mountState === 'errored'
+          ? `Storybook showed an error while rendering the story: ${storybookError || 'no message'}`
+          : 'Story did not mount — #storybook-root stayed empty and Storybook was not preparing anything',
         failureClass: 'code',
         pageErrors, consoleErrors, isErrorPlaceholder: false,
         dispose: async () => {}, navMs: Date.now() - started,

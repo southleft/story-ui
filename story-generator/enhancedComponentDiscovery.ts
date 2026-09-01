@@ -4,6 +4,8 @@ import path from 'path';
 import { DiscoveredComponent, PropInfo } from './componentDiscovery.js';
 import { StoryUIConfig } from '../story-ui.config.js';
 import { DynamicPackageDiscovery } from './dynamicPackageDiscovery.js';
+import { packageComponentVerdict, declaredComponentExports, typesEntryFor } from './knowledge/componentShape.js';
+import { nearestNames } from './nameSimilarity.js';
 import { logger } from './logger.js';
 import { componentDirsFromStorybookConfig } from './knowledge/storybookConfig.js';
 import { BaseFrameworkAdapter } from './framework-adapters/base-adapter.js';
@@ -275,27 +277,54 @@ export class EnhancedComponentDiscovery {
    * Packages published under an npm scope, when importPath names one.
    *
    * Returns [] for a normal package path so the single-package route is
-   * unchanged. Internal packages a design system depends on but does not
-   * present as components — analytics, tokens, build helpers — are excluded by
-   * name, because shipping them as composable components would put
-   * `<AnalyticsNext>` in front of the model as something to render.
+   * unchanged.
+   *
+   * Which packages under the scope are component packages is decided by what
+   * each one DECLARES: its types entry is read and every export classified
+   * (`knowledge/componentShape`). A package is excluded only when its
+   * declarations were reached and none of them is a component — tokens,
+   * analytics helpers, build tooling. A package with no declarations at all is
+   * admitted, because runtime discovery downstream can still judge its values.
+   *
+   * The previous filter was a name regex — `^(analytics|tokens?|theme|css|…)`
+   * — which would have dropped any `@scope/theme` package that happened to
+   * export a `ThemeProvider`, and said nothing about having done so. Every
+   * exclusion made here is logged with its reason.
    */
+  private scopeVerdicts = new Map<string, string[]>();
+
   private packagesInScope(importPath: string): string[] {
     if (!importPath.startsWith('@') || importPath.includes('/')) return [];
+    const cached = this.scopeVerdicts.get(importPath);
+    if (cached) return cached;
 
     const dir = path.join(this.getProjectRoot(), 'node_modules', importPath);
     if (!fs.existsSync(dir)) return [];
 
-    const INFRASTRUCTURE = /^(analytics|tokens?|theme|css|primitives?-?internal|build|eslint|babel|docs?|icon-.*-internal|browser-apis|atlassian-context|app-provider|ds-lib|codemod|platform)/;
-
+    const projectRoot = this.getProjectRoot();
+    const kept: string[] = [];
+    const excluded: string[] = [];
+    const admittedBlind: string[] = [];
     try {
-      return fs.readdirSync(dir, { withFileTypes: true })
-        .filter(e => e.isDirectory() && !e.name.startsWith('.'))
-        .filter(e => !INFRASTRUCTURE.test(e.name))
-        .map(e => `${importPath}/${e.name}`);
+      const entries = fs.readdirSync(dir, { withFileTypes: true })
+        .filter(e => e.isDirectory() && !e.name.startsWith('.'));
+      for (const e of entries) {
+        const name = `${importPath}/${e.name}`;
+        const { verdict, entry, excluded: types } = packageComponentVerdict(path.join(dir, e.name), projectRoot);
+        if (verdict === 'not-component') {
+          excluded.push(`${e.name} (${types.length} declared export(s), none a component)`);
+          continue;
+        }
+        if (verdict === 'unknown') admittedBlind.push(entry ? e.name : `${e.name} (no declarations entry)`);
+        kept.push(name);
+      }
     } catch {
       return [];
     }
+    if (excluded.length) logger.log(`📦 ${importPath}: excluded ${excluded.length} package(s) whose declarations contain no component — ${excluded.join('; ')}`);
+    if (admittedBlind.length) logger.log(`📦 ${importPath}: admitted ${admittedBlind.length} package(s) without a readable component declaration, for runtime discovery — ${admittedBlind.join(', ')}`);
+    this.scopeVerdicts.set(importPath, kept);
+    return kept;
   }
 
   /**
@@ -315,22 +344,22 @@ export class EnhancedComponentDiscovery {
    */
   private defaultExportComponent(packageName: string): { name: string; importPath: string } | null {
     const pkgDir = packageDirFor(this.getProjectRoot(), packageName) ?? path.join(this.getProjectRoot(), 'node_modules', packageName);
-    let types: string | undefined;
-    try {
-      const meta = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf-8'));
-      types = meta.types || meta.typings;
-    } catch {
-      return null;
-    }
-    if (!types) return null;
+    const entry = typesEntryFor(pkgDir, '');
+    if (!entry) return null;
 
-    let declaration: string;
-    try {
-      declaration = fs.readFileSync(path.join(pkgDir, types), 'utf-8');
-    } catch {
+    // The default export's own declaration decides, followed through
+    // `export { default } from './x'` to the file that declares it. A default
+    // export that is declared as a type, a config object or a context names no
+    // component, however the package is called.
+    const found = declaredComponentExports(entry, { projectRoot: this.getProjectRoot(), followBare: false });
+    if (!found.defaultExport) return null;
+    if (found.defaultExport === 'not-component') {
+      logger.log(`📦 ${packageName}: default export is declared as a non-component; not named from the package`);
       return null;
     }
-    if (!/export\s*\{\s*default\s*[},]|export\s+default\b/.test(declaration)) return null;
+    if (found.defaultExport === 'unknown') {
+      logger.log(`📦 ${packageName}: default export admitted without a reachable declaration`);
+    }
 
     // `@atlaskit/teams-avatar` -> `TeamsAvatar`
     const leaf = packageName.split('/').pop() || packageName;
@@ -520,38 +549,6 @@ export class EnhancedComponentDiscovery {
    */
   private addDesignSystemPackages(sources: ComponentSource[]): void {
     // Functionality moved to guided installation process
-  }
-
-  /**
-   * Check if a package is likely to contain React components (not utilities, types, etc.)
-   */
-  private isLikelyComponentPackage(packageName: string): boolean {
-    const name = packageName.toLowerCase();
-
-    // Skip obvious utility packages
-    const utilityPatterns = [
-      'types',
-      'utils', 'util', 'utilities',
-      'helpers', 'constants', 'config',
-      'analytics', 'tracking', 'metrics',
-      'tokens', 'theme', 'styles', 'css',
-      'icons', 'icon', // Icons are usually too numerous and specific
-      'editor-', // Editor plugins are usually too specific
-      'smart-card', // Requires SmartCardProvider wrapper - too complex for simple stories
-      '-types', '-utils', '-constants',
-      'babel-', 'webpack-', 'rollup-', 'eslint-',
-      'test', 'mock', 'fixture', 'storybook',
-      'codemod', 'migration',
-      'build', 'dev', 'cli'
-    ];
-
-    // Skip if contains utility patterns
-    if (utilityPatterns.some(pattern => name.includes(pattern))) {
-      return false;
-    }
-
-
-    return true;
   }
 
     /**
@@ -1961,46 +1958,13 @@ export class EnhancedComponentDiscovery {
   }
 
   /**
-   * Find a similar component name
+   * The nearest discovered name, by similarity. No fixed vocabulary: the
+   * `'stack' → BlockStack, InlineStack, LegacyStack` table this replaces was
+   * Polaris's, and answered wrongly for every other design system.
    */
   private findSimilarComponent(targetName: string, availableComponents: string[]): string | null {
-    if (!targetName || typeof targetName !== 'string') {
-      return null;
-    }
-    const targetLower = targetName.toLowerCase();
-
-    // Direct substring matches
-    for (const available of availableComponents) {
-      if (!available || typeof available !== 'string') {
-        continue;
-      }
-      const availableLower = available.toLowerCase();
-      if (availableLower.includes(targetLower) || targetLower.includes(availableLower)) {
-        return available;
-      }
-    }
-
-    // Special case mappings for common mistakes
-    const commonMappings: Record<string, string[]> = {
-      'stack': ['BlockStack', 'InlineStack', 'LegacyStack'],
-      'layout': ['Layout', 'Box'],
-      'container': ['Box', 'Layout'],
-      'grid': ['Grid', 'InlineGrid'],
-      'text': ['Text'],
-      'button': ['Button'],
-      'card': ['Card', 'LegacyCard']
-    };
-
-    const mapping = commonMappings[targetLower];
-    if (mapping) {
-      for (const suggestion of mapping) {
-        if (availableComponents.includes(suggestion)) {
-          return suggestion;
-        }
-      }
-    }
-
-    return null;
+    if (!targetName || typeof targetName !== 'string') return null;
+    return nearestNames(targetName, availableComponents.filter(n => typeof n === 'string'), 1)[0] ?? null;
   }
 
   /**

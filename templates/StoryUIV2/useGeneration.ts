@@ -193,6 +193,8 @@ export interface GenerationRequest {
    * source, and a compiled class hash appears nowhere in it.
    */
   selection?: string;
+  /** Storybook origin; defaults to this page's origin, since the workspace lives inside Storybook. */
+  storybookUrl?: string;
 }
 
 /** The server wrote the file. Everything after this is background work. */
@@ -394,7 +396,17 @@ export function useGeneration(apiBase: string) {
 
       // knownUpdatedAt is recovery bookkeeping for THIS client, not part of
       // the generation contract — keep it off the wire.
-      const { knownUpdatedAt: _knownUpdatedAt, ...payload } = request;
+      const { knownUpdatedAt: _knownUpdatedAt, ...rest } = request;
+      /**
+       * The workspace lives inside Storybook, so it knows the origin. Without
+       * this the server falls back to STORYBOOK_URL / STORYBOOK_PORT, which
+       * `init` never writes, and then to port 6006 — so on a fresh install
+       * verification looked at whatever was on 6006 instead of this Storybook.
+       */
+      const payload = {
+        ...rest,
+        storybookUrl: rest.storybookUrl ?? (typeof window !== 'undefined' ? window.location.origin : undefined),
+      };
 
       let completion: any = null;
       let failure: string | null = null;

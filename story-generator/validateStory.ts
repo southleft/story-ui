@@ -240,21 +240,20 @@ function performSemanticChecks(sourceFile: ts.SourceFile, config?: any): string[
               // Check if component exists in available components
               if (availableComponents.size > 0) {
                 if (isBlacklistedComponent(componentName, availableComponents)) {
-                  // This is a blacklisted component
+                  // Not in the catalog. The only useful help is the nearest
+                  // names the catalog actually has — not a fixed list of
+                  // "basic components" from some other design system.
                   const validation = validateImports([componentName], availableComponents);
                   const suggestions = validation.suggestions.get(componentName);
 
-                  let errorMsg = `Import error: "${componentName}" is not a valid component from ${importPath}. This appears to be a story export name or made-up component.`;
-
+                  let errorMsg = `Import error: "${componentName}" is an unknown component (not in the catalog for ${importPath}).`;
                   if (suggestions && suggestions.length > 0) {
-                    errorMsg += ` Use these components instead: ${suggestions.join(', ')}.`;
+                    errorMsg += ` Nearest catalog names: ${suggestions.join(', ')}.`;
                   } else {
-                    errorMsg += ` Use basic components like Box, Stack, Text, Button instead.`;
+                    errorMsg += ` Available components include: ${Array.from(availableComponents).slice(0, 10).join(', ')}...`;
                   }
 
                   errors.push(errorMsg);
-                } else if (!availableComponents.has(componentName)) {
-                  errors.push(`Import error: "${componentName}" is not available from ${importPath}. Available components include: ${Array.from(availableComponents).slice(0, 10).join(', ')}...`);
                 }
               }
             });

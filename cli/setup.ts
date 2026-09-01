@@ -1896,7 +1896,10 @@ VITE_STORY_UI_PORT=${answers.mcpPort || '4001'}
     const patterns = [
       '.env',
       path.relative(process.cwd(), config.generatedStoriesPath),
-      '.story-ui-history/'
+      '.story-ui-history/',
+      // Knowledge caches (props, runtime reflection), keyed on content
+      // fingerprints. Machine-local by construction; never worth committing.
+      '.story-ui/'
     ];
 
     let gitignoreUpdated = false;

@@ -95,3 +95,96 @@ export function packageDirFor(projectRoot: string, specifier: string): string | 
 export function readManifest(pkgDir: string): any | null {
   try { return JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf-8')); } catch { return null; }
 }
+
+/**
+ * The import specifier for a file inside a package, read from its `exports`.
+ *
+ * `${pkgName}/${relativePath}` is a guess, and a package with an exports map
+ * rejects it: Vuetify maps `./components/*` → `./lib/components/*\/index.js`,
+ * so the file `lib/components/VApp` is imported as `vuetify/components/VApp`,
+ * and `vuetify/components/lib/components/VApp` — what string concatenation
+ * produced — does not exist. Shoelace's manifest names `components/alert/
+ * alert.js` while the exported path is `dist/components/alert/alert.js`.
+ *
+ * `relativePath` may name a file or a directory (an `index.*` is tried). When
+ * the package has no exports map every path is importable, so the plain join
+ * is returned. When it has one and nothing maps to the file, null: the caller
+ * must not invent a path.
+ */
+export function specifierForPackageFile(pkgName: string, pkgDir: string, relativePath: string): string | null {
+  const rel = relativePath.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
+  let pkg: any;
+  try { pkg = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf-8')); } catch { pkg = null; }
+  const isFile = (p: string) => { try { return fs.statSync(p).isFile(); } catch { return false; } };
+
+  if (!pkg?.exports || typeof pkg.exports === 'string') return `${pkgName}/${rel}`;
+
+  // Every target string an exports entry can resolve to, conditions flattened.
+  const targets = (node: unknown, out: string[] = [], depth = 0): string[] => {
+    if (depth > 5 || node == null) return out;
+    if (typeof node === 'string') { out.push(node); return out; }
+    if (Array.isArray(node)) { node.forEach(n => targets(n, out, depth + 1)); return out; }
+    if (typeof node === 'object') for (const v of Object.values(node as Record<string, unknown>)) targets(v, out, depth + 1);
+    return out;
+  };
+
+  // Files the relative path may denote.
+  const candidates = [rel, ...['.js', '.mjs', '.cjs', '/index.js', '/index.mjs', '/index.cjs'].map(e => rel + e)]
+    .filter(c => isFile(path.join(pkgDir, c)));
+  if (candidates.length === 0) candidates.push(rel);
+
+  const entries = Object.entries(pkg.exports as Record<string, unknown>).filter(([k]) => k.startsWith('./'));
+  const candidateExists = candidates.some(c => isFile(path.join(pkgDir, c)));
+
+  // Exact keys and pattern keys whose target IS one of the candidate files.
+  for (const [key, value] of entries) {
+    for (const target of targets(value)) {
+      const t = target.replace(/^\.\//, '');
+      if (!key.includes('*')) {
+        if (candidates.includes(t)) return `${pkgName}/${key.slice(2)}`;
+        continue;
+      }
+      const star = t.indexOf('*');
+      if (star < 0) continue;
+      const pre = t.slice(0, star);
+      const post = t.slice(star + 1);
+      for (const c of candidates) {
+        if (c.startsWith(pre) && c.endsWith(post) && c.length > pre.length + post.length) {
+          return `${pkgName}/${key.slice(2).replace('*', c.slice(pre.length, c.length - post.length))}`;
+        }
+      }
+    }
+  }
+
+  // The path exists but no exports entry names it: it is not importable, and
+  // no other file may stand in for it.
+  if (candidateExists) return null;
+
+  // The path does NOT exist under the package: a manifest wrote it relative to
+  // another root (Shoelace's `components/alert/alert.js` lives under `dist/`).
+  // Find the pattern key whose target contains the longest trailing part of it.
+  let bestSpecifier: string | null = null;
+  let bestLength = 0;
+  for (const [key, value] of entries) {
+    if (!key.includes('*')) continue;
+    for (const target of targets(value)) {
+      const t = target.replace(/^\.\//, '');
+      const star = t.indexOf('*');
+      if (star < 0) continue;
+      const pre = t.slice(0, star);
+      const post = t.slice(star + 1);
+      const segs = rel.split('/');
+      for (let i = 0; i < Math.min(segs.length, 6); i++) {
+        const suffix = segs.slice(i).join('/');
+        if (post && !suffix.endsWith(post)) continue;
+        const starPart = post ? suffix.slice(0, suffix.length - post.length) : suffix;
+        if (!starPart || starPart.length <= bestLength) continue;
+        if (isFile(path.join(pkgDir, pre + starPart + post))) {
+          bestSpecifier = `${pkgName}/${key.slice(2).replace('*', starPart)}`;
+          bestLength = starPart.length;
+        }
+      }
+    }
+  }
+  return bestSpecifier;
+}

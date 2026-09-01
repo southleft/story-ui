@@ -21,6 +21,7 @@ import { pathToFileURL } from 'url';
 import path from 'path';
 import fs from 'fs';
 import { logger } from '../logger.js';
+import { contentFingerprint, knowledgeCacheFile, listSourceFiles, pruneStaleKnowledge } from './cacheKey.js';
 
 export interface CompoundComponent {
   /** Parent export name, e.g. "Menu". */
@@ -114,12 +115,12 @@ function isRenderable(value: any): boolean {
   return false;
 }
 
-function cachePath(projectRoot: string, importPath: string, version?: string): string {
-  const safe = importPath.replace(/[^a-z0-9]+/gi, '-');
-  return path.join(projectRoot, '.story-ui', 'knowledge', `${safe}@${version || 'unknown'}.json`);
+/** Version plus a content fingerprint, for the same reason as propExtractor: version alone never moves for a workspace package. */
+function cachePath(projectRoot: string, importPath: string, version: string | undefined, fingerprint: string): string {
+  return knowledgeCacheFile(projectRoot, importPath, version, fingerprint, '.json');
 }
 
-function readPackageVersion(req: NodeRequire, importPath: string): string | undefined {
+function locatePackage(req: NodeRequire, importPath: string): { version?: string; root?: string } {
   const pkgName = importPath.startsWith('@')
     ? importPath.split('/').slice(0, 2).join('/')
     : importPath.split('/')[0];
@@ -134,7 +135,7 @@ function readPackageVersion(req: NodeRequire, importPath: string): string | unde
       const candidate = path.join(dir, 'package.json');
       if (fs.existsSync(candidate)) {
         const pkg = JSON.parse(fs.readFileSync(candidate, 'utf-8'));
-        if (pkg?.name === pkgName && pkg.version) return pkg.version;
+        if (pkg?.name === pkgName) return { version: pkg.version || undefined, root: dir };
       }
       const parent = path.dirname(dir);
       if (parent === dir) break;
@@ -148,12 +149,12 @@ function readPackageVersion(req: NodeRequire, importPath: string): string | unde
   try {
     const direct = path.join(process.cwd(), 'node_modules', ...pkgName.split('/'), 'package.json');
     if (fs.existsSync(direct)) {
-      return JSON.parse(fs.readFileSync(direct, 'utf-8')).version;
+      return { version: JSON.parse(fs.readFileSync(direct, 'utf-8')).version || undefined, root: path.dirname(direct) };
     }
   } catch {
     // give up; the cache simply keys on 'unknown'
   }
-  return undefined;
+  return {};
 }
 
 /**
@@ -178,8 +179,16 @@ export async function reflectDesignSystem(
   if (!fs.existsSync(anchor)) return null;
   const req = createRequire(anchor);
 
-  const version = readPackageVersion(req, importPath);
-  const cacheFile = cachePath(projectRoot, importPath, version);
+  const { version, root } = locatePackage(req, importPath);
+  let entryFile: string | null = null;
+  try { entryFile = req.resolve(importPath); } catch { /* the import below reports it */ }
+  const fingerprint = contentFingerprint({
+    root: root ?? projectRoot,
+    version,
+    entryFile,
+    files: () => (root ? listSourceFiles(root) : []),
+  });
+  const cacheFile = cachePath(projectRoot, importPath, version, fingerprint);
 
   if (!force && fs.existsSync(cacheFile)) {
     try {
@@ -277,6 +286,7 @@ export async function reflectDesignSystem(
   try {
     fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
     fs.writeFileSync(cacheFile, JSON.stringify(knowledge, null, 2), 'utf-8');
+    pruneStaleKnowledge(projectRoot, importPath, cacheFile, '.json');
   } catch {
     // Cache is an optimisation; a read-only project is fine.
   }

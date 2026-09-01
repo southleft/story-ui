@@ -1,9 +1,11 @@
-import { packageDirFor } from './knowledge/packageLocator.js';
+import { packageDirFor, packageNameOf, specifierForPackageFile } from './knowledge/packageLocator.js';
 import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 import { logger } from './logger.js';
+import { looksLikeComponentValue, declaredComponentExports, logDeclarationVerdicts, typesEntryFor } from './knowledge/componentShape.js';
+import { nearestNames } from './nameSimilarity.js';
 
 export interface RealPackageComponent {
   name: string;
@@ -214,140 +216,19 @@ export class DynamicPackageDiscovery {
   }
 
   /**
-   * Determine if an export is likely a React component
+   * Is this export a component? Judged from the VALUE, which is in hand.
+   *
+   * The previous version rejected by name shape — `/Value$/`, `/Config$/`,
+   * `/^get[A-Z]/`, `/String$/` — and then read `fn.toString()` looking for
+   * the words "function get". A real `EmptyState`, `ThemeConfig` or
+   * `SelectOptions` component was invisible, and nothing said so. The one
+   * predicate in `knowledge/componentShape` reads React's `$$typeof`, class
+   * heritage, Vue's `setup`/`render`, and namespace members (Base UI's `Menu`
+   * is a plain object whose members are the components; dropping it lost 29
+   * of that library's 40 exports). See that module for every branch.
    */
   private isLikelyComponent(name: string, value: any): boolean {
-    // Skip obvious non-components
-    if (this.isUtilityExport(name)) {
-      return false;
-    }
-
-    // React components typically start with uppercase
-    if (!/^[A-Z]/.test(name)) {
-      return false;
-    }
-
-    // Check if it's a function or class (likely React component)
-    const type = typeof value;
-    if (type === 'function') {
-      // Additional checks for React components
-      return this.looksLikeReactComponent(name, value);
-    }
-
-    // Some components might be wrapped in objects
-    if (type === 'object' && value !== null) {
-      // Check if object has component-like properties
-      return this.hasComponentLikeProperties(value);
-    }
-
-    return false;
-  }
-
-  /**
-   * Check if a name indicates a utility export (not a component)
-   */
-  private isUtilityExport(name: string): boolean {
-    const utilityPatterns = [
-      /^use[A-Z]/, // hooks
-      /^create[A-Z]/, // factory functions
-      /^get[A-Z]/, // getter functions
-      /^set[A-Z]/, // setter functions
-      /^handle[A-Z]/, // handlers
-      /^on[A-Z]/, // event handlers
-      /Config$/,
-      // `/Provider$/` and `/Context$/` were here and are deliberately gone.
-      // Shopify Polaris's `AppProvider` is the mandatory application root, and
-      // every Radix-derived system exposes `*.Provider` as a required part.
-      // Rejecting them by name emptied the catalog of the one component
-      // without which nothing renders. These exports are already imported by
-      // the time this runs, so `isComponentLike` below judges the real value.
-      /^default$/,
-      /^DEFAULT_/,
-      /^SUPPORTED_/,
-      /^Key$/,
-      /^DATA_/,
-      /String$/,
-      /ToHex$/,
-      /ToRgb$/,
-      /ToHsl$/,
-      /ToHsb$/,
-      /_SECRET_/,
-      /Value$/
-    ];
-
-    return utilityPatterns.some(pattern => pattern.test(name));
-  }
-
-  /**
-   * Check if a function looks like a React component
-   */
-  private looksLikeReactComponent(name: string, fn: Function): boolean {
-    // Must start with uppercase
-    if (!/^[A-Z]/.test(name)) {
-      return false;
-    }
-
-    // Skip known utility functions
-    if (this.isUtilityExport(name)) {
-      return false;
-    }
-
-    // Check function signature - React components typically take props
-    const fnString = fn.toString();
-
-    // Skip if it looks like a utility function
-    if (fnString.includes('function create') ||
-        fnString.includes('function get') ||
-        fnString.includes('function set') ||
-        fnString.includes('function use')) {
-      return false;
-    }
-
-    return true;
-  }
-
-  /**
-   * Check if an object has component-like properties
-   */
-  /**
-   * Is this object a component, or a namespace holding components?
-   *
-   * Duck-typing on `.render`/`.component`/`.Component` answers only the first
-   * question, and answers it wrongly for the export shape that now carries ~10%
-   * of the React component-library market. Base UI's `Menu` is a PLAIN OBJECT
-   * whose members are the components — `Menu.Root`, `Menu.Popup`, `Menu.Item`.
-   * It has none of the three markers, so it was classified not-a-component and
-   * dropped, taking 29 of that library's 40 exports with it, including every
-   * interactive composite: Menu, Dialog, Select, Tabs, Tooltip, Popover,
-   * Combobox, Accordion.
-   *
-   * The loss was invisible: 11 survivors is greater than zero, so the
-   * no-components fallback never fired and the log read "Discovered 11
-   * components" exactly as it would for a complete library.
-   *
-   * A namespace is admitted here so the library is not lost. Whether the parent
-   * may itself be RENDERED is a separate question, answered from the runtime
-   * value by runtimeReflect's `parentRenderable` — `<Menu>` throws.
-   */
-  private hasComponentLikeProperties(obj: any): boolean {
-    if (
-      typeof obj.render === 'function' ||
-      typeof obj.component === 'function' ||
-      typeof obj.Component === 'function'
-    ) return true;
-
-    // A namespace: at least one PascalCase member that is itself renderable.
-    try {
-      return Object.keys(obj).some(k => {
-        if (!/^[A-Z]/.test(k)) return false;
-        const v = (obj as any)[k];
-        if (!v) return false;
-        if (typeof v === 'function') return true;
-        return typeof v === 'object' && Boolean(v.$$typeof || v.render || v.type);
-      });
-    } catch {
-      return false; // exotic proxy or throwing getter
-    }
+    return looksLikeComponentValue(value, name);
   }
 
   /**
@@ -430,40 +311,12 @@ export class DynamicPackageDiscovery {
   }
 
   /**
-   * Find a similar component name
+   * The nearest catalog name, by similarity to what was actually discovered.
+   * There is no fixed vocabulary here: the old `'stack' → BlockStack` table was
+   * Polaris's, and wrong for everyone else.
    */
   private findSimilarComponent(targetName: string, availableComponents: string[]): string | null {
-    const targetLower = targetName.toLowerCase();
-
-    // Direct substring matches
-    for (const available of availableComponents) {
-      const availableLower = available.toLowerCase();
-      if (availableLower.includes(targetLower) || targetLower.includes(availableLower)) {
-        return available;
-      }
-    }
-
-    // Special case mappings for common mistakes
-    const commonMappings: Record<string, string[]> = {
-      'stack': ['BlockStack', 'InlineStack', 'LegacyStack'],
-      'layout': ['Layout', 'Box'],
-      'container': ['Box', 'Layout'],
-      'grid': ['Grid', 'InlineGrid'],
-      'text': ['Text'],
-      'button': ['Button'],
-      'card': ['Card', 'LegacyCard']
-    };
-
-    const mapping = commonMappings[targetLower];
-    if (mapping) {
-      for (const suggestion of mapping) {
-        if (availableComponents.includes(suggestion)) {
-          return suggestion;
-        }
-      }
-    }
-
-    return null;
+    return nearestNames(targetName, availableComponents, 1)[0] ?? null;
   }
 
   /**
@@ -516,6 +369,19 @@ export class DynamicPackageDiscovery {
         }
       }
 
+      // Angular and Svelte: what the package DECLARES, per exported subpath,
+      // before any directory scan. The scans below inferred `MatChips` from a
+      // directory named `chips` (no such class exists) and offered
+      // `flowbite-svelte/dist/accordion` (a path the exports map does not
+      // expose) — both invisible until the bench checked names and subpaths.
+      if (this.framework === 'angular' || this.framework === 'svelte') {
+        const declared = this.discoverFromDeclaredEntries(packagePath, packageJson);
+        if (declared && Object.keys(declared).length > 0) {
+          return declared;
+        }
+        logger.log(`📋 ${this.packageName}: no component declarations found under its exported entries; scanning the package layout instead`);
+      }
+
       // Angular framework: Scan NgModule directories
       if (this.framework === 'angular') {
         const angularComponents = this.discoverAngularFrameworkComponents(packagePath);
@@ -560,6 +426,50 @@ export class DynamicPackageDiscovery {
       console.warn(`Alternative discovery failed for ${this.packageName}:`, error);
       return null;
     }
+  }
+
+  /**
+   * Components declared under each subpath the package's exports map names.
+   *
+   * The exports map is the package's own statement of what is importable and
+   * from where; each entry's declarations file states what it exports and
+   * whether that is a component. Nothing here is inferred from a directory
+   * name, a prefix, or a file extension.
+   */
+  private discoverFromDeclaredEntries(packagePath: string, packageJson: any): any {
+    const pkgName = packageNameOf(this.packageName);
+    const subpaths: string[] = [''];
+    if (packageJson?.exports && typeof packageJson.exports === 'object') {
+      for (const key of Object.keys(packageJson.exports)) {
+        if (!key.startsWith('./') || key.includes('*')) continue;
+        if (/\.(css|scss|sass|less|json|svg|png|md)$/.test(key)) continue;
+        if (key === './package.json') continue;
+        subpaths.push(key.slice(2));
+      }
+    }
+
+    const exportsFound: any = {};
+    let entriesRead = 0;
+    for (const sub of subpaths.slice(0, 400)) {
+      const entry = typesEntryFor(packagePath, sub);
+      if (!entry) continue;
+      entriesRead++;
+      const found = declaredComponentExports(entry, { projectRoot: this.projectRoot, followBare: false });
+      logDeclarationVerdicts(`${pkgName}${sub ? '/' + sub : ''}`, found);
+      const names = [...found.components, ...found.unknown];
+      if (names.length === 0) continue;
+      const specifier = sub ? `${pkgName}/${sub}` : this.packageName;
+      for (const name of names) {
+        if (exportsFound[name]) continue; // the root barrel, read first, wins
+        exportsFound[name] = () => {};
+        exportsFound[name].displayName = name;
+        exportsFound[name].__componentPath = specifier;
+      }
+    }
+    if (entriesRead > 0) {
+      logger.log(`✅ ${pkgName}: ${Object.keys(exportsFound).length} components declared across ${entriesRead} exported entr${entriesRead === 1 ? 'y' : 'ies'}`);
+    }
+    return Object.keys(exportsFound).length > 0 ? exportsFound : null;
   }
 
   /**
@@ -612,14 +522,13 @@ export class DynamicPackageDiscovery {
         const subdirTypings = path.join(componentsDir, componentDir, 'index.d.ts');
         if (fs.existsSync(subdirTypings)) {
           try {
-            const realExports = this.extractComponentsFromTypings(
-              fs.readFileSync(subdirTypings, 'utf-8')
-            );
+            const realExports = this.componentsDeclaredIn(subdirTypings);
             if (realExports.length > 0) {
+              const specifier = this.importSpecifierFor(packagePath, path.join(componentsDir, componentDir));
               for (const name of realExports) {
                 exports[name] = () => {};
                 exports[name].displayName = name;
-                exports[name].__componentPath = `${this.packageName}/${path.relative(packagePath, componentsDir)}/${componentDir}`;
+                exports[name].__componentPath = specifier;
               }
               continue; // Skip the directory-name fallback below
             }
@@ -627,11 +536,10 @@ export class DynamicPackageDiscovery {
         }
 
         // Fallback: use directory name when we can't resolve actual exports
-        if (this.isComponentName(componentDir)) {
+        if (this.canBeWrittenAsTag(componentDir)) {
           exports[componentDir] = () => {};
           exports[componentDir].displayName = componentDir;
-          const relPath = path.relative(packagePath, componentsIndexPath);
-          exports[componentDir].__componentPath = `${this.packageName}/${path.dirname(relPath)}/${componentDir}`;
+          exports[componentDir].__componentPath = this.importSpecifierFor(packagePath, path.join(componentsDir, componentDir));
         }
       }
 
@@ -642,6 +550,22 @@ export class DynamicPackageDiscovery {
       logger.log(`❌ Vue framework discovery failed: ${error}`);
       return null;
     }
+  }
+
+  /**
+   * The specifier that imports a file of this package, from its exports map.
+   *
+   * Falls back to the configured importPath when the map exposes no route to
+   * the file — an importable barrel is a weaker answer than a subpath, but a
+   * path that does not exist is not an answer at all — and says so.
+   */
+  private importSpecifierFor(packagePath: string, absoluteOrRelativeFile: string): string {
+    const pkgName = packageNameOf(this.packageName);
+    const rel = path.isAbsolute(absoluteOrRelativeFile) ? path.relative(packagePath, absoluteOrRelativeFile) : absoluteOrRelativeFile;
+    const specifier = specifierForPackageFile(pkgName, packagePath, rel);
+    if (specifier) return specifier;
+    logger.log(`📍 ${pkgName}: exports map gives no route to ${rel}; offering ${this.packageName} instead`);
+    return this.packageName;
   }
 
   /**
@@ -688,8 +612,12 @@ export class DynamicPackageDiscovery {
                 const componentName = declaration.name;
                 exports[componentName] = () => {};
                 exports[componentName].displayName = componentName;
-                // GENERIC: Use package name, not hardcoded design system name
-                exports[componentName].__componentPath = `${this.packageName}/${module.path || ''}`;
+                // The specifier the package's exports map gives this module —
+                // a manifest path is relative to the SOURCE tree, and Shoelace
+                // publishes `components/alert/alert.js` under `dist/`.
+                exports[componentName].__componentPath = module.path
+                  ? this.importSpecifierFor(packagePath, module.path)
+                  : this.packageName;
                 exports[componentName].__tagName = declaration.tagName;
               }
             }
@@ -817,12 +745,10 @@ export class DynamicPackageDiscovery {
               for (const file of files) {
                 if (file.endsWith('.svelte')) {
                   const componentName = file.replace('.svelte', '');
-                  if (this.isComponentName(componentName)) {
+                  if (this.canBeWrittenAsTag(componentName)) {
                     exports[componentName] = () => {};
                     exports[componentName].displayName = componentName;
-                    // GENERIC: Use package name, not hardcoded design system name
-                    const relativePath = path.relative(packagePath, subPath);
-                    exports[componentName].__componentPath = `${this.packageName}/${relativePath}`;
+                    exports[componentName].__componentPath = this.importSpecifierFor(packagePath, subPath);
                   }
                 }
               }
@@ -832,11 +758,10 @@ export class DynamicPackageDiscovery {
           } else if (entry.name.endsWith('.svelte')) {
             // Direct .svelte files in the directory
             const componentName = entry.name.replace('.svelte', '');
-            if (this.isComponentName(componentName)) {
+            if (this.canBeWrittenAsTag(componentName)) {
               exports[componentName] = () => {};
               exports[componentName].displayName = componentName;
-              const relativePath = path.relative(packagePath, searchDir);
-              exports[componentName].__componentPath = `${this.packageName}/${relativePath}`;
+              exports[componentName].__componentPath = this.importSpecifierFor(packagePath, searchDir);
             }
           }
         }
@@ -910,10 +835,8 @@ export class DynamicPackageDiscovery {
         // Check if this subdirectory has an index.d.ts (likely a component)
         if (fs.existsSync(indexTypingsPath)) {
           try {
-            const typingsContent = fs.readFileSync(indexTypingsPath, 'utf-8');
-
-            // Look for component exports (functions/classes starting with uppercase)
-            const componentExports = this.extractComponentsFromTypings(typingsContent);
+            // What the declarations say, not what the names look like.
+            const componentExports = this.componentsDeclaredIn(indexTypingsPath);
 
             if (componentExports.length > 0) {
               logger.log(`📦 Found ${componentExports.length} components in ${entry.name}/`);
@@ -941,72 +864,27 @@ export class DynamicPackageDiscovery {
   }
 
   /**
-   * Extract component names from TypeScript declaration content
+   * Components a declarations file exports, decided by each declaration.
+   *
+   * `unknown` (a re-export whose target could not be reached) is admitted and
+   * logged: absence of a declaration is not evidence of a non-component, and
+   * the log makes the admission visible rather than silent.
    */
-  private extractComponentsFromTypings(content: string): string[] {
-    const components: string[] = [];
-
-    // Look for export statements with component-like names
-    const exportRegex = /export\s+{\s*([^}]+)\s*}/g;
-    const defaultExportRegex = /export\s+{\s*default\s+as\s+(\w+)\s*}/g;
-    const namedExportRegex = /export\s+.*?\s+(\w+)\s*(?:,|$)/g;
-
-    let match;
-
-    // Extract from export { ... } statements
-    while ((match = exportRegex.exec(content)) !== null) {
-      const exportsList = match[1];
-      const exports = exportsList.split(',').map(e => e.trim());
-
-      for (const exp of exports) {
-        // Handle "default as ComponentName" pattern
-        const defaultAsMatch = exp.match(/default\s+as\s+(\w+)/);
-        if (defaultAsMatch) {
-          const componentName = defaultAsMatch[1];
-          if (this.isComponentName(componentName)) {
-            components.push(componentName);
-          }
-        } else {
-          // Handle regular export names
-          const cleanName = exp.replace(/\s+as\s+\w+/, '').trim();
-          if (this.isComponentName(cleanName)) {
-            components.push(cleanName);
-          }
-        }
-      }
-    }
-
-    return [...new Set(components)]; // Remove duplicates
+  private componentsDeclaredIn(file: string): string[] {
+    const found = declaredComponentExports(file, { projectRoot: this.projectRoot });
+    logDeclarationVerdicts(`${this.packageName} (${path.relative(this.projectRoot, file)})`, found);
+    return [...new Set([...found.components, ...found.unknown])];
   }
 
   /**
-   * Check if a name looks like a React component
+   * The only name test left, and it is grammar, not convention: a JSX tag or
+   * SFC template tag beginning lowercase is an intrinsic element, so a name
+   * that begins lowercase can never be written as a component. Used where the
+   * fact that something IS a component comes from elsewhere — a `.svelte`
+   * file's extension, a Vue component directory the index re-exports.
    */
-  private isComponentName(name: string): boolean {
-    // Must start with uppercase letter
-    if (!/^[A-Z]/.test(name)) return false;
-
-    // Skip constants and utilities
-    if (name.toUpperCase() === name) return false; // ALL_CAPS constants
-    if (name.startsWith('Styled')) return false; // Styled components (usually internal)
-    /**
-     * A `*Provider` is very often a MANDATORY component, not plumbing.
-     *
-     * This rejection was removed from the runtime path after it deleted Shopify
-     * Polaris's `AppProvider` — without which that library throws — and was left
-     * standing here, in the structural path, where it silently costs any
-     * Radix-derived system its `Tooltip.Provider` and `Toast.Provider`. Those
-     * are required composition members: telling a model to use dot notation
-     * while hiding the one child it cannot render without is worse than saying
-     * nothing.
-     *
-     * `*Context` stays rejected: a React context object genuinely is not
-     * renderable, and unlike a provider it is never written as an element.
-     */
-    if (name.endsWith('Context')) return false; // React contexts
-    if (name.endsWith('Type') || name.endsWith('Types')) return false; // Type definitions
-
-    return true;
+  private canBeWrittenAsTag(name: string): boolean {
+    return /^[A-Z][\w$]*$/.test(name);
   }
 
   /**
@@ -1038,111 +916,31 @@ export class DynamicPackageDiscovery {
   }
 
   /**
-   * Extract component declarations from TypeScript definition files
+   * Components a package's declarations entry exports.
+   *
+   * Everything here is decided by the declaration each name resolves to
+   * (`knowledge/componentShape`): `export { default as Box } from './box'` is
+   * followed to `box.d.ts`; `export * from './Button'` is followed; a braced
+   * `export { ButtonProps }` is followed to the `interface` it names and
+   * excluded for being one. The previous version matched name suffixes —
+   * `(Props|PropTypes|Type|Types|Handler|Options|Config|Context|State)$` —
+   * which hid a real `SelectOptions` and admitted an unfollowed `ButtonProps`
+   * with equal confidence.
+   *
+   * The exported name is the ALIAS (`export { X as Y }` → `import { Y }`).
+   * `export default Name` also registers `Name`, as it always has, so a file
+   * that only default-exports still yields a component to offer.
    */
   private extractExportsFromTypeDefinitions(typingsPath: string, result: any): void {
     try {
-      const content = fs.readFileSync(typingsPath, 'utf-8');
-
-      // Look for export declarations like:
-      // export declare const Button: ...
-      // export default Button
-      // export { Button }
-
-      /**
-       * `declare` is optional, because the file may be SOURCE.
-       *
-       * A workspace package consumed without a build step points `types` at
-       * `src/index.ts`, and source writes `export const Button = …`, not
-       * `export declare const`. Requiring the keyword found only the braced
-       * re-exports: measured on a fixture whose three files export a forwardRef
-       * const, a function declaration and a braced pair, discovery returned 2
-       * of 4 components and reported no error.
-       */
-      const exportPatterns = [
-        /export\s+(?:declare\s+)?const\s+([A-Z][a-zA-Z0-9]*)/g,
-        /export\s+(?:declare\s+)?function\s+([A-Z][a-zA-Z0-9]*)/g,
-        /export\s+default\s+([A-Z][a-zA-Z0-9]*)/g,
-      ];
-
-      for (const pattern of exportPatterns) {
-        let match;
-        while ((match = pattern.exec(content)) !== null) {
-          const componentName = match[1];
-          if (componentName && /^[A-Z]/.test(componentName)) {
-            result[componentName] = `Component_${componentName}`;
-            logger.log(`📍 Found component in .d.ts: ${componentName}`);
-          }
-        }
-      }
-
-      /**
-       * Braced export lists, parsed rather than pattern-matched.
-       *
-       * The old pattern was `export\s*\{\s*([A-Z][a-zA-Z0-9, ]+)\s*\}` — the
-       * list had to BEGIN with a capital letter, so
-       *
-       *   export { default as Box } from './components/box';
-       *
-       * never matched. Measured on `@atlaskit/primitives`: `Grid` and `Bleed`
-       * were found because they happen to be plain named re-exports, while
-       * `Box`, `Inline`, `Stack`, `Flex`, `Text`, `Pressable` and `MetricText`
-       * were invisible — the design system's entire layout primitive set. A
-       * composition with nothing to lay out with falls back to raw pixel
-       * values, which is exactly what Atlassian output was doing.
-       *
-       * The same pattern also admitted `export { Foo as Bar }` as one capture
-       * and registered a component literally named "Foo as Bar".
-       *
-       * The EXPORTED name is the alias. `export { X as Y }` means a consumer
-       * writes `import { Y }`; the local name may not be importable at all.
-       */
-      // `export type { … }` exports TYPES. Including them put `AvatarPropTypes`,
-      // `LozengeProps`, `SizeType` and `AppearanceType` in the catalog as
-      // components — names the model can import but never render.
-      const bracedExports = /export\s*\{([^}]*)\}/g;
-      let braced;
-      while ((braced = bracedExports.exec(content)) !== null) {
-        for (const entry of braced[1].split(',')) {
-          const raw = entry.trim();
-          // Inline type modifier: `export { type Foo, Bar }`.
-          if (/^type\s/.test(raw)) continue;
-          const parts = raw.split(/\s+as\s+/).map(p => p.trim()).filter(Boolean);
-          const exported = parts[parts.length - 1];
-          // `export { default }` with no alias exposes no importable name.
-          if (!exported || exported === 'default') continue;
-          if (!/^[A-Z][a-zA-Z0-9]*$/.test(exported)) continue;
-          // Type-shaped names that a design system never renders as an element.
-          if (/(Props|PropTypes|Type|Types|Handler|Options|Config|Context|State)$/.test(exported)) continue;
-          if (result[exported]) continue;
-          result[exported] = `Component_${exported}`;
-          logger.log(`📍 Found component in .d.ts: ${exported}`);
-        }
-      }
-      /**
-       * `export * from './Button'` — follow it, or see nothing at all.
-       *
-       * A source-only workspace package routinely has an index that is nothing
-       * but star re-exports of sibling files. Measured on two fixtures that are
-       * byte-identical apart from this line: `export { Button } from './Button'`
-       * yields 4 components, `export * from './Button'` yields ZERO. The
-       * package was found, opened, and read — and reported empty.
-       *
-       * Bounded: relative targets only (a bare specifier is another package's
-       * problem, handled by federation in propExtractor), one level deep, and
-       * capped, so a barrel-of-barrels cannot walk a whole node_modules tree.
-       */
-      const dir = path.dirname(typingsPath);
-      const starExports = [...content.matchAll(/export\s+\*\s+from\s+['"](\.[^'"]+)['"]/g)]
-        .map(m => m[1])
-        .slice(0, 200);
-      for (const rel of starExports) {
-        const base = path.resolve(dir, rel);
-        const target = ['.d.ts', '.ts', '.tsx', '.d.mts', '/index.d.ts', '/index.ts', '/index.tsx']
-          .map(ext => base.endsWith(ext) ? base : base + ext)
-          .find(p => fs.existsSync(p) && fs.statSync(p).isFile());
-        if (!target || target === typingsPath) continue;
-        this.extractExportsFromTypeDefinitions(target, result);
+      const found = declaredComponentExports(typingsPath, { projectRoot: this.projectRoot });
+      logDeclarationVerdicts(`${this.packageName} (${path.relative(this.projectRoot, typingsPath)})`, found);
+      const names = [...found.components, ...found.unknown];
+      if (found.defaultLocalName && found.defaultExport !== 'not-component') names.push(found.defaultLocalName);
+      for (const name of names) {
+        if (result[name]) continue;
+        result[name] = `Component_${name}`;
+        logger.log(`📍 Found component in declarations: ${name}`);
       }
     } catch (error) {
       console.warn(`Could not read TypeScript definitions: ${error}`);

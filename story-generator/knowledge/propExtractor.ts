@@ -28,6 +28,7 @@
 import ts from 'typescript';
 import fs from 'fs';
 import path from 'path';
+import { contentFingerprint, knowledgeCacheFile, pruneStaleKnowledge } from './cacheKey.js';
 import { createRequire } from 'module';
 import { logger } from '../logger.js';
 
@@ -1188,9 +1189,17 @@ function collectPropTypes(source: ts.SourceFile, out: Record<string, ComponentFa
  */
 const EXTRACTOR_SCHEMA = 4;
 
-function cachePath(projectRoot: string, importPath: string, version?: string): string {
-  const safe = importPath.replace(/[^a-z0-9]+/gi, '-');
-  return path.join(projectRoot, '.story-ui', 'knowledge', `${safe}@${version || 'unknown'}.props.json`);
+/**
+ * Keyed on version AND a content fingerprint (`knowledge/cacheKey`).
+ *
+ * Version alone never changes for a source-only workspace package, and is
+ * `unknown` forever for a bare scope — Atlassian's `@atlaskit` served one
+ * 757KB record across every upgrade. For an installed copy the fingerprint is
+ * the stamp of package.json and the types entry; for anything else it is the
+ * stamp of every file this extractor reads.
+ */
+function cachePath(projectRoot: string, importPath: string, version: string | undefined, fingerprint: string): string {
+  return knowledgeCacheFile(projectRoot, importPath, version, fingerprint, '.props.json');
 }
 
 /** Read ONE package's own declarations. No federation; cached under its own key. */
@@ -1209,7 +1218,13 @@ async function readOnePackage(
     } catch { /* unknown */ }
   }
 
-  const cacheFile = cachePath(projectRoot, importPath, version);
+  // The file list is what a source tree's fingerprint is made of, and what a
+  // miss reads; computed at most once.
+  let declarationFiles: string[] | undefined;
+  const filesToRead = () => (declarationFiles ??= findDeclarationFiles(root));
+  const fingerprint = contentFingerprint({ root, version, entryFile: typesEntryFile(root), files: filesToRead });
+
+  const cacheFile = cachePath(projectRoot, importPath, version, fingerprint);
   if (!options.force && fs.existsSync(cacheFile)) {
     try {
       const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf-8')) as ExtractedProps;
@@ -1220,7 +1235,7 @@ async function readOnePackage(
   }
 
   const started = Date.now();
-  const files = findDeclarationFiles(root);
+  const files = filesToRead();
   const components: Record<string, ComponentFacts> = {};
   const inheritedOnly: string[] = [];
   const allTypes: Record<string, PropFact[]> = {};
@@ -1296,6 +1311,7 @@ async function readOnePackage(
   try {
     fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
     fs.writeFileSync(cacheFile, JSON.stringify(extracted), 'utf-8');
+    pruneStaleKnowledge(projectRoot, importPath, cacheFile, '.props.json');
   } catch { /* cache is an optimisation */ }
 
   /**

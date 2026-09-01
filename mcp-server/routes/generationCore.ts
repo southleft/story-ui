@@ -903,6 +903,19 @@ async function runStoryGenerationPipeline(
     if (c.name && typeof home === 'string' && home.includes('/')) componentHomes.set(c.name, home);
   }
 
+  /**
+   * The title is a separate, trivial model call that used to sit on the
+   * critical path between the generation and the write (1–3s, sometimes 30s
+   * when the provider was slow). It depends only on the request, so it runs
+   * alongside the generation and is awaited when the file is named.
+   */
+  const titleNeedsModel = !(isActualUpdate && originalTitle);
+  const titlePromise: Promise<string> = titleNeedsModel
+    ? getLLMTitle(isActualUpdate && conversation
+        ? (conversation.find((msg) => msg.role === 'user')?.content || prompt)
+        : prompt)
+    : Promise.resolve(originalTitle as string);
+
   let aiText = '';
   /** Stylesheet emitted alongside the story, when the model needed real states. */
   let generatedStylesheet: string | null = null;
@@ -1297,18 +1310,9 @@ async function runStoryGenerationPipeline(
   // Step 7: Post-processing
   events.onProgress?.(7, totalSteps, 'post_processing', 'Applying finishing touches...');
 
-  // Title generation
-  let aiTitle: string;
-  if (isActualUpdate && originalTitle) {
-    aiTitle = originalTitle;
-  } else if (isActualUpdate && conversation) {
-    const originalPrompt = conversation.find((msg) => msg.role === 'user')?.content || prompt;
-    aiTitle = await getLLMTitle(originalPrompt);
-    events.onLLMCall?.();
-  } else {
-    aiTitle = await getLLMTitle(prompt);
-    events.onLLMCall?.();
-  }
+  // Title — started before the generation loop; see titlePromise.
+  let aiTitle: string = await titlePromise;
+  if (titleNeedsModel) events.onLLMCall?.();
   if (!aiTitle || aiTitle.length < 2) {
     aiTitle = cleanPromptForTitle(prompt);
   }
@@ -3353,10 +3357,14 @@ export async function preValidateImports(
   const validation = await discovery.validateComponentNames(componentImports);
   const allowedComponents = new Set<string>(discovery.getAvailableComponentNames());
 
+  const reportedAsInvalid = new Set(validation.invalid);
   for (const importName of componentImports) {
+    // An import that validation already reports as unknown gets one message
+    // (below, with its nearest catalog names), not two.
+    if (reportedAsInvalid.has(importName)) continue;
     if (isBlacklistedComponent(importName, allowedComponents, config.importPath)) {
       const errorMsg = getBlacklistErrorMessage(importName, config.importPath);
-      errors.push(`Blacklisted component detected: ${errorMsg}`);
+      errors.push(`Unknown component: ${errorMsg}`);
     }
   }
 

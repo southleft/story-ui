@@ -453,8 +453,12 @@ export async function buildFrameworkAwarePrompt(
   if (config.importStyle === 'individual') {
     importStyleRulesFramework.push(
       `- 🚫 INDIVIDUAL IMPORTS REQUIRED: Import each component from its own file (e.g., '${config.importPath}/button', NOT '${config.importPath}')`,
-      `- Sub-components share files: CardHeader, CardContent → '${config.importPath}/card'`,
-      '- File names use kebab-case: AlertDialog → alert-dialog, NavigationMenu → navigation-menu'
+      // No path FORMULA here. The catalog lists each component's exact import
+      // path, read from the project; a rule like "AlertDialog → alert-dialog"
+      // invented paths that do not exist for every library that does not
+      // kebab-case its files.
+      '- The Available components catalog states the exact import path for each component — use it verbatim',
+      '- A component with no import path listed in the catalog must not be imported at all'
     );
   }
 

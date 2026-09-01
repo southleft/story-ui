@@ -78,6 +78,9 @@ import {
   type StoryVersionSummary,
 } from './VersionHistory';
 
+/** sessionStorage key for the story the workspace had open. */
+const ACTIVE_KEY = 'story-ui-v2-active';
+
 interface Turn {
   id: string;
   role: 'user' | 'assistant';
@@ -668,10 +671,36 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     if (!sessionsLoaded || recovering || editRequestHandled.current) return;
     editRequestHandled.current = true;
     const request = takeEditRequest();
-    if (!request) return;
-    const session = byStoryId(request.componentId);
+    if (request) {
+      const session = byStoryId(request.componentId);
+      if (session) openSession(session);
+      return;
+    }
+    /**
+     * Reopen the story that was active before the frame reloaded.
+     *
+     * The workspace lives in Storybook's preview iframe, and Storybook
+     * reloads that frame when a story file changes — which the pipeline does
+     * again AFTER the completion arrives (a repair pass writing, or restoring
+     * the original). Mid-generation reloads were recovered from the pending
+     * stash; a reload right after a finished run had nothing to recover from
+     * and landed on Home, with the finished conversation one click away.
+     */
+    if (readPendingGeneration()) return;
+    let active: string | null = null;
+    try { active = sessionStorage.getItem(ACTIVE_KEY); } catch { /* private mode */ }
+    if (!active) return;
+    const session = byFileName(active);
     if (session) openSession(session);
-  }, [sessionsLoaded, recovering, byStoryId, openSession]);
+  }, [sessionsLoaded, recovering, byStoryId, byFileName, openSession]);
+
+  // Remember the active story across a preview-frame reload.
+  useEffect(() => {
+    try {
+      if (activeFile?.fileName) sessionStorage.setItem(ACTIVE_KEY, activeFile.fileName);
+      else sessionStorage.removeItem(ACTIVE_KEY);
+    } catch { /* private mode */ }
+  }, [activeFile]);
 
   /* ---- autoscroll ----------------------------------------------------- */
 
@@ -869,7 +898,10 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
         role: 'assistant',
         text: [
           result.chatSummary || `Created ${result.title}.`,
-          result.pins?.applied?.length ? `Kept your hand-set props: ${result.pins.applied.join(', ')}.` : '',
+          (() => {
+            const kept = [...(result.pins?.applied ?? []), ...(result.pins?.kept ?? [])];
+            return kept.length ? `Kept your hand-set props: ${kept.join(', ')}.` : '';
+          })(),
         ].filter(Boolean).join('\n\n'),
         // Advice travels beside the reply, not inside it — it is ours, not
         // the model's, and reads wrongly in the model's voice.

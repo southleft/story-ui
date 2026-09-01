@@ -66,7 +66,196 @@ const ENVIRONMENTS = [
   // namespace `Dialog.Root` — and states nearly every prop through an inherited
   // generic, which is the deepest heritage chain measured anywhere.
   { name: 'chakra-v3 (dual surface)', project: '/Users/tjpitre/Sites/test-storybooks/chakra', storybook: 'http://localhost:6114' },
+  // The four non-React frameworks CLAUDE.md claims support for. Until they
+  // were listed here their numbers were assumed, not measured — and the bench
+  // instantiated ReactAdapter for every environment regardless of the
+  // configured componentFramework, so it could not have measured them anyway.
+  { name: 'vue-vuetify (Vue 3)', project: '/Users/tjpitre/Sites/test-storybooks/vue-vuetify', storybook: 'http://localhost:6103' },
+  { name: 'angular-material (Angular)', project: '/Users/tjpitre/Sites/test-storybooks/angular-material', storybook: 'http://localhost:6102' },
+  { name: 'svelte-flowbite (Svelte 5)', project: '/Users/tjpitre/Sites/test-storybooks/svelte-flowbite', storybook: 'http://localhost:6104' },
+  { name: 'web-components-shoelace (Lit)', project: '/Users/tjpitre/Sites/test-storybooks/web-components-shoelace', storybook: 'http://localhost:6105' },
 ];
+
+/**
+ * Does the package actually EXPORT the name the catalog tells the model to
+ * import? "node_modules/<pkg> exists" was the whole check, and it is the wrong
+ * question: a specifier can resolve to a real package that has no such export,
+ * and the story then fails at runtime with "does not provide an export named".
+ *
+ * Reads the package's declarations entry (or its JS entry) and follows
+ * `export * from`, braced re-exports and CommonJS `__exportStar`, so a barrel
+ * of barrels is checked to its leaves. Deliberately independent of the
+ * engine's own declaration reader: a bench that reuses the code under test
+ * cannot see that code's mistakes.
+ *
+ * Returns 'present', 'missing', or 'unchecked' when no entry could be read —
+ * and 'unchecked' is reported as such, never folded into either answer.
+ */
+function makeExportChecker(projectRoot) {
+  const isFile = (p) => { try { return fs.statSync(p).isFile(); } catch { return false; } };
+  const pkgNameOf = (spec) => spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0];
+
+  function pkgDirFor(name) {
+    let dir = projectRoot;
+    for (let i = 0; i < 12; i++) {
+      const candidate = path.join(dir, 'node_modules', ...name.split('/'));
+      if (isFile(path.join(candidate, 'package.json'))) return candidate;
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+    return null;
+  }
+
+  /** The declarations entry for `<pkg>/<subpath>`, else the JS entry, else null. */
+  function entryFor(pkgDir, subpath) {
+    let pkg = {};
+    try { pkg = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8')); } catch { /* no manifest */ }
+    const found = [];
+    const walk = (node, depth = 0) => {
+      if (depth > 5 || node == null) return;
+      if (typeof node === 'string') { found.push(node); return; }
+      if (Array.isArray(node)) return node.forEach(n => walk(n, depth + 1));
+      if (typeof node === 'object') {
+        if (typeof node.types === 'string') found.push(node.types);
+        for (const [k, v] of Object.entries(node)) if (k !== 'types') walk(v, depth + 1);
+      }
+    };
+    if (pkg.exports) {
+      const key = subpath ? `./${subpath}` : '.';
+      if (typeof pkg.exports === 'string') { if (!subpath) found.push(pkg.exports); }
+      else if (pkg.exports[key] !== undefined) walk(pkg.exports[key]);
+      else if (!subpath) walk(pkg.exports);
+      else {
+        // Pattern keys: `./components/*` → `./lib/components/*\/index.js`.
+        for (const [k, v] of Object.entries(pkg.exports)) {
+          if (!k.includes('*')) continue;
+          const star = k.indexOf('*');
+          const pre = k.slice(0, star), post = k.slice(star + 1);
+          if (!key.startsWith(pre) || !key.endsWith(post) || key.length < pre.length + post.length) continue;
+          const filled = key.slice(pre.length, key.length - post.length);
+          const sub = [];
+          walk(v, 0); // collect into found, then rewrite the tail we just added
+          const added = found.splice(found.length - (found.length - sub.length), found.length);
+          for (const t of added) found.push(t.replace('*', filled));
+        }
+      }
+    }
+    if (!subpath) {
+      for (const k of ['types', 'typings', 'main', 'module']) if (typeof pkg[k] === 'string') found.push(pkg[k]);
+      found.push('index.d.ts', 'index.ts', 'index.js', 'index.mjs');
+    } else {
+      const nested = path.join(pkgDir, subpath);
+      if (isFile(path.join(nested, 'package.json'))) return entryFor(nested, '');
+      found.push(`${subpath}/index.d.ts`, `${subpath}.d.ts`, `${subpath}/index.ts`, `${subpath}/index.js`, `${subpath}.js`, `${subpath}/index.mjs`);
+    }
+    const decl = (p) => /\.(d\.[cm]?ts|ts|tsx|mts)$/.test(p);
+    const ordered = [...found.filter(decl), ...found.filter(p => !decl(p))];
+    const entries = { declarations: null, runtime: null };
+    for (const rel of ordered) {
+      const full = path.join(pkgDir, rel);
+      if (decl(rel) && isFile(full)) { entries.declarations ??= full; continue; }
+      const twin = full.replace(/\.(m?js|cjs|jsx)$/, '');
+      if (twin !== full) for (const e of ['.d.ts', '.d.mts', '.d.cts']) if (isFile(twin + e)) { entries.declarations ??= twin + e; break; }
+      if (isFile(full)) entries.runtime ??= full;
+    }
+    return entries.declarations || entries.runtime ? entries : null;
+  }
+
+  const DECL_EXTS = ['.d.ts', '.d.mts', '.ts', '.tsx', '.mts'];
+  const JS_EXTS = ['.js', '.mjs', '.cjs', '.vue', '.svelte'];
+  function resolve(spec, fromFile) {
+    if (spec.startsWith('.')) {
+      const base = path.resolve(path.dirname(fromFile), spec);
+      const stripped = base.replace(/\.(m?js|cjs|jsx)$/, '');
+      // Stay in the world we came from: a JS barrel's `./FormLabel` is its
+      // JS sibling, whose exports may exceed what the .d.ts twin declares.
+      const fromJs = /\.(m?js|cjs)$/.test(fromFile);
+      const EXTS = fromJs ? [...JS_EXTS, ...DECL_EXTS] : [...DECL_EXTS, ...JS_EXTS];
+      const candidates = [
+        ...(stripped !== base && !fromJs ? DECL_EXTS.map(e => stripped + e) : []),
+        base, ...EXTS.map(e => base + e), ...EXTS.map(e => path.join(base, 'index' + e)),
+      ];
+      return candidates.find(isFile) ?? null;
+    }
+    const dir = pkgDirFor(pkgNameOf(spec));
+    if (!dir) return null;
+    const sub = spec.length > pkgNameOf(spec).length ? spec.slice(pkgNameOf(spec).length + 1) : '';
+    const e = entryFor(dir, sub);
+    return e ? (e.declarations || e.runtime) : null;
+  }
+
+  const cache = new Map();
+  function exportsIn(file, depth = 0, seen = new Set()) {
+    if (cache.has(file)) return cache.get(file);
+    const names = new Set();
+    cache.set(file, names);
+    if (seen.has(file) || depth > 5) return names;
+    seen.add(file);
+    if (/\.(vue|svelte)$/.test(file)) { names.add('default'); return names; }
+    let src = '';
+    try { src = fs.readFileSync(file, 'utf8'); } catch { return names; }
+
+    let m;
+    const declRe = /export\s+(?:declare\s+)?(?:abstract\s+)?(?:default\s+)?(?:const\s+enum|const|let|var|async\s+function\*?|function\*?|class|type|interface|enum|namespace)\s+([A-Za-z_$][\w$]*)/g;
+    while ((m = declRe.exec(src)) !== null) names.add(m[1]);
+    if (/export\s+default\b/.test(src)) names.add('default');
+    const bracedRe = /export\s*(?:type\s+)?\{([^}]*)\}(?:\s*from\s*['"]([^'"]+)['"])?/g;
+    while ((m = bracedRe.exec(src)) !== null) {
+      for (const raw of m[1].split(',')) {
+        const entry = raw.trim().replace(/^type\s+/, '');
+        if (!entry) continue;
+        const parts = entry.split(/\s+as\s+/).map(p => p.trim());
+        names.add(parts[parts.length - 1]);
+      }
+    }
+    const starAsRe = /export\s*\*\s*as\s+([A-Za-z_$][\w$]*)\s+from/g;
+    while ((m = starAsRe.exec(src)) !== null) names.add(m[1]);
+    const cjsRe = /(?:^|[^.\w])exports\.([A-Za-z_$][\w$]*)\s*=|Object\.defineProperty\(\s*exports\s*,\s*['"]([A-Za-z_$][\w$]*)['"]/g;
+    while ((m = cjsRe.exec(src)) !== null) names.add(m[1] || m[2]);
+
+    const follow = [];
+    const starRe = /export\s*\*\s*from\s*['"]([^'"]+)['"]/g;
+    while ((m = starRe.exec(src)) !== null) follow.push(m[1]);
+    const exportStarRe = /__export(?:Star)?\(\s*require\(\s*['"]([^'"]+)['"]\s*\)/g;
+    while ((m = exportStarRe.exec(src)) !== null) follow.push(m[1]);
+    const reassign = src.match(/module\.exports\s*=\s*require\(\s*['"]([^'"]+)['"]\s*\)/);
+    if (reassign) follow.push(reassign[1]);
+    // Babel's export-star: `var _x = _interopRequireWildcard(require("./x"));
+    // Object.keys(_x).forEach(...)`. MUI's CJS barrel re-exports every
+    // component's siblings this way, and nothing else declares them.
+    const required = new Map();
+    const reqRe = /(?:var|const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:_interopRequireWildcard\(|_interopRequireDefault\()?\s*require\(\s*['"]([^'"]+)['"]\s*\)/g;
+    while ((m = reqRe.exec(src)) !== null) required.set(m[1], m[2]);
+    const keysRe = /Object\.keys\(\s*([A-Za-z_$][\w$]*)\s*\)\.forEach/g;
+    while ((m = keysRe.exec(src)) !== null) if (required.has(m[1])) follow.push(required.get(m[1]));
+    for (const spec of follow) {
+      const target = resolve(spec, file);
+      if (!target) continue;
+      for (const n of exportsIn(target, depth + 1, seen)) if (n !== 'default') names.add(n);
+    }
+    return names;
+  }
+
+  return {
+    /** 'present' | 'missing' | 'unchecked' */
+    check(spec, name, isDefault) {
+      const pkgName = pkgNameOf(spec);
+      const dir = pkgDirFor(pkgName);
+      if (!dir) return 'unchecked';
+      const sub = spec.length > pkgName.length ? spec.slice(pkgName.length + 1) : '';
+      const entry = entryFor(dir, sub);
+      if (!entry) return 'unchecked';
+      // Declarations OR runtime: MUI exports `FormLabelRoot` from FormLabel.js
+      // and never declares it. A name the runtime module provides is present,
+      // whatever the .d.ts omits — the story would import it fine.
+      const want = isDefault ? 'default' : name;
+      if (entry.declarations && exportsIn(entry.declarations).has(want)) return 'present';
+      if (entry.runtime && exportsIn(entry.runtime).has(want)) return 'runtime-only';
+      return 'missing';
+    },
+  };
+}
 
 /**
  * Resolve an import specifier the way the project's own tooling would.
@@ -104,15 +293,56 @@ function makeResolver(projectRoot) {
     EXTS.some(e => fs.existsSync(path.join(base, 'index' + e))) ||
     fs.existsSync(base);
 
+  /**
+   * A bare specifier resolves the way Node resolves it: through the package's
+   * `exports` map when it has one. "node_modules/<pkg> exists" accepted
+   * `vuetify/components/lib/components/VApp` — a path Vuetify's map does not
+   * expose — as resolvable, for 172 components.
+   */
+  const bareResolves = (spec) => {
+    const pkgName = spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0];
+    let pkgDir = null;
+    let dir = projectRoot;
+    for (let i = 0; i < 12; i++) {
+      const candidate = path.join(dir, 'node_modules', ...pkgName.split('/'));
+      if (fs.existsSync(path.join(candidate, 'package.json'))) { pkgDir = candidate; break; }
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+    if (!pkgDir) return false;
+    const subpath = spec.length > pkgName.length ? spec.slice(pkgName.length + 1) : '';
+    if (!subpath) return true;
+    let pkg = {};
+    try { pkg = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8')); } catch { /* no manifest */ }
+    if (!pkg.exports || typeof pkg.exports === 'string') return asFile(path.join(pkgDir, subpath));
+    const targets = (node, out = [], depth = 0) => {
+      if (depth > 5 || node == null) return out;
+      if (typeof node === 'string') { out.push(node); return out; }
+      if (Array.isArray(node)) { node.forEach(n => targets(n, out, depth + 1)); return out; }
+      if (typeof node === 'object') for (const v of Object.values(node)) targets(v, out, depth + 1);
+      return out;
+    };
+    const key = `./${subpath}`;
+    if (pkg.exports[key] !== undefined) return targets(pkg.exports[key]).some(t => asFile(path.join(pkgDir, t)));
+    for (const [k, v] of Object.entries(pkg.exports)) {
+      if (!k.includes('*')) continue;
+      const star = k.indexOf('*');
+      const pre = k.slice(0, star), post = k.slice(star + 1);
+      if (!key.startsWith(pre) || !key.endsWith(post) || key.length < pre.length + post.length) continue;
+      const filled = key.slice(pre.length, key.length - post.length);
+      if (targets(v).some(t => asFile(path.join(pkgDir, t.replace('*', filled))))) return true;
+    }
+    return false;
+  };
+
   return {
     aliases,
+    isBare: (spec) => !spec.startsWith('.') && !aliases.some(a => spec.startsWith(a.prefix)),
     /** Does this specifier point at something real? */
     resolves(spec, fromDir) {
       if (!spec) return false;
-      // Bare package specifier — node_modules' problem, not ours.
-      if (!spec.startsWith('.') && !aliases.some(a => spec.startsWith(a.prefix))) {
-        return fs.existsSync(path.join(projectRoot, 'node_modules', spec.split('/').slice(0, spec.startsWith('@') ? 2 : 1).join('/')));
-      }
+      if (!spec.startsWith('.') && !aliases.some(a => spec.startsWith(a.prefix))) return bareResolves(spec);
       if (spec.startsWith('.')) return asFile(path.resolve(fromDir, spec));
       for (const a of aliases) {
         if (!spec.startsWith(a.prefix)) continue;
@@ -129,7 +359,7 @@ async function measure(env) {
   const { EnhancedComponentDiscovery } = await import(pathToFileURL(`${DIST}/story-generator/enhancedComponentDiscovery.js`).href);
   const { getFrameworkAdapter } = await import(pathToFileURL(`${DIST}/story-generator/framework-adapters/index.js`).href)
     .catch(() => ({ getFrameworkAdapter: null }));
-  const { ReactAdapter } = await import(pathToFileURL(`${DIST}/story-generator/framework-adapters/react-adapter.js`).href);
+  const { getAdapter } = await import(pathToFileURL(`${DIST}/story-generator/framework-adapters/index.js`).href);
 
   // One definition of "is this a real description", shared with the pipeline.
   const { saysMoreThanName } = await import(
@@ -235,8 +465,19 @@ async function measure(env) {
     manifestReachable = false;
   }
 
-  const adapter = new ReactAdapter();
+  /**
+   * The adapter for the CONFIGURED framework, not React for everyone.
+   *
+   * `new ReactAdapter()` was hardcoded here, so a Vue, Angular, Svelte or
+   * Web Components environment would have been measured against a catalog
+   * those frameworks never see. Which adapter answered is printed, so a
+   * silent fallback to React cannot masquerade as a measurement.
+   */
+  const framework = config.componentFramework || 'react';
+  const adapter = getAdapter(framework);
+  if (!adapter) throw new Error(`no framework adapter registered for componentFramework "${framework}"`);
   const resolver = makeResolver(env.project);
+  const exportChecker = makeExportChecker(env.project);
   const generatedDir = path.resolve(env.project, config.generatedStoriesPath || './src/stories/generated');
 
   // The adapter's catalog text is exactly what the model is told, so parse the
@@ -250,8 +491,10 @@ async function measure(env) {
   // than no check, so the count is asserted against the catalog below.
   const reference = adapter.generateComponentReference(components, config);
   const specs = new Map();
-  for (const m of reference.matchAll(/\*\*([A-Za-z0-9_]+)\*\* \((?:import\s+(?:\w+\s+)?from\s+)?'([^']+)'/g)) {
-    specs.set(m[1], m[2]);
+  const defaultImports = new Set();
+  for (const m of reference.matchAll(/\*\*([A-Za-z0-9_]+)\*\* \((?:import\s+(\w+\s+)?from\s+)?'([^']+)'/g)) {
+    specs.set(m[1], m[3]);
+    if (m[2]) defaultImports.add(m[1]);
   }
 
   // Every catalog entry offers an import path; if we parsed fewer than the
@@ -265,8 +508,25 @@ async function measure(env) {
   }
 
   const dead = [];
+  const missingExport = [];
+  const uncheckedExport = [];
+  const runtimeOnlyExport = [];
+  let bareSpecifiers = 0;
   for (const [name, spec] of specs) {
-    if (!resolver.resolves(spec, generatedDir)) dead.push(`${name} -> ${spec}`);
+    if (!resolver.resolves(spec, generatedDir)) { dead.push(`${name} -> ${spec}`); continue; }
+    // A bare specifier that resolves only proves the PACKAGE is installed.
+    // The named export is a separate fact, and a separate failure.
+    const bare = !spec.startsWith('.') && !resolver.aliases.some(a => spec.startsWith(a.prefix));
+    if (!bare) continue;
+    // A custom element is imported for its side effect (`import 'lib/button'`
+    // registers the tag); there is no named export to check, and the module
+    // resolving IS the check, which the dead-specifier pass already made.
+    if (framework === 'web-components') continue;
+    bareSpecifiers++;
+    const verdict = exportChecker.check(spec, name, defaultImports.has(name));
+    if (verdict === 'missing') missingExport.push(`${name} -> ${spec}${defaultImports.has(name) ? ' (default)' : ''}`);
+    else if (verdict === 'unchecked') uncheckedExport.push(`${name} -> ${spec}`);
+    else if (verdict === 'runtime-only') runtimeOnlyExport.push(`${name} -> ${spec}`);
   }
 
   const withProps = components.filter(c => (c.props || []).length > 0).length;
@@ -285,11 +545,17 @@ async function measure(env) {
   process.chdir(prevCwd);
   return {
     environment: env.name,
+    framework,
+    adapter: adapter.type,
     aliasesRead: resolver.aliases.map(a => a.prefix),
     components: components.length,
     withSpecifier: specs.size,
     resolvable: specs.size - dead.length,
     dead,
+    bareSpecifiers,
+    missingExport,
+    uncheckedExport,
+    runtimeOnlyExport,
     knowProps: withProps,
     totalProps, docedProps, deprecatedProps, defaultedProps,
     knowDescription: withDesc,
@@ -301,9 +567,17 @@ async function measure(env) {
 function report(r) {
   const pct = (n, d) => d === 0 ? '—' : `${Math.round((100 * n) / d)}%`;
   console.log(`\n=== ${r.environment} ===`);
+  console.log(`  framework / adapter        : ${r.framework} / ${r.adapter}`);
   console.log(`  aliases read from tsconfig : ${r.aliasesRead.length ? r.aliasesRead.join(', ') : 'none'}`);
   console.log(`  components discovered      : ${r.components}`);
   console.log(`  import specifier resolves  : ${r.resolvable}/${r.withSpecifier}  ${pct(r.resolvable, r.withSpecifier)}`);
+  const checked = r.bareSpecifiers - r.uncheckedExport.length;
+  console.log(r.bareSpecifiers === 0
+    ? (r.framework === 'web-components'
+      ? `  named export present       : n/a — custom elements are side-effect imports; the specifier resolving is the check`
+      : `  named export present       : n/a — no bare package specifiers in this catalog`)
+    : `  named export present       : ${checked - r.missingExport.length}/${checked}  ${pct(checked - r.missingExport.length, checked)}` +
+      (r.uncheckedExport.length ? `  (${r.uncheckedExport.length} NOT CHECKED — no readable package entry)` : ''));
   console.log(`  props known                : ${r.knowProps}/${r.components}  ${pct(r.knowProps, r.components)}`);
   console.log(`  real description known     : ${r.knowDescription}/${r.components}  ${pct(r.knowDescription, r.components)}`);
   // Held, not shipped: see the note in generationCore's enrichment block.
@@ -317,6 +591,22 @@ function report(r) {
     console.log(`  DEAD SPECIFIERS (${r.dead.length}):`);
     for (const d of r.dead.slice(0, 12)) console.log(`    ${d}`);
     if (r.dead.length > 12) console.log(`    …and ${r.dead.length - 12} more`);
+  }
+  if (r.missingExport.length) {
+    console.log(`  PACKAGE PRESENT BUT EXPORT MISSING (${r.missingExport.length}):`);
+    for (const d of r.missingExport.slice(0, 12)) console.log(`    ${d}`);
+    if (r.missingExport.length > 12) console.log(`    …and ${r.missingExport.length - 12} more`);
+  }
+  if (r.runtimeOnlyExport.length) {
+    // The story renders; a typechecked consumer would not compile. Both facts.
+    console.log(`  EXPORT PRESENT AT RUNTIME ONLY, undeclared in types (${r.runtimeOnlyExport.length}):`);
+    for (const d of r.runtimeOnlyExport.slice(0, 6)) console.log(`    ${d}`);
+    if (r.runtimeOnlyExport.length > 6) console.log(`    …and ${r.runtimeOnlyExport.length - 6} more`);
+  }
+  if (r.uncheckedExport.length) {
+    console.log(`  EXPORT NOT CHECKED (${r.uncheckedExport.length}) — package found, no entry file to read:`);
+    for (const d of r.uncheckedExport.slice(0, 6)) console.log(`    ${d}`);
+    if (r.uncheckedExport.length > 6) console.log(`    …and ${r.uncheckedExport.length - 6} more`);
   }
 }
 
@@ -332,14 +622,22 @@ if (flag('all')) {
   const { spawnSync } = await import('child_process');
   let failed = 0;
   let unmeasured = 0;
+  let notPresent = 0;
   for (const env of ENVIRONMENTS) {
+    // A missing directory is an environment we CLAIM and did not measure. It
+    // must be visible in the output, not skipped into a cleaner-looking run.
+    if (!fs.existsSync(env.project)) {
+      console.log(`\n=== ${env.name} ===\n  NOT PRESENT — expected at ${env.project}; nothing measured`);
+      notPresent++;
+      continue;
+    }
     const r = spawnSync(process.execPath, [
       new URL(import.meta.url).pathname,
       '--project', env.project,
       '--storybook', env.storybook,
       '--name', env.name,
     ], { encoding: 'utf8' });
-    process.stdout.write((r.stdout || '').split('\n').filter(l => /^(===|  [a-z]|    |DEAD|\d+ dead|All specifiers)/.test(l)).join('\n') + '\n');
+    process.stdout.write((r.stdout || '').split('\n').filter(l => /^(===|  [A-Za-z]|    |DEAD|\d+ dead|\d+ missing|All specifiers|NO COMPONENTS)/.test(l)).join('\n') + '\n');
     if (r.status !== 0) failed++;
     if (/NOT MEASURED/.test(r.stdout || '')) unmeasured++;
   }
@@ -355,14 +653,17 @@ if (flag('all')) {
    * So: dead specifiers fail, incompleteness is reported loudly, and CI can
    * demand the stronger claim with --require-complete.
    */
-  console.log(failed === 0 ? '\nAll environments clean.' : `\n${failed} environment(s) with dead specifiers.`);
+  console.log(failed === 0 ? '\nAll environments clean.' : `\n${failed} environment(s) with dead specifiers, missing exports, or no components.`);
+  if (notPresent > 0) {
+    console.log(`${notPresent} of ${ENVIRONMENTS.length} environment(s) NOT PRESENT on disk — claimed, not measured.`);
+  }
   if (unmeasured > 0) {
     console.log(
       `${unmeasured} of ${ENVIRONMENTS.length} environment(s) had metrics that could NOT be measured ` +
       `— start their Storybook to measure them. This run is INCOMPLETE, not clean.`
     );
   }
-  const incomplete = flag('require-complete') && unmeasured > 0;
+  const incomplete = flag('require-complete') && (unmeasured > 0 || notPresent > 0);
   process.exit(failed > 0 || incomplete ? 1 : 0);
 }
 
@@ -382,7 +683,8 @@ try {
     process.exit(1);
   }
   console.log(`\n${r.dead.length === 0 ? 'All specifiers resolve.' : `${r.dead.length} dead specifier(s).`}`);
-  process.exit(r.dead.length > 0 ? 1 : 0);
+  if (r.missingExport.length > 0) console.log(`${r.missingExport.length} missing export(s): the package is installed but does not export that name.`);
+  process.exit(r.dead.length > 0 || r.missingExport.length > 0 ? 1 : 0);
 } catch (e) {
   console.log(`\n=== ${env.name} ===\n  FAILED: ${String(e).slice(0, 300)}`);
   process.exit(1);

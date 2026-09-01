@@ -1,81 +1,34 @@
 /**
- * Blacklist of component names that AI commonly mistakes for real components
- * These are often story export names or made-up components that don't exist
+ * Components the model may not import: anything the catalog did not discover.
+ *
+ * This file used to hold a list of names and a set of regexes — anything
+ * ending in Card, Header, Container, Layout or Wrapper, anything starting with
+ * Styled or Custom — that labelled an UNDISCOVERED name "blacklisted" as if it
+ * were a known offender,
+ * and then suggested Polaris and Primer components (`Box`, `Pagehead`,
+ * `PageLayout`) to every design system. The regexes were also wrong on their
+ * own terms: a real `ProductCard`, `PageHeader` or `StyledLink` in a project's
+ * catalog was only spared by the catalog check that ran first.
+ *
+ * There is exactly one fact available: is the name in the catalog? A name that
+ * is not is an unknown component, and the only honest help is the nearest
+ * names the catalog actually contains.
  */
 
 import { isDeprecatedComponent, getComponentReplacement } from './documentation-sources.js';
+import { nearestNames } from './nameSimilarity.js';
 
-export const BLACKLISTED_COMPONENTS = [
-  // Story UI interface components (not design system components)
-  'StoryUIPanel',
-
-  // Common mistaken imports
-  'GitHubStyleRepoCard',
-  'GitHubHeader',
-  'CustomCard',
-  'StyledCard',
-  'LayoutWrapper',
-  'ContentWrapper',
-  'StoryCard',
-  'UICard',
-  'ComponentCard',
-
-  // Patterns that indicate story exports
-  /^.*Story$/,
-  /^.*Example$/,
-  /^.*Demo$/,
-  /^Custom.*/,
-  /^Styled.*/,
-  /^.*Layout$/,
-  /^.*Wrapper$/,
-  /^.*Container$/,
-  /^GitHub.*/,
-  /^.*Header$/, // Except for 'Header' itself
-  /^.*Card$/, // Except for specific known card components
-];
-
-// Generic deprecated components (can be extended per design system)
-const DEPRECATED_COMPONENTS: Record<string, string[]> = {
-  // Add deprecated components for supported design systems as needed
-};
-
+/**
+ * True when the model must not import `componentName`: it is deprecated per
+ * the design system's own documentation, or it is not in the catalog at all.
+ * With an empty catalog nothing can be judged, so nothing is rejected.
+ */
 export function isBlacklistedComponent(componentName: string, validComponents: Set<string>, importPath?: string): boolean {
-  // Check if it's a known deprecated component from documentation
   if (importPath && isDeprecatedComponent(importPath, componentName)) {
     return true;
   }
-
-  // Check for deprecated components for specific design systems
-  if (importPath) {
-    for (const [systemPath, deprecatedList] of Object.entries(DEPRECATED_COMPONENTS)) {
-      if (importPath.includes(systemPath) && deprecatedList.includes(componentName)) {
-        return true;
-      }
-    }
-  }
-
-  // First check if it's in the allowed list - if so, it's not blacklisted
-  if (validComponents.has(componentName)) {
-    return false;
-  }
-
-  // Check exact matches
-  if (BLACKLISTED_COMPONENTS.includes(componentName)) {
-    return true;
-  }
-
-  // Check regex patterns
-  for (const pattern of BLACKLISTED_COMPONENTS) {
-    if (pattern instanceof RegExp && pattern.test(componentName)) {
-      // Special cases - these are allowed even if they match patterns
-      if (componentName === 'Header' || componentName === 'Card') {
-        return false;
-      }
-      return true;
-    }
-  }
-
-  return false;
+  if (validComponents.size === 0) return false;
+  return !validComponents.has(componentName);
 }
 
 /**
@@ -132,6 +85,11 @@ export function isBlacklistedIcon(iconName: string, allowedIcons: Set<string>): 
   return incorrectPatterns.some(pattern => pattern.test(iconName));
 }
 
+/**
+ * Partition imports into catalog members and unknowns, with the nearest
+ * catalog names for each unknown. Suggestions come from `allowedComponents`
+ * and nowhere else.
+ */
 export function validateImports(imports: string[], allowedComponents: Set<string>): {
   valid: string[];
   invalid: string[];
@@ -142,60 +100,25 @@ export function validateImports(imports: string[], allowedComponents: Set<string
   const suggestions = new Map<string, string[]>();
 
   for (const importName of imports) {
-    if (isBlacklistedComponent(importName, allowedComponents)) {
-      invalid.push(importName);
-
-      // Suggest alternatives
-      const suggested = suggestAlternatives(importName, allowedComponents);
-      if (suggested.length > 0) {
-        suggestions.set(importName, suggested);
-      }
-    } else if (!allowedComponents.has(importName)) {
-      invalid.push(importName);
-    } else {
+    if (allowedComponents.has(importName)) {
       valid.push(importName);
+      continue;
     }
+    invalid.push(importName);
+    const near = nearestNames(importName, allowedComponents, 3);
+    if (near.length > 0) suggestions.set(importName, near);
   }
 
   return { valid, invalid, suggestions };
 }
 
-function suggestAlternatives(invalidComponent: string, allowedComponents: Set<string>): string[] {
-  const suggestions: string[] = [];
-
-  // Specific mappings for common mistakes
-  const mappings: Record<string, string[]> = {
-    'StoryUIPanel': ['Box', 'Card', 'Stack'],
-    'GitHubStyleRepoCard': ['Box', 'Card'],
-    'GitHubHeader': ['Header'],
-    'CustomCard': ['Box', 'Card'],
-    'StyledCard': ['Box', 'Card'],
-    'LayoutWrapper': ['Box', 'Stack', 'PageLayout'],
-    'ContentWrapper': ['Box', 'Stack'],
-  };
-
-  if (mappings[invalidComponent]) {
-    return mappings[invalidComponent].filter(comp => allowedComponents.has(comp));
-  }
-
-  // Generic suggestions based on patterns
-  if (invalidComponent.includes('Card')) {
-    suggestions.push('Box', 'Card');
-  }
-  if (invalidComponent.includes('Header')) {
-    suggestions.push('Header', 'Pagehead');
-  }
-  if (invalidComponent.includes('Layout') || invalidComponent.includes('Wrapper')) {
-    suggestions.push('Box', 'Stack', 'PageLayout');
-  }
-
-  return suggestions.filter(comp => allowedComponents.has(comp));
-}
-
 /**
- * Get helpful error message for blacklisted component
+ * Why an import was rejected, in words the model can act on.
+ *
+ * Pass the catalog to get the nearest real names; without it the message
+ * states only the fact, that the name is not in the catalog.
  */
-export function getBlacklistErrorMessage(componentName: string, importPath?: string): string {
+export function getBlacklistErrorMessage(componentName: string, importPath?: string, validComponents?: Iterable<string>): string {
   if (importPath) {
     const replacement = getComponentReplacement(importPath, componentName);
     if (replacement) {
@@ -203,14 +126,9 @@ export function getBlacklistErrorMessage(componentName: string, importPath?: str
     }
   }
 
-  // Existing error messages
-  if (componentName.endsWith('Icon') && !componentName.includes('Icon')) {
-    return `"${componentName}" looks like an icon but may not exist. Check the available icons list.`;
-  }
-
-  if (BLACKLISTED_COMPONENTS.some(pattern => pattern instanceof RegExp && pattern.test(componentName))) {
-    return `"${componentName}" appears to be invalid. Use standard component names.`;
-  }
-
-  return `"${componentName}" is not a valid component.`;
+  const near = validComponents ? nearestNames(componentName, validComponents, 3) : [];
+  const hint = near.length > 0
+    ? ` Nearest catalog names: ${near.join(', ')}.`
+    : ' Use only components listed in the catalog.';
+  return `"${componentName}" is an unknown component (not in the catalog).${hint}`;
 }
