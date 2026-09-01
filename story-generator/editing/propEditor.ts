@@ -231,6 +231,8 @@ export function editProp(code: string, edit: PropEdit): PropEditResult {
   let seen = 0;
   let found = false;
   let previous: string | undefined;
+  /** The located element, so the edit can be applied as a text splice. */
+  let targetElement: ts.JsxOpeningElement | ts.JsxSelfClosingElement | null = null;
 
   const makeInitializer = (): ts.JsxAttributeValue | undefined => {
     const v = edit.value;
@@ -256,6 +258,7 @@ export function editProp(code: string, edit: PropEdit): PropEditResult {
         if (index === edit.occurrence) {
           found = true;
           const element = node as ts.JsxOpeningElement | ts.JsxSelfClosingElement;
+          targetElement = element;
           const existing = element.attributes.properties.filter(
             (a): a is ts.JsxAttribute => ts.isJsxAttribute(a) && a.name.getText(source) === edit.prop,
           );
@@ -320,17 +323,90 @@ export function editProp(code: string, edit: PropEdit): PropEditResult {
     };
   }
 
-  /**
-   * Print the WHOLE file from the transformed AST.
-   *
-   * The printer reformats, which is a real cost — but emitting only the
-   * changed node and splicing it back by offset is how a "targeted" edit
-   * corrupts a file when any earlier transform has shifted positions. A stable
-   * file that is reformatted beats an unstable one that is not.
-   */
-  const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed, removeComments: false });
-  const printed = printer.printFile(transformed);
   result.dispose();
 
-  return { code: printed, changed: true, previous };
+  /**
+   * Splice the ONE attribute back into the original text.
+   *
+   * This used to print the whole file from the transformed AST, on the
+   * reasoning that emitting a node and splicing it by offset is how a
+   * "targeted" edit corrupts a file once an earlier transform has shifted
+   * positions. That reasoning holds for MULTIPLE edits and not for one:
+   * exactly one range changes here, so no offset can have moved beneath it.
+   *
+   * The cost of reprinting was not theoretical. TypeScript's printer
+   * normalises formatting, so setting `size="xl"` on one Button also collapsed
+   * a ten-line import block onto a single line — measured. This writes to a
+   * file someone else reviews, and a one-attribute change that rewrites a
+   * hundred lines is a change nobody can review.
+   *
+   * The AST above is still what LOCATES the attribute; only the rewriting is
+   * textual, and if a range cannot be resolved we fall back to the printer.
+   */
+  const spliced = spliceAttribute(code, source, edit, targetElement);
+  if (spliced !== null) return { code: spliced, changed: true, previous };
+
+  const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed, removeComments: false });
+  return { code: printer.printFile(transformed), changed: true, previous };
+}
+
+/**
+ * Rewrite a single JSX attribute in the original source text.
+ *
+ * Returns null when the edit cannot be expressed as one contiguous range, so
+ * the caller can fall back to a full reprint rather than guess.
+ */
+function spliceAttribute(
+  code: string,
+  source: ts.SourceFile,
+  edit: PropEdit,
+  element: ts.JsxOpeningElement | ts.JsxSelfClosingElement | null,
+): string | null {
+  if (!element) return null;
+
+  const existing = element.attributes.properties.find(
+    (a): a is ts.JsxAttribute => ts.isJsxAttribute(a) && a.name.getText(source) === edit.prop,
+  );
+
+  /** The attribute source text for the new value, or null to remove it. */
+  const rendered = (): string | null => {
+    const v = edit.value;
+    if (v === null) return null;
+    if (typeof v === 'string') return `${edit.prop}="${v.replace(/"/g, '&quot;')}"`;
+    if (typeof v === 'number') return `${edit.prop}={${v}}`;
+    // `<X flag />` rather than `<X flag={true} />` — every design system's own
+    // examples use the shorthand.
+    if (typeof v === 'boolean') return v ? edit.prop : `${edit.prop}={false}`;
+    return null;
+  };
+
+  const text = rendered();
+
+  if (existing) {
+    const start = existing.getStart(source);
+    const end = existing.getEnd();
+    if (text === null) {
+      // Remove the attribute AND the whitespace that preceded it, or the tag
+      // is left with a double space where it used to be.
+      let from = start;
+      while (from > 0 && /\s/.test(code[from - 1])) from--;
+      return code.slice(0, from) + code.slice(end);
+    }
+    return code.slice(0, start) + text + code.slice(end);
+  }
+
+  // Nothing to remove.
+  if (text === null) return code;
+
+  /**
+   * A new attribute goes at the END of the existing ones, matching what the
+   * AST path did. Insert after the last attribute, or after the tag name when
+   * there are none — never by scanning for `>`, which would find the wrong
+   * one inside a generic type argument or an attribute string.
+   */
+  const props = element.attributes.properties;
+  const anchor = props.length > 0
+    ? props[props.length - 1].getEnd()
+    : element.tagName.getEnd();
+  return code.slice(0, anchor) + ' ' + text + code.slice(anchor);
 }

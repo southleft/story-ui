@@ -349,3 +349,88 @@ describe('ambiguity is refused, never defaulted', () => {
       .toEqual({ refuse: 'no owner render to narrow by (2 in file)' });
   });
 });
+
+/**
+ * A one-attribute change must produce a one-attribute diff.
+ *
+ * The editor printed the whole file from the transformed AST, and
+ * TypeScript's printer normalises formatting — so setting `size="xl"` on one
+ * Button also collapsed a ten-line import block onto a single line. Measured
+ * live. This writes to a file someone else reviews, and a change that
+ * rewrites a hundred lines it did not need to touch is a change nobody can
+ * review.
+ */
+describe('minimal diff', () => {
+  const story = [
+    "import React from 'react';",
+    "import {",
+    "  Button,",
+    "  Card,",
+    "  Text,",
+    "} from '@mantine/core';",
+    "",
+    "// A comment that must survive.",
+    "export const Default = () => (",
+    "  <Card padding=\"lg\">",
+    "    <Button variant=\"outline\">Save</Button>",
+    "  </Card>",
+    ");",
+  ].join('\n');
+
+  const linesChanged = (before: string, after: string) => {
+    const a = before.split('\n');
+    const b = after.split('\n');
+    let n = 0;
+    for (let i = 0; i < Math.max(a.length, b.length); i++) if (a[i] !== b[i]) n++;
+    return n;
+  };
+
+  it('changes exactly one line when replacing a prop value', () => {
+    const r = editProp(story, { component: 'Button', occurrence: 0, prop: 'variant', value: 'filled' });
+    expect(r.changed).toBe(true);
+    expect(r.code).toContain('<Button variant="filled">Save</Button>');
+    expect(linesChanged(story, r.code)).toBe(1);
+  });
+
+  it('changes exactly one line when adding a prop', () => {
+    const r = editProp(story, { component: 'Button', occurrence: 0, prop: 'size', value: 'xl' });
+    expect(r.code).toContain('<Button variant="outline" size="xl">Save</Button>');
+    expect(linesChanged(story, r.code)).toBe(1);
+  });
+
+  it('keeps the multi-line import block intact', () => {
+    const r = editProp(story, { component: 'Button', occurrence: 0, prop: 'size', value: 'xl' });
+    // The exact regression: the printer collapsed this onto one line.
+    expect(r.code).toContain("import {\n  Button,\n  Card,\n  Text,\n} from '@mantine/core';");
+  });
+
+  it('keeps comments', () => {
+    const r = editProp(story, { component: 'Button', occurrence: 0, prop: 'size', value: 'xl' });
+    expect(r.code).toContain('// A comment that must survive.');
+  });
+
+  it('writes a boolean as the shorthand every design system uses', () => {
+    const r = editProp(story, { component: 'Button', occurrence: 0, prop: 'disabled', value: true });
+    expect(r.code).toContain('<Button variant="outline" disabled>Save</Button>');
+  });
+
+  it('removes an attribute and the space in front of it', () => {
+    const r = editProp(story, { component: 'Button', occurrence: 0, prop: 'variant', value: null });
+    // Not `<Button  >` — the leading whitespace goes with the attribute.
+    expect(r.code).toContain('<Button>Save</Button>');
+    expect(linesChanged(story, r.code)).toBe(1);
+  });
+
+  it('adds to a self-closing element without breaking it', () => {
+    const selfClosing = '<TextInput label="Email" />';
+    const r = editProp(selfClosing, { component: 'TextInput', occurrence: 0, prop: 'required', value: true });
+    expect(r.code).toBe('<TextInput label="Email" required />');
+  });
+
+  it('adds to an element that has no attributes yet', () => {
+    const bare = '<Button>Go</Button>';
+    const r = editProp(bare, { component: 'Button', occurrence: 0, prop: 'size', value: 'sm' });
+    expect(r.code).toBe('<Button size="sm">Go</Button>');
+  });
+});
+

@@ -256,6 +256,16 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
 
   /** Images staged for the next message, already encoded for upload. */
   const [images, setImages] = useState<AttachedImage[]>([]);
+  /**
+   * How many recent-work cards to render.
+   *
+   * The header printed the full count while the grid rendered twelve, so on a
+   * project with forty stories twenty-eight were unreachable from the UI. Each
+   * card mounts a live Storybook iframe, so they are still revealed in batches
+   * rather than all at once.
+   */
+  const RECENT_PAGE = 12;
+  const [shownRecent, setShownRecent] = useState(RECENT_PAGE);
   const [imageError, setImageError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   /**
@@ -1074,11 +1084,15 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                     {/* Radix Heading renders h1 unless told otherwise, which
                         gave the page two competing h1s. */}
                     <Heading as="h2" size="3" weight="medium">Recent work</Heading>
-                    <Text size="1" color="gray">{sessions.length} in this project</Text>
+                    <Text size="1" color="gray">
+                      {shownRecent >= sessions.length
+                        ? `${sessions.length} in this project`
+                        : `showing ${shownRecent} of ${sessions.length}`}
+                    </Text>
                   </Flex>
 
                   <div className="suiw-recent-grid">
-                    {sessions.slice(0, 12).map(session => (
+                    {sessions.slice(0, shownRecent).map(session => (
                       <Card key={session.fileName} asChild size="1" style={{ padding: 0, overflow: 'hidden' }}>
                         <button
                           type="button"
@@ -1106,6 +1120,18 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                       </Card>
                     ))}
                   </div>
+                  {shownRecent < sessions.length && (
+                    <Flex justify="center" mt="3">
+                      <Button
+                        size="1"
+                        variant="soft"
+                        color="gray"
+                        onClick={() => setShownRecent(n => n + RECENT_PAGE)}
+                      >
+                        Show more ({sessions.length - shownRecent} remaining)
+                      </Button>
+                    </Flex>
+                  )}
                 </Box>
               )}
             </Box>
