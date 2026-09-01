@@ -31,7 +31,77 @@ import { useCallback, useRef, useState } from 'react';
  * "absent looks like success" shape the pipeline was just fixed for, in the
  * one place the user actually looks.
  */
-export type StepState = 'active' | 'done' | 'failed';
+export type StepState = 'active' | 'done' | 'failed' | 'warn';
+
+/**
+ * Phases whose arrival IS the verdict, and the verdict is negative.
+ *
+ * These used to be pushed as `active` and then closed as `done` by whatever
+ * came next — so "The crash could not be fixed automatically" wore a grey
+ * finished-dot and read as a step that had been completed successfully.
+ * `warn` is for "could not check" (amber), `failed` for "checked and it is
+ * wrong" (red). Neither is ever flipped back to done by a later phase: only
+ * `active` steps are closed out.
+ */
+export const FAILED_PHASES: ReadonlySet<string> = new Set([
+  'runtime_heal_failed',
+  'verify_repair_failed',
+  'verify_issues',
+]);
+export const WARN_PHASES: ReadonlySet<string> = new Set(['verify_inconclusive']);
+
+export function stepStateForPhase(phase: string | undefined): StepState {
+  if (!phase) return 'active';
+  if (FAILED_PHASES.has(phase)) return 'failed';
+  if (WARN_PHASES.has(phase)) return 'warn';
+  return 'active';
+}
+
+/**
+ * Render a progress event's `details` as a step detail, when it carries one
+ * the user can read. Currently only the streaming character count.
+ */
+export function detailFromProgress(details: unknown): string | undefined {
+  const chars = (details as { charsWritten?: unknown } | undefined)?.charsWritten;
+  if (typeof chars !== 'number' || !Number.isFinite(chars)) return undefined;
+  return `${Math.max(0, Math.floor(chars)).toLocaleString()} characters written`;
+}
+
+/**
+ * The step-list reducer, pure so it can be tested without React.
+ *
+ *  - Whatever was `active` is closed as `done`; only one step is ever active.
+ *  - A terminal state (`failed` / `warn`) is never revisited by a later push.
+ *  - Re-emitting the CURRENTLY ACTIVE step (the server re-sends `llm_thinking`
+ *    about once a second while the model streams) updates only its detail:
+ *    the clock and label stay, or the elapsed counter would reset to 0s every
+ *    second for the whole writing phase.
+ *  - Re-activating a step that had finished (`validating` on every healing
+ *    attempt) resets the clock, so the counter measures THIS attempt.
+ */
+export function applyStep(
+  prev: GenStep[],
+  step: { id: string; label: string; detail?: string; state?: StepState },
+  now: number = Date.now(),
+): GenStep[] {
+  const state: StepState = step.state ?? 'active';
+  const existingIdx = prev.findIndex(s => s.id === step.id);
+  const existing = existingIdx >= 0 ? prev[existingIdx] : null;
+
+  if (existing && existing.state === 'active' && state === 'active') {
+    const next = [...prev];
+    next[existingIdx] = { ...existing, detail: step.detail ?? existing.detail };
+    return next;
+  }
+
+  const closed = prev.map(s => (s.state === 'active' ? { ...s, state: 'done' as const } : s));
+  if (existingIdx >= 0) {
+    const next = [...closed];
+    next[existingIdx] = { ...next[existingIdx], label: step.label, detail: step.detail, state, startedAt: now };
+    return next;
+  }
+  return [...closed, { id: step.id, label: step.label, detail: step.detail, state, startedAt: now }];
+}
 
 export interface GenStep {
   id: string;
@@ -72,6 +142,15 @@ export interface GenerationResult {
   notice?: string;
   /** Hand-set props re-applied after the model's rewrite. */
   pins?: { applied: string[]; kept: string[]; lost: string[] };
+}
+
+/** The error the run ended on, with whatever the server said to do about it. */
+export interface ErrorInfo {
+  message: string;
+  suggestion?: string;
+  recoverable?: boolean;
+  /** The request never reached a server (fetch threw), so re-probe it. */
+  network: boolean;
 }
 
 export interface GenerationRequest {
@@ -230,6 +309,16 @@ export function useGeneration(apiBase: string) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /**
+   * What the server said to do about the error, when it said anything.
+   *
+   * The SSE error event has always carried `suggestion` and `recoverable`;
+   * the hook kept only `message`, so "Add an API key to .env" reached the log
+   * and never the person who needed it. `network` is set when the request
+   * itself failed (fetch rejects with a TypeError) — the caller re-probes the
+   * server on that, since the header badge is otherwise only checked once.
+   */
+  const [errorInfo, setErrorInfo] = useState<ErrorInfo | null>(null);
+  /**
    * Something the user should know that is not a failure — currently only
    * "you stopped this, but the server did not". Kept apart from `error` so a
    * deliberate action is not painted as a fault.
@@ -243,24 +332,12 @@ export function useGeneration(apiBase: string) {
   const reset = useCallback(() => {
     setSteps([]);
     setError(null);
+    setErrorInfo(null);
     setNotice(null);
   }, []);
 
-  const pushStep = useCallback((id: string, label: string, detail?: string) => {
-    setSteps(prev => {
-      // Close out whatever was running; only one step is ever active.
-      const closed = prev.map(s => (s.state === 'active' ? { ...s, state: 'done' as const } : s));
-      const existing = closed.findIndex(s => s.id === id);
-      if (existing >= 0) {
-        const next = [...closed];
-        // Reset the clock. `validating` is re-emitted on every healing attempt,
-        // and preserving the original startedAt made a step that had just begun
-        // read "2:47" — time since attempt one.
-        next[existing] = { ...next[existing], label, detail, state: 'active', startedAt: Date.now() };
-        return next;
-      }
-      return [...closed, { id, label, detail, state: 'active', startedAt: Date.now() }];
-    });
+  const pushStep = useCallback((id: string, label: string, detail?: string, state?: StepState) => {
+    setSteps(prev => applyStep(prev, { id, label, detail, state }));
   }, []);
 
   const finishSteps = useCallback((ok: boolean = true) => {
@@ -321,6 +398,7 @@ export function useGeneration(apiBase: string) {
 
       let completion: any = null;
       let failure: string | null = null;
+      let failureInfo: Omit<ErrorInfo, 'message'> = { network: false };
       /** True only for a rejection that means the server never started work. */
       let neverStarted = false;
       generationIdRef.current = null;
@@ -368,7 +446,12 @@ export function useGeneration(apiBase: string) {
             switch (event.type) {
               case 'progress': {
                 const label = PHASE_LABEL[data.phase] || data.message || 'Working';
-                pushStep(data.phase || `step-${data.step}`, label);
+                pushStep(
+                  data.phase || `step-${data.step}`,
+                  label,
+                  detailFromProgress(data.details),
+                  stepStateForPhase(data.phase),
+                );
                 break;
               }
               case 'retry':
@@ -394,6 +477,11 @@ export function useGeneration(apiBase: string) {
                 break;
               case 'error':
                 failure = data.message || 'Generation failed';
+                failureInfo = {
+                  suggestion: typeof data.suggestion === 'string' && data.suggestion ? data.suggestion : undefined,
+                  recoverable: typeof data.recoverable === 'boolean' ? data.recoverable : undefined,
+                  network: false,
+                };
                 break;
             }
           }
@@ -411,6 +499,9 @@ export function useGeneration(apiBase: string) {
           return null;
         }
         failure = e?.message || String(e);
+        // fetch rejects with a TypeError when the request never reached a
+        // server — the case where the connection badge is now wrong.
+        failureInfo = { network: e instanceof TypeError && !neverStarted };
       } finally {
         /**
          * Keep the stash unless we KNOW there is nothing to recover.
@@ -434,10 +525,13 @@ export function useGeneration(apiBase: string) {
 
       if (failure && !completion) {
         setError(failure);
+        setErrorInfo({ message: failure, ...failureInfo });
         return null;
       }
       if (!completion) {
-        setError('The generation ended without producing a story.');
+        const message = 'The generation ended without producing a story.';
+        setError(message);
+        setErrorInfo({ message, network: false });
         return null;
       }
 
@@ -458,7 +552,7 @@ export function useGeneration(apiBase: string) {
     [apiBase, pushStep, finishSteps, reset],
   );
 
-  return { generate, cancel, steps, busy, error, notice, reset };
+  return { generate, cancel, steps, busy, error, errorInfo, notice, reset };
 }
 
 /**

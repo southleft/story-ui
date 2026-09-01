@@ -13,7 +13,7 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 import express from 'express';
 import cors from 'cors';
 import { resolveAccessPolicy, accessControl } from './auth.js';
-import { getComponents, getProps } from './routes/components.js';
+import { getComponents, getComponentInventory, getProps } from './routes/components.js';
 import { editablePropsHandler, editPropHandler } from './routes/editProp.js';
 import { makeHandoff, makeHandoffStatus } from './routes/handoff.js';
 import { makeListVersions, makeRestoreVersion } from './routes/storyVersions.js';
@@ -180,6 +180,8 @@ app.use((err: any, _req: express.Request, res: express.Response, next: express.N
 
 // Component discovery routes
 app.get('/mcp/components', getComponents);
+// Inventory for people, not the model: name, provenance, how much is known.
+app.get('/mcp/components/inventory', getComponentInventory);
 // Direct property editing — the deterministic path for changes that have
 // exactly one correct answer, so "make this button red" never reaches a model.
 app.get('/mcp/editable-props', editablePropsHandler);

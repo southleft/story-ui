@@ -499,6 +499,13 @@ async function runStoryGenerationPipeline(
            * generation — see conformance.ts. Assert first, verify second.
            */
           const deprecatedFacts = facts.props.filter(p => p.deprecated);
+          // Descriptions ride alongside, keyed by name; the catalog renders
+          // them only for the components the request is about.
+          const propDocs: Record<string, string> = {};
+          for (const p of facts.props) {
+            if (!p.deprecated && p.doc && p.doc.trim()) propDocs[p.name] = p.doc.trim().split('\n')[0];
+          }
+          if (Object.keys(propDocs).length) component.__propDocs = propDocs;
           component.props = rankProps(facts.props.filter(p => !p.deprecated)).map(p => {
             /**
              * Say REQUIRED, rather than implying it by the absence of `?`.
@@ -2288,7 +2295,15 @@ async function buildClaudePromptWithContext(
     storybookUrl?: string;
   }
 ): Promise<string> {
-  const frameworkOptions: StoryGenerationOptions = { framework: options.framework };
+  // What the previous code already uses must stay fully described, or an
+  // update could not keep using it.
+  const usedBefore = previousCode
+    ? [...new Set([...previousCode.matchAll(/<([A-Z][\w]*)(?:[\s/>])/g)].map(m => m[1]))]
+    : [];
+  const frameworkOptions: StoryGenerationOptions = {
+    framework: options.framework,
+    catalogFocus: { prompt: userPrompt, mustInclude: usedBefore },
+  };
   let prompt = await buildFrameworkAwarePrompt(userPrompt, config, components, frameworkOptions);
 
   if (options.visionMode) {

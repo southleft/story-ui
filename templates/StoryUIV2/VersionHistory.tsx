@@ -35,6 +35,36 @@ interface VersionHistoryProps {
   disabled?: boolean;
 }
 
+/** List a story's versions, newest first as the server orders them. */
+export async function fetchVersions(apiBase: string, fileName: string): Promise<StoryVersionSummary[]> {
+  const res = await apiFetch(`${apiBase}/story-ui/versions/${encodeURIComponent(fileName)}`);
+  if (!res.ok) throw new Error(`Could not load history (${res.status})`);
+  return (await res.json())?.versions ?? [];
+}
+
+/** Put one version's content back on disk. Throws with the server's reason. */
+export async function restoreVersion(apiBase: string, fileName: string, versionId: string): Promise<void> {
+  const res = await apiFetch(`${apiBase}/story-ui/versions/${encodeURIComponent(fileName)}/restore`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ versionId }),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error || `Restore failed (${res.status})`);
+}
+
+/**
+ * The version before the current one, or null when there is nothing to go
+ * back to. What Cmd/Ctrl+Z restores — the same row the History popover would
+ * list directly under "current".
+ */
+export function previousVersion(versions: StoryVersionSummary[]): StoryVersionSummary | null {
+  const current = versions.find(v => v.current);
+  const candidates = versions.filter(v => !v.current && (!current || v.ordinal < current.ordinal));
+  if (candidates.length === 0) return null;
+  return candidates.reduce((best, v) => (v.ordinal > best.ordinal ? v : best));
+}
+
 const when = (ts: number): string => {
   const mins = Math.floor((Date.now() - ts) / 60000);
   if (mins < 1) return 'just now';
@@ -62,9 +92,7 @@ export const VersionHistory: React.FC<VersionHistoryProps> = ({
     setLoading(true);
     setError(null);
     try {
-      const res = await apiFetch(`${apiBase}/story-ui/versions/${encodeURIComponent(fileName)}`);
-      if (!res.ok) throw new Error(`Could not load history (${res.status})`);
-      setVersions((await res.json())?.versions ?? []);
+      setVersions(await fetchVersions(apiBase, fileName));
     } catch (e: any) {
       setError(e?.message || String(e));
     } finally {
@@ -82,13 +110,7 @@ export const VersionHistory: React.FC<VersionHistoryProps> = ({
     setBusyId(version.id);
     setError(null);
     try {
-      const res = await apiFetch(`${apiBase}/story-ui/versions/${encodeURIComponent(fileName)}/restore`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ versionId: version.id }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || `Restore failed (${res.status})`);
+      await restoreVersion(apiBase, fileName, version.id);
       setOpen(false);
       onRestored?.(version);
     } catch (e: any) {

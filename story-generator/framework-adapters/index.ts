@@ -197,7 +197,7 @@ class AdapterRegistry {
 
     return {
       systemPrompt: adapter.generateSystemPrompt(config, options),
-      componentReference: adapter.generateComponentReference(components, config),
+      componentReference: adapter.generateComponentReference(components, config, options),
       layoutInstructions: layoutInstructionsString,
       examples: adapter.generateExamples(config),
       sampleStory: adapter.generateSampleStory(config, components),

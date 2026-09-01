@@ -103,6 +103,21 @@ export interface StoryGenerationOptions {
   includeA11yTests?: boolean;
   /** Include interaction tests */
   includeInteractionTests?: boolean;
+  /**
+   * What this request is about, so the catalog can spend its budget on the
+   * components that matter to it. Without it every component gets a full
+   * entry (65k chars on Mantine, 97k on college-town).
+   */
+  catalogFocus?: CatalogFocus;
+}
+
+export interface CatalogFocus {
+  /** The user's request, ranked against component names and descriptions. */
+  prompt: string;
+  /** Components that must get a full entry regardless of the prompt — those the previous code already uses. */
+  mustInclude?: string[];
+  /** Full-entry budget in characters; the rest are listed by name and import only. */
+  budgetChars?: number;
 }
 
 /**
@@ -137,7 +152,8 @@ export interface FrameworkAdapter {
    */
   generateComponentReference(
     components: DiscoveredComponent[],
-    config: StoryUIConfig
+    config: StoryUIConfig,
+    options?: StoryGenerationOptions
   ): string;
 
   /**

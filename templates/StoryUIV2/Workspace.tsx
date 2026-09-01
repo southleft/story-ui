@@ -21,29 +21,37 @@
 import { apiFetch } from './api';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertDialog,
   Badge,
   Box,
   Button,
   Callout,
   Card,
+  DropdownMenu,
   Flex,
   Heading,
+  IconButton,
+  Kbd,
   Select,
   Separator,
   Text,
   TextArea,
   Theme,
+  Tooltip,
 } from '@radix-ui/themes';
 import '@radix-ui/themes/styles.css';
 import './workspace.css';
-import { PreviewCanvas } from './PreviewCanvas';
+import { PreviewCanvas, type PreviewCanvasHandle, type PreviewFailure } from './PreviewCanvas';
 import { HandoffDialog } from './HandoffDialog';
+import { ComponentsDrawer } from './ComponentsDrawer';
+import { useAppearance, type AppearanceSetting } from './useAppearance';
 import {
   useGeneration,
   waitForStory,
   readPendingGeneration,
   clearPendingGeneration,
   type Verification,
+  type VerificationFinding,
 } from './useGeneration';
 import {
   useSessions,
@@ -52,6 +60,8 @@ import {
   pollForCompletedEntry,
   summarizeVerification,
   verificationFromCompletion,
+  isPartialVerification,
+  deleteStory,
   type SessionSummary,
   type ManifestEntry,
   type VerificationSummary,
@@ -60,7 +70,13 @@ import { processImageFiles, MAX_IMAGES, type AttachedImage } from './imageAttach
 import { useVoiceInput } from './useVoiceInput';
 import { describeTarget, targetLabel, type ElementTarget } from './elementTargeting';
 import { PropertyPanel } from './PropertyPanel';
-import { VersionHistory, type StoryVersionSummary } from './VersionHistory';
+import {
+  VersionHistory,
+  fetchVersions,
+  restoreVersion,
+  previousVersion,
+  type StoryVersionSummary,
+} from './VersionHistory';
 
 interface Turn {
   id: string;
@@ -77,6 +93,16 @@ interface Turn {
    * same badge from the same fields.
    */
   verification?: VerificationSummary;
+  /**
+   * The full findings, live turns only. The manifest persists just the
+   * summary, so a restored turn has the badge and not the list — which is
+   * honest: the list describes a render that happened in THIS session.
+   */
+  findings?: VerificationFinding[];
+  /** Advice attached to the reply — read, never clicked. */
+  notice?: string;
+  /** The generation behind this reply did not produce a working story. */
+  failed?: boolean;
   storyId?: string;
   fileName?: string;
   title?: string;
@@ -84,9 +110,46 @@ interface Turn {
 
 interface WorkspaceProps {
   apiBase: string;
+  /**
+   * Called with the story id when the user opens the story in Storybook.
+   * When absent the workspace opens it in a new tab itself; a host that
+   * passes this REPLACES that behaviour, so it should not navigate the
+   * current window away from the workspace.
+   */
   onOpenStory?: (storyId: string) => void;
   onHandoff?: (fileName: string, title: string) => void;
+  /** 'auto' follows the host page (Storybook's theme, else the OS). */
+  appearance?: AppearanceSetting;
 }
+
+/** What a send needs, kept so Retry can send exactly the same thing again. */
+interface SendRequest {
+  prompt: string;
+  images: AttachedImage[];
+  selection: ElementTarget | null;
+}
+
+/** True when the keyboard event came from somewhere text is being edited. */
+const inTextField = (target: EventTarget | null): boolean => {
+  const el = target as HTMLElement | null;
+  if (!el || typeof el.closest !== 'function') return false;
+  return !!el.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]');
+};
+
+/**
+ * The manager URL for a story, for opening in a new tab.
+ *
+ * The workspace lives in the preview iframe; the manager is `window.top`,
+ * same origin. Built from its pathname because Storybook can be served from
+ * a sub-path. Falls back to this window when the top is not reachable.
+ */
+const storybookUrlFor = (storyId: string): string => {
+  let base: Location = window.location;
+  try {
+    if (window.top && window.top.location.href) base = window.top.location;
+  } catch { /* cross-origin top */ }
+  return `${base.origin}${base.pathname}?path=/story/${encodeURIComponent(storyId)}`;
+};
 
 const SUGGESTIONS = [
   'A pricing table with three tiers and a highlighted plan',
@@ -189,7 +252,27 @@ const VERIFY_TONE: Record<Verification['outcome'], 'green' | 'amber' | 'gray'> =
   not_verified: 'gray',
 };
 
-export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHandoff }) => {
+const SEVERITY_TONE: Record<VerificationFinding['severity'], 'red' | 'amber' | 'gray'> = {
+  blocker: 'red',
+  warning: 'amber',
+  info: 'gray',
+};
+
+/** The badge's label. "Verified" alone is only claimed when every check ran. */
+const verificationLabel = (v: VerificationSummary): string => {
+  if (v.outcome === 'issues') return `${v.blockers} issue(s) found`;
+  if (v.outcome === 'not_verified') return 'Not verified';
+  if (v.checksRun !== undefined && v.checksTotal !== undefined) {
+    return `Verified · ${v.checksRun}/${v.checksTotal} checks`;
+  }
+  return 'Verified in browser';
+};
+
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || '');
+const MOD = isMac ? '⌘' : 'Ctrl';
+
+export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHandoff, appearance: appearanceSetting = 'auto' }) => {
+  const appearance = useAppearance(appearanceSetting);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
   const [designSystem, setDesignSystem] = useState<string>('');
@@ -254,6 +337,25 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
    * observe the handoff.
    */
   const [handoffTarget, setHandoffTarget] = useState<{ fileName: string; title: string } | null>(null);
+  /**
+   * The active story's source, for the Code view. From the completion for a
+   * live turn, from the file for a reopened one, from the edit response after
+   * a prop change. Null when there is nothing to show.
+   */
+  const [code, setCode] = useState<string | null>(null);
+  const [codeLoading, setCodeLoading] = useState(false);
+  /** A generation that ended without a working story, until the next send. */
+  const [failure, setFailure] = useState<PreviewFailure | null>(null);
+  /** The last request sent, so Retry after a transport error resends it. */
+  const [retryRequest, setRetryRequest] = useState<SendRequest | null>(null);
+  const [componentsOpen, setComponentsOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  /** Per-finding outcome of "Select": the element was not found, and when. */
+  const [findingNotes, setFindingNotes] = useState<Record<string, string>>({});
+  const canvasRef = useRef<PreviewCanvasHandle>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   /** Images staged for the next message, already encoded for upload. */
   const [images, setImages] = useState<AttachedImage[]>([]);
@@ -278,7 +380,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const threadRef = useRef<HTMLDivElement>(null);
-  const { generate, cancel, steps, busy, error, notice } = useGeneration(apiBase);
+  const { generate, cancel, steps, busy, error, errorInfo, notice } = useGeneration(apiBase);
 
   /**
    * Dictation. Interim results are shown in the textarea so speech feels live,
@@ -299,27 +401,40 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
 
   /* ---- project context ------------------------------------------------ */
 
+  /**
+   * Probe the server and read its providers.
+   *
+   * Run once on mount, and again whenever a send fails at the transport —
+   * the badge was checked exactly once, so a server that died after the
+   * home screen loaded kept reading "Connected" beside a red error.
+   */
+  const checkConnection = useCallback(async (isCancelled: () => boolean = () => false) => {
+    try {
+      const res = await apiFetch(`${apiBase}/mcp/providers`);
+      if (isCancelled()) return;
+      if (res.ok) {
+        const data = await res.json();
+        if (isCancelled()) return;
+        setProviders(data.providers?.filter((p: any) => p.configured) ?? []);
+        // Keep a choice the user already made; only fill in the default when
+        // nothing is selected yet (first probe, or the server came back).
+        setProvider(prev => prev || (data.current?.provider?.toLowerCase?.() ?? ''));
+        setModel(prev => prev || (data.current?.model ?? ''));
+        setConnected(true);
+      } else {
+        // A reachable server that answers 500 is not "connected", and
+        // leaving this null would sit on "Checking…" indefinitely.
+        setConnected(false);
+      }
+    } catch {
+      if (!isCancelled()) setConnected(false);
+    }
+  }, [apiBase]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        const res = await apiFetch(`${apiBase}/mcp/providers`);
-        if (!cancelled) {
-          if (res.ok) {
-            const data = await res.json();
-            setProviders(data.providers?.filter((p: any) => p.configured) ?? []);
-            setProvider(data.current?.provider?.toLowerCase?.() ?? '');
-            setModel(data.current?.model ?? '');
-            setConnected(true);
-          } else {
-            // A reachable server that answers 500 is not "connected", and
-            // leaving this null would sit on "Checking…" indefinitely.
-            setConnected(false);
-          }
-        }
-      } catch {
-        if (!cancelled) setConnected(false);
-      }
+      await checkConnection(() => cancelled);
       try {
         const res = await apiFetch(`${apiBase}/mcp/canvas-config`);
         if (res.ok && !cancelled) {
@@ -341,6 +456,29 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       } catch { /* optional */ }
     })();
     return () => { cancelled = true; };
+  }, [apiBase, checkConnection]);
+
+  // A request that never reached a server means the badge is now wrong.
+  useEffect(() => {
+    if (errorInfo?.network) void checkConnection();
+  }, [errorInfo, checkConnection]);
+
+  /**
+   * Read the story file for the Code view.
+   *
+   * The content route matches the file name directly, so no id derivation
+   * is needed. Failures leave whatever was shown: the code view says "no
+   * source" rather than the workspace raising an error over a view the user
+   * may not even have open.
+   */
+  const loadCode = useCallback(async (fileName: string) => {
+    setCodeLoading(true);
+    try {
+      const res = await apiFetch(`${apiBase}/mcp/stories/${encodeURIComponent(fileName)}/content`);
+      if (res.ok) setCode(await res.text());
+    } catch { /* leave the previous code */ } finally {
+      setCodeLoading(false);
+    }
   }, [apiBase]);
 
   /* ---- past work, from the manifest ----------------------------------- */
@@ -386,8 +524,15 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     setActiveStory(session.storyId ? { id: session.storyId, title: session.title } : null);
     setActiveFile({ fileName: session.fileName, title: session.title });
     setNotIndexed(session.storyId ? null : { fileName: session.fileName, title: session.title });
+    setFailure(null);
+    setSelection(null);
+    setResolvedName(null);
+    setFindingNotes({});
     setReloadToken(t => t + 1);
-  }, []);
+    // The persisted code is a fine first frame; the file is authoritative.
+    setCode(completion?.code ?? null);
+    void loadCode(session.fileName);
+  }, [loadCode]);
 
   /**
    * Recover a generation the iframe reload cut off.
@@ -481,6 +626,8 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
         return lastAssistant ? [...prev, lastAssistant] : prev;
       });
       setActiveFile({ fileName: entry.fileName, title: entry.title });
+      setCode(completion?.code ?? null);
+      void loadCode(entry.fileName);
       reloadSessions();
 
       const resolved = await waitForStory(completion?.storybookId || entry.id, entry.title);
@@ -534,7 +681,21 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
 
   /* ---- send ----------------------------------------------------------- */
 
-  const send = useCallback(async (text?: string) => {
+  /**
+   * Whether a send can leave this machine at all.
+   *
+   * `connected` starts null (checking) and the providers list starts empty,
+   * so the Build button is held until the probe answers; the card under the
+   * composer says which of the two is missing and what to do about it.
+   */
+  const blocked: 'checking' | 'unreachable' | 'no-providers' | null =
+    connected === null ? 'checking'
+      : connected === false ? 'unreachable'
+        : providers.length === 0 ? 'no-providers'
+          : null;
+  const canSend = blocked === null;
+
+  const send = useCallback(async (text?: string, opts?: { images?: AttachedImage[]; selection?: ElementTarget | null }) => {
     const prompt = (text ?? input).trim();
     // `recovering` counts as busy here: a turn sent while recovery polls
     // would be replaced when the recovered conversation lands, and its reply
@@ -545,15 +706,26 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     if (voice.isListening) voice.stop();
     committedInputRef.current = '';
     setInput('');
-    const sentImages = images;
+    const sentImages = opts?.images ?? images;
+    const sentSelection = opts?.selection !== undefined ? opts.selection : selection;
+    const sentLabeled = sentSelection
+      ? (sentSelection === selection ? labeledSelection : sentSelection)
+      : null;
     setImages([]);
     setImageError(null);
+    setFailure(null);
+    setFindingNotes({});
+    setRetryRequest({ prompt, images: sentImages, selection: sentSelection });
+    // What the canvas showed before this send, restored if the send fails —
+    // a fallback error story must never replace the composition the user
+    // was iterating on.
+    const before = { story: activeStory, code };
     // Shown on the turn so the transcript records what the instruction was
     // pointed at — six months later "make it bigger" means nothing on its own.
     const userTurn: Turn = {
       id: uid(), role: 'user', text: prompt,
       // The label the chip showed — the resolved name when the lookup answered.
-      target: labeledSelection ? targetLabel(labeledSelection) : undefined,
+      target: sentLabeled ? targetLabel(sentLabeled) : undefined,
       thumbnails: sentImages.length ? sentImages.map(i => i.preview) : undefined,
     };
     setSelection(null);
@@ -589,12 +761,13 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       fileName: activeFile?.fileName,
       isUpdate: !!activeFile,
       originalTitle: activeFile?.title,
-      selection: selection ? describeTarget(selection) : undefined,
+      selection: sentSelection ? describeTarget(sentSelection) : undefined,
       // When this updates an existing entry, record how fresh that entry is
       // right now — recovery then demands a STRICTLY newer one, so resending
       // an identical prompt can never re-match the previous completion.
       knownUpdatedAt: activeFile ? byFileName(activeFile.fileName)?.entry.updatedAt : undefined,
     }, async (preview) => {
+      if (preview.code) setCode(preview.code);
       if (!preview.storybookId) return;
       const resolved = await waitForStory(preview.storybookId, preview.title);
       if (!resolved) return;
@@ -604,7 +777,54 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       previewShown = true;
     });
 
-    if (!result) return;
+    if (!result) {
+      // The run died (transport error) or was stopped. Either way the prompt
+      // goes back where it was typed — retyping it was the whole cost of a
+      // dropped connection, and the error callout offers Retry as well.
+      setInput(prev => prev || prompt);
+      committedInputRef.current = committedInputRef.current || prompt;
+      setImages(prev => (prev.length ? prev : sentImages));
+      return;
+    }
+
+    if (!result.success) {
+      // The server writes a fallback error story on failure so Storybook
+      // stays consistent. That story is NOT the result, and must not become
+      // what the canvas shows or what the next edit applies to.
+      setActiveStory(before.story);
+      setCode(before.code);
+      if (before.story) setReloadToken(t => t + 1);
+      setFailure({
+        message: result.chatSummary || '',
+        notice: result.notice,
+        onRetry: () => { void send(prompt, { images: sentImages, selection: sentSelection }); },
+        onEditPrompt: () => {
+          setFailure(null);
+          setInput(prompt);
+          committedInputRef.current = prompt;
+          setImages(sentImages);
+          setSelection(sentSelection);
+          textareaRef.current?.focus();
+        },
+      });
+      setTurns(prev => [
+        ...prev,
+        {
+          id: uid(),
+          role: 'assistant',
+          text: 'That generation did not produce a working story.',
+          notice: result.notice,
+          elapsedMs: result.elapsedMs,
+          verification: summarizeVerification(result.verification),
+          findings: result.verification?.findings?.length ? result.verification.findings : undefined,
+          failed: true,
+        },
+      ]);
+      reloadSessions();
+      return;
+    }
+
+    if (result.code) setCode(result.code);
 
     // The file is written before Storybook has indexed it, so resolve the real
     // story id before pointing the canvas at it.
@@ -636,7 +856,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
         setActiveStory(null);
         setNotIndexed({ fileName: result.fileName, title: result.title });
       }
-    } else if (result.success) {
+    } else {
       // No storybookId came back at all: no lookup, no callout, no reload —
       // the canvas simply never changed and nothing explained why.
       setNotIndexed({ fileName: result.fileName, title: result.title });
@@ -648,13 +868,16 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
         id: uid(),
         role: 'assistant',
         text: [
-          result.chatSummary || (result.success ? `Created ${result.title}.` : 'That generation did not succeed.'),
+          result.chatSummary || `Created ${result.title}.`,
           result.pins?.applied?.length ? `Kept your hand-set props: ${result.pins.applied.join(', ')}.` : '',
-          result.notice || '',
         ].filter(Boolean).join('\n\n'),
+        // Advice travels beside the reply, not inside it — it is ours, not
+        // the model's, and reads wrongly in the model's voice.
+        notice: result.notice,
         elapsedMs: result.elapsedMs,
         suggestions: result.suggestions,
         verification: summarizeVerification(result.verification),
+        findings: result.verification?.findings?.length ? result.verification.findings : undefined,
         storyId,
         fileName: result.fileName,
         title: result.title,
@@ -662,11 +885,11 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     ]);
     // Only adopt a story that actually succeeded. A failed generation used to
     // become the file every subsequent edit was applied to.
-    if (result.fileName && result.success) {
+    if (result.fileName) {
       setActiveFile({ fileName: result.fileName, title: result.title || 'Story' });
     }
     reloadSessions();
-  }, [input, busy, recovering, turns, provider, model, considerations, activeFile, selection, resolvedName, images, voice, generate, reloadSessions, byFileName]);
+  }, [input, busy, recovering, turns, provider, model, considerations, activeFile, activeStory, code, selection, labeledSelection, images, voice, generate, reloadSessions, byFileName]);
 
   /* ---- attachments ----------------------------------------------------- */
 
@@ -718,11 +941,136 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
   }, [notIndexed]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    // Enter sends; so does Cmd/Ctrl+Enter, which is what people who live in
+    // chat tools reach for. Shift+Enter is a newline.
+    if (e.key === 'Enter' && (!e.shiftKey || e.metaKey || e.ctrlKey)) {
       e.preventDefault();
-      send();
+      if (canSend) send();
     }
   };
+
+  /**
+   * After a version is put back on disk: reload the canvas, note it in the
+   * thread, refresh the code view. Shared by the History popover and Cmd/Ctrl+Z
+   * so the two can never diverge.
+   */
+  const handleRestored = useCallback((v: StoryVersionSummary) => {
+    // The file on disk changed underneath the canvas, so force a reload and
+    // note it in the thread — a preview that silently becomes a different
+    // composition is disorienting.
+    setReloadToken(t => t + 1);
+    setTurns(prev => [...prev, {
+      id: uid(), role: 'assistant',
+      // Name what is now on disk. The server writes the CLICKED version's
+      // content, and that version CONTAINS the edit its prompt describes —
+      // "from before" named the wrong boundary, in both directions. Ordinal
+      // plus prompt is exactly the row the user clicked in the history list.
+      text: `Restored version ${v.ordinal}: "${v.prompt}".`,
+      fileName: activeFile?.fileName, title: activeFile?.title,
+    }]);
+    if (activeFile) void loadCode(activeFile.fileName);
+    reloadSessions();
+  }, [activeFile, loadCode, reloadSessions]);
+
+  /** Undo: put the version before the current one back. */
+  const restorePrevious = useCallback(async () => {
+    if (!activeFile || busy || recovering) return;
+    try {
+      const prev = previousVersion(await fetchVersions(apiBase, activeFile.fileName));
+      if (!prev) return;
+      await restoreVersion(apiBase, activeFile.fileName, prev.id);
+      handleRestored(prev);
+    } catch (e: any) {
+      setTurns(prevTurns => [...prevTurns, {
+        id: uid(), role: 'assistant',
+        text: `Could not restore the previous version: ${e?.message || String(e)}`,
+      }]);
+    }
+  }, [activeFile, busy, recovering, apiBase, handleRestored]);
+
+  // Cmd/Ctrl+Z outside a text field is undo for the story, not the textarea.
+  useEffect(() => {
+    if (!started) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+      if (e.key !== 'z' && e.key !== 'Z') return;
+      if (inTextField(e.target)) return;
+      e.preventDefault();
+      void restorePrevious();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [started, restorePrevious]);
+
+  /** Put a component name into the prompt, as "using X". */
+  const insertComponent = useCallback((name: string) => {
+    setInput(prev => {
+      const base = prev.replace(/\s+$/, '');
+      const next = base ? `${base} using ${name}` : `using ${name}`;
+      committedInputRef.current = next;
+      return next;
+    });
+    setComponentsOpen(false);
+    window.setTimeout(() => textareaRef.current?.focus(), 0);
+  }, []);
+
+  /** Back to Home. Shared by New and by Delete. */
+  const goHome = useCallback(() => {
+    setTurns([]);
+    setActiveStory(null);
+    setActiveFile(null);
+    setNotIndexed(null);
+    // Left behind before, which is how you could end up on the home screen
+    // with a live selection chip and an open property panel pointing at a
+    // story that is no longer active — where every control silently did
+    // nothing.
+    setSelection(null);
+    setResolvedName(null);
+    setShowProperties(false);
+    setImages([]);
+    setInput('');
+    committedInputRef.current = '';
+    setCode(null);
+    setFailure(null);
+    setFindingNotes({});
+    reloadSessions();
+  }, [reloadSessions]);
+
+  const confirmDelete = useCallback(async () => {
+    if (!activeFile) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteStory(apiBase, activeFile.fileName);
+      setDeleteOpen(false);
+      goHome();
+    } catch (e: any) {
+      setDeleteError(e?.message || String(e));
+    } finally {
+      setDeleting(false);
+    }
+  }, [activeFile, apiBase, goHome]);
+
+  /**
+   * "Select" on a verification finding: find the element the selector names
+   * in the preview and select it exactly as a click would have.
+   */
+  const selectFinding = useCallback((finding: VerificationFinding) => {
+    if (!finding.selector) return;
+    const target = canvasRef.current?.targetBySelector(finding.selector) ?? null;
+    if (!target) {
+      setFindingNotes(prev => ({ ...prev, [finding.id]: 'element not on the page any more' }));
+      return;
+    }
+    setFindingNotes(prev => {
+      if (!(finding.id in prev)) return prev;
+      const next = { ...prev };
+      delete next[finding.id];
+      return next;
+    });
+    setResolvedName(null);
+    setSelection(target);
+  }, []);
 
   /**
    * Only a generated turn carries a fileName. A story opened from Recent work
@@ -752,6 +1100,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     >
       <Card size="1">
         <TextArea
+          ref={textareaRef}
           size="2"
           variant="soft"
           value={input}
@@ -840,7 +1189,11 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                   apiBase={apiBase}
                   target={selection}
                   fileName={activeFile?.fileName}
-                  onApplied={() => setReloadToken(t => t + 1)}
+                  onApplied={next => {
+                    setReloadToken(t => t + 1);
+                    if (typeof next === 'string') setCode(next);
+                    else if (activeFile) void loadCode(activeFile.fileName);
+                  }}
                   onAskInstead={() => setShowProperties(false)}
                   onResolved={setResolvedName}
                 />
@@ -986,17 +1339,90 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
               // Recovering counts as busy: a turn sent mid-recovery would be
               // clobbered when the recovered conversation lands. send() also
               // guards, for the Enter key and suggestion chips.
-              disabled={!input.trim() || recovering}
+              disabled={!input.trim() || recovering || !canSend}
               className="suiw-btn-build"
               style={{ flexShrink: 0 }}
+              title={
+                blocked === 'unreachable' ? 'The Story UI server is not reachable'
+                  : blocked === 'no-providers' ? 'No AI provider is configured'
+                    : blocked === 'checking' ? 'Checking the server…'
+                      : `Build (${MOD}+Enter)`
+              }
             >
               Build
             </Button>
           )}
         </Flex>
       </Card>
+
+      {/* Why Build is held, and what to do about it. A disabled button with
+          no explanation was the first thing a new install showed. */}
+      {(blocked === 'unreachable' || blocked === 'no-providers') && (
+        <Callout.Root color={blocked === 'unreachable' ? 'red' : 'amber'} size="1" mt="2" role="status" className="suiw-gate">
+          <Callout.Text>
+            {blocked === 'unreachable' ? (
+              <>
+                <Text weight="medium">The Story UI server is not running.</Text>
+                <br />
+                Start it from your project: <Kbd size="1">npm run story-ui</Kbd>
+                <br />
+                <Text color="gray">Tried {apiBase}</Text>
+              </>
+            ) : (
+              <>
+                <Text weight="medium">No AI provider is configured.</Text>
+                <br />
+                Add an API key to <Kbd size="1">.env</Kbd> (<Kbd size="1">ANTHROPIC_API_KEY</Kbd>,{' '}
+                <Kbd size="1">OPENAI_API_KEY</Kbd> or <Kbd size="1">GEMINI_API_KEY</Kbd>) and restart the server.
+              </>
+            )}
+          </Callout.Text>
+          <Flex mt="2">
+            <Button size="1" variant="soft" color="gray" onClick={() => { setConnected(null); void checkConnection(); }}>
+              Check again
+            </Button>
+          </Flex>
+        </Callout.Root>
+      )}
     </Box>
   );
+
+  const connectionBadge = (
+    // Three states, not two. `connected` starts null and is only set true
+    // on a successful probe — so a 500, or a probe that had not returned
+    // yet, used to render a green "Connected" badge for a server we had
+    // heard nothing from.
+    <Badge
+      color={connected === false ? 'red' : connected === true ? 'green' : 'gray'}
+      variant="soft"
+      title={connected === false ? `No answer from ${apiBase}` : apiBase}
+    >
+      {connected === false ? 'Server unreachable' : connected === true ? 'Connected' : 'Checking…'}
+    </Badge>
+  );
+
+  const shortcutsHelp = (
+    <Tooltip
+      content={
+        // Spans throughout: Radix renders tooltip content inside a <p>, and
+        // a <div> in a <p> is invalid markup React warns about.
+        <Flex as="span" direction="column" gap="1" style={{ minWidth: 220 }}>
+          <Flex as="span" justify="between" gap="3"><span>Send</span><span><Kbd size="1">Enter</Kbd> / <Kbd size="1">{MOD}</Kbd>+<Kbd size="1">Enter</Kbd></span></Flex>
+          <Flex as="span" justify="between" gap="3"><span>New line</span><span><Kbd size="1">Shift</Kbd>+<Kbd size="1">Enter</Kbd></span></Flex>
+          <Flex as="span" justify="between" gap="3"><span>Leave pick mode</span><Kbd size="1">Esc</Kbd></Flex>
+          <Flex as="span" justify="between" gap="3"><span>Restore previous version</span><span><Kbd size="1">{MOD}</Kbd>+<Kbd size="1">Z</Kbd> outside a text field</span></Flex>
+        </Flex>
+      }
+    >
+      <IconButton size="1" variant="ghost" color="gray" aria-label="Keyboard shortcuts">
+        <Text size="1" weight="bold">?</Text>
+      </IconButton>
+    </Tooltip>
+  );
+
+  const currentSessionFile = activeFile && sessions.some(s => s.fileName === activeFile.fileName)
+    ? activeFile.fileName
+    : '';
 
   const header = (
     <Flex
@@ -1025,50 +1451,123 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       {started && (
         <>
           <Separator orientation="vertical" size="1" />
-          <Text size="2" color="gray" className="suiw-ellipsis">
-            {activeStory?.title ?? 'Untitled'}
-          </Text>
+          {/* The story switcher. Changing stories used to mean New → Home →
+              card; the header already named the story, so it now lists them. */}
+          <Select.Root
+            value={currentSessionFile}
+            onValueChange={fileName => {
+              const session = byFileName(fileName);
+              if (session && fileName !== activeFile?.fileName) openSession(session);
+            }}
+            size="1"
+            disabled={busy || recovering}
+          >
+            <Select.Trigger
+              variant="ghost"
+              color="gray"
+              aria-label="Switch story"
+              className="suiw-ellipsis"
+              placeholder={activeStory?.title ?? activeFile?.title ?? 'Untitled'}
+              style={{ maxWidth: 280 }}
+            />
+            <Select.Content position="popper">
+              {sessions.map(s => (
+                <Select.Item key={s.fileName} value={s.fileName}>{s.title}</Select.Item>
+              ))}
+            </Select.Content>
+          </Select.Root>
+
+          {activeFile && (
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger>
+                <IconButton size="1" variant="ghost" color="gray" aria-label="Story actions" disabled={busy || recovering}>
+                  <Text size="2" weight="bold" aria-hidden>⋯</Text>
+                </IconButton>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Content size="1">
+                <DropdownMenu.Item
+                  disabled={!activeStory}
+                  onSelect={() => { if (activeStory) openInStorybook(activeStory.id); }}
+                >
+                  Open in Storybook
+                </DropdownMenu.Item>
+                <DropdownMenu.Separator />
+                <DropdownMenu.Item color="red" onSelect={() => { setDeleteError(null); setDeleteOpen(true); }}>
+                  Delete story…
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Root>
+          )}
         </>
       )}
 
       <Box flexGrow="1" minWidth="0" />
 
-      {started ? (
-        <Button
-          size="1"
-          variant="soft"
-          color="gray"
-          onClick={() => {
-            setTurns([]);
-            setActiveStory(null);
-            setActiveFile(null);
-            setNotIndexed(null);
-            // Left behind before, which is how you could end up on the home
-            // screen with a live selection chip and an open property panel
-            // pointing at a story that is no longer active — where every
-            // control silently did nothing.
-            setSelection(null);
-            setShowProperties(false);
-            setImages([]);
-            setInput('');
-            reloadSessions();
-          }}
-        >
+      <Button
+        size="1"
+        variant="ghost"
+        color="gray"
+        onClick={() => setComponentsOpen(true)}
+        disabled={connected !== true}
+        title="What the server discovered in this project"
+      >
+        Components
+      </Button>
+
+      {shortcutsHelp}
+
+      {connectionBadge}
+
+      {started && (
+        <Button size="1" variant="soft" color="gray" onClick={goHome}>
           New
         </Button>
-      ) : (
-        // Three states, not two. `connected` starts null and is only set true
-        // on a successful probe — so a 500, or a probe that had not returned
-        // yet, used to render a green "Connected" badge for a server we had
-        // heard nothing from.
-        <Badge
-          color={connected === false ? 'red' : connected === true ? 'green' : 'gray'}
-          variant="soft"
-        >
-          {connected === false ? 'Server unreachable' : connected === true ? 'Connected' : 'Checking…'}
-        </Badge>
       )}
     </Flex>
+  );
+
+  const openInStorybook = (storyId: string) => {
+    if (onOpenStory) { onOpenStory(storyId); return; }
+    // A new tab. Navigating the top window replaced the workspace — and the
+    // conversation in it — with the story, which is the opposite of "open".
+    window.open(storybookUrlFor(storyId), '_blank', 'noopener');
+  };
+
+  const deleteDialog = (
+    <AlertDialog.Root open={deleteOpen} onOpenChange={o => { if (!deleting) setDeleteOpen(o); }}>
+      <AlertDialog.Content maxWidth="420px">
+        <AlertDialog.Title>Delete this story?</AlertDialog.Title>
+        <AlertDialog.Description size="2">
+          {activeFile ? `"${activeFile.title}" (${activeFile.fileName})` : 'This story'} and its conversation
+          will be removed from this project. Versions kept by the server are not touched, but nothing in the
+          workspace will list them.
+        </AlertDialog.Description>
+        {deleteError && (
+          <Callout.Root color="red" size="1" mt="3">
+            <Callout.Text>{deleteError}</Callout.Text>
+          </Callout.Root>
+        )}
+        <Flex gap="3" mt="4" justify="end">
+          <AlertDialog.Cancel>
+            <Button variant="soft" color="gray" disabled={deleting}>Cancel</Button>
+          </AlertDialog.Cancel>
+          {/* Not wrapped in AlertDialog.Action: the dialog must stay open on
+              a failed delete so the reason can be read. */}
+          <Button color="red" onClick={() => void confirmDelete()} loading={deleting}>
+            Delete
+          </Button>
+        </Flex>
+      </AlertDialog.Content>
+    </AlertDialog.Root>
+  );
+
+  const componentsDrawer = (
+    <ComponentsDrawer
+      apiBase={apiBase}
+      open={componentsOpen}
+      onOpenChange={setComponentsOpen}
+      onInsert={insertComponent}
+    />
   );
 
   /* ---- home ------------------------------------------------------------ */
@@ -1076,7 +1575,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
   if (!started) {
     return (
       <div className="suiw-root suiw sb-unstyled">
-        <Theme appearance="dark" accentColor="jade" radius="medium">
+        <Theme appearance={appearance} accentColor="jade" radius="medium">
           {header}
 
           <Box className="suiw-scroll suiw-home">
@@ -1092,7 +1591,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
 
               <Flex gap="2" wrap="wrap" justify="center" px="3">
                 {SUGGESTIONS.map(s => (
-                  <Button key={s} size="1" variant="surface" color="gray" onClick={() => send(s)}>
+                  <Button key={s} size="1" variant="surface" color="gray" onClick={() => send(s)} disabled={!canSend}>
                     {s}
                   </Button>
                 ))}
@@ -1156,6 +1655,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
               )}
             </Box>
           </Box>
+          {componentsDrawer}
         </Theme>
       </div>
     );
@@ -1175,7 +1675,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
      * screen and reset on the other.
      */
     <div className="suiw-root suiw sb-unstyled">
-      <Theme appearance="dark" accentColor="jade" radius="medium">
+      <Theme appearance={appearance} accentColor="jade" radius="medium">
         {header}
 
         <div className="suiw-body">
@@ -1207,17 +1707,30 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                         <Text as="div" size="2" className="suiw-turn-body">{turn.text}</Text>
                       </Card>
                     ) : (
-                      <Text as="div" size="2" color="gray" className="suiw-turn-body">{turn.text}</Text>
+                      <Text as="div" size="2" color={turn.failed ? 'red' : 'gray'} className="suiw-turn-body">{turn.text}</Text>
+                    )}
+
+                    {turn.role === 'assistant' && turn.notice && (
+                      <Text as="div" size="1" className="suiw-turn-notice">{turn.notice}</Text>
                     )}
 
                     {turn.verification && (
                       <Flex direction="column" gap="1" className="suiw-verify">
                         <Flex align="center" gap="2">
-                          <Badge color={VERIFY_TONE[turn.verification.outcome]} variant="soft">
-                            {turn.verification.outcome === 'verified' && 'Verified in browser'}
-                            {turn.verification.outcome === 'issues' &&
-                              `${turn.verification.blockers} issue(s) found`}
-                            {turn.verification.outcome === 'not_verified' && 'Not verified'}
+                          {/* A pass with checks missing is amber, not green:
+                              "Verified · 3/6 checks" must not look like 6/6. */}
+                          <Badge
+                            color={isPartialVerification(turn.verification) ? 'amber' : VERIFY_TONE[turn.verification.outcome]}
+                            variant="soft"
+                            title={
+                              turn.verification.outcome === 'verified' && turn.verification.reason
+                                ? turn.verification.reason
+                                : isPartialVerification(turn.verification)
+                                  ? 'Not every verification layer ran'
+                                  : undefined
+                            }
+                          >
+                            {verificationLabel(turn.verification)}
                           </Badge>
                           {typeof turn.verification.focusables === 'number' && (
                             <Text size="1" color="gray">
@@ -1236,6 +1749,15 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                             withholding it just moved the confusion downstream. */}
                         {turn.verification.outcome === 'not_verified' && turn.verification.reason && (
                           <Text size="1" color="gray">{turn.verification.reason}</Text>
+                        )}
+
+                        {turn.findings && turn.findings.length > 0 && (
+                          <FindingsList
+                            findings={turn.findings}
+                            notes={findingNotes}
+                            canSelect={!!activeStory && !busy}
+                            onSelect={selectFinding}
+                          />
                         )}
                       </Flex>
                     )}
@@ -1316,13 +1838,14 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                             // one that finished.
                             background: s.state === 'active'
                               ? 'var(--accent-9)'
-                              : s.state === 'failed' ? 'var(--red-9)' : 'var(--gray-a7)',
+                              : s.state === 'failed' ? 'var(--red-9)'
+                                : s.state === 'warn' ? 'var(--amber-9)' : 'var(--gray-a7)',
                             flex: '0 0 auto',
                           }}
                         />
                         <Text
                           size="1"
-                          color={s.state === 'active' ? undefined : s.state === 'failed' ? 'red' : 'gray'}
+                          color={s.state === 'active' ? undefined : s.state === 'failed' ? 'red' : s.state === 'warn' ? 'amber' : 'gray'}
                           className="suiw-step-label"
                         >
                           {s.label}
@@ -1340,7 +1863,35 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
 
                 {error && (
                   <Callout.Root color="red" size="1" role="alert">
-                    <Callout.Text>{error}</Callout.Text>
+                    <Callout.Text>
+                      {error}
+                      {/* What the server said to do about it. It always sends
+                          one; the hook used to drop it on the floor. */}
+                      {errorInfo?.suggestion && (
+                        <><br /><Text size="1" color="gray">{errorInfo.suggestion}</Text></>
+                      )}
+                      {errorInfo?.network && (
+                        <><br /><Text size="1" color="gray">The request never reached the server at {apiBase}.</Text></>
+                      )}
+                    </Callout.Text>
+                    {retryRequest && errorInfo?.recoverable !== false && (
+                      <Flex mt="2" gap="2">
+                        <Button
+                          size="1"
+                          variant="soft"
+                          color="red"
+                          disabled={busy || recovering || !canSend}
+                          onClick={() => {
+                            const r = retryRequest;
+                            setInput('');
+                            committedInputRef.current = '';
+                            void send(r.prompt, { images: r.images, selection: r.selection });
+                          }}
+                        >
+                          Retry
+                        </Button>
+                      </Flex>
+                    )}
                   </Callout.Root>
                 )}
 
@@ -1357,29 +1908,14 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
           </div>
 
           <PreviewCanvas
+            ref={canvasRef}
             historySlot={
               <VersionHistory
                 apiBase={apiBase}
                 fileName={activeFile?.fileName}
                 refreshToken={reloadToken}
                 disabled={busy || recovering}
-                onRestored={(v: StoryVersionSummary) => {
-                  // The file on disk changed underneath the canvas, so force a
-                  // reload and note it in the thread — a preview that silently
-                  // becomes a different composition is disorienting.
-                  setReloadToken(t => t + 1);
-                  setTurns(prev => [...prev, {
-                    id: uid(), role: 'assistant',
-                    // Name what is now on disk. The server writes the CLICKED
-                    // version's content, and that version CONTAINS the edit its
-                    // prompt describes — "from before" named the wrong boundary,
-                    // in both directions. Ordinal plus prompt is exactly the row
-                    // the user clicked in the history list.
-                    text: `Restored version ${v.ordinal}: "${v.prompt}".`,
-                    fileName: activeFile?.fileName, title: activeFile?.title,
-                  }]);
-                  reloadSessions();
-                }}
+                onRestored={handleRestored}
               />
             }
             onSelectElement={t => { setResolvedName(null); setSelection(t); }}
@@ -1390,7 +1926,11 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
             busy={busy}
             notIndexed={notIndexed}
             onRecheck={recheckIndex}
-            onOpenInStorybook={() => activeStory && onOpenStory?.(activeStory.id)}
+            code={code}
+            codeFileName={activeFile?.fileName}
+            codeLoading={codeLoading}
+            failure={failure}
+            onOpenInStorybook={() => activeStory && openInStorybook(activeStory.id)}
             canHandoff={!!handoffCandidate}
             onHandoff={() => {
               if (!handoffCandidate?.fileName) return;
@@ -1406,8 +1946,69 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
           target={handoffTarget}
           onClose={() => setHandoffTarget(null)}
         />
+        {deleteDialog}
+        {componentsDrawer}
       </Theme>
     </div>
+  );
+};
+
+/**
+ * The findings behind a verification badge, folded by default.
+ *
+ * The badge said "2 issue(s) found" and nothing else — the findings were in
+ * the completion the whole time. Each has a severity, a message, and the
+ * evidence the check saw; the ones with a selector can put the element under
+ * the property panel, exactly as a click would.
+ */
+const FindingsList: React.FC<{
+  findings: VerificationFinding[];
+  notes: Record<string, string>;
+  canSelect: boolean;
+  onSelect: (finding: VerificationFinding) => void;
+}> = ({ findings, notes, canSelect, onSelect }) => {
+  const [open, setOpen] = useState(false);
+  return (
+    <Flex direction="column" gap="1" className="suiw-findings-wrap">
+      <Button
+        size="1"
+        variant="ghost"
+        color="gray"
+        onClick={() => setOpen(v => !v)}
+        aria-expanded={open}
+        style={{ alignSelf: 'flex-start' }}
+      >
+        {open ? 'Hide' : 'Show'} {findings.length} issue{findings.length === 1 ? '' : 's'}
+      </Button>
+      {open && (
+        <div className="suiw-findings" role="list">
+          {findings.map(f => (
+            <Flex key={f.id} direction="column" gap="1" p="2" className="suiw-finding" role="listitem">
+              <Flex align="center" gap="2" wrap="wrap">
+                <Badge size="1" color={SEVERITY_TONE[f.severity] ?? 'gray'} variant="soft">{f.severity}</Badge>
+                <Text size="1">{f.message}</Text>
+              </Flex>
+              {f.evidence && <Text as="div" className="suiw-finding-evidence">{f.evidence}</Text>}
+              {f.selector && (
+                <Flex align="center" gap="2">
+                  <Button
+                    size="1"
+                    variant="soft"
+                    color="gray"
+                    disabled={!canSelect}
+                    onClick={() => onSelect(f)}
+                    title={canSelect ? `Select ${f.selector} in the preview` : 'The preview is not showing this story'}
+                  >
+                    Select
+                  </Button>
+                  {notes[f.id] && <Text size="1" color="gray">{notes[f.id]}</Text>}
+                </Flex>
+              )}
+            </Flex>
+          ))}
+        </div>
+      )}
+    </Flex>
   );
 };
 

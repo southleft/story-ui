@@ -308,3 +308,138 @@
 .suiw-step--failed .suiw-step-label {
   font-weight: 500;
 }
+
+/* A step that could not run (verification without a browser) is amber: not a
+   failure, not a pass. */
+.suiw-step--warn .suiw-step-label {
+  font-weight: 500;
+}
+
+/* Advice attached to a turn — "automatic fixes were applied" — set apart from
+   the reply it follows so it reads as a note, not as something the model
+   said. */
+.suiw-turn-notice {
+  color: var(--gray-11);
+  border-left: 2px solid var(--gray-a6);
+  padding-left: var(--space-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- verification findings ---------------------------------------------- */
+
+.suiw-findings {
+  border: 1px solid var(--gray-a5);
+  border-radius: var(--radius-3);
+  background: var(--gray-a2);
+}
+
+.suiw-finding + .suiw-finding {
+  border-top: 1px solid var(--gray-a4);
+}
+
+.suiw-finding-evidence {
+  font-family: var(--code-font-family);
+  font-size: var(--font-size-1);
+  color: var(--gray-11);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- code view ---------------------------------------------------------- */
+
+/* Sits where the frame does. The frame itself stays mounted underneath so
+   toggling back does not cold-boot Storybook. */
+.suiw-code {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-panel-solid);
+  color: var(--gray-12);
+}
+
+.suiw-code pre {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  overflow: auto;
+  font-family: var(--code-font-family);
+  font-size: var(--font-size-1);
+  line-height: 1.6;
+  tab-size: 2;
+  scrollbar-width: thin;
+  scrollbar-color: var(--gray-a6) transparent;
+}
+
+.suiw-code code {
+  display: block;
+  white-space: pre;
+}
+
+.suiw-code-line {
+  display: block;
+}
+
+.suiw-code-line::before {
+  content: attr(data-line);
+  display: inline-block;
+  width: 3.5ch;
+  margin-right: var(--space-3);
+  text-align: right;
+  color: var(--gray-a9);
+  user-select: none;
+}
+
+/* The stage becomes the positioning context for the overlays (code view,
+   failure callout) that replace the frame without unmounting it. */
+.suiw-stage {
+  position: relative;
+}
+
+.suiw-frame--hidden {
+  visibility: hidden;
+  position: absolute;
+  pointer-events: none;
+}
+
+/* ---- components drawer -------------------------------------------------- */
+
+.suiw-inventory-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-1);
+  border-bottom: 1px solid var(--gray-a4);
+}
+
+.suiw-inventory-name {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--accent-11);
+  cursor: pointer;
+  text-align: left;
+}
+
+.suiw-inventory-name:hover,
+.suiw-inventory-name:focus-visible {
+  text-decoration: underline;
+}
+
+.suiw-inventory-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-9);
+  flex: 0 0 auto;
+}
+
+.suiw-inventory-dot--empty {
+  background: transparent;
+  border: 1px solid var(--gray-a7);
+}

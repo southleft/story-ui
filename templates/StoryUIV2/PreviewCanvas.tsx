@@ -10,9 +10,10 @@
  * Nothing here simulates a preview. It IS the preview.
  */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Badge, Button, Callout, DropdownMenu, Flex, Text } from '@radix-ui/themes';
-import { attachElementPicker, type ElementTarget } from './elementTargeting';
+import { attachElementPicker, describeElement, type ElementTarget } from './elementTargeting';
+import { CodeView } from './CodeView';
 
 export type Viewport = 'fit' | 'desktop' | 'tablet' | 'mobile';
 
@@ -34,6 +35,14 @@ const VIEWPORTS: Record<Viewport, { w: number; h: number; label: string }> = {
   tablet: { w: 834, h: 1000, label: 'Tablet' },
   mobile: { w: 390, h: 844, label: 'Mobile' },
 };
+
+/** A generation that ended without a working story. Shown instead of the frame. */
+export interface PreviewFailure {
+  message: string;
+  notice?: string;
+  onRetry: () => void;
+  onEditPrompt: () => void;
+}
 
 interface PreviewCanvasProps {
   storyId?: string;
@@ -57,9 +66,28 @@ interface PreviewCanvasProps {
   hasSelection?: boolean;
   /** Version history control, owned by the workspace which knows the file. */
   historySlot?: React.ReactNode;
+  /** The active story's source, for the Code view. Null when unknown. */
+  code?: string | null;
+  codeFileName?: string;
+  codeLoading?: boolean;
+  /** When set, the canvas shows this instead of any story. */
+  failure?: PreviewFailure | null;
 }
 
-export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
+/**
+ * What the workspace can ask the canvas to do beyond rendering.
+ *
+ * The iframe lives here; the verification findings live in the thread. A
+ * finding's "Select" has to reach the preview document, and this is the
+ * narrowest door: give it a selector, get back the same target a click on
+ * that element would have produced.
+ */
+export interface PreviewCanvasHandle {
+  /** Null when nothing matches — the element is not on the page any more. */
+  targetBySelector(selector: string): ElementTarget | null;
+}
+
+export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>(function PreviewCanvas({
   storyId,
   title,
   reloadToken = 0,
@@ -72,14 +100,34 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
   onSelectElement,
   hasSelection = false,
   historySlot,
-}) => {
+  code = null,
+  codeFileName,
+  codeLoading = false,
+  failure = null,
+}, ref) {
   const [picking, setPicking] = useState(false);
   const [viewport, setViewport] = useState<Viewport>('fit');
   const [zoom, setZoom] = useState(1);
+  const [showCode, setShowCode] = useState(false);
   const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
   const stageRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const lastSrc = useRef<string | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    targetBySelector(selector: string) {
+      try {
+        const doc = frameRef.current?.contentDocument;
+        if (!doc?.body) return null;
+        const el = doc.querySelector(selector);
+        if (!el) return null;
+        return describeElement(doc, el);
+      } catch {
+        // An invalid selector, or a cross-origin preview. Neither is "found".
+        return null;
+      }
+    },
+  }), []);
 
   useEffect(() => {
     const el = stageRef.current;
@@ -176,13 +224,40 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
     };
   }, [picking, onSelectElement]);
 
+  /**
+   * Escape leaves pick mode from anywhere in the workspace.
+   *
+   * The picker already handles Escape inside the preview document, but focus
+   * is usually still in the composer when the user arms it and changes their
+   * mind — and there the key did nothing.
+   */
+  useEffect(() => {
+    if (!picking) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      setPicking(false);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [picking]);
+
   // A rebuild replaces the document; leaving the picker armed across it would
   // attach to a document that no longer exists.
   useEffect(() => { if (busy) setPicking(false); }, [busy]);
 
+  // Picking needs the frame on screen.
+  useEffect(() => { if (showCode) setPicking(false); }, [showCode]);
+
   const cycleZoom = useCallback(() => {
     setZoom(z => (z >= 1 ? 0.5 : z >= 0.75 ? 1 : z + 0.25));
   }, []);
+
+  // The frame stays mounted under the code view so switching back is
+  // instant — unmounting it would cold-boot Storybook and lose the iframe's
+  // navigation state, which the reload effect above does not repeat.
+  const overlay: 'failure' | 'code' | null = failure ? 'failure' : showCode ? 'code' : null;
+  const frameHidden = overlay !== null;
 
   return (
     <div className="suiw-canvas">
@@ -194,7 +269,7 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
             compact pickers (soft gray, size 1). */}
         <DropdownMenu.Root>
           <DropdownMenu.Trigger>
-            <Button size="1" variant="soft" color="gray" aria-label="Viewport" style={{ flexShrink: 0 }}>
+            <Button size="1" variant="soft" color="gray" aria-label="Viewport" style={{ flexShrink: 0 }} disabled={showCode}>
               {VIEWPORTS[viewport].label}
               <DropdownMenu.TriggerIcon />
             </Button>
@@ -215,8 +290,24 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
           </DropdownMenu.Content>
         </DropdownMenu.Root>
 
-        <Button size="1" variant="ghost" color="gray" onClick={cycleZoom} title="Zoom" style={{ flexShrink: 0 }}>
+        <Button size="1" variant="ghost" color="gray" onClick={cycleZoom} title="Zoom" style={{ flexShrink: 0 }} disabled={showCode}>
           {Math.round(scale * 100)}%
+        </Button>
+
+        {/* Preview / Code. Code is available whenever the source is known,
+            which includes a story Storybook has not indexed — reading the
+            file is sometimes the only way to see what was built. */}
+        <Button
+          size="1"
+          variant={showCode ? 'soft' : 'ghost'}
+          color={showCode ? undefined : 'gray'}
+          onClick={() => setShowCode(v => !v)}
+          disabled={code == null && !codeLoading}
+          aria-pressed={showCode}
+          title={showCode ? 'Back to the preview' : 'Show the story source'}
+          style={{ flexShrink: 0 }}
+        >
+          {showCode ? 'Preview' : 'Code'}
         </Button>
 
         <Flex flexGrow="1" minWidth="0" justify="center">
@@ -229,7 +320,7 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
             variant={picking ? 'solid' : hasSelection ? 'soft' : 'ghost'}
             color={picking || hasSelection ? undefined : 'gray'}
             highContrast={picking}
-            disabled={!storyId || busy}
+            disabled={!storyId || busy || frameHidden}
             onClick={() => {
               if (picking) { setPicking(false); return; }
               // Starting a new pick clears the old one, so the chip in the
@@ -237,7 +328,7 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
               onSelectElement(null);
               setPicking(true);
             }}
-            title="Point at an element to describe a change to just that element"
+            title="Point at an element to describe a change to just that element (Esc to cancel)"
           >
             {picking ? 'Click an element…' : hasSelection ? 'Selected' : 'Select'}
           </Button>
@@ -245,7 +336,14 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
 
         {historySlot}
 
-        <Button size="1" variant="ghost" color="gray" disabled={!storyId} onClick={onOpenInStorybook}>
+        <Button
+          size="1"
+          variant="ghost"
+          color="gray"
+          disabled={!storyId}
+          onClick={onOpenInStorybook}
+          title="Open this story in Storybook, in a new tab"
+        >
           Open in Storybook
         </Button>
         {/* highContrast: solid-on-accent-9 measures 3.15:1 for this accent,
@@ -265,16 +363,17 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
         </Button>
       </Flex>
 
-      {/* `--fit` only when a frame is actually mounted: it swaps the stage's
+      {/* `--fit` only when a frame is actually on screen: it swaps the stage's
           `place-items: center` for `stretch`, which is right for a full-bleed
           frame and wrong for every placeholder state — with the default
           viewport being `fit`, the Building/empty states were stretched and
           their content pinned to the top instead of dead-centre. */}
-      <div className={`suiw-stage${viewport === 'fit' && src ? ' suiw-stage--fit' : ''}`} ref={stageRef}>
-        {src ? (
+      <div className={`suiw-stage${viewport === 'fit' && src && !frameHidden ? ' suiw-stage--fit' : ''}`} ref={stageRef}>
+        {src && (
           <div
-            className={`suiw-frame${busy ? ' suiw-frame--stale' : ''}`}
+            className={`suiw-frame${busy ? ' suiw-frame--stale' : ''}${frameHidden ? ' suiw-frame--hidden' : ''}`}
             style={{ width: spec.w * scale, height: spec.h * scale }}
+            aria-hidden={frameHidden || undefined}
           >
             {/* Rendered at true viewport size and scaled down, so the story sees
                 the media queries it would see at that width. Scaling the
@@ -290,7 +389,31 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
               }}
             />
           </div>
-        ) : busy ? (
+        )}
+
+        {overlay === 'failure' && failure ? (
+          // A failed generation writes a fallback error story so Storybook
+          // stays consistent. The canvas used to load that story as if it
+          // were the result — a red Storybook error page presented as "here
+          // is what you asked for".
+          <Callout.Root color="red" size="2" role="alert" style={{ maxWidth: 'min(560px, 100%)' }}>
+            <Callout.Text>
+              <Text weight="medium">That generation did not produce a working story</Text>
+              {failure.message && <><br />{failure.message}</>}
+              {failure.notice && <><br /><Text color="gray">{failure.notice}</Text></>}
+            </Callout.Text>
+            <Flex gap="2" mt="3">
+              <Button size="1" variant="soft" color="red" onClick={failure.onRetry} disabled={busy}>
+                Retry
+              </Button>
+              <Button size="1" variant="ghost" color="gray" onClick={failure.onEditPrompt}>
+                Edit prompt
+              </Button>
+            </Flex>
+          </Callout.Root>
+        ) : overlay === 'code' ? (
+          <CodeView code={code} fileName={codeFileName} loading={codeLoading} />
+        ) : src ? null : busy ? (
           <Flex direction="column" align="center" gap="2">
             <Badge color="orange" variant="soft">
               <span className="suiw-pulse">Building</span>
@@ -329,6 +452,6 @@ export const PreviewCanvas: React.FC<PreviewCanvasProps> = ({
       </div>
     </div>
   );
-};
+});
 
 export default PreviewCanvas;

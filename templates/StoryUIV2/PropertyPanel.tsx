@@ -32,8 +32,12 @@ interface PropertyPanelProps {
   apiBase: string;
   target: ElementTarget | null;
   fileName?: string;
-  /** Called after a successful write so the canvas can reload. */
-  onApplied: () => void;
+  /**
+   * Called after a successful write so the canvas can reload. Carries the
+   * file's new contents when the server returns them, so the code view shows
+   * the edit without another round trip.
+   */
+  onApplied: (code?: string) => void;
   /** Escape hatch to the model for anything structural. */
   onAskInstead?: () => void;
   /**
@@ -273,7 +277,7 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
         // bump, a variant swap — was indistinguishable from a dead control.
         setNote(`Set ${prop}${value === null ? ' back to its default' : ` to ${String(value)}`}.`);
       }
-      onApplied();
+      onApplied(typeof data?.code === 'string' ? data.code : undefined);
     } catch {
       setNote('That change could not be applied.');
     } finally {

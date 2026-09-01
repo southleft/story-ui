@@ -48,23 +48,17 @@ export const Mount = () => {
 
   if (!apiBase) return null;
 
-  return (
-    <Workspace
-      apiBase={apiBase}
-      onOpenStory={(storyId) => {
-        try {
-          const channel = window.__STORYBOOK_ADDONS_CHANNEL__;
-          if (channel?.emit) channel.emit('selectStory', { storyId });
-        } catch {}
-        const top = window.top ?? window;
-        window.setTimeout(() => {
-          if (!top.location.search.includes(storyId)) {
-            top.location.href = `${top.location.pathname}?path=/story/${storyId}`;
-          }
-        }, 400);
-      }}
-    />
-  );
+  /*
+    "Open in Storybook" opens the story in a new tab; the workspace handles
+    that itself. Passing `onOpenStory` here would REPLACE that with whatever
+    the handler does — the previous handler navigated the top window away
+    from the workspace, losing the conversation in progress.
+
+    `appearance` follows the host by default: Storybook's theme when it can
+    be read from the page, the OS preference otherwise. Pin it to "light" or
+    "dark" for a project that wants the workspace fixed.
+  */
+  return <Workspace apiBase={apiBase} appearance="auto" />;
 };
 
 <Mount />

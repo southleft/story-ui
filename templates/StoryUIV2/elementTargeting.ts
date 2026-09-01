@@ -811,6 +811,23 @@ export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFro
 }})`;
 
 /**
+ * Describe an element of the preview document exactly as a click on it would.
+ *
+ * Shared by the picker and by "Select" on a verification finding, which has a
+ * selector rather than a click — both must produce the same target, or the
+ * property panel would resolve one and not the other.
+ */
+export function describeElement(doc: Document, el: Element): ElementTarget {
+  // eslint-disable-next-line no-eval
+  return (doc.defaultView as any).eval(`(${EXTRACTOR_SOURCE})`)(
+    el,
+    componentFromMarkup.toString(),
+    orderSourceCandidates.toString(),
+    isAuthoredListKey.toString(),
+  );
+}
+
+/**
  * Turn on click-to-select inside the preview document.
  *
  * Returns a teardown function. Everything it adds is tagged so teardown is
@@ -854,14 +871,7 @@ export function attachElementPicker(
 
   doc.body.style.cursor = 'crosshair';
 
-  const describe = (el: Element): ElementTarget =>
-    // eslint-disable-next-line no-eval
-    (doc.defaultView as any).eval(`(${EXTRACTOR_SOURCE})`)(
-      el,
-      componentFromMarkup.toString(),
-      orderSourceCandidates.toString(),
-      isAuthoredListKey.toString(),
-    );
+  const describe = (el: Element): ElementTarget => describeElement(doc, el);
 
   let current: Element | null = null;
 

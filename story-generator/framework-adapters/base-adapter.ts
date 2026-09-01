@@ -10,8 +10,7 @@ import {
   FrameworkType,
   StoryFramework,
   FrameworkAdapter,
-  StoryGenerationOptions,
-} from './types.js';
+  StoryGenerationOptions, CatalogFocus } from './types.js';
 import * as fs from 'fs';
 import * as nodePath from 'path';
 import { StoryUIConfig } from '../../story-ui.config.js';
@@ -24,6 +23,14 @@ import { saysMoreThanName } from '../knowledge/descriptionQuality.js';
  */
 /** How many props to show per component in the prompt catalog. */
 const MAX_PROPS_IN_CATALOG = 12;
+/** Character budget for full catalog entries when the request is known. */
+const CATALOG_BUDGET_CHARS = 24_000;
+/** Never fewer full entries than this, however terse the request. */
+const CATALOG_MIN_FULL = 40;
+/** The top of the ranking also gets prop descriptions. */
+const CATALOG_DOC_TIER = 20;
+const CATALOG_DOCS_PER_COMPONENT = 6;
+const CATALOG_DOC_CHARS = 90;
 
 /**
  * Order props so the ones that determine BEHAVIOR come first.
@@ -77,28 +84,132 @@ export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
   ): string;
 
   /**
-   * Generate component reference documentation
+   * Generate component reference documentation.
+   *
+   * Every component used to get a full entry — props, description, usage —
+   * whether or not the request could possibly involve it. Measured: 244
+   * entries and 65k chars on Mantine, 97k on college-town, two thirds of the
+   * whole prompt, resent on every attempt. Relevance ranking already existed
+   * for the exemplar section and was never applied here.
+   *
+   * With a `catalogFocus`, components are ranked against the request (and
+   * anything the previous code already imports is kept), the top of the
+   * ranking gets a full entry within a character budget, the next tier gets
+   * prop DESCRIPTIONS as well — the facts that were extracted and withheld —
+   * and everything else is listed by name and import path only, so the model
+   * still knows it exists and how to import it. Small catalogs are unaffected:
+   * below the budget everything is full.
    */
   generateComponentReference(
     components: DiscoveredComponent[],
-    config: StoryUIConfig
+    config: StoryUIConfig,
+    options?: StoryGenerationOptions
   ): string {
     if (components.length === 0) {
       return 'No components discovered.';
     }
 
+    const focus = options?.catalogFocus;
+    const tiers = this.tierComponents(components, focus);
+    const full = new Set(tiers.full.map(c => c.name));
+    const withDocs = new Set(tiers.docs.map(c => c.name));
+
     const groupedComponents = this.groupComponentsByPackage(components);
     const sections: string[] = [];
 
     for (const [packageName, pkgComponents] of Object.entries(groupedComponents)) {
-      const componentList = pkgComponents
-        .map(comp => this.formatComponentEntry(comp, config))
-        .join('\n');
+      const fullEntries = pkgComponents
+        .filter(c => full.has(c.name))
+        .map(comp => this.formatComponentEntry(comp, config, { withDocs: withDocs.has(comp.name) }));
+      const compact = pkgComponents.filter(c => !full.has(c.name));
+      const parts: string[] = [];
+      if (fullEntries.length) parts.push(fullEntries.join('\n'));
+      if (compact.length) {
+        // Name + import only. Grouped by import path so the list stays one
+        // line per path rather than one line per component.
+        const byPath = new Map<string, string[]>();
+        for (const c of compact) {
+          const how = this.getImportPath(c, config);
+          const key = (c as any).__defaultExport === true ? `${how} (default exports)` : how;
+          byPath.set(key, [...(byPath.get(key) ?? []), c.name]);
+        }
+        const lines = [...byPath.entries()].map(([how, names]) => `  from '${how}': ${names.join(', ')}`);
+        parts.push(`Also available (props not listed — prefer the components above unless the request needs one of these):\n${lines.join('\n')}`);
+      }
+      sections.push(`## ${packageName}\n${parts.join('\n\n')}`);
+    }
 
-      sections.push(`## ${packageName}\n${componentList}`);
+    if (focus) {
+      logger.log(
+        `📚 Catalog: ${tiers.full.length} full entries (${tiers.docs.length} with prop docs), ` +
+        `${components.length - tiers.full.length} by name only`,
+      );
     }
 
     return `# Available Components\n\n${sections.join('\n\n')}`;
+  }
+
+  /**
+   * Rank components against the request and split them into tiers.
+   *
+   * Scoring is by facts the catalog holds: the component's name, its
+   * description and category against the words of the request. A component
+   * the previous code imports scores above everything, because an update
+   * must be able to keep using it. Ties break toward components with more
+   * documented props, which is the closest available proxy for "commonly
+   * used" that does not name a library.
+   */
+  protected tierComponents(
+    components: DiscoveredComponent[],
+    focus: CatalogFocus | undefined,
+  ): { full: DiscoveredComponent[]; docs: DiscoveredComponent[] } {
+    const budget = focus?.budgetChars ?? CATALOG_BUDGET_CHARS;
+    if (!focus) return { full: components, docs: [] };
+
+    const words = new Set(focus.prompt.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 2));
+    const must = new Set((focus.mustInclude ?? []).map(n => n.toLowerCase()));
+    const score = (c: DiscoveredComponent): number => {
+      const name = c.name.toLowerCase();
+      let s = 0;
+      if (must.has(name)) s += 100;
+      if (words.has(name)) s += 10;
+      for (const w of words) {
+        if (w === name) continue;
+        if (w.startsWith(name) || name.startsWith(w)) s += 4;
+        else if (w.length > 3 && (w.includes(name) || name.includes(w))) s += 2;
+      }
+      const prose = `${c.description ?? ''} ${(c as any).category ?? ''}`.toLowerCase();
+      if (prose) {
+        let hits = 0;
+        for (const w of words) if (prose.includes(w)) hits++;
+        s += Math.min(hits, 3);
+      }
+      s += Math.min(c.props?.length ?? 0, 12) * 0.05;
+      return s;
+    };
+
+    const ranked = [...components]
+      .map(c => ({ c, s: score(c) }))
+      .sort((a, b) => b.s - a.s || a.c.name.localeCompare(b.c.name))
+      .map(x => x.c);
+
+    // Fill the budget with full entries, in rank order, never fewer than the
+    // floor so a terse request still sees a usable set.
+    const full: DiscoveredComponent[] = [];
+    let spent = 0;
+    for (const c of ranked) {
+      const cost = this.estimateEntryChars(c);
+      if (full.length >= CATALOG_MIN_FULL && spent + cost > budget) break;
+      full.push(c);
+      spent += cost;
+    }
+    return { full, docs: full.slice(0, CATALOG_DOC_TIER) };
+  }
+
+  /** Rough size of a full entry, for the budget. Props dominate. */
+  protected estimateEntryChars(c: DiscoveredComponent): number {
+    const props = (c.props ?? []).slice(0, MAX_PROPS_IN_CATALOG).reduce((n, p) => n + String(p).length + 2, 0);
+    return 60 + props + (c.description?.length ?? 0);
   }
 
   /**
@@ -125,7 +236,8 @@ export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
    */
   protected formatComponentEntry(
     component: DiscoveredComponent,
-    config: StoryUIConfig
+    config: StoryUIConfig,
+    opts: { withDocs?: boolean } = {}
   ): string {
     const importPath = this.getImportPath(component, config);
     const isLocal = !!this.getLocalImportPath(component, config);
@@ -136,7 +248,8 @@ export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
     const importHow = defaultExport
       ? `import ${component.name} from '${importPath}'  ← DEFAULT export, not a named one`
       : `import from '${importPath}'`;
-    let entry = `- **${component.name}** (${importHow})${isLocal ? ' — CUSTOM PROJECT COMPONENT, fully allowed; use this exact relative import' : ''}`;
+    const pathUnknown = (component as any).__importPathUnknown === true;
+    let entry = `- **${component.name}** (${importHow})${isLocal ? ' — CUSTOM PROJECT COMPONENT, fully allowed; use this exact relative import' : ''}${pathUnknown ? ' — exact module path not declared; only use if you know it' : ''}`;
 
     if (component.props && component.props.length > 0) {
       // Props are the only signal the model has for what a component can
@@ -145,7 +258,26 @@ export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
       // interactive component from a presentational one (active, onChange,
       // leftSection, value), which is the choice we most need it to get right.
       const ranked = rankPropsByRelevance(component.props);
-      const shown = ranked.slice(0, MAX_PROPS_IN_CATALOG);
+      /**
+       * Prop descriptions, for the components the request is about.
+       *
+       * Extracted at 86–99% coverage and, until now, withheld from every
+       * component because the full set costs ~28k tokens. For the top of the
+       * ranking a clipped sentence on the first few props is a few hundred
+       * chars per component, and it is the only place the model learns what
+       * `withBorder` or `kind` actually does.
+       */
+      const docs: Record<string, string> | undefined = opts.withDocs ? (component as any).__propDocs : undefined;
+      let docsAttached = 0;
+      const shown = ranked.slice(0, MAX_PROPS_IN_CATALOG).map((p) => {
+        if (!docs || docsAttached >= CATALOG_DOCS_PER_COMPONENT) return p;
+        const name = String(p).match(/^([A-Za-z_$][\w$]*)/)?.[1];
+        const doc = name ? docs[name] : undefined;
+        if (!doc) return p;
+        docsAttached++;
+        const clipped = doc.length > CATALOG_DOC_CHARS ? `${doc.slice(0, CATALOG_DOC_CHARS - 1)}…` : doc;
+        return `${p} — ${clipped}`;
+      });
       /**
        * Never end the list with a bare invitation to guess.
        *
@@ -166,7 +298,9 @@ export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
         : hiddenHasBehaviour
           ? `, …${hidden.length} more`
           : `, …${hidden.length} more (styling and layout only — every state prop and handler this component has is listed above)`;
-      entry += `\n  Props: ${shown.join(', ')}${tail}`;
+      entry += docs
+        ? `\n  Props:\n    ${shown.join('\n    ')}${tail ? `\n    ${tail.replace(/^, /, '')}` : ''}`
+        : `\n  Props: ${shown.join(', ')}${tail}`;
     }
 
     // A description that only restates the name — discovery's `Chip component
@@ -242,18 +376,19 @@ export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
 
     const basePath = config.importPath || 'unknown';
 
-    // If using individual imports, convert component name to kebab-case file path
+    /**
+     * No formula. This used to kebab-case the component name onto the base
+     * path for `importStyle: 'individual'` (`AlertDialog` → `alert-dialog`),
+     * which is one library's convention and wrong for the next. Every
+     * individual-import library this tool has met declares its paths: in
+     * `config.components[].importPath`, in discovery's `source.path`, or as a
+     * local file the relative-path branch above already resolved. When none
+     * of those exist the honest answer is the base path with a note, not a
+     * guess that fails at build time.
+     */
     if (config.importStyle === 'individual') {
-      // Find the base component name (for sub-components like CardHeader, use Card)
-      const baseComponentName = this.getBaseComponentName(component.name);
-      const kebabName = this.toKebabCase(baseComponentName);
-      const result = `${basePath}/${kebabName}`;
-      console.log(`[DEBUG] getImportPath: ${component.name} -> ${result} (importStyle=${config.importStyle})`);
-      return result;
+      (component as any).__importPathUnknown = true;
     }
-
-    console.log(`[DEBUG] getImportPath: ${component.name} -> ${basePath} (importStyle=${config.importStyle})`);
-    // Fall back to import path from config (barrel import)
     return basePath;
   }
 

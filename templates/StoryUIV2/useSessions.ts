@@ -49,6 +49,9 @@ export interface CompletionVerification {
   blockers?: number;
   /** The census's focusable-element count, shown beside the badge. */
   focusables?: number;
+  /** How many of the verification layers actually ran, when the server says. */
+  checksRun?: number;
+  checksTotal?: number;
 }
 
 export interface LastCompletion {
@@ -83,7 +86,18 @@ export interface VerificationSummary {
   reason?: string;
   blockers: number;
   focusables?: number;
+  /**
+   * Checks that ran, out of the checks the stack has. "Verified" after three
+   * of six layers ran is a different claim from "Verified" after all six, and
+   * the badge must not draw them the same way. Both absent when the server
+   * did not report them — absent renders as a plain badge, never as 0/0.
+   */
+  checksRun?: number;
+  checksTotal?: number;
 }
+
+const asCount = (v: unknown): number | undefined =>
+  typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined;
 
 /** Collapse a live verification report to what the badge shows. */
 export function summarizeVerification(v: Verification | undefined | null): VerificationSummary | undefined {
@@ -92,8 +106,21 @@ export function summarizeVerification(v: Verification | undefined | null): Verif
     outcome: v.outcome,
     reason: v.reason,
     blockers: (v.findings ?? []).filter(f => f.severity === 'blocker').length,
-    focusables: typeof v.metrics?.focusables === 'number' ? v.metrics.focusables : undefined,
+    focusables: asCount(v.metrics?.focusables),
+    checksRun: asCount(v.metrics?.checksRun),
+    checksTotal: asCount(v.metrics?.checksTotal),
   };
+}
+
+/**
+ * True when verification passed but not every layer ran — the case the badge
+ * paints amber instead of green. False whenever the counts are unknown: an
+ * older server's plain "verified" is not demoted on missing data.
+ */
+export function isPartialVerification(s: VerificationSummary | undefined | null): boolean {
+  if (!s || s.outcome !== 'verified') return false;
+  if (s.checksRun === undefined || s.checksTotal === undefined) return false;
+  return s.checksRun < s.checksTotal;
 }
 
 /**
@@ -114,7 +141,9 @@ export function verificationFromCompletion(
     outcome: v.outcome,
     reason: typeof v.reason === 'string' ? v.reason : undefined,
     blockers: typeof v.blockers === 'number' ? v.blockers : 0,
-    focusables: typeof v.focusables === 'number' ? v.focusables : undefined,
+    focusables: asCount(v.focusables),
+    checksRun: asCount(v.checksRun),
+    checksTotal: asCount(v.checksTotal),
   };
 }
 
@@ -272,6 +301,30 @@ export async function pollForCompletedEntry(
     await new Promise(r => setTimeout(r, 3000));
   }
   return null;
+}
+
+/**
+ * Remove a story completely: the file AND its manifest entry.
+ *
+ * Two endpoints, because they do two different things. `DELETE
+ * /mcp/stories/:id` unlinks the story file and knows nothing about the
+ * manifest; `DELETE /story-ui/manifest/:fileName` drops the conversation and
+ * leaves the file on disk, where Storybook keeps indexing it. Either alone
+ * leaves a half-deleted story that reappears in one list or the other.
+ *
+ * The file delete tolerates a 404 (already gone, or never written — a failed
+ * generation can leave a manifest entry with no file). Anything else throws.
+ */
+export async function deleteStory(apiBase: string, fileName: string): Promise<void> {
+  const id = fileName.replace(/\.stories\.(tsx|ts|jsx|js|svelte)$/, '');
+  const file = await apiFetch(`${apiBase}/mcp/stories/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!file.ok && file.status !== 404) {
+    throw new Error(`Could not delete the story file (${file.status})`);
+  }
+  const entry = await apiFetch(`${apiBase}/story-ui/manifest/${encodeURIComponent(fileName)}`, { method: 'DELETE' });
+  if (!entry.ok) {
+    throw new Error(`Could not remove the story from the manifest (${entry.status})`);
+  }
 }
 
 export function useSessions(apiBase: string) {
