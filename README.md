@@ -150,6 +150,7 @@ package per component (Atlassian), and local source (Radix + Tailwind).
 | `componentsPath` | Local component source directory, for libraries that are not an npm package. |
 | `componentsMetadataPath` | A `custom-elements.json` manifest, read when nothing else is discovered. |
 | `components` | Explicit component list (`name`, `importPath`, `props`, `examples`, `description`, `category`, `slots`). Declared fields are honoured over discovered ones. |
+| `excludeComponents` | Names discovery found that must never be offered (a provider that belongs in `preview.tsx`, an internal context). `components[].exclude: true` does the same per entry. |
 | `layoutComponents` | Layout-specific components, same shape. |
 | `componentFramework` | `react`, `vue`, `angular`, `svelte` or `web-components`. Routes discovery and the prop editor. |
 | `framework` | Same values; story generation reads this one first. Set both to the same value. |
