@@ -16,6 +16,16 @@ export interface RenderResult {
   ok: boolean;
   /** Why the render failed, when ok is false. */
   reason?: string;
+  /**
+   * WHOSE failure this was, when ok is false.
+   *
+   * 'code' — the page loaded and the story did not put anything on it.
+   * 'infrastructure' — we never got far enough to find out: chromium would
+   *   not launch, the connection was refused, the tab died. That is a fact
+   *   about this machine, and blaming the story for it spends an LLM call
+   *   rewriting code that was already correct.
+   */
+  failureClass?: 'code' | 'infrastructure';
   /** Uncaught page errors — invisible to the old text-fetch approach. */
   pageErrors: string[];
   /** console.error output during render. */
@@ -87,9 +97,12 @@ export async function renderStory(options: RenderOptions): Promise<RenderResult>
       );
     } catch {
       await dispose();
+      // The page loaded and Storybook mounted nothing into it. That is the
+      // story's failure, whether it threw or simply rendered nothing.
       return {
         ok: false,
         reason: 'Story did not mount — #storybook-root stayed empty',
+        failureClass: 'code',
         pageErrors, consoleErrors, isErrorPlaceholder: false,
         dispose: async () => {}, navMs: Date.now() - started,
       };
@@ -137,9 +150,14 @@ export async function renderStory(options: RenderOptions): Promise<RenderResult>
     await dispose();
     const message = error instanceof Error ? error.message : String(error);
     logger.log(`⚠️ Render failed for ${storyId}: ${message}`);
+    // Throwing out of launch/goto means we never rendered anything, so we
+    // learned nothing about the story. Reported as infrastructure so it can
+    // neither block nor trigger a repair: "Storybook restarted mid-run" and
+    // "the generated code is broken" must not produce the same verdict.
     return {
       ok: false,
       reason: message,
+      failureClass: 'infrastructure',
       pageErrors, consoleErrors, isErrorPlaceholder: false,
       dispose: async () => {}, navMs: Date.now() - started,
     };

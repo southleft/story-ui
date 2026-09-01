@@ -25,7 +25,25 @@
  *    to rewrite correct code with no fix available to it.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+
+import { resolveHostTooling, canLaunchBrowser } from '../story-generator/verify/hostTooling.js';
+import { runClassEffectProbe } from '../story-generator/verify/probes/classEffect.js';
+
+/**
+ * A real browser, resolved from a host project the same way the pipeline does.
+ * When none is available these tests are skipped rather than silently passing.
+ */
+const tooling = resolveHostTooling('/Users/tjpitre/Sites/test-storybooks/react-mantine');
+let browser: any;
+
+beforeAll(async () => {
+  if (!tooling) return;
+  const ok = await canLaunchBrowser(tooling);
+  if (ok.ok) browser = await tooling.playwright.chromium.launch({ headless: true });
+}, 60_000);
+
+afterAll(async () => { try { await browser?.close(); } catch { /* already gone */ } });
 
 /** The selector harvester, as the probe implements it. */
 function harvest(selector: string): string[] {
@@ -83,22 +101,63 @@ describe('which unmatched classes are worth reporting', () => {
   });
 });
 
-describe('absent is not clean', () => {
-  /** The result shape the probe returns when no stylesheet could be read. */
-  const unreadable = { sheetsRead: 0, sheetsBlocked: 3, definedClasses: 0, undefined_: [], unreadable: true };
-  const clean = { sheetsRead: 4, sheetsBlocked: 0, definedClasses: 1349, undefined_: [], unreadable: false };
+/**
+ * "Could not check" and "checked and found nothing" must not look alike.
+ *
+ * This used to be asserted against two object literals written by hand in the
+ * test itself — `expect(skipped.unreadable).toBe(true)` where `skipped` was
+ * declared on the line above. It could not fail, and it was guarding the
+ * single invariant this project cares most about. These drive the real probe.
+ */
+describe.runIf(tooling)('absent is not clean', { retry: 2 }, () => {
+  it('reports unreadable when no stylesheet can be read', async () => {
+    const page = await browser.newPage();
+    // No <style>, no <link>: nothing to read, so nothing can be concluded.
+    await page.setContent('<div id="storybook-root"><div class="card-bordered">x</div></div>');
+    const r = await runClassEffectProbe(page);
+    await page.close();
 
-  it('distinguishes "could not check" from "checked and found nothing"', () => {
-    // Both report zero undefined classes. Only one of them is a result.
-    expect(unreadable.undefined_).toEqual([]);
-    expect(clean.undefined_).toEqual([]);
-    expect(unreadable.unreadable).toBe(true);
-    expect(clean.unreadable).toBe(false);
+    expect(r.unreadable).toBe(true);
+    expect(r.sheetsRead).toBe(0);
+    // The undefined list is empty in BOTH cases — that is exactly why the
+    // flag has to carry the difference.
+    expect(r.undefined_).toEqual([]);
   });
 
-  it('reports how many stylesheets it could not read', () => {
-    expect(unreadable.sheetsBlocked).toBeGreaterThan(0);
-    expect(unreadable.definedClasses).toBe(0);
+  it('reports a real result when a stylesheet IS readable', async () => {
+    const page = await browser.newPage();
+    await page.setContent(
+      '<style>.card-bordered{border:1px solid #000}</style>' +
+      '<div id="storybook-root"><div class="card-bordered">x</div></div>'
+    );
+    const r = await runClassEffectProbe(page);
+    await page.close();
+
+    expect(r.unreadable).toBe(false);
+    expect(r.sheetsRead).toBeGreaterThan(0);
+    expect(r.undefined_).toEqual([]);
+  });
+
+  it('catches a class no stylesheet defines', async () => {
+    const page = await browser.newPage();
+    // The family has to look stylesheet-DRIVEN for a miss inside it to carry
+    // information: the probe drops any family with as many unmatched names as
+    // defined ones, which is what stops Chakra's runtime markers becoming ten
+    // warnings of noise. One typo against a real family is the Carbon case.
+    await page.setContent(
+      '<style>' +
+      '.card{padding:8px}.card-bordered{border:1px solid #000}.card-title{font-weight:600}' +
+      '.card-body{padding:12px}.card-footer{padding:8px}' +
+      '</style>' +
+      '<div id="storybook-root"><div class="card card-borderd">typo</div></div>'
+    );
+    const r = await runClassEffectProbe(page);
+    await page.close();
+
+    expect(r.unreadable).toBe(false);
+    // Proves the probe can actually FIND something — without this, the two
+    // tests above would also pass on a probe that always returns nothing.
+    expect(r.undefined_.map((u: any) => u.className)).toContain('card-borderd');
   });
 });
 

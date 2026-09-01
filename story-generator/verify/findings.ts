@@ -56,6 +56,53 @@ export interface RepairSummary {
   attempts?: number;
 }
 
+/** Whether one verification layer actually executed, and why not if it did not. */
+export interface LayerCoverage {
+  ran: boolean;
+  reason?: string;
+}
+
+/**
+ * Which layers actually ran.
+ *
+ * `outcome: 'verified'` means "nothing blocking was found", which is not the
+ * same claim as "everything was checked" — and for a long time the two were
+ * indistinguishable. axe absent, no readable stylesheet, the interaction probe
+ * skipped, the critic throwing: each produced a byte-identical `verified`, and
+ * only `axeRan` reached the metrics at all. A verdict nothing can falsify is
+ * the project's own "absent must not look like zero" rule, broken at the exact
+ * point where the answer is handed to the user.
+ *
+ * The outcome still answers "did we find a problem". This answers "how much of
+ * the page did we actually look at", so a reader can tell a clean sweep from a
+ * quiet one.
+ */
+export interface VerifyCoverage {
+  census: LayerCoverage;
+  layout: LayerCoverage;
+  classes: LayerCoverage;
+  interaction: LayerCoverage;
+  a11y: LayerCoverage;
+  visual: LayerCoverage;
+}
+
+export const LAYER_COUNT = 6;
+
+/** How many layers ran, for the summary line and the badge. */
+export const coverageRatio = (c?: VerifyCoverage): { ran: number; total: number } => {
+  if (!c) return { ran: 0, total: LAYER_COUNT };
+  const layers = [c.census, c.layout, c.classes, c.interaction, c.a11y, c.visual];
+  return { ran: layers.filter(l => l?.ran).length, total: LAYER_COUNT };
+};
+
+/** The layers that did not run, named, for a reader who wants the gap. */
+export const missingLayers = (c?: VerifyCoverage): string[] => {
+  if (!c) return [];
+  return Object.entries(c)
+    .filter(([, v]) => v && !(v as LayerCoverage).ran)
+    .map(([k, v]) => `${k}: ${(v as LayerCoverage).reason || 'did not run'}`);
+};
+
 export interface VerifyReport {
   outcome: VerifyOutcome;
   /** Why verification was skipped, when outcome is not_verified. */
@@ -67,6 +114,11 @@ export interface VerifyReport {
   storyId?: string;
   /** Repair disposition, when verification found issues and enforce mode ran. */
   repair?: RepairSummary;
+  /**
+   * Which layers ran. Absent only on reports produced before any probe could
+   * start (no Storybook URL, no browser), where the answer is "none of them".
+   */
+  coverage?: VerifyCoverage;
 }
 
 export const blockers = (f: Finding[]): Finding[] => f.filter(x => x.severity === 'blocker');

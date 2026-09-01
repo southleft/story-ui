@@ -17,7 +17,25 @@
  * than in a reviewer's opinion.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+
+import { resolveHostTooling, canLaunchBrowser } from '../story-generator/verify/hostTooling.js';
+import { runInteractionProbe } from '../story-generator/verify/probes/interaction.js';
+
+/**
+ * A real browser, resolved the way the pipeline resolves it. When none is
+ * available these are skipped rather than passing on literals.
+ */
+const tooling = resolveHostTooling('/Users/tjpitre/Sites/test-storybooks/react-mantine');
+let browser: any;
+
+beforeAll(async () => {
+  if (!tooling) return;
+  const ok = await canLaunchBrowser(tooling);
+  if (ok.ok) browser = await tooling.playwright.chromium.launch({ headless: true });
+}, 60_000);
+
+afterAll(async () => { try { await browser?.close(); } catch { /* already gone */ } });
 
 /** The state read the probe performs on a toggle. */
 const toggleState = (el: { ariaChecked?: string; ariaPressed?: string; checked?: boolean }): string =>
@@ -104,19 +122,79 @@ describe('what the probe refuses to touch', () => {
   });
 });
 
-describe('absent is not a pass', () => {
-  it('zero controls tested is reported, not treated as clean', () => {
-    const result = { controlsTested: 0, overlaysTested: 0, deadControls: [], flowBreakingOverlays: [], skipped: false };
-    // A story with nothing interactive yields no findings — and the count is
-    // what tells a reader that silence meant "nothing to test".
-    expect(result.deadControls).toEqual([]);
-    expect(result.controlsTested).toBe(0);
+/**
+ * "Nothing to test" and "could not test" must not look alike.
+ *
+ * This previously asserted against object literals declared in the test
+ * itself — `expect(skipped.skipped).toBe(true)` where `skipped` was written
+ * on the line above — so it could not fail, while appearing to guard the
+ * invariant this project rates highest. These drive the real probe.
+ */
+describe.runIf(tooling)('absent is not a pass', { retry: 2 }, () => {
+  it('reports zero controls tested on a page with nothing interactive', async () => {
+    const page = await browser.newPage();
+    await page.setContent(
+      '<div id="storybook-root"><h1>Report</h1><p>Static content only.</p></div>'
+    );
+    const r = await runInteractionProbe(page);
+    await page.close();
+
+    // Not skipped — the probe ran and there was genuinely nothing to exercise.
+    expect(r.skipped).toBe(false);
+    expect(r.controlsTested).toBe(0);
+    expect(r.deadControls).toEqual([]);
   });
 
-  it('a skipped run is distinguishable from a clean one', () => {
-    const skipped = { controlsTested: 0, deadControls: [], skipped: true, skipReason: 'a modal was already open' };
-    const clean = { controlsTested: 3, deadControls: [], skipped: false };
-    expect(skipped.skipped).toBe(true);
-    expect(clean.skipped).toBe(false);
+  it('skips, with a reason, when a modal is already open', async () => {
+    const page = await browser.newPage();
+    await page.setContent(
+      '<div id="storybook-root">' +
+      '<div role="dialog" aria-modal="true"><button>Confirm</button></div>' +
+      '<input type="checkbox" aria-label="Email notifications">' +
+      '</div>'
+    );
+    const r = await runInteractionProbe(page);
+    await page.close();
+
+    expect(r.skipped).toBe(true);
+    expect(r.skipReason).toBeTruthy();
+    // Same empty list as the clean case above. Only the flag separates them,
+    // which is the entire point.
+    expect(r.deadControls).toEqual([]);
+    expect(r.controlsTested).toBe(0);
+  });
+
+  it('actually exercises a working toggle, and does not fault it', async () => {
+    const page = await browser.newPage();
+    await page.setContent(
+      '<div id="storybook-root">' +
+      '<input type="checkbox" id="t" aria-label="Email notifications">' +
+      '</div>'
+    );
+    const r = await runInteractionProbe(page);
+    await page.close();
+
+    // Without this, the two tests above would also pass on a probe that never
+    // tests anything at all.
+    expect(r.skipped).toBe(false);
+    expect(r.controlsTested).toBeGreaterThan(0);
+    expect(r.deadControls).toEqual([]);
+  });
+
+  it('catches a toggle that does not change state', async () => {
+    const page = await browser.newPage();
+    await page.setContent(
+      '<div id="storybook-root">' +
+      '<div role="switch" aria-checked="false" tabindex="0">Dark mode</div>' +
+      '</div>'
+    );
+    const r = await runInteractionProbe(page);
+    await page.close();
+
+    expect(r.skipped).toBe(false);
+    expect(r.controlsTested).toBe(1);
+    // A switch whose aria-checked never moves is inert, and that is the defect
+    // this probe exists to find.
+    expect(r.deadControls.length).toBe(1);
   });
 });

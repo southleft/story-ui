@@ -205,10 +205,18 @@ async function measure(env) {
   } catch { /* source facts unavailable */ }
 
   // Storybook's own component manifest is the pipeline's example source.
+  //
+  // It requires a RUNNING Storybook. When there is none, examples cannot be
+  // measured at all — and printing that as `0%` is the exact failure this
+  // bench exists to catch, committed by the bench itself: for a long time
+  // every environment reported "usage example known: 0%" and it meant only
+  // that nobody had started a dev server.
+  let manifestReachable = true;
   try {
     const res = await fetch(`${env.storybook.replace(/\/+$/, '')}/manifests/components.json`, {
       signal: AbortSignal.timeout(4000),
     });
+    if (!res.ok) manifestReachable = false;
     if (res.ok) {
       const manifest = await res.json();
       const byName = new Map();
@@ -222,7 +230,10 @@ async function measure(env) {
         }
       }
     }
-  } catch { /* Storybook not running or no manifest */ }
+  } catch {
+    // Storybook not running, or no manifest at that URL.
+    manifestReachable = false;
+  }
 
   const adapter = new ReactAdapter();
   const resolver = makeResolver(env.project);
@@ -283,6 +294,7 @@ async function measure(env) {
     totalProps, docedProps, deprecatedProps, defaultedProps,
     knowDescription: withDesc,
     knowExamples: withExamples,
+    manifestReachable,
   };
 }
 
@@ -298,7 +310,9 @@ function report(r) {
   console.log(`  prop descriptions known    : ${r.docedProps}/${r.totalProps}  ${pct(r.docedProps, r.totalProps)}  (knowledge only, not in catalog)`);
   console.log(`  prop defaults known        : ${r.defaultedProps}`);
   console.log(`  deprecated props flagged   : ${r.deprecatedProps}`);
-  console.log(`  usage example known        : ${r.knowExamples}/${r.components}  ${pct(r.knowExamples, r.components)}`);
+  console.log(r.manifestReachable
+    ? `  usage example known        : ${r.knowExamples}/${r.components}  ${pct(r.knowExamples, r.components)}`
+    : `  usage example known        : NOT MEASURED — Storybook unreachable, so this is not zero`);
   if (r.dead.length) {
     console.log(`  DEAD SPECIFIERS (${r.dead.length}):`);
     for (const d of r.dead.slice(0, 12)) console.log(`    ${d}`);
@@ -317,6 +331,7 @@ function report(r) {
 if (flag('all')) {
   const { spawnSync } = await import('child_process');
   let failed = 0;
+  let unmeasured = 0;
   for (const env of ENVIRONMENTS) {
     const r = spawnSync(process.execPath, [
       new URL(import.meta.url).pathname,
@@ -326,9 +341,29 @@ if (flag('all')) {
     ], { encoding: 'utf8' });
     process.stdout.write((r.stdout || '').split('\n').filter(l => /^(===|  [a-z]|    |DEAD|\d+ dead|All specifiers)/.test(l)).join('\n') + '\n');
     if (r.status !== 0) failed++;
+    if (/NOT MEASURED/.test(r.stdout || '')) unmeasured++;
   }
+  /**
+   * "Clean" must not be able to mean "we checked almost nothing".
+   *
+   * The per-environment line already refuses to print an unmeasurable metric
+   * as `0%`, which is the defect that mattered. The exit CODE is a separate
+   * question: a Storybook that is not running is an environment state, not a
+   * regression, and failing the run for it would make the bench unusable as
+   * the thing you run on every change — you would need ten dev servers up.
+   *
+   * So: dead specifiers fail, incompleteness is reported loudly, and CI can
+   * demand the stronger claim with --require-complete.
+   */
   console.log(failed === 0 ? '\nAll environments clean.' : `\n${failed} environment(s) with dead specifiers.`);
-  process.exit(failed > 0 ? 1 : 0);
+  if (unmeasured > 0) {
+    console.log(
+      `${unmeasured} of ${ENVIRONMENTS.length} environment(s) had metrics that could NOT be measured ` +
+      `— start their Storybook to measure them. This run is INCOMPLETE, not clean.`
+    );
+  }
+  const incomplete = flag('require-complete') && unmeasured > 0;
+  process.exit(failed > 0 || incomplete ? 1 : 0);
 }
 
 const env = {

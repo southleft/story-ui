@@ -1104,7 +1104,21 @@ async function runStoryGenerationPipeline(
 
   const validationResult = extractAndValidateCodeBlock(aiText, config);
   let fileContents: string;
-  let hasValidationWarnings = false;
+  /**
+   * Seeded from what the healing loop actually ended up with.
+   *
+   * Only import errors throw above; syntax and pattern errors that survived
+   * every attempt (`UNSAFE_style`, emoji-as-icon, a missing `export default
+   * meta`) fall through here, and `extractAndValidateCodeBlock` below is
+   * AST-only so it never sees them again. Starting at `false` meant the SSE
+   * route computed `isValid: !hasWarnings` = true while `validation.errors`
+   * was non-empty — the story shipped flagged as clean, carrying the errors
+   * that describe why it is not.
+   */
+  let hasValidationWarnings = !hasNoErrors(finalErrors);
+  if (hasValidationWarnings) {
+    logger.warn(`⚠️ Shipping with unresolved validation errors: ${formatErrorsForLog(finalErrors)}`);
+  }
   let isFallbackStory = false;
 
   if (!validationResult.isValid && !validationResult.fixedCode) {

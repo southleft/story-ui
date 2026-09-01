@@ -20,8 +20,8 @@ import { runClassEffectProbe } from './probes/classEffect.js';
 import { runInteractionProbe } from './probes/interaction.js';
 import { runVisualCritique, type CritiqueModel } from './probes/visualCritic.js';
 import { runA11yProbe, isGenerationDefect, isDesignSystemConcern, isDesignSystemInternal, isContrastDefect } from './probes/a11y.js';
-import type { Finding, VerifyReport } from './findings.js';
-import { blockers, summarize } from './findings.js';
+import type { Finding, VerifyReport, VerifyCoverage } from './findings.js';
+import { blockers, summarize, coverageRatio, missingLayers } from './findings.js';
 
 export interface VerifyStoryOptions {
   /** Base Storybook URL, e.g. http://localhost:6101 */
@@ -61,12 +61,18 @@ export interface VerifyStoryOptions {
   componentsUsed?: string[];
 }
 
-const notVerified = (reason: string, started: number, extra: Finding[] = []): VerifyReport => ({
+const notVerified = (
+  reason: string,
+  started: number,
+  extra: Finding[] = [],
+  storyId?: string,
+): VerifyReport => ({
   outcome: 'not_verified',
   reason,
   findings: extra,
   metrics: {},
   durationMs: Date.now() - started,
+  storyId,
 });
 
 /**
@@ -194,8 +200,26 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
   const render = await renderStory({ storybookUrl, storyId: indexed.storyId, tooling, timeoutMs });
 
   if (!render.ok) {
-    // A render failure IS a code defect and is worth repairing — unlike the
-    // infrastructure cases above.
+    // A render failure is a code defect worth repairing ONLY when the page
+    // actually loaded and the story then failed to put anything on it. When
+    // the harness threw on its way there — chromium refusing to launch, a
+    // refused connection, a tab that died, Storybook restarting mid-run — we
+    // never observed the story at all, and charging that to the generated
+    // code spends a repair rewriting something already correct.
+    if (render.failureClass === 'infrastructure') {
+      return notVerified(
+        `Could not render the story in a browser: ${render.reason || 'unknown error'}`,
+        started,
+        [{
+          id: 'render-unavailable', severity: 'warning', class: 'infrastructure',
+          message: 'The browser could not render the story, so it was not verified',
+          evidence: (render.reason || '').slice(0, 500),
+          repairable: false,
+        }],
+        indexed.storyId,
+      );
+    }
+
     return {
       outcome: 'issues',
       findings: [{
@@ -212,6 +236,18 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
 
   try {
     const findings: Finding[] = [];
+
+    // Track what actually executed. `verified` reports that nothing blocking
+    // was found; this reports how much of the page was looked at, so the two
+    // claims stop being indistinguishable.
+    const coverage: VerifyCoverage = {
+      census: { ran: false, reason: 'did not run' },
+      layout: { ran: false, reason: 'did not run' },
+      classes: { ran: false, reason: 'did not run' },
+      interaction: { ran: false, reason: 'did not run' },
+      a11y: { ran: false, reason: 'did not run' },
+      visual: { ran: false, reason: 'not requested' },
+    };
 
     if (render.isErrorPlaceholder) {
       findings.push({
@@ -232,6 +268,7 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
     }
 
     const census = await runDomCensus(render.page, { libraryComponents });
+    coverage.census = { ran: true };
 
     /**
      * Layout arithmetic, before any aesthetic judgement is applied.
@@ -260,6 +297,9 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
      * visible in a screenshot, so the vision critic cannot see them either.
      */
     const interaction = await runInteractionProbe(render.page, { libraryComponents });
+    coverage.interaction = interaction.skipped
+      ? { ran: false, reason: interaction.skipReason || 'skipped' }
+      : { ran: true };
     if (interaction.skipped) {
       logger.log(`🖱️ Interaction checks skipped: ${interaction.skipReason} — controls unverified, not working`);
     } else {
@@ -318,6 +358,9 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
     }
 
     const classes = await runClassEffectProbe(render.page, { libraryComponents });
+    coverage.classes = classes.unreadable
+      ? { ran: false, reason: `${classes.sheetsBlocked} stylesheet(s) unreadable, 0 readable` }
+      : { ran: true };
     if (classes.unreadable) {
       // No stylesheet was readable, so silence here means nothing. Say that.
       logger.log(`🎨 Class check skipped: ${classes.sheetsBlocked} stylesheet(s) unreadable, 0 readable — classes unverified, not clean`);
@@ -341,6 +384,7 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
     }
 
     const layout = await runLayoutProbe(render.page, { libraryComponents });
+    coverage.layout = { ran: true };
     for (const p of layout.problems) {
       findings.push({
         id: `${p.kind}-${findings.length}`,
@@ -363,6 +407,7 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
     // markup can block; palette and document-structure rules describe the design
     // system itself and would push the model into overriding it.
     const a11y = await runA11yProbe(render.page, tooling);
+    coverage.a11y = a11y.ran ? { ran: true } : { ran: false, reason: a11y.reason || 'axe did not run' };
     if (a11y.ran) {
       for (const v of a11y.violations) {
         // A violation on markup the library renders is not something the story
@@ -433,26 +478,41 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
             repairable: v.severity === 'blocker',
           });
         }
+        coverage.visual = { ran: true };
         // Logged either way: "no findings" and "never ran" must not look alike.
         logger.log(`👁️ Visual critique: ${visual.length} finding(s)`);
       } catch (err) {
-        logger.warn(`[visual-critique] skipped: ${err instanceof Error ? err.message : String(err)}`);
+        const why = err instanceof Error ? err.message : String(err);
+        coverage.visual = { ran: false, reason: why };
+        logger.warn(`[visual-critique] skipped: ${why}`);
       }
     }
 
     const outcome = blockers(findings).length > 0 ? 'issues' : 'verified';
+    const ratio = coverageRatio(coverage);
+    const gaps = missingLayers(coverage);
     logger.log(
       `🔍 Verification (${indexed.storyId}): ${outcome} — ${summarize(findings)} ` +
-      `[${census.metrics.focusables} focusable, ${census.metrics.realInputs} inputs, ${census.metrics.nodes} nodes]`,
+      `[${census.metrics.focusables} focusable, ${census.metrics.realInputs} inputs, ${census.metrics.nodes} nodes] ` +
+      `· ${ratio.ran}/${ratio.total} checks ran`,
     );
+    // Name the gaps. "verified" with two layers dark is a materially weaker
+    // claim than "verified" with all six, and the reader cannot tell from the
+    // outcome alone.
+    if (gaps.length) {
+      logger.log(`   checks that did NOT run — ${gaps.join('; ')}`);
+    }
 
     return {
       outcome,
+      coverage,
       findings,
       metrics: {
         ...census.metrics,
         ...layout.metrics,
         navMs: render.navMs,
+        checksRun: ratio.ran,
+        checksTotal: ratio.total,
         axeRan: a11y.ran,
         axeViolations: a11y.violations.length,
         axePasses: a11y.passCount,
