@@ -158,6 +158,9 @@ export class EnhancedComponentDiscovery {
     // Step 3: Resolve component conflicts and apply prioritization
     this.resolveComponentConflicts();
 
+    // Step 3b: what the project says it never wants offered.
+    this.applyExclusions();
+
     /**
      * Normalise names before anything downstream sees them.
      *
@@ -1831,6 +1834,27 @@ export class EnhancedComponentDiscovery {
   /**
    * Apply manual component configurations
    */
+  /**
+   * Remove what the config excludes, from both the catalog and the validation
+   * set. Until now the config could only add or override: RemoveScroll,
+   * MantineContext and friends could not be taken out of the catalog by any
+   * setting, and the blacklist was code.
+   */
+  private applyExclusions(): void {
+    const names = new Set<string>();
+    for (const n of (this.config as any).excludeComponents ?? []) if (typeof n === 'string' && n.trim()) names.add(n.trim());
+    for (const c of this.config.components ?? []) if ((c as any).exclude === true && c.name) names.add(c.name);
+    if (names.size === 0) return;
+    let removed = 0;
+    const missing: string[] = [];
+    for (const name of names) {
+      const had = this.discoveredComponents.delete(name);
+      this.validateAvailableComponents.delete(name);
+      if (had) removed++; else missing.push(name);
+    }
+    logger.log(`🚫 Excluded ${removed} component(s) by config${missing.length ? ` (not found, nothing to exclude: ${missing.join(', ')})` : ''}`);
+  }
+
   private applyManualConfigurations(): void {
     // Add main components from config
     if (this.config.components && Array.isArray(this.config.components)) {

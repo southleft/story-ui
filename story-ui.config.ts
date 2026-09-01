@@ -14,6 +14,8 @@ export interface ComponentConfig {
   description?: string;
   category?: 'layout' | 'content' | 'form' | 'navigation' | 'feedback' | 'other';
   slots?: string[];
+  /** Drop this component from the catalog even though discovery found it. */
+  exclude?: boolean;
 }
 
 // Layout rules configuration
@@ -141,6 +143,13 @@ export interface StoryUIConfig {
    * Default: 5000 (5 seconds)
    */
   storybookMcpTimeout?: number;
+  /**
+   * Components discovery found that must never be offered — a provider that
+   * belongs in preview.tsx, an internal context, a deprecated widget. Names
+   * as they appear in the catalog. `components[].exclude` does the same per
+   * entry.
+   */
+  excludeComponents?: string[];
 }
 
 // Default generic configuration
