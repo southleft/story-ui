@@ -98,30 +98,21 @@ export function isGuessedStorybookUrl(): boolean {
 }
 
 /**
- * Check if runtime validation is enabled
+ * Whether the legacy runtime check runs. Off unless asked for.
+ *
+ * Browser verification (verify/verifyStory.ts) renders the story, waits for
+ * Storybook's index to catch up with the write, and reports a story that does
+ * not mount as a repairable blocker — everything this check does, done
+ * against the right story. This check looks the story up by an id computed
+ * from the file, and after an update that renames the story export the index
+ * still carries the OLD id for a few seconds: it navigated to a story that no
+ * longer existed, waited 30s on an empty root, called that a crash, and spent
+ * an LLM call healing nothing (observed live, 1 Sept 2026: 92s added to a
+ * generation verification then passed 6/6). It stays available for projects
+ * that cannot run verification and want the older behaviour.
  */
 export function isRuntimeValidationEnabled(): boolean {
-  // Enabled by default whenever a Storybook URL can be resolved, and disabled
-  // only when the operator says so.
-  //
-  // This used to return `STORYBOOK_RUNTIME_VALIDATION === 'true'` while its own
-  // comment claimed "enabled by default". That variable is set by nothing in
-  // this repo — not `.env.sample`, not `init`, not the docs — so every
-  // CLI-initialised project silently ran with the runtime check, and therefore
-  // the runtime healing loop, switched off. Opting IN to the check that catches
-  // a story which compiles and then crashes on render is the wrong default.
-  if (process.env.STORYBOOK_RUNTIME_VALIDATION === 'false') {
-    return false;
-  }
-
-  // In proxy mode we know Storybook is reachable.
-  if (process.env.STORYBOOK_PROXY_ENABLED === 'true') {
-    return true;
-  }
-
-  // Otherwise the check is on; validateStoryRuntime reports `not_run` when no
-  // Storybook URL can be resolved, which is honest and costs nothing.
-  return true;
+  return process.env.STORYBOOK_RUNTIME_VALIDATION === 'true';
 }
 
 /**

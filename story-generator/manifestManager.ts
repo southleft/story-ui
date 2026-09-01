@@ -14,6 +14,7 @@
  * - Reconciliation on server startup fixes any drift (manual file deletions, etc.)
  */
 
+import type { PropPin } from './editing/pins.js';
 import fs from 'fs';
 import path from 'path';
 import { loadUserConfig } from './configLoader.js';
@@ -57,6 +58,11 @@ export interface ManifestEntry {
     model?: string;
     /** The original generation prompt */
     prompt?: string;
+    /**
+     * Props the user set by hand in the property panel. Re-applied after every
+     * model rewrite so a chat edit cannot undo a direct one. See editing/pins.ts.
+     */
+    pins?: PropPin[];
     /**
      * Completion payload of the most recent generation. The panel lives in
      * Storybook's preview iframe, which reloads when the new story file lands

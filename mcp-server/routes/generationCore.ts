@@ -27,6 +27,8 @@ import { createFrameworkAwareFallbackStory, isFallbackStoryCode } from './storyH
 import { isBlacklistedComponent, isBlacklistedIcon, getBlacklistErrorMessage, ICON_CORRECTIONS } from '../../story-generator/componentBlacklist.js';
 import { StoryTracker, StoryMapping } from '../../story-generator/storyTracker.js';
 import { getManifestManager } from '../../story-generator/manifestManager.js';
+import { reapplyPins, pinsForPrompt, describePin, type PropPin } from '../../story-generator/editing/pins.js';
+import type { PreviewReady } from './streamTypes.js';
 import { getDocumentation } from '../../story-generator/documentation-sources.js';
 import { postProcessStory, fixBarrelImports, splitScopeImports, editDivergence } from '../../story-generator/postProcessStory.js';
 import { validateStory } from '../../story-generator/storyValidator.js';
@@ -150,6 +152,8 @@ export interface GenerationEvents {
   onLLMCall?(): void;
   /** Fired once with the run's id, so a client can cancel this specific run. */
   onStarted?(generationId: string): void;
+  /** The file is written. Show it; the rest is background. */
+  onPreviewReady?(preview: PreviewReady): void;
 }
 
 /**
@@ -223,6 +227,10 @@ export interface GenerationOutcome {
   chatSummary?: string;
   /** Short follow-up prompt ideas the user can click to refine. */
   suggestions?: string[];
+  /** Advice for the user to read — never rendered as a clickable prompt. */
+  notice?: string;
+  /** Hand-set props re-applied after the model's rewrite. */
+  pins?: { applied: string[]; kept: string[]; lost: string[] };
   /**
    * Storybook component ID (the `--<story>` prefix) for the generated story,
    * so clients can navigate to it without guessing.
@@ -703,6 +711,15 @@ async function runStoryGenerationPipeline(
    * guard is skipped for exactly this baseline.
    */
   let previousCodeIsFallback = false;
+  /**
+   * Props the user set by hand on this story. Told to the model, and
+   * re-applied to whatever it returns — the model rewrites props as a matter
+   * of style even when asked not to.
+   */
+  const pins: PropPin[] = (isActualUpdate && fileName)
+    ? (() => { try { return getManifestManager().get(fileName)?.metadata?.pins ?? []; } catch { return []; } })()
+    : [];
+  const pinReport = { applied: new Set<string>(), kept: new Set<string>(), lost: new Set<string>() };
   let parentVersionId: string | undefined;
   let oldTitle: string | undefined;
   let oldStoryUrl: string | undefined;
@@ -809,6 +826,7 @@ async function runStoryGenerationPipeline(
       considerations,
       storybookContext,
       selection,
+      pins,
       storybookUrl: config.storybookMcpUrl || storybookUrl || getStorybookUrl() || undefined,
     }
   );
@@ -1267,6 +1285,18 @@ async function runStoryGenerationPipeline(
   // so both go through identical title/prefix/id/import treatment.
   const finalizeStoryCode = (code: string): { code: string; finalValidationErrors: string[] } => {
     let fixed = postProcessStory(code, config.importPath);
+    // Whatever the model did to a hand-set prop, put it back. Runs on the
+    // first result, on a runtime-healed result and on a repair candidate
+    // alike, because all three come through here.
+    if (pins.length) {
+      const r = reapplyPins(fixed, pins);
+      fixed = r.code;
+      for (const p of r.applied) pinReport.applied.add(describePin(p));
+      for (const p of r.kept) pinReport.kept.add(describePin(p));
+      for (const p of r.lost) pinReport.lost.add(describePin(p));
+      if (r.applied.length) logger.log(`📌 Restored ${r.applied.length} pinned prop(s) the model had changed: ${r.applied.map(describePin).join(', ')}`);
+      if (r.lost.length) logger.warn(`📌 ${r.lost.length} pinned prop(s) no longer have an element: ${r.lost.map(describePin).join(', ')}`);
+    }
     fixed = frameworkAdapter.postProcess(fixed);
     fixed = applyTitleAndId(fixed, cleanTitle, storyIdSlug, config.storyPrefix);
     fixed = alignStorybookTypesImport(fixed, config.storybookFramework);
@@ -1349,8 +1379,26 @@ async function runStoryGenerationPipeline(
   // A story may come with a stylesheet — inline style cannot express hover,
   // focus-visible or active states, so anything with real interaction needs one.
   // generatedStylesheet is captured from the model response below.
+  /**
+   * The last bytes this pipeline put on disk. Once the preview is shown, the
+   * user can edit the file (a prop edit, their editor) while verification and
+   * repair are still running; a later write from here would silently discard
+   * that. So every write after the first checks the file is still ours.
+   */
+  let lastWritten: string | undefined;
+  class FileChangedError extends Error {
+    constructor() { super('The story file was changed by someone else while the pipeline was still working on it — leaving their version in place'); this.name = 'FileChangedError'; }
+  }
   const writeStory = (code: string): string => {
     const dir = path.resolve(process.cwd(), config.generatedStoriesPath || './src/stories/generated/');
+    if (lastWritten !== undefined) {
+      let onDisk: string | undefined;
+      try { onDisk = fs.readFileSync(path.join(dir, finalFileName), 'utf-8'); } catch { onDisk = undefined; }
+      if (onDisk !== undefined && onDisk !== lastWritten) {
+        logger.warn('✋ ' + new FileChangedError().message);
+        throw new FileChangedError();
+      }
+    }
     const { storyPath } = writeStoryArtifacts({
       dir,
       fileName: finalFileName,
@@ -1360,10 +1408,66 @@ async function runStoryGenerationPipeline(
     // Collect stylesheets whose story was removed by any of the many delete
     // paths that know nothing about them.
     sweepOrphanedArtifacts(dir);
+    lastWritten = code;
     return storyPath;
   };
 
   let outPath = writeStory(fixedFileContents);
+
+  /**
+   * The story exists. Tell the client now.
+   *
+   * Everything below — runtime check, browser verification, repair, the chat
+   * summary — used to stand between the write and the first preview, which
+   * made a 49-second generation feel like 49 seconds when the file had been
+   * on disk since second 38. The manifest is upserted here too, so a panel
+   * that reloads during the background work still finds the story.
+   */
+  const earlyStorybookId = computeStorybookId(fixedFileContents, storyIdSlug);
+  if (!isFallbackStory) {
+    try {
+      getManifestManager().upsert(finalFileName, {
+        id: storyIdSlug,
+        title: cleanTitle,
+        source: (conversation?.length ?? 0) > 0 ? 'panel' : 'mcp-external',
+        metadata: {
+          provider: provider ?? undefined,
+          model: model ?? undefined,
+          prompt,
+          lastCompletion: {
+            code: fixedFileContents.slice(0, 60_000),
+            generationTimeMs: Date.now() - startedAt,
+            storybookId: earlyStorybookId,
+          },
+        },
+      });
+    } catch (earlyManifestErr) {
+      logger.warn('[manifest] early upsert failed (non-fatal):', earlyManifestErr);
+    }
+    events.onPreviewReady?.({
+      fileName: finalFileName,
+      title: cleanTitle,
+      storybookId: earlyStorybookId,
+      isUpdate: isActualUpdate,
+      code: fixedFileContents,
+    });
+  }
+
+  /**
+   * The conversational reply runs alongside verification instead of after it.
+   * It depends on the request and the components used, both known now; the
+   * verification badge is reported separately, so nothing the summary says
+   * can be contradicted by a repair that lands later.
+   */
+  const summaryPromise = isFallbackStory ? null : generateChatSummary({
+    prompt,
+    isUpdate: isActualUpdate,
+    title: cleanTitle,
+    componentsUsed: analyzeGeneratedCode(fixedFileContents, prompt, config).componentsUsed.map(c => c.name),
+    framework: detectedFramework,
+    provider,
+    model,
+  }).catch((err) => { logger.warn(`Chat summary failed: ${err instanceof Error ? err.message : String(err)}`); return null; });
 
   // --- Runtime validation, wired into the healing loop ---
   // Requires the file on disk (Storybook must rebuild it), so it runs after
@@ -1818,35 +1922,29 @@ async function runStoryGenerationPipeline(
   };
   storyTracker.registerStory(mapping);
 
+  // The analysis the summary and the completion describe is of the code that
+  // was actually written — after healing and repair.
   const analysis = analyzeGeneratedCode(fixedFileContents, prompt, config);
 
-  // Conversational reply + follow-up suggestions (model-authored). Computed
-  // BEFORE the manifest upsert so the assistant's reply is persisted
-  // server-side — the panel lives in Storybook's preview iframe, which can
-  // reload when the new story file lands, killing the in-flight SSE stream.
   let chatSummary: string | undefined;
   let suggestions: string[] | undefined;
-  if (!isFallbackStory) {
-    const conversational = await generateChatSummary({
-      prompt,
-      isUpdate: isActualUpdate,
-      title: cleanTitle,
-      componentsUsed: analysis.componentsUsed.map(c => c.name),
-      framework: detectedFramework,
-      provider,
-      model,
-    });
+  if (summaryPromise) {
+    const conversational = await summaryPromise;
     chatSummary = conversational?.summary;
     suggestions = conversational?.suggestions;
     if (chatSummary) events.onLLMCall?.();
   }
-  if (!suggestions?.length) {
-    suggestions = isFallbackStory
-      ? ['Story generation failed. Please try rephrasing your request.']
-      : hasValidationWarnings
-        ? ['Some automatic fixes were applied. Review the generated code.']
-        : undefined;
-  }
+  /**
+   * Advice is not a suggestion. These strings used to ride in `suggestions`,
+   * which the workspace renders as chips that send their text as the next
+   * prompt — so "Story generation failed. Please try rephrasing your request."
+   * could be sent to the model as a request.
+   */
+  const noticeParts: string[] = [];
+  if (isFallbackStory) noticeParts.push('The generation did not produce a working story. Try rephrasing the request, or make it narrower.');
+  else if (hasValidationWarnings) noticeParts.push('Some automatic fixes were applied; check the code view.');
+  if (pinReport.lost.size) noticeParts.push(`Could not keep ${pinReport.lost.size} hand-set prop(s) because the element is gone: ${[...pinReport.lost].join(', ')}.`);
+  const notice = noticeParts.length ? noticeParts.join(' ') : undefined;
 
   const storybookId = computeStorybookId(fixedFileContents, storyIdSlug);
 
@@ -1942,8 +2040,14 @@ async function runStoryGenerationPipeline(
     logger.warn('[manifest] upsert error (non-fatal):', manifestErr);
   }
 
-  // History
-  historyManager.addVersion(finalFileName, prompt, fixedFileContents, parentVersionId);
+  // History — through a manager loaded NOW. The one built at the start of the
+  // run holds a snapshot from minutes ago; saving through it overwrote any
+  // version a prop edit recorded in the meantime.
+  try {
+    new StoryHistoryManager(process.cwd()).addVersion(finalFileName, prompt, fixedFileContents, parentVersionId);
+  } catch (historyErr) {
+    logger.warn('[history] version record failed (non-fatal):', historyErr);
+  }
 
   // URL redirect when an update renamed the story
   if (isActualUpdate && oldTitle && oldStoryUrl) {
@@ -1994,6 +2098,8 @@ async function runStoryGenerationPipeline(
     },
     chatSummary,
     suggestions,
+    notice,
+    pins: pins.length ? { applied: [...pinReport.applied], kept: [...pinReport.kept], lost: [...pinReport.lost] } : undefined,
     storybookId,
     verification,
   };
@@ -2105,6 +2211,8 @@ async function buildClaudePromptWithContext(
     storybookContext?: StorybookMcpContext;
     /** Prose description of the element the user pointed at, if any. */
     selection?: string;
+    /** Props the user set by hand, which the model must not restyle. */
+    pins?: PropPin[];
     /** Where this project's Storybook is served, so its own stories can be read. */
     storybookUrl?: string;
   }
@@ -2244,6 +2352,11 @@ async function buildClaudePromptWithContext(
   // the whole story file, so without it a request to recolour one icon can
   // quietly restructure a dashboard that was already correct — observed: an
   // edit introduced a verification blocker into a composition that had none.
+  if (options.pins?.length) {
+    logger.log(`📌 ${options.pins.length} pinned prop(s) carried into the prompt`);
+    prompt = injectBeforeUserRequest(prompt, pinsForPrompt(options.pins));
+  }
+
   if (options.selection) {
     logger.log(`🎯 Scoping the edit to: ${options.selection}`);
     prompt = injectBeforeUserRequest(prompt, [

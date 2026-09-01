@@ -8,6 +8,7 @@
 // Event types for SSE stream
 export type StreamEventType =
   | 'started'          // Names the run, so the client can cancel this one
+  | 'preview_ready'    // The file is on disk and indexed-or-indexing: show it now
   | 'intent'           // Initial plan/intent before execution
   | 'progress'         // Step-by-step progress updates
   | 'validation'       // Validation results (errors, warnings)
@@ -111,8 +112,19 @@ export interface CompletionFeedback {
     reason?: string;
   }[];
 
-  // Warnings or suggestions (also rendered as clickable follow-up chips)
+  // Model-authored follow-up ideas, rendered as clickable chips. Never advice.
   suggestions?: string[];
+
+  /**
+   * Something the user should read, not click: "automatic fixes were
+   * applied", "the run failed, try rephrasing". These used to travel in
+   * `suggestions` and were rendered as chips that sent themselves as the
+   * next prompt.
+   */
+  notice?: string;
+
+  /** Hand-set props re-applied after the model's rewrite, and any it could not keep. */
+  pins?: { applied: string[]; kept: string[]; lost: string[] };
 
   // Conversational, model-authored reply describing what was built.
   // Rendered as the assistant's chat message in the panel.
@@ -176,11 +188,24 @@ export interface GenerationStarted {
   generationId: string;
 }
 
+/**
+ * The story exists. Everything after this event — runtime check, browser
+ * verification, repair, the chat summary — is background work that updates
+ * the badge; none of it should stand between the user and the preview.
+ */
+export interface PreviewReady {
+  fileName: string;
+  title: string;
+  storybookId?: string;
+  isUpdate: boolean;
+  code: string;
+}
+
 // Union type for all stream events
 export interface StreamEvent {
   type: StreamEventType;
   timestamp: number;
-  data: GenerationStarted | IntentPreview | ProgressUpdate | ValidationFeedback | RetryInfo | CompletionFeedback | ErrorFeedback;
+  data: GenerationStarted | PreviewReady | IntentPreview | ProgressUpdate | ValidationFeedback | RetryInfo | CompletionFeedback | ErrorFeedback;
 }
 
 // Request body for streaming endpoint

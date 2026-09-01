@@ -570,6 +570,9 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       thumbnails: t.thumbnails,
     }));
 
+    // The server fires preview_ready the moment the file is written. Point the
+    // canvas at it then; verification and repair narrate in the rail meanwhile.
+    let previewShown = false;
     const result = await generate({
       prompt,
       // mediaType must describe the bytes we actually encoded — after
@@ -591,6 +594,14 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       // right now — recovery then demands a STRICTLY newer one, so resending
       // an identical prompt can never re-match the previous completion.
       knownUpdatedAt: activeFile ? byFileName(activeFile.fileName)?.entry.updatedAt : undefined,
+    }, async (preview) => {
+      if (!preview.storybookId) return;
+      const resolved = await waitForStory(preview.storybookId, preview.title);
+      if (!resolved) return;
+      setActiveStory({ id: resolved, title: preview.title || 'Untitled' });
+      setReloadToken(t => t + 1);
+      setNotIndexed(null);
+      previewShown = true;
     });
 
     if (!result) return;
@@ -598,7 +609,11 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     // The file is written before Storybook has indexed it, so resolve the real
     // story id before pointing the canvas at it.
     let storyId = result.storybookId;
-    if (storyId) {
+    if (storyId && previewShown) {
+      // Already on screen since preview_ready. A repair may have rewritten the
+      // file since; one reload picks that up.
+      setReloadToken(t => t + 1);
+    } else if (storyId) {
       // Pass the title too: the id Storybook assigns may be derived from it
       // rather than from the filename slug the server reports.
       const resolved = await waitForStory(storyId, result.title);
@@ -632,7 +647,11 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       {
         id: uid(),
         role: 'assistant',
-        text: result.chatSummary || (result.success ? `Created ${result.title}.` : 'That generation did not succeed.'),
+        text: [
+          result.chatSummary || (result.success ? `Created ${result.title}.` : 'That generation did not succeed.'),
+          result.pins?.applied?.length ? `Kept your hand-set props: ${result.pins.applied.join(', ')}.` : '',
+          result.notice || '',
+        ].filter(Boolean).join('\n\n'),
         elapsedMs: result.elapsedMs,
         suggestions: result.suggestions,
         verification: summarizeVerification(result.verification),

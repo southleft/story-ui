@@ -68,6 +68,10 @@ export interface GenerationResult {
   suggestions?: string[];
   verification?: Verification;
   elapsedMs: number;
+  /** Advice to read, never a chip to click. */
+  notice?: string;
+  /** Hand-set props re-applied after the model's rewrite. */
+  pins?: { applied: string[]; kept: string[]; lost: string[] };
 }
 
 export interface GenerationRequest {
@@ -110,6 +114,15 @@ export interface GenerationRequest {
    * source, and a compiled class hash appears nowhere in it.
    */
   selection?: string;
+}
+
+/** The server wrote the file. Everything after this is background work. */
+export interface PreviewReadyInfo {
+  fileName: string;
+  title: string;
+  storybookId?: string;
+  isUpdate: boolean;
+  code: string;
 }
 
 const PENDING_KEY = 'story-ui-v2-pending';
@@ -279,7 +292,7 @@ export function useGeneration(apiBase: string) {
   }, [apiBase]);
 
   const generate = useCallback(
-    async (request: GenerationRequest): Promise<GenerationResult | null> => {
+    async (request: GenerationRequest, onPreviewReady?: (preview: PreviewReadyInfo) => void): Promise<GenerationResult | null> => {
       reset();
       setBusy(true);
       startedRef.current = Date.now();
@@ -373,6 +386,12 @@ export function useGeneration(apiBase: string) {
                 // The server names the run so Stop can cancel it.
                 if (data.generationId) generationIdRef.current = data.generationId;
                 break;
+              case 'preview_ready':
+                // Show the story now; verification keeps narrating in the rail.
+                if (data.fileName) {
+                  try { onPreviewReady?.(data as PreviewReadyInfo); } catch { /* the caller's problem */ }
+                }
+                break;
               case 'error':
                 failure = data.message || 'Generation failed';
                 break;
@@ -430,6 +449,8 @@ export function useGeneration(apiBase: string) {
         code: completion.code,
         chatSummary: completion.chatSummary,
         suggestions: completion.suggestions,
+        notice: completion.notice,
+        pins: completion.pins,
         verification: completion.verification,
         elapsedMs: Date.now() - startedRef.current,
       };

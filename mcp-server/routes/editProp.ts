@@ -29,6 +29,7 @@ import { storybookComponentDirs } from '../../story-generator/knowledge/storyboo
 import { loadUserConfig } from '../../story-generator/configLoader.js';
 import { readDesignTokens } from '../../story-generator/knowledge/stylingFacts.js';
 import { StoryHistoryManager } from '../../story-generator/storyHistory.js';
+import { upsertPin } from '../../story-generator/editing/pins.js';
 import { getManifestManager } from '../../story-generator/manifestManager.js';
 import { logger } from '../../story-generator/logger.js';
 
@@ -563,10 +564,17 @@ export async function editPropHandler(req: Request, res: Response): Promise<void
     } catch (historyError) {
       logger.warn('[edit-prop] version record failed (non-fatal):', historyError);
     }
+    // The pin is what lets this edit survive the next chat rewrite.
+    let pins: ReturnType<typeof upsertPin> | undefined;
     try {
+      const existing = getManifestManager().get(String(fileName))?.metadata?.pins;
+      pins = upsertPin(existing, {
+        component: resolved, occurrence: targetOccurrence, prop: String(prop),
+        value: value as string | number | boolean | null,
+      });
       getManifestManager().upsert(String(fileName), {
         source: 'panel',
-        metadata: { prompt: editDescription },
+        metadata: { prompt: editDescription, pins },
       });
     } catch (manifestError) {
       logger.warn('[edit-prop] manifest update failed (non-fatal):', manifestError);
@@ -582,6 +590,8 @@ export async function editPropHandler(req: Request, res: Response): Promise<void
        * and the DOM occurrence cannot be mapped one-to-one.
        */
       component: resolved,
+      /** Every prop the panel has pinned on this story, after this edit. */
+      pins,
       occurrencesInSource: occurrencesInSource(result.code, resolved),
     });
   } catch (error) {

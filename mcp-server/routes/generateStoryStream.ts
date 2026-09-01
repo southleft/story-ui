@@ -20,6 +20,7 @@ import {
   ValidationFeedback,
   CompletionFeedback,
   ErrorFeedback,
+  PreviewReady,
   formatSSE,
   createStreamEvent,
   StreamGenerateRequest,
@@ -44,6 +45,11 @@ class StreamWriter {
   /** Tell the client which run this is, so Stop can cancel it. */
   sendStarted(generationId: string): void {
     this.send(createStreamEvent('started', { generationId }));
+  }
+
+  /** The file is on disk: the client should show it now and treat the rest as background. */
+  sendPreviewReady(preview: PreviewReady): void {
+    this.send(createStreamEvent('preview_ready', preview));
   }
 
   /**
@@ -178,6 +184,7 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
         onRetry: (attempt, maxAttempts, reason, errors) =>
           stream.sendRetry(attempt, maxAttempts, reason, errors),
         onStarted: (generationId) => stream.sendStarted(generationId),
+        onPreviewReady: (preview) => stream.sendPreviewReady(preview),
         onLLMCall: () => stream.trackLLMCall(),
       }
     );
@@ -199,6 +206,8 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
       layoutChoices: outcome.analysis.layoutChoices,
       styleChoices: outcome.analysis.styleChoices,
       suggestions: outcome.suggestions,
+      notice: outcome.notice,
+      pins: outcome.pins,
       chatSummary: outcome.chatSummary,
       storybookId: outcome.storybookId,
       // Browser verification — forwarded verbatim so the panel can show what was
