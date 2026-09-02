@@ -78,6 +78,7 @@ import { processImageInputs, ImageInput } from '../../story-generator/imageProce
 import { processFileInputs, fileFraming, FileInput } from '../../story-generator/fileAttachments.js';
 import { checkTokenUsage, formatTokenErrors } from '../../story-generator/knowledge/tokenConformance.js';
 import { targetComponentFromSelection, repairWithinTarget, scopedCritiqueRequest, repairScopeNote } from '../../story-generator/editing/repairScope.js';
+import { relocateUnresolvableImports, resolveLocalModule, relativeSpecifier } from '../../story-generator/editing/relocateImports.js';
 import { VisionPromptType, buildVisionAwarePrompt } from '../../story-generator/visionPrompts.js';
 import { ImageContent, MessageContent, TextContent } from '../../story-generator/llm-providers/types.js';
 import {
@@ -1133,6 +1134,16 @@ async function runStoryGenerationPipeline(
      * spending another LLM call on an instruction that has not worked.
      */
     aiText = splitScopeImports(aiText, config.importPath, componentHomes);
+    {
+      // A relative import that does not resolve is a story Vite cannot serve.
+      // Where discovery knows the file, the fix is on disk — apply it here,
+      // before validation, and say so.
+      const moved = relocateUnresolvableImports(aiText, path.resolve(process.cwd(), config.generatedStoriesPath || './src/stories/generated'), components as any);
+      if (moved.relocated.length) {
+        logger.log(`🧭 Relocated ${moved.relocated.length} import(s) to the files discovery knows: ${moved.relocated.slice(0, 6).join('; ')}`);
+        aiText = moved.code;
+      }
+    }
 
     // Step 5: Validation (pattern + AST + imports)
     events.onProgress?.(5, totalSteps, 'validating', 'Validating generated code...');
@@ -1237,6 +1248,16 @@ async function runStoryGenerationPipeline(
     // barrel rewriting) can reintroduce a scope-root import after the first
     // repair, and validation must judge the code that will actually be written.
     aiText = splitScopeImports(aiText, config.importPath, componentHomes);
+    {
+      // A relative import that does not resolve is a story Vite cannot serve.
+      // Where discovery knows the file, the fix is on disk — apply it here,
+      // before validation, and say so.
+      const moved = relocateUnresolvableImports(aiText, path.resolve(process.cwd(), config.generatedStoriesPath || './src/stories/generated'), components as any);
+      if (moved.relocated.length) {
+        logger.log(`🧭 Relocated ${moved.relocated.length} import(s) to the files discovery knows: ${moved.relocated.slice(0, 6).join('; ')}`);
+        aiText = moved.code;
+      }
+    }
     const isolationErrors = validateImportIsolation(aiText, config, detectedFramework, considerationsText, components as any);
     // A resolving specifier is not an existing binding: verified against the
     // module on disk, for relative imports where that answer is certain.
@@ -1544,6 +1565,13 @@ async function runStoryGenerationPipeline(
      * put the scope import back.
      */
     fixed = splitScopeImports(fixed, config.importPath, componentHomes);
+    {
+      const moved = relocateUnresolvableImports(fixed, path.resolve(process.cwd(), config.generatedStoriesPath || './src/stories/generated'), components as any);
+      if (moved.relocated.length) {
+        logger.log(`🧭 Relocated ${moved.relocated.length} import(s) before writing: ${moved.relocated.slice(0, 6).join('; ')}`);
+        fixed = moved.code;
+      }
+    }
 
     return {
       code: fixed,
@@ -3288,24 +3316,8 @@ function hasPackageManifest(specifier: string): boolean {
 const LOCAL_EXTENSIONS = ['.tsx', '.ts', '.jsx', '.js', '.mjs'];
 
 /** An importable specifier for `file`, as written from `fromDir`. */
-function relativeSpecifier(fromDir: string, file: string): string {
-  let rel = path.relative(fromDir, file).replace(/\\/g, '/');
-  rel = rel.replace(/\.(tsx|ts|jsx|js|mjs)$/, '').replace(/\/index$/, '');
-  return rel.startsWith('.') ? rel : `./${rel}`;
-}
 
 /** Resolve a relative specifier to a file the way the bundler would. */
-function resolveLocalModule(specifier: string, fromDir: string): string | null {
-  const base = path.resolve(fromDir, specifier);
-  for (const ext of LOCAL_EXTENSIONS) {
-    if (fs.existsSync(base + ext)) return base + ext;
-  }
-  for (const ext of LOCAL_EXTENSIONS) {
-    const indexFile = path.join(base, `index${ext}`);
-    if (fs.existsSync(indexFile)) return indexFile;
-  }
-  return fs.existsSync(base) && fs.statSync(base).isFile() ? base : null;
-}
 
 /**
  * Names a module exports, following `export * from` one hop.
@@ -3393,9 +3405,26 @@ export function validateLocalNamedImports(
     if (bindings.length === 0) continue;
 
     const file = resolveLocalModule(specifier, generatedDir);
-    // An unresolvable relative path is a different fault, already reported by
-    // import validation; saying so twice helps nobody.
-    if (!file) continue;
+    if (!file) {
+      /**
+       * This used to `continue`, on the belief that import validation had
+       * already reported it. It had not. Three stories on a local library
+       * shipped with `from '../../components'` — a directory with no index —
+       * and every one showed Vite's red overlay. Absent is not a pass.
+       */
+      const fixes = bindings.map(b => {
+        const known = components.find(c => c.name === b && (c.__componentPath || c.filePath));
+        return known ? `import { ${b} } from '${known.__componentPath || relativeSpecifier(generatedDir, known.filePath!)}';` : null;
+      }).filter(Boolean);
+      errors.push(
+        `Import error: "${specifier}" does not resolve to a file from the generated stories directory ` +
+        `(no such module and no index file there). Vite cannot serve the story.` +
+        (fixes.length
+          ? `\nWrite instead:\n${fixes.join('\n')}`
+          : `\nImport ${bindings.join(', ')} from the exact path shown beside each component in the component reference.`),
+      );
+      continue;
+    }
 
     const available = exportedNames(file);
     // A module we could not read anything from tells us nothing. Staying quiet

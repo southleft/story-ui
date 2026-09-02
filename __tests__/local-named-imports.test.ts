@@ -120,11 +120,15 @@ describe('validateLocalNamedImports', () => {
     expect(validateLocalNamedImports(code, dir, components)).toEqual([]);
   });
 
-  it('says nothing about a path that does not resolve', () => {
-    // Already reported by import validation. Twice helps nobody.
+  it('refuses a path that does not resolve, and names the file to import from', () => {
+    // This used to expect silence, on the belief that import validation had
+    // already reported it. It had not: three stories shipped unservable.
     const dir = fixture(ds);
     const code = "import { Whatever } from '../../ds/DoesNotExist';";
-    expect(validateLocalNamedImports(code, dir, components)).toEqual([]);
+    const errors = validateLocalNamedImports(code, dir, components);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain('does not resolve');
+    expect(errors[0]).toContain('Vite cannot serve');
   });
 
   it('does not flag a default import, which binds any name it likes', () => {
