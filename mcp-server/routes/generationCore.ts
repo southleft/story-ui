@@ -110,6 +110,7 @@ import { isSafeStoryFileName,
   writeStoryArtifacts,
   extractStylesheet,
   sweepOrphanedArtifacts,
+  stripStoryPrefix,
 } from '../../story-generator/storyArtifacts.js';
 import { attemptVerificationRepair } from './verifyRepair.js';
 import type { VerifyReport, RepairSummary } from '../../story-generator/verify/findings.js';
@@ -944,7 +945,7 @@ async function runStoryGenerationPipeline(
     ? getLLMTitle(isActualUpdate && conversation
         ? (conversation.find((msg) => msg.role === 'user')?.content || prompt)
         : prompt, provider)
-    : Promise.resolve(originalTitle as string);
+    : Promise.resolve(stripStoryPrefix(originalTitle as string, config.storyPrefix));
 
   let aiText = '';
   /** Edit blocks the update was answered with, for the client's diff view. */

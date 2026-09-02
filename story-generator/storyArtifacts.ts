@@ -225,3 +225,17 @@ export function extractStylesheet(response: string, storyCode: string): string |
   const css = match[1].trim();
   return css.length > 0 ? css : null;
 }
+
+/**
+ * A title as the file declares it carries the story prefix (`Generated/Data
+ * Table`); a title as the user typed it does not. Clients send either, and an
+ * id derived from the prefixed form (`generated-data-table--default`) matches
+ * nothing in Storybook's index, so the update verified against a story that
+ * did not exist. One form, always.
+ */
+export function stripStoryPrefix(title: string, prefix: string | undefined): string {
+  const p = (prefix || '').replace(/\/+$/, '');
+  if (!p) return title.trim();
+  const t = title.trim();
+  return t.toLowerCase().startsWith(`${p.toLowerCase()}/`) ? t.slice(p.length + 1).trim() : t;
+}

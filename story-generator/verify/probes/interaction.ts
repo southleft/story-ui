@@ -191,7 +191,9 @@ export async function runInteractionProbe(
         ?? String((el as HTMLInputElement).checked ?? '');
 
       const allToggles = queryAll(
-        '[role="switch"], [role="checkbox"], input[type="checkbox"], [role="radio"], input[type="radio"]',
+        // Toggle buttons carry aria-pressed; a publication system's PillFilter
+        // and ToggleButton were skipped as "nothing interactive" without it.
+        '[role="switch"], [role="checkbox"], input[type="checkbox"], [role="radio"], input[type="radio"], button[aria-pressed], [role="button"][aria-pressed]',
       )
         .filter(el => {
           if ((el as HTMLInputElement).disabled) return false;

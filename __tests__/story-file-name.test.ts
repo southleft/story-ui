@@ -52,3 +52,14 @@ describe('writeStoryArtifacts', () => {
     expect(fs.existsSync(path.join(dir, '..', 'escaped.stories.tsx'))).toBe(false);
   });
 });
+
+describe('stripStoryPrefix', () => {
+  it('removes the configured prefix once, case-insensitively, and leaves plain titles alone', async () => {
+    const { stripStoryPrefix } = await import('../story-generator/storyArtifacts');
+    expect(stripStoryPrefix('Generated/Data Table', 'Generated/')).toBe('Data Table');
+    expect(stripStoryPrefix('generated/Data Table', 'Generated')).toBe('Data Table');
+    expect(stripStoryPrefix('Data Table', 'Generated/')).toBe('Data Table');
+    expect(stripStoryPrefix('Generated/Generated Reports', 'Generated/')).toBe('Generated Reports');
+    expect(stripStoryPrefix(' Data Table ', undefined)).toBe('Data Table');
+  });
+});
