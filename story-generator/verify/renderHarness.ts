@@ -103,6 +103,25 @@ export async function renderStory(options: RenderOptions): Promise<RenderResult>
     page = await context.newPage();
 
     page.on('pageerror', (err: Error) => pageErrors.push(err.message));
+    /**
+     * The browser sees "Failed to fetch dynamically imported module"; the
+     * REASON is in the body of the module request Vite answered 500 to —
+     * "Failed to resolve import '../../components' from …". Without it the
+     * repair model is told the story did not load and left to guess why.
+     */
+    page.on('response', (res: any) => {
+      try {
+        const status = res.status();
+        const url: string = res.url();
+        if (status < 400 || !/\.(stories|story)\.[jt]sx?(\?|$)|\/src\//.test(url)) return;
+        res.text().then((body: string) => {
+          let message = body;
+          try { const j = JSON.parse(body); message = j.message || j.error || body; } catch { /* html or text */ }
+          message = String(message).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400);
+          if (message) pageErrors.push(`Module request ${status} for ${url.replace(/\?.*$/, '').split('/').slice(-2).join('/')}: ${message}`);
+        }).catch(() => {});
+      } catch { /* a closed page */ }
+    });
     page.on('console', (msg: any) => {
       if (msg.type() === 'error') consoleErrors.push(msg.text());
     });
