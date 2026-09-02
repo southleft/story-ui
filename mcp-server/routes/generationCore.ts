@@ -2358,6 +2358,9 @@ async function runStoryGenerationPipeline(
               ...(verification.reason ? { reason: verification.reason.slice(0, 300) } : {}),
               blockers: verification.findings.filter(f => f.severity === 'blocker').length,
               warnings: verification.findings.filter(f => f.severity === 'warning').length,
+              // Whether the story loaded at all. The counts alone cannot say
+              // so, and a card reopened in another browser needs to.
+              ...(verification.findings.some(f => f.id === 'render-failed') ? { renderFailed: true } : {}),
               ...(typeof verification.metrics?.focusables === 'number'
                 ? { focusables: verification.metrics.focusables }
                 : {}),

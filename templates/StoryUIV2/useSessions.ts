@@ -56,6 +56,7 @@ export interface CompletionVerification {
   checksRun?: number;
   checksTotal?: number;
   checksNotRun?: string[];
+  renderFailed?: boolean;
 }
 
 export interface LastCompletion {
@@ -172,6 +173,7 @@ export function verificationFromCompletion(
     checksRun: asCount(v.checksRun),
     checksTotal: asCount(v.checksTotal),
     checksNotRun: asNames(v.checksNotRun),
+    renderFailed: v.renderFailed === true ? true : undefined,
   };
 }
 
