@@ -6,7 +6,7 @@ install to a handed-off story.
 ## Before you start
 
 - Node 20 or newer.
-- A project with Storybook 8 or newer already running (9 or 10 recommended).
+- A project with Storybook 10 or newer already running.
 - A React + TypeScript design system for the full workspace. Vue, Svelte,
   Angular and Web Components projects can generate stories through the classic
   panel; see "Framework support" in the [README](../README.md).
@@ -15,17 +15,15 @@ install to a handed-off story.
   browser downloaded (`npx playwright install chromium`), and `axe-core`.
   Without Playwright every story is reported as "Not verified".
 
-## 1. Install
+## 1. Install and initialise
 
 ```bash
-npm install -D @tpitre/story-ui
+npx @tpitre/story-ui@latest init
 ```
 
-## 2. Initialise
-
-```bash
-npx story-ui init
-```
+No prior install is needed: `init` adds `@tpitre/story-ui` to your
+devDependencies and installs it. (`npm install -D @tpitre/story-ui` followed by
+`npx story-ui init` does the same in two steps.)
 
 `init` reads `package.json` and detects the framework and Storybook builder.
 It then asks for:
@@ -45,13 +43,14 @@ What it writes:
 | File | Purpose |
 |---|---|
 | `story-ui.config.js` | Import path, paths, framework, layout rules. Kept as is on re-run unless `--force`. |
-| `.env` | `DEFAULT_PROVIDER`, the provider's key variable, `VITE_STORY_UI_PORT`. Skipped if `.env` exists. |
+| `.env` | `DEFAULT_PROVIDER`, the provider's key variable, `VITE_STORY_UI_PORT`. Merged line by line into an existing `.env`. |
 | `story-ui-considerations.md` | Rules for how the model must use your design system. |
 | `story-ui-docs/` | Where you put documentation about the design system. |
 | `src/stories/StoryUIV2/StoryUIV2.mdx` | The workspace. One file; the UI itself is imported from the package. |
 | `src/stories/StoryUI/` | The classic panel and the Voice Canvas. Existing files are kept unless `--force`. |
 | `.storybook/preview.tsx` | Provider wrapper for the design system, when one is needed and can be derived. |
-| `.storybook/manager.ts` | The "Edit in Story UI" toolbar button. Storybook 9+ only. |
+| `.storybook/manager.ts` | The Story UI page (`?path=/workspace/`) and the "Edit in Story UI" toolbar button. |
+| `.storybook/manager-head.html` | A `<meta name="story-ui-port">` telling the manager page which port the server uses. |
 | `package.json` | `story-ui` and `storybook-with-ui` scripts; `concurrently`, `react-live`, and `@storybook/react` on React hosts, when missing. |
 | `.gitignore` | `.env`, the generated stories directory, `.story-ui-history/`. |
 

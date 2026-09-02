@@ -65,7 +65,6 @@ Environment:
 | `PORT` | The public port; Railway sets it |
 | `CLAUDE_API_KEY` / `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` | At least one |
 | `DEFAULT_PROVIDER`, `DEFAULT_MODEL` | Optional |
-| `ALLOWED_PROVIDERS`, `ALLOWED_MODELS`, `SINGLE_PROVIDER_MODE` | Optional cost controls |
 | `STORY_UI_ALLOWED_ORIGINS` | Only if the page is served from a domain not covered above |
 
 A start script, adapted from this repository's `start-live.sh`:
