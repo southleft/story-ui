@@ -522,18 +522,23 @@ export function autoDetectDesignSystem(): Partial<StoryUIConfig> | null {
     const analysis = analyzeExistingStories(cwd);
     console.log(`📊 Analysis found: ${analysis.storyFiles.length} story files, ${analysis.componentDirs.length} component directories`);
 
-    // Determine if we're using an external package
-    const isExternalPackage = knownSystems && knownSystems.importPath &&
-      !knownSystems.importPath.startsWith('.') &&
-      !knownSystems.importPath.startsWith('/');
+    // Determine the most likely import path: a known system from package.json
+    // first, then what the project's own stories import.
+    const importPath = knownSystems?.importPath || findMostLikelyImportPath(analysis.importPaths, packageJson.name);
+
+    /**
+     * External means the RESOLVED import path is a bare specifier, whether
+     * it came from the known list or from the stories. Judging it from the
+     * known list alone gave an MUI project — found through its stories, not
+     * the list — a componentsPath pointing at its own stories folder.
+     */
+    const isExternalPackage = Boolean(importPath) && !importPath.startsWith('.') && !importPath.startsWith('/')
+      && Boolean(dependencies[importPath.split('/').slice(0, importPath.startsWith('@') ? 2 : 1).join('/')]);
 
     // Only determine component path if we're not using an external package
     const componentPath = !isExternalPackage ?
       findMostLikelyComponentDirectory(analysis.componentDirs, cwd) :
       undefined;
-
-    // Determine the most likely import path
-    const importPath = findMostLikelyImportPath(analysis.importPaths, packageJson.name);
 
     // Determine component prefix
     const componentPrefix = findMostLikelyPrefix(analysis.componentPrefixes);
@@ -574,7 +579,25 @@ export function autoDetectDesignSystem(): Partial<StoryUIConfig> | null {
 /**
  * Detects known design systems from package.json dependencies
  */
+/**
+ * npm design systems recognised by package name alone. The import path is the
+ * package; discovery reads its declarations for everything else.
+ */
+const KNOWN_NPM_DESIGN_SYSTEMS: string[] = [
+  '@mui/material', '@carbon/react', '@fluentui/react-components', '@radix-ui/themes',
+  '@base-ui/react', '@shopify/polaris', '@primer/react', '@heroui/react', '@nextui-org/react',
+  'flowbite-react', '@salt-ds/core', '@blueprintjs/core', '@adobe/react-spectrum', 'react-aria-components',
+  '@atlaskit/button', 'vuetify', 'primevue', 'element-plus', '@angular/material', 'primeng',
+  'flowbite-svelte', '@skeletonlabs/skeleton', '@shoelace-style/shoelace',
+];
+
 function detectKnownDesignSystems(dependencies: Record<string, string>): Partial<StoryUIConfig> | null {
+  for (const pkg of KNOWN_NPM_DESIGN_SYSTEMS) {
+    if (dependencies[pkg]) {
+      // Atlassian is one package per component; the scope is the design system.
+      return { importPath: pkg === '@atlaskit/button' ? '@atlaskit' : pkg };
+    }
+  }
   // Chakra UI detection
   if (dependencies['@chakra-ui/react']) {
     return {
@@ -707,7 +730,10 @@ function findMostLikelyComponentDirectory(componentDirs: string[], projectRoot: 
 /**
  * Finds the most likely import path based on import analysis
  */
-function findMostLikelyImportPath(importPaths: string[], packageName?: string): string {
+/** Runtime and tooling packages a story imports that are never the design system. */
+const NOT_A_DESIGN_SYSTEM = /^(react|react-dom|react\/.*|react-dom\/.*|storybook|storybook\/.*|@storybook\/.*|@testing-library\/.*|jest|vitest|@vitest\/.*|vite|next|next\/.*)$/;
+
+export function findMostLikelyImportPath(importPaths: string[], packageName?: string): string {
   if (importPaths.length === 0) {
     return packageName || 'your-component-library';
   }
@@ -716,11 +742,14 @@ function findMostLikelyImportPath(importPaths: string[], packageName?: string): 
   const pathCounts: Record<string, number> = {};
 
   for (const importPath of importPaths) {
-    // Skip common non-component libraries
-    if (importPath.includes('react') || importPath.includes('storybook') ||
-        importPath.includes('testing') || importPath.includes('jest')) {
-      continue;
-    }
+    /**
+     * Skip the runtime, not everything with "react" in its name. The old
+     * substring test dropped @carbon/react, @chakra-ui/react and
+     * @fluentui/react-components — the design system itself — and a fresh
+     * Carbon project was configured with its own package name as the
+     * import path.
+     */
+    if (NOT_A_DESIGN_SYSTEM.test(importPath)) continue;
 
     pathCounts[importPath] = (pathCounts[importPath] || 0) + 1;
   }

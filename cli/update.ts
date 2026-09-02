@@ -585,12 +585,16 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
     console.log(chalk.gray('   • story-ui-docs/ (your documentation)'));
     console.log(chalk.gray('   • src/stories/generated/ (your generated stories)'));
 
-    const { confirm } = await inquirer.prompt([{
-      type: 'confirm',
-      name: 'confirm',
-      message: `Update ${filesToUpdate.length} file(s)?`,
-      default: true
-    }]);
+    // No terminal means no question: an agent or CI would hang on it.
+    const unattended = !process.stdin.isTTY || process.env.CI === 'true' || process.env.CI === '1' || process.env.STORY_UI_NONINTERACTIVE === 'true';
+    const { confirm } = unattended
+      ? { confirm: true }
+      : await inquirer.prompt([{
+          type: 'confirm',
+          name: 'confirm',
+          message: `Update ${filesToUpdate.length} file(s)?`,
+          default: true
+        }]);
 
     if (!confirm) {
       console.log(chalk.yellow('\n⏹️  Update cancelled.'));

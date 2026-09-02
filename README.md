@@ -137,6 +137,22 @@ The four React shapes that are developed against, because each hid a distinct
 bug: barrel npm packages (Mantine, Carbon), subpath npm packages (MUI), one
 package per component (Atlassian), and local source (Radix + Tailwind).
 
+## Installing with an AI agent or a script
+
+`init` never asks a question when there is no terminal: with no TTY, `CI=true`, or `STORY_UI_NONINTERACTIVE=true` every answer comes from flags and detection, so an agent running the commands cannot hang on a prompt. The same flags work interactively.
+
+```bash
+npm install --save-dev @tpitre/story-ui        # or pnpm add -D / yarn add -D
+npx story-ui init --yes --provider claude --api-key "$ANTHROPIC_API_KEY" --json
+npx story-ui check --json                       # exit 0 when the install is usable
+npm run story-ui                                 # the server, on the port init chose
+npm run storybook                                # open ?path=/workspace/
+```
+
+What `init --yes` decides on its own: the design system from `package.json` (Mantine, MUI, Chakra, Carbon and the others in `--design-system`), or a local component library from the project's own stories and component directories (`src/components`, `src/ui`, `components`, …) when no npm design system is present; the Storybook framework; a free port from 4001. Override any of it with `--import-path`, `--components-path`, `--component-prefix`, `--stories-path`, `--port`. `--json` prints a `STORY_UI_INIT {…}` line with what was written. Re-running `init` keeps an existing config and panel files unless `--force`.
+
+`story-ui check` verifies the result with facts, not assumptions: the config loads, the import path resolves (an installed package or a local directory), discovery finds components and how many have props, the generated directory exists, Storybook's globs cover the Story UI entries, the manager addon is wired, a provider key is set, and whether the server answers. `update --yes` refreshes the managed files without a confirmation.
+
 ## Configuration
 
 `story-ui.config.js` is looked for in the project root and then in

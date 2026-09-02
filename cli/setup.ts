@@ -931,6 +931,66 @@ export interface SetupOptions {
   skipInstall?: boolean;
   /** Overwrite an existing config and panel files. Without it, init keeps what is there. */
   force?: boolean;
+  apiKey?: string;
+  port?: string;
+  storiesPath?: string;
+  importPath?: string;
+  componentsPath?: string;
+  componentPrefix?: string;
+  json?: boolean;
+}
+
+/**
+ * Whether init may ask questions at all.
+ *
+ * An AI agent or a CI job runs `npx story-ui init` with no terminal, and an
+ * inquirer prompt in that situation hangs the run forever with nothing on
+ * screen. No TTY, CI=true, or STORY_UI_NONINTERACTIVE=true means every
+ * answer comes from flags and detection, never from a prompt.
+ */
+export function isNonInteractive(
+  options: Pick<SetupOptions, 'yes' | 'designSystem'>,
+  env: NodeJS.ProcessEnv = process.env,
+  isTTY: boolean = Boolean(process.stdin.isTTY),
+): boolean {
+  if (options.yes || options.designSystem) return true;
+  if (!isTTY) return true;
+  if (env.CI === 'true' || env.CI === '1') return true;
+  if (env.STORY_UI_NONINTERACTIVE === 'true') return true;
+  return false;
+}
+
+/**
+ * A local component library, found without asking: the first of the usual
+ * directories that holds component files, with the import path a generated
+ * story would use to reach it.
+ */
+export function detectLocalComponentLibrary(
+  cwd: string,
+  generatedStoriesPath: string,
+): { componentsPath: string; importPath: string; count: number } | null {
+  const candidates = ['src/components', 'src/ui', 'components', 'src/lib/components', 'lib/components', 'src/design-system', 'packages/ui/src'];
+  const isComponentFile = (f: string) => /^[A-Z][\w-]*\.(tsx|jsx|vue|svelte)$/.test(f) && !/\.(stories|test|spec)\./.test(f);
+  let best: { componentsPath: string; count: number } | null = null;
+  for (const rel of candidates) {
+    const dir = path.join(cwd, rel);
+    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) continue;
+    let count = 0;
+    const walk = (d: string, depth: number) => {
+      if (depth > 2) return;
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        if (e.isDirectory()) { if (!/node_modules|__tests__|stories/.test(e.name)) walk(path.join(d, e.name), depth + 1); }
+        else if (isComponentFile(e.name)) count++;
+      }
+    };
+    try { walk(dir, 0); } catch { continue; }
+    if (count > 0 && (!best || count > best.count)) best = { componentsPath: rel, count };
+  }
+  if (!best) return null;
+  const from = path.resolve(cwd, generatedStoriesPath);
+  let importPath = path.relative(from, path.resolve(cwd, best.componentsPath)).split(path.sep).join('/');
+  if (!importPath.startsWith('.')) importPath = './' + importPath;
+  return { componentsPath: './' + best.componentsPath.replace(/^\.\//, ''), importPath, count: best.count };
 }
 
 export async function setupCommand(options: SetupOptions = {}) {
@@ -1094,10 +1154,15 @@ export async function setupCommand(options: SetupOptions = {}) {
   // Non-interactive mode: build answers from CLI options
   let answers: SetupAnswers;
 
-  if (options.yes || options.designSystem) {
+  const nonInteractive = isNonInteractive(options);
+  if (nonInteractive && !options.yes && !options.designSystem) {
+    console.log(chalk.gray('No terminal attached — running non-interactively; every answer comes from flags and detection.'));
+  }
+
+  if (nonInteractive) {
     // Non-interactive mode
     const designSystem = options.designSystem || (autoDetected ? 'auto' : 'custom');
-    const mcpPort = String(await findAvailablePort(4001));
+    const mcpPort = options.port ? String(parseInt(options.port, 10)) : String(await findAvailablePort(4001));
 
     // Validate design system choice
     const validSystems = ['auto', 'custom', ...Object.keys(DESIGN_SYSTEM_CONFIGS)];
@@ -1108,14 +1173,40 @@ export async function setupCommand(options: SetupOptions = {}) {
     }
 
     const llmProvider = options.llmProvider || 'claude';
+    const generatedStoriesPath = options.storiesPath || './src/stories/generated/';
+
+    /**
+     * A custom (local) library with no flags: find it rather than write a
+     * config with an undefined import path. That is what the interactive
+     * path asks three questions for.
+     */
+    let importPath = options.importPath;
+    let componentsPath = options.componentsPath;
+    let componentPrefix = options.componentPrefix;
+    if (designSystem === 'custom' && (!importPath || !componentsPath)) {
+      const local = detectLocalComponentLibrary(process.cwd(), generatedStoriesPath);
+      if (local) {
+        importPath = importPath || local.importPath;
+        componentsPath = componentsPath || local.componentsPath;
+        console.log(chalk.green(`✅ Found a local component library: ${local.componentsPath} (${local.count} component file(s)); stories will import from ${importPath}`));
+      } else if (!importPath) {
+        console.log(chalk.yellow('⚠️  No known design system in package.json and no local component directory found. Pass --import-path and --components-path, or run interactively.'));
+        importPath = './src/components';
+        componentsPath = componentsPath || './src/components';
+      }
+    }
 
     answers = {
       designSystem,
       installDesignSystem: !options.skipInstall && Object.keys(DESIGN_SYSTEM_CONFIGS).includes(designSystem),
-      generatedStoriesPath: './src/stories/generated/',
+      generatedStoriesPath,
       llmProvider,
       mcpPort,
-      hasApiKey: false,
+      hasApiKey: Boolean(options.apiKey),
+      ...(options.apiKey ? { apiKey: options.apiKey } : {}),
+      ...(importPath ? { importPath } : {}),
+      ...(componentsPath ? { componentsPath } : {}),
+      ...(componentPrefix ? { componentPrefix } : {}),
     };
 
     console.log(chalk.blue(`📦 Design system: ${designSystem}`));
@@ -2029,6 +2120,21 @@ VITE_STORY_UI_PORT=${answers.mcpPort || '4001'}
 
 
   console.log(chalk.green.bold('\n🎉 Setup complete!\n'));
+  if (options.json) {
+    // One line a script or an agent can parse, after the human output.
+    console.log('STORY_UI_INIT ' + JSON.stringify({
+      ok: true,
+      configPath: path.join(process.cwd(), 'story-ui.config.js'),
+      importPath: config.importPath,
+      componentsPath: config.componentsPath ?? null,
+      generatedStoriesPath: config.generatedStoriesPath,
+      provider: answers.llmProvider,
+      apiKeyWritten: Boolean(answers.apiKey),
+      port: Number(answers.mcpPort),
+      workspaceUrl: '?path=/workspace/',
+      next: ['npm run story-ui', 'npm run storybook', 'npx story-ui check'],
+    }));
+  }
   console.log(`📁 Configuration saved to: ${chalk.cyan(configPath)}`);
   console.log(`📁 Generated stories will be saved to: ${chalk.cyan(config.generatedStoriesPath)}`);
   console.log(`📁 Story UI component installed to: ${chalk.cyan(path.relative(process.cwd(), storyUITargetDir))}`);
