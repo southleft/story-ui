@@ -118,7 +118,14 @@ export function checkConformance(
            * to anything, and guessing at one is how a check starts rejecting
            * correct code.
            */
-          if (fact.options?.length && attr.initializer) {
+          /**
+           * Only a CLOSED set can reject a value. Mantine's `color` resolves to
+           * fourteen theme colours AND `(string & {})` — any shade like
+           * "blue.9" or any CSS colour is legal, and the extractor records that
+           * as `optionsOpen`. Judging the value against the fourteen rejected
+           * `color="blue.9"` on correct code and cost two retries.
+           */
+          if (fact.options?.length && !fact.optionsOpen && attr.initializer) {
             let literal: string | null = null;
             if (ts.isStringLiteral(attr.initializer)) literal = attr.initializer.text;
             else if (ts.isJsxExpression(attr.initializer)

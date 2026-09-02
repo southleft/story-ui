@@ -130,3 +130,17 @@ describe('reporting', () => {
     expect(out[0]).toMatch(/^Line \d+: /);
   });
 });
+
+describe('open value sets', () => {
+  it('does not reject a value outside the listed options when the set is open', async () => {
+    const { checkConformance } = await import('../story-generator/knowledge/conformance.js');
+    // Mantine: color?: MantineColor = DefaultMantineColor | (string & {}) — the
+    // fourteen names are examples, "blue.9" and any CSS colour are legal.
+    const MANTINE = { components: { Badge: { name: 'Badge', props: [
+      { name: 'color', options: ['dark', 'gray', 'blue'], optionsOpen: true },
+      { name: 'variant', options: ['filled', 'light', 'outline'] },
+    ] } } } as any;
+    expect(checkConformance(`const a = <Badge color="blue.9">Go</Badge>;`, MANTINE)).toEqual([]);
+    expect(checkConformance(`const a = <Badge variant="glow">Go</Badge>;`, MANTINE)).toHaveLength(1);
+  });
+});
