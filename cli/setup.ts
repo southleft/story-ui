@@ -2604,6 +2604,13 @@ export default registry;
   }
 
 
+  try {
+    const sbVersion = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'node_modules', 'storybook', 'package.json'), 'utf8')).version || '';
+    if (sbVersion && Number(sbVersion.split('.')[0]) < 10) {
+      console.log(chalk.yellow(`\n⚠️  Storybook ${sbVersion}: Story UI needs Storybook 10 or newer — before 10, a generated story is not picked up until Storybook restarts. Upgrade with: npx storybook@latest upgrade`));
+    }
+  } catch { /* Storybook not installed here; check reports it */ }
+
   if (problems.length === 0) {
     console.log(chalk.green.bold('\n🎉 Setup complete!\n'));
   } else {

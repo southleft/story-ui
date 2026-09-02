@@ -180,6 +180,24 @@ export async function runChecks(opts: { server?: string; cwd?: string } = {}): P
     });
   }
 
+  // Storybook's version. 9.1 never refreshed its story index for a new file
+  // in testing (with stories present at boot, after editing another story,
+  // after touching main.ts), so a generated story only appeared after a
+  // restart. 10 is what the flow matrix runs against.
+  {
+    let sbVersion = '';
+    try { sbVersion = JSON.parse(fs.readFileSync(path.join(cwd, 'node_modules', 'storybook', 'package.json'), 'utf8')).version || ''; } catch { /* not installed here */ }
+    const major = Number(sbVersion.split('.')[0]);
+    items.push({
+      id: 'storybook-version',
+      ok: sbVersion ? major >= 10 : null,
+      detail: sbVersion
+        ? (major >= 10 ? `Storybook ${sbVersion}` : `Storybook ${sbVersion} — new stories are not picked up live before 10; generated stories appear only after a restart`)
+        : 'Storybook is not installed in this project',
+      fix: sbVersion && major < 10 ? 'npx storybook@latest upgrade' : undefined,
+    });
+  }
+
   items.push({ id: 'generated-dir', ok: fs.existsSync(generatedDir), detail: fs.existsSync(generatedDir) ? `generated stories go to ${path.relative(cwd, generatedDir)}` : `${path.relative(cwd, generatedDir)} does not exist yet`, fix: fs.existsSync(generatedDir) ? undefined : `mkdir -p ${path.relative(cwd, generatedDir)}` });
   // Read what init wrote, before anything that depends on the port.
   const env = { ...readEnv(cwd), ...process.env } as Record<string, string | undefined>;
