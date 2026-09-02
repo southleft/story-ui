@@ -149,6 +149,14 @@ export interface StoryUIConfig {
    * entry.
    */
   excludeComponents?: string[];
+
+  /**
+   * Extra packages a generated story may import, beyond the design system,
+   * the framework runtime, Storybook and the icon package. Read by import
+   * isolation; the considerations file's "Allowed additional imports" line
+   * does the same in prose.
+   */
+  allowedImports?: string[];
 }
 
 // Default generic configuration

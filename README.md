@@ -4,142 +4,219 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Story UI is a workspace inside your Storybook for composing screens from the
-design system that is actually installed in the project. You describe what you
+design system that is actually installed in the project. Describe what you
 want; the server discovers your components (from the package's type
-declarations, from local source, and from Storybook's own index), asks a
-model to write a `.stories.tsx` file with them, writes the file, and shows it
-in Storybook's own preview iframe. The preview is not a sandbox: it is your
-Storybook, your providers, your theme.
+declarations, from local source, and from Storybook's own index), asks a model
+to write a `.stories.tsx` file with them, writes the file, and shows it in
+Storybook's own preview iframe. The preview is not a sandbox: it is your
+Storybook, your providers, your theme, your tokens.
 
-Once a story exists you iterate on it in two different ways. Compositional
-changes ("add a filters panel") go back through the model. Parametric changes
-("make this button the secondary variant") do not: you click the element in the
-preview, the property panel reads the prop's legal values from the component's
-own types, and the change is applied as an AST edit to one attribute with no
-model in the path. Every generated story is then rendered in a real browser and
-checked, and the result is reported as a verification badge that names which
-checks ran and which did not.
+![The workspace after a generation: the conversation and verification on the left, the story rendered in Storybook's preview on the right](docs/images/workspace-story.png)
+
+Once a story exists you change it in two different ways. Compositional
+changes ("add a filters panel", "center the pagination") go back through the
+model as an edit of the existing file, and you see exactly which lines moved.
+Parametric changes ("make this button the secondary variant") do not touch a
+model at all: click the element, the inspector reads the prop's legal values
+from the component's own types, and one attribute of one element is rewritten
+as an AST edit. Every generated story is then rendered in a real browser and
+checked, and the badge names which checks ran and which could not.
+
+Story UI is built and tested for **React + TypeScript** design systems, both
+npm packages and local source. Other frameworks get the classic panel; see
+[Framework support](#framework-support).
 
 ## Requirements
 
-- Node 20 or newer (the code uses global `fetch`, `AbortSignal.timeout` and `Array.prototype.at`).
-- Storybook 8 or newer; 9 and 10 are what development runs against. The "Edit in Story UI" toolbar button needs Storybook 9+.
-- A React + TypeScript design system for the full workspace. See [Framework support](#framework-support) for what other frameworks get.
-- An API key for at least one of Anthropic, OpenAI or Google Gemini.
-- For verification: `playwright` (or `playwright-core`) installed in your project, with a browser downloaded. `axe-core` is optional and enables the accessibility check.
+- Node 20 or newer.
+- Storybook 8 or newer; 9 and 10 are what development runs against. The manager page (`?path=/workspace/`) and the "Edit in Story UI" toolbar button need Storybook 9+.
+- A React + TypeScript design system for the full workspace.
+- An API key for Anthropic, OpenAI or Google Gemini.
+- For verification: `playwright` installed in your project with a browser downloaded (`npx playwright install chromium`). `axe-core` is optional and enables the accessibility check.
 
 ## Quick start
 
 ```bash
 npm install -D @tpitre/story-ui
 npx story-ui init          # detects your framework and design system, writes config and the workspace entry
+npx story-ui check         # says what works and what to fix, with the command for each
 npm run story-ui           # Story UI server on http://127.0.0.1:4001 (loopback only)
 npm run storybook          # your Storybook, in another terminal
 ```
 
-Open Storybook and go to **Story UI > Workspace** in the sidebar. Type a
-request, press Enter, and the story appears in the preview when the file has
-been written. The story is also listed under `Generated/` in Storybook's sidebar.
+Open Storybook and click **Story UI** in the toolbar, or go to
+`?path=/workspace/`. Type a request and press Enter. The story appears in the
+preview the moment the file is written, and under `Generated/` in Storybook's
+sidebar.
 
-`init` creates `story-ui.config.js`, `.env` (with `DEFAULT_PROVIDER`, your key
-and `VITE_STORY_UI_PORT`), `story-ui-considerations.md`, a `story-ui-docs/`
-directory, `src/stories/StoryUIV2/StoryUIV2.mdx` (the workspace) and
-`src/stories/StoryUI/` (the classic panel), and adds `story-ui` and
-`storybook-with-ui` scripts to `package.json`. It keeps an existing config and
-panel files unless you pass `--force`, and it only removes Storybook's own
-scaffold stories (`Button`, `Header`, `Page`) after checking the file content is
-the scaffold. `npm run storybook-with-ui` starts both processes together.
+`init` creates `story-ui.config.js`, `.env` (provider, key, port),
+`story-ui-considerations.md`, a `story-ui-docs/` directory, the generated
+stories directory, `src/stories/StoryUIV2/StoryUIV2.mdx` (the workspace as a
+docs page), `src/stories/StoryUI/` (the classic panel and the manager addon),
+and wires `.storybook/manager.ts`. It adds `story-ui` and `storybook-with-ui`
+scripts to `package.json`. It keeps an existing config unless you pass
+`--force`, and only removes Storybook's own scaffold stories after checking the
+file content is the scaffold.
 
 The long-form walkthrough is in [docs/quick-start.md](docs/quick-start.md).
 
 ## What you get
 
-In the order you meet it in the workspace (`Story UI > Workspace`):
+**A prompt, with references.** The composer takes text, up to five images, and
+files: a Markdown spec, a CSV of the rows a table should show, JSON, code, or a
+PDF brief. Text files are inlined for the model as reference material; PDFs are
+read natively by Claude. The microphone dictates where the browser supports the
+Web Speech API. Provider, model and keyboard shortcuts live behind the gear.
 
-1. **Prompt.** A composer with provider and model selection. You can attach up to four images (file picker, paste, or drag and drop; they are downscaled in the browser before upload) and dictate with the microphone button where the browser supports the Web Speech API.
-2. **Live preview at write time.** The right pane is Storybook's `/iframe.html` showing the story that was just written. Fit, desktop (1280), tablet (834) and mobile (390) widths.
-3. **Chat iteration.** Follow-up requests are sent with the current file so the model edits rather than regenerates. A rewrite that diverges structurally from the file is rejected.
-4. **Click to edit.** Click an element in the preview. The component is identified from React's fiber tree (the name the source used, not a CSS class), and the property panel lists the props that component accepts, read from its type declarations. Deprecated props are withheld. Changing a value writes one attribute of one element through `POST /mcp/edit-prop`; no model is involved.
-5. **Pinned props.** Property-panel edits are recorded as pins and re-applied after every model rewrite. A pin whose element no longer exists is reported as lost rather than dropped silently.
-6. **Version history.** Every generation is kept. Restore any version from the list, or press Cmd/Ctrl+Z outside a text field to put the previous one back.
-7. **Code view.** The story's source, read-only, with Copy and Download.
-8. **Verification badge.** After the file is written the story is rendered in a browser and checked (see below). The badge reads `Verified · N/6 checks`, `Issues`, or `Not verified` with the reason, and the findings list lets you select the element a finding names.
-9. **Handoff.** Commit the story to a new git branch, optionally push, optionally open a pull request with `gh`. It never commits on your current branch, stages only the one story file (and its sibling stylesheet if there is one), refuses to run when unrelated changes are already staged, and never force-pushes.
-10. **Components drawer.** The inventory the server discovered: name, import path, category, prop count, whether a description was found, and whether it came from npm or local source.
-11. **Story switcher.** The header lists your generated stories; switching one restores its conversation. **Open in Storybook** opens the story in a new tab; **Delete** removes the file and its conversation.
-12. **Theme.** The workspace follows the host: `data-theme` on the document, then the docs container's painted background, then `prefers-color-scheme`. Pin it by passing `appearance="light"` or `"dark"` to `<Workspace>` in `StoryUIV2.mdx`.
+![The home screen: the composer, four starter prompts, and recent work with live thumbnails](docs/images/workspace-home.png)
 
-The classic panel (`Story UI > Story Generator`) is still installed alongside
-and is the surface non-React projects use. It has chat generation, image
-attachments, the Voice Canvas (a `react-live` playground; React projects only),
-and a design-context editor for `story-ui-docs/`.
+**Narration while it works.** The model's plan streams into the conversation
+as it thinks, then the code streams as it is written, with a step list that
+folds to one line when the run finishes. Stop is the same button as Send.
+
+![A generation in progress: the plan streaming in, the step list, and the preview waiting for the file](docs/images/workspace-generating.png)
+
+**A preview at write time.** The right pane is Storybook's `/iframe.html`
+showing the story the moment the file lands, before verification starts. The
+canvas has three views: Preview, Code (read-only source with copy), and
+Changes, which appears after an edit and shows the diff against the previous
+version. The fullscreen button takes the canvas over the whole page; the
+sidebar toggle in the header hides Storybook's own chrome.
+
+**Iteration without regeneration.** A follow-up request is sent with the
+current file, and the model answers with search/replace edit blocks that are
+applied to it. "Center the pagination" changes one block and leaves the other
+389 lines byte-identical; a reply that rewrites the composition instead is
+rejected. When you select an element first, the request is scoped to it, and
+verification and repair are held to the same scope.
+
+![The Changes view after "Center the page heading": the diff against the previous version](docs/images/workspace-changes.png)
+
+**Select, then edit directly.** Turn on Select and click anything in the
+preview. The component is identified from React's fiber tree (the name the
+source used, not a CSS class) and an inspector opens beside the preview with
+the props that component accepts, read from its own type declarations, with
+deprecated props withheld. Every change applies immediately as an AST edit to
+that one attribute, with no model involved, and shows "Applied" with Undo. The
+chip in the composer scopes your next typed request to the same element.
+
+![The inspector docked beside the preview after selecting a button, showing its editable props](docs/images/workspace-inspector.png)
+
+**Pinned props.** Inspector edits are recorded as pins and re-applied after
+every model rewrite. A pin whose element no longer exists is reported as lost,
+not dropped silently.
+
+**Version history.** Every generation and edit is kept. Restore any version
+from History, or press Cmd/Ctrl+Z outside a text field to put the previous one
+back.
+
+**A verification badge that names what ran.** After the file is written the
+story is rendered in a browser and checked (see below). The badge reads
+`Verified · 6/6 checks`, `Issues`, or `Not verified` with the reason. Findings
+you can act on become `Fix:` chips; the other chips are next-step suggestions
+grounded in what was built.
+
+**The story switcher.** The story name in the header lists every generated
+story with search; switching restores its conversation. From there: Open in
+Storybook, Hand off (commit the story to a new git branch, optionally push,
+optionally open a pull request; it never commits on your current branch,
+stages only the one story file and its sibling stylesheet, refuses when
+unrelated changes are staged, and never force-pushes), and Delete.
+
+**The Components drawer.** The inventory the server discovered: name, import
+path, category, prop count, whether a description was found, and whether it
+came from npm or local source. Insert a name into the prompt from there.
+
+**Theme.** The workspace follows the host: `data-theme` on the document, then
+the painted background, then `prefers-color-scheme`.
+
+### The two surfaces
+
+The **workspace** (`?path=/workspace/`, also `Story UI > Workspace` as a docs
+page) is the experience above. It is React-only where it reads React: element
+targeting through the fiber tree, the prop editor, and attributed verification.
+
+The **classic panel** (`Story UI > Story Generator`) is the original chat
+interface: generation with image attachments, the Voice Canvas (a `react-live`
+playground, React only), and an editor for the design-context files in
+`story-ui-docs/`. It works on every framework Storybook's docs addon can host,
+which is why it is still installed alongside the workspace and is the surface
+Vue, Svelte, Angular and Web Components projects use. Both talk to the same
+server and the same generated files; a story made in one is listed in the
+other.
 
 ## How generation is verified
 
-Before anything renders, the generated code is checked statically: TypeScript
-AST parsing, forbidden-pattern checks, and import isolation (a story may only
-import from your design system, the framework runtime, Storybook, your
-configured icon package, and packages you name in
-`story-ui-considerations.md`). Failures go back to the model for up to three
-correction attempts.
+Before anything renders, the generated code is checked statically:
 
-After the file is written, `verifyStory` renders it in a browser and runs, in
-order:
+- TypeScript AST parsing, and forbidden patterns (no injected `<style>`, no `!important`, no `UNSAFE_*` props).
+- Import isolation: a story may only import from your design system, the framework runtime, Storybook, your configured icon package, and packages named in `story-ui-considerations.md`.
+- Catalog conformance: every component and prop value the story uses is one the catalog offered, read from the library's own types (`const` tuples behind a type alias, `cva()` maps, JSDoc).
+- Token existence: every `var(--x)` must be a custom property your project's stylesheets declare; an invented name is rejected with the nearest real one.
+
+Failures go back to the model for up to three correction attempts.
+
+After the file is written, the story is rendered in a browser and these run in
+order, each only on what the previous passed:
 
 | Check | What it measures |
 |---|---|
-| Render | The story appears in Storybook's index and mounts without an uncaught error. Waits for the DOM to stop changing. |
-| DOM census | Fake fields, unnamed icon-only controls, invisible icons, clickable non-buttons, nothing focusable. |
-| Layout probe | Grid coverage against the rendered `grid-template-columns`, and left-edge alignment. |
+| Render | The story appears in Storybook's index and mounts without an uncaught error. Waits for the DOM to stop changing, and tells a story that is still compiling apart from one that crashed. |
+| DOM census | Fake fields, unnamed icon-only controls, invisible icons, clickable non-buttons, nothing focusable. Covers portalled menus and dialogs. |
+| Layout probe | Grid coverage against the rendered `grid-template-columns`, and left-edge alignment. Arithmetic, not taste. |
 | Class effect | Class names the story wrote that no loaded stylesheet defines. |
 | Interaction | Clicks each control and waits for a visible change; opens overlays and checks they float instead of pushing content. |
 | axe | Accessibility rules, when `axe-core` resolves from your project. |
-| Visual critique | A vision-model pass on a full-page screenshot, judged against your request. On by default; `STORY_UI_VISUAL_CRITIQUE=false` turns it off. |
+| Visual critique | A vision-model pass on a full-page screenshot, judged against your request, or against the selected element when the turn was targeted. `STORY_UI_VISUAL_CRITIQUE=false` turns it off. |
 
 Findings are attributed through React's fiber tree. A defect in markup the
-library rendered is reported as a warning and never triggers repair, because the
-only "fix" a model could make is to stop using the component. Findings the
-story can fix are blockers, and by default (`STORY_UI_VERIFY_ENFORCE` not set
-to `false`) one repair pass is attempted; the candidate is re-verified and kept
-only if it reduces blockers. The whole verify-and-repair phase has one budget,
-three minutes by default (`STORY_UI_VERIFY_BUDGET_MS`).
+library rendered is reported as a warning and never triggers repair, because
+the only "fix" a model could make is to stop using the component. Findings the
+story can fix are blockers, and by default one repair pass is attempted with
+edit blocks; the candidate is re-verified and kept only if it reduces
+blockers. On a targeted turn a repair may only touch the selected element. The
+whole verify-and-repair phase has one budget, three minutes by default.
 
-What you must install: verification resolves `playwright` (or
-`playwright-core`) and `axe-core` from **your project's** `node_modules`, not
-from Story UI. If Playwright is missing or its browser is not downloaded, the
-badge says `Not verified` with that reason. It never reports a pass it could
-not prove: a check that did not run is listed as not run, not as clean.
+Verification resolves `playwright` and `axe-core` from **your project's**
+`node_modules`. If Playwright or its browser is missing, the badge says so and
+names the command. It never reports a pass it could not prove: a check that did
+not run is listed as not run, not as clean.
 
 Verification needs to reach your Storybook. The server uses, in order,
 `storybookMcpUrl` from the config, `STORYBOOK_URL`, the proxy port when
-`STORYBOOK_PROXY_ENABLED=true`, `STORYBOOK_PORT`, and finally `http://localhost:6006`.
-If your Storybook is not on 6006, set `STORYBOOK_PORT`.
+`STORYBOOK_PROXY_ENABLED=true`, `STORYBOOK_PORT`, then `http://localhost:6006`.
+The workspace sends its own origin, so from the UI this is automatic.
 
 ## Framework support
 
-| Framework | Generation | Component discovery | Live preview | Click-to-edit and pinned props | Attributed verification |
+| Framework | Surface | Component discovery | Live preview | Inspector and pins | Attributed verification |
 |---|---|---|---|---|---|
 | React + TypeScript | Workspace and classic panel | npm types, local source, Storybook index | Yes | Yes | Yes |
-| Vue | Classic panel | Yes | Workspace preview mounts, but see note | No (`POST /mcp/edit-prop` answers 501) | Findings reported at warning, unattributed |
+| Vue | Classic panel | Yes | Workspace preview mounts, see note | No (`POST /mcp/edit-prop` answers 501, and the inspector says so) | Findings reported at warning, unattributed |
 | Svelte | Classic panel | Yes | Same | No | Same |
 | Web Components (Lit) | Classic panel | Yes, with `importExamples` for local libraries | Same | No | Same |
 | Angular | Classic panel | Limited: `@Component` classes and `NgModule` exports by regex; a fixed fallback list for `@angular/material` | Same | No | Same |
 
-Notes. The workspace renders through Storybook's docs addon, which is always
-React, so it mounts in any Storybook; but element targeting reads React's fiber
-tree and the prop editor parses JSX, so outside React the click-to-edit path is
-refused and verification cannot say who rendered a node, so every blocker is
-downgraded to a warning and nothing is repaired. Use the classic panel for
-those projects. React design systems that ship without type declarations lose
-prop knowledge and editable props.
+Notes. The workspace renders through Storybook's manager and docs addon, which
+are always React, so it mounts in any Storybook; but element targeting reads
+React's fiber tree and the prop editor parses JSX, so outside React the
+click-to-edit path is refused and verification cannot say who rendered a node,
+so every blocker is downgraded to a warning and nothing is repaired. Use the
+classic panel for those projects. Parity for other frameworks is a future
+version, not a configuration option.
 
-The four React shapes that are developed against, because each hid a distinct
-bug: barrel npm packages (Mantine, Carbon), subpath npm packages (MUI), one
-package per component (Atlassian), and local source (Radix + Tailwind).
+React design systems are developed against in four shapes, because each hid a
+distinct bug: barrel npm packages (Mantine, Carbon), subpath npm packages (MUI),
+one package per component (Atlassian), and local source (Radix + Tailwind,
+and fully custom libraries with their own tokens). React design systems that
+ship without type declarations lose prop knowledge and editable props.
 
 ## Installing with an AI agent or a script
 
-`init` never asks a question when there is no terminal: with no TTY, `CI=true`, or `STORY_UI_NONINTERACTIVE=true` every answer comes from flags and detection, so an agent running the commands cannot hang on a prompt. The same flags work interactively.
+`init` never asks a question when there is no terminal: with no TTY, `CI=true`,
+or `STORY_UI_NONINTERACTIVE=true` every answer comes from flags and detection,
+so an agent running the commands cannot hang on a prompt. The same flags work
+interactively.
 
 ```bash
 npm install --save-dev @tpitre/story-ui        # or pnpm add -D / yarn add -D
@@ -149,25 +226,38 @@ npm run story-ui                                 # the server, on the port init 
 npm run storybook                                # open ?path=/workspace/
 ```
 
-What `init --yes` decides on its own: the design system from `package.json` (Mantine, MUI, Chakra, Carbon and the others in `--design-system`), or a local component library from the project's own stories and component directories (`src/components`, `src/ui`, `components`, …) when no npm design system is present; the Storybook framework; a free port from 4001. Override any of it with `--import-path`, `--components-path`, `--component-prefix`, `--stories-path`, `--port`. `--json` prints a `STORY_UI_INIT {…}` line with what was written. Re-running `init` keeps an existing config and panel files unless `--force`.
+What `init --yes` decides on its own: the design system from `package.json`
+(Mantine, MUI, Chakra, Carbon and the others in `--design-system`), or a local
+component library from the project's own stories and component directories
+(`src/components`, `src/ui`, `components`, …) when no npm design system is
+present; the Storybook framework; a free port from 4001. Override any of it
+with `--import-path`, `--components-path`, `--component-prefix`,
+`--stories-path`, `--port`. `--json` prints a `STORY_UI_INIT {…}` line with
+what was written. Re-running `init` keeps an existing config unless `--force`.
 
-`story-ui check` verifies the result with facts, not assumptions: the config loads, the import path resolves (an installed package or a local directory), discovery finds components and how many have props, the generated directory exists, Storybook's globs cover the Story UI entries, the manager addon is wired, a provider key is set, and whether the server answers. `update --yes` refreshes the managed files without a confirmation.
+`story-ui check` verifies the result with facts: the config loads, the import
+path resolves (an installed package or a local directory), discovery finds
+components and how many have props, Playwright and its browser can actually
+launch, the generated directory exists, Storybook's globs cover the Story UI
+entries, the manager addon is wired, a provider key is set, and whether the
+server answers. Each failed item carries the command that fixes it.
+`update --yes` refreshes the managed files without a confirmation.
 
 ## Configuration
 
 `story-ui.config.js` is looked for in the project root and then in
-`.storybook/`, as `.js`, `.cjs` or `.ts`. `init` writes it as
-`module.exports = { ... }`. Fields, from `story-ui.config.ts`:
+`.storybook/`, as `.js`, `.cjs` or `.ts`. Fields, from `story-ui.config.ts`:
 
 | Field | Meaning |
 |---|---|
-| `importPath` | The package or path components are imported from (`@mantine/core`, `@/components`). |
+| `importPath` | The package or path components are imported from (`@mantine/core`, `../../components`). |
 | `generatedStoriesPath` | Where stories are written. Default `./src/stories/generated/`. |
 | `componentsPath` | Local component source directory, for libraries that are not an npm package. |
 | `componentsMetadataPath` | A `custom-elements.json` manifest, read when nothing else is discovered. |
 | `components` | Explicit component list (`name`, `importPath`, `props`, `examples`, `description`, `category`, `slots`). Declared fields are honoured over discovered ones. |
 | `excludeComponents` | Names discovery found that must never be offered (a provider that belongs in `preview.tsx`, an internal context). `components[].exclude: true` does the same per entry. |
 | `layoutComponents` | Layout-specific components, same shape. |
+| `allowedImports` | Extra packages a story may import, beyond the design system, the framework and the icon package. |
 | `componentFramework` | `react`, `vue`, `angular`, `svelte` or `web-components`. Routes discovery and the prop editor. |
 | `framework` | Same values; story generation reads this one first. Set both to the same value. |
 | `storybookFramework` | e.g. `@storybook/react-vite`; auto-detected from `package.json` when omitted. |
@@ -177,19 +267,23 @@ What `init --yes` decides on its own: the design system from `package.json` (Man
 | `iconImports` | `{ package, importPath, commonIcons?, allowAllIcons? }`; auto-detected from `package.json` when omitted. |
 | `componentPrefix` | Prefix prepended to discovered component names, and used to filter re-exports. |
 | `storyPrefix` | Title prefix for generated stories. Default `Generated/`. |
-| `defaultAuthor` | Written into story metadata. |
 | `layoutRules` | `multiColumnWrapper`, `columnComponent`, `containerComponent`, `layoutExamples`, `prohibitedElements`. |
 | `designSystemGuidelines` | `name`, `preferredComponents`, `spacingTokens`, `colorTokens`, `prohibitedPatterns`, `enforcementRules`, `additionalNotes`. |
-| `systemPrompt`, `layoutInstructions`, `examples`, `sampleStory` | Prompt overrides. |
+| `systemPrompt` | Replaces the framework adapter's system prompt. The only prompt override that is read. |
 | `considerationsPath` | Path to the considerations file if not `./story-ui-considerations.md`. |
 | `storybookMcpUrl`, `storybookMcpTimeout` | Your Storybook's URL, used for the Storybook MCP addon and as the verification target. |
 
 Two files teach the model your design system. `story-ui-docs/` holds what the
 design system *is* (`.md`, `.mdx`, `.json`, `.yaml`, `.yml`, `.xml`, `.html`,
-`.txt`; 8,000 characters per file, 24,000 in total, truncated beyond that).
-`story-ui-considerations.md` holds rules for how the model must *use* it, and is
-the only place an extra package can be allowed for import ("Allowed additional
-imports: `@tabler/icons-react`"). See [docs/CUSTOM_DOCUMENTATION.md](docs/CUSTOM_DOCUMENTATION.md).
+`.txt`; 8,000 characters per file, 24,000 in total). `story-ui-considerations.md`
+holds rules for how the model must *use* it, and is the other place an extra
+package can be allowed for import ("Allowed additional imports:
+`@tabler/icons-react`"). See [docs/CUSTOM_DOCUMENTATION.md](docs/CUSTOM_DOCUMENTATION.md).
+
+Your tokens are read from the project's own stylesheets (and the design
+system package's, for npm libraries): every `--custom-property` becomes a
+token the model is shown, scale tokens with their values, and a token the
+model invents is rejected before the story is written.
 
 ## Environment variables
 
@@ -201,27 +295,25 @@ From `.env.sample`. The server reads `.env` in the directory it is started from.
 | `OPENAI_API_KEY`, `OPENAI_ORG_ID` | OpenAI key and optional organisation. |
 | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | Google key. |
 | `DEFAULT_PROVIDER` | `claude`, `openai` or `gemini`. |
-| `DEFAULT_MODEL` | Model id. Provider defaults are `claude-sonnet-5`, `gpt-5.5`, `gemini-3.1-pro`. `CLAUDE_MODEL`, `OPENAI_MODEL`, `GEMINI_MODEL` are still read. |
-| `ALLOWED_PROVIDERS`, `ALLOWED_MODELS`, `SINGLE_PROVIDER_MODE` | Restrict what the UI can select. |
+| `DEFAULT_MODEL` | Model id. Provider defaults are `claude-opus-5`, `gpt-5.6-sol`, `gemini-3.1-pro`. `CLAUDE_MODEL`, `OPENAI_MODEL`, `GEMINI_MODEL` are still read; older Claude ids are mapped to current models. |
+| `CLAUDE_EFFORT` | `low`, `medium`, `high` (default) or `xhigh`. Adaptive thinking is on for models that support it. |
+| `CLAUDE_STREAM_MAX_MS` | Hard cap on one streamed model call. Default 15 minutes; streams are otherwise bounded by silence, not wall clock. |
 | `PORT` | Server port. Default 4001. |
-| `VITE_STORY_UI_PORT` | Tells the workspace which port to call. Written by `init`. |
+| `VITE_STORY_UI_PORT` | Tells the docs-page workspace which port to call. Written by `init`. |
+| `STORYBOOK_STORY_UI_PORT` | The same, for the manager page (`?path=/workspace/`), inlined at Storybook start. |
 | `VITE_STORY_UI_EDGE_URL` / `window.__STORY_UI_EDGE_URL__` | Full server URL when it is not on localhost. |
 | `VITE_STORY_UI_TOKEN` / `window.__STORY_UI_TOKEN__` | Token the workspace sends as a bearer header. |
 | `STORY_UI_TOKEN`, `STORY_UI_HOST`, `STORY_UI_ALLOW_UNAUTHENTICATED` | Access control; see below. |
 | `STORY_UI_ALLOWED_ORIGINS` | Extra CORS origins, comma-separated. |
 | `STORY_UI_MAX_BODY` | Request body ceiling. Default `25mb`. |
-| `STORYBOOK_URL`, `STORYBOOK_PORT` | Where verification finds your Storybook. |
+| `STORYBOOK_URL`, `STORYBOOK_PORT` | Where verification finds your Storybook when the request does not say. |
 | `STORYBOOK_PROXY_ENABLED`, `STORYBOOK_PROXY_PORT` | Proxy non-API requests to a Storybook dev server (deployments). |
 | `STORY_UI_VERIFY_BUDGET_MS` | Verify-and-repair budget. Default 180000. |
 | `STORY_UI_VISUAL_CRITIQUE` | `false` disables the vision pass. |
 | `STORY_UI_VERIFY_ENFORCE` | `false` disables the repair pass. |
 | `STORYBOOK_RUNTIME_VALIDATION` | `true` enables the older iframe-fetch check. Off by default. |
 | `STORY_UI_LOG_LEVEL` | Server log level. |
-
-The workspace resolves the server URL in this order (`StoryUIV2.mdx`):
-`VITE_STORY_UI_EDGE_URL`, `window.__STORY_UI_EDGE_URL__`, the page's own
-origin when the hostname ends in `up.railway.app`, then
-`http://localhost:<VITE_STORY_UI_PORT or window.__STORY_UI_PORT__ or 4001>`.
+| `STORY_UI_DUMP_PROMPT` | `1` writes each prompt to the temp directory, for debugging what the model was told. |
 
 ## Security and deployment
 
@@ -244,9 +336,9 @@ not recommended.
 
 Railway remains an option: run Storybook in dev mode on an internal port, run
 the server with `STORYBOOK_PROXY_ENABLED=true` and `STORYBOOK_PROXY_PORT`, and
-set `STORY_UI_TOKEN`. Point the platform's health check at `/health`, since
-every other path requires the token. Details, including the repository's own
-`Dockerfile` and `start-live.sh`, are in [DEPLOYMENT.md](DEPLOYMENT.md).
+set `STORY_UI_TOKEN`. Point the platform's health check at `/health`. Details,
+including the repository's own `Dockerfile` and `start-live.sh`, are in
+[DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Claude Desktop and other MCP clients
 
@@ -275,8 +367,7 @@ The stdio process finds the HTTP server through `STORY_UI_HTTP_BASE_URL`, or
 **Streamable HTTP** (remote): `POST <server>/mcp-remote/mcp`. When the server
 runs in token mode the client must send the bearer header, for example
 `claude mcp add --transport http story-ui <url>/mcp-remote/mcp --header "Authorization: Bearer <token>"`.
-The legacy SSE endpoints `/mcp-remote/sse` and `/mcp-remote/messages` are still
-served. See [docs/MCP_INTEGRATION.md](docs/MCP_INTEGRATION.md).
+See [docs/MCP_INTEGRATION.md](docs/MCP_INTEGRATION.md).
 
 ## Commands
 
@@ -284,28 +375,26 @@ From `cli/index.ts`:
 
 | Command | Options |
 |---|---|
-| `story-ui init` | `-d, --design-system <system>`, `-l, --llm-provider <claude\|openai\|gemini>`, `-y, --yes`, `--skip-install`, `--force` (overwrite an existing config and panel files) |
-| `story-ui start` | `-p, --port <port>` (default 4001; if busy, the next free port is used and logged), `-c, --config <path>` (sets `STORY_UI_CONFIG_PATH`; not currently read by the config loader), `--mcp` (also start the stdio MCP server) |
+| `story-ui init` | `-y, --yes`, `--provider <claude\|openai\|gemini>`, `--api-key <key>`, `--port <port>`, `--stories-path <path>`, `--import-path <specifier>`, `--components-path <path>`, `--component-prefix <prefix>`, `-d, --design-system <system>`, `--skip-install`, `--force`, `--json` |
+| `story-ui check` | `--server <url>`, `--json`. Exit code 1 when something is broken. |
+| `story-ui start` | `-p, --port <port>` (default 4001; if busy, the next free port is used and logged), `--mcp` (also start the stdio MCP server) |
 | `story-ui mcp` | `--http-port <port>` |
-| `story-ui update` | `-f, --force`, `--no-backup`, `-n, --dry-run`, `-v, --verbose`. Refreshes the managed panel files and `StoryUIV2.mdx`; leaves `story-ui.config.js` and `.env` alone. |
+| `story-ui update` | `-y, --yes` / `-f, --force`, `--no-backup`, `-n, --dry-run`, `-v, --verbose`. Refreshes the managed files; leaves `story-ui.config.js` and `.env` alone. |
 | `story-ui status` | Installed version and managed-file status. |
 | `story-ui cleanup` | Remove Storybook's scaffold stories. |
 | `story-ui config --generate [--type js\|json]` | Write a sample config. |
 | `story-ui deploy` | `--live`, `--platform <railway\|render\|fly>`, `--dry-run`, `--backend`, `--app`, `--frontend`, `--backend-url <url>`, `--storybook-dir <dir>`, `--project-name <name>` |
 
-There is no `registry` command.
-
 ## Troubleshooting
 
 **"Server unreachable" in the workspace header.** The server is not running on
-the port the workspace resolved. Check `VITE_STORY_UI_PORT` in `.env` matches
-the `--port` in the `story-ui` script, restart Storybook after changing `.env`
-(Vite reads it at start), and look at the server's first log line, which names
-the bound address and port. If the server chose a different port because 4001
-was busy, it says so.
+the port the workspace resolved. Run `npx story-ui check`; it names the port
+the config expects and whether anything answers there. Restart Storybook after
+changing `.env` (Vite reads it at start). If the server chose a different port
+because 4001 was busy, its first log line says so.
 
 **No provider available.** No key was found for any provider. Put
-`CLAUDE_API_KEY` (or `ANTHROPIC_API_KEY`), `OPENAI_API_KEY` or
+`ANTHROPIC_API_KEY` (or `CLAUDE_API_KEY`), `OPENAI_API_KEY` or
 `GEMINI_API_KEY` in the `.env` of the directory you start the server from.
 `GET /mcp/providers` shows what the server sees.
 
@@ -315,23 +404,41 @@ indexed stories: Storybook's watcher has stopped. Restart Storybook. If the
 generated directory is not covered by the `stories` globs in
 `.storybook/main.*`, add it.
 
-**Badge says "Playwright is not installed in this project".** Install
-`playwright` in your project and run `npx playwright install chromium`.
-Story UI resolves it from your `node_modules`, never from its own. Add
-`axe-core` for the accessibility check.
+**Badge says Playwright's browser is not installed.** Run
+`npx playwright install chromium` in your project. Story UI resolves Playwright
+from your `node_modules`, never from its own. Add `axe-core` for the
+accessibility check. `story-ui check` launches the browser to prove it works.
 
-**Verified against the wrong Storybook.** With no `STORYBOOK_PORT` or
-`STORYBOOK_URL` the server verifies against `localhost:6006` and logs that it
-guessed. Set `STORYBOOK_PORT`.
+**Verified against the wrong Storybook.** From the workspace the server is
+told your Storybook's origin. From the API or an MCP client, set
+`STORYBOOK_PORT` or `STORYBOOK_URL`; otherwise `localhost:6006` is assumed and
+logged as a guess.
 
 **401 from every endpoint.** The server is in token mode. Open Storybook once
 with `?token=<STORY_UI_TOKEN>` or set `VITE_STORY_UI_TOKEN`.
 
+**The "+" attach button does nothing.** Update Story UI: builds before
+4.18 used a `display:none` file input, which WebKit refuses to open
+programmatically.
+
 **Changes to Story UI itself do not appear.** Test projects import the built
 package. Run `npm run build` in this repository, then in the project
-`rm -rf node_modules/.vite`, restart Storybook and hard-refresh. If the project
-installed a tarball, rebuild and reinstall it; `story-ui status` shows the
-version in use.
+`rm -rf node_modules/.vite node_modules/.cache/storybook`, restart Storybook
+and hard-refresh. If the project installed a tarball, rebuild and reinstall
+it; `story-ui status` shows the version in use.
+
+## Testing and benches
+
+```bash
+npm test                                        # vitest: pure functions, fixtures, route contracts
+node bench/resolution.mjs --project ../your-storybook --import '@your/design-system'
+node bench/fidelity.mjs --server http://localhost:4101 --storybook http://localhost:6101 --project ../test-storybooks/react-mantine
+bench/durability.sh ../test-storybooks/carbon:4109:6109 ../test-storybooks/mui-material:4107:6107
+```
+
+- `bench/resolution.mjs` is deterministic and free: can the engine find your components, do the import specifiers resolve, are props and descriptions known. Run it on every change to discovery or knowledge.
+- `bench/fidelity.mjs` calls a model: does a generated story use the right components and variants, stay inside the design system, and does an iteration change only what was asked. Records every SSE event, the code, scores and a screenshot per scenario under `bench/results/`. `--generic` scores by catalog conformance instead of Mantine component names, so it runs on any library.
+- `bench/durability.sh` boots each project's server and Storybook and runs the generic fidelity scenarios across libraries, for a table of outcomes per design system.
 
 ## Contributing
 
@@ -339,16 +446,11 @@ version in use.
 git clone https://github.com/southleft/story-ui.git
 cd story-ui
 npm install
-npm run build          # tsc, then copies templates into dist/
-npm test               # vitest
-node bench/resolution.mjs --project ../your-storybook --import '@your/design-system'
+npm run build          # tsc, templates and the manager bundle into dist/
+npm test
 ```
 
-`bench/resolution.mjs` is deterministic and free: can the engine find your
-components, do the import specifiers resolve, are props and descriptions
-known. Run it on every change to discovery or knowledge.
-`bench/componentSelection.mjs` calls a model and measures judgement; run it
-rarely. Commits follow Conventional Commits (`npm run commit`); releases and
+Commits follow Conventional Commits (`npm run commit`); releases and
 `CHANGELOG.md` are produced by semantic-release. See
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
