@@ -41,7 +41,7 @@ describe('waitForStoryIndexed', () => {
 
     const result = await waitForStoryIndexed('http://localhost:6101', 'notification-settings-panel-addff419', 1000);
 
-    expect(result).toEqual({ indexed: true, storyId: 'notification-settings-panel-addff419--default' });
+    expect(result).toEqual({ indexed: true, storyId: 'notification-settings-panel-addff419--default', reachable: true });
   });
 
   it('falls back to the title-derived id when Storybook ignored the filename slug', async () => {
@@ -59,7 +59,7 @@ describe('waitForStoryIndexed', () => {
       'Notification Settings Panel',
     );
 
-    expect(result).toEqual({ indexed: true, storyId: 'generated-notification-settings-panel--default' });
+    expect(result).toEqual({ indexed: true, storyId: 'generated-notification-settings-panel--default', reachable: true });
   });
 
   it("matches on the entry's own title when neither id shape lines up", async () => {
@@ -76,7 +76,7 @@ describe('waitForStoryIndexed', () => {
       'Notification Settings Panel',
     );
 
-    expect(result).toEqual({ indexed: true, storyId: 'some-other-prefix--default' });
+    expect(result).toEqual({ indexed: true, storyId: 'some-other-prefix--default', reachable: true });
   });
 
   it('prefers a story entry over a docs entry sharing the prefix', async () => {
@@ -105,7 +105,7 @@ describe('waitForStoryIndexed', () => {
       'Notification Settings Panel',
     );
 
-    expect(result).toEqual({ indexed: false });
+    expect(result).toEqual({ indexed: false, reachable: true });
   });
 
   it('keeps polling through a Storybook that is not up yet', async () => {

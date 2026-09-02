@@ -87,7 +87,8 @@ import {
   StorybookMcpContext,
 } from '../../story-generator/storybookMcpClient.js';
 import { IntentPreview, ValidationFeedback, CompletionFeedback } from './streamTypes.js';
-import { verifyStory } from '../../story-generator/verify/verifyStory.js';
+import { verifyStory, repairableByStory } from '../../story-generator/verify/verifyStory.js';
+import { describeAutoFix } from '../../story-generator/autoFixSummary.js';
 import { moduleText, waitForRecompile } from '../../story-generator/verify/renderHarness.js';
 import { reflectDesignSystem, formatCompoundReference } from '../../story-generator/knowledge/runtimeReflect.js';
 import { extractProps, extractPropsForPackages, rankProps } from '../../story-generator/knowledge/propExtractor.js';
@@ -220,6 +221,8 @@ export interface GenerationOutcome {
     selfHealingUsed: boolean;
     attempts: number;
     autoFixApplied: boolean;
+    /** What the auto-fix changed, one clause each; empty when it changed nothing. */
+    fixDetails?: string[];
     isFallback: boolean;
   };
   runtimeValidation: {
@@ -973,6 +976,8 @@ async function runStoryGenerationPipeline(
   let attempts = 0;
   let selfHealingUsed = false;
   let lastAstResult: ValidationResult | null = null;
+  // What the last auto-fix did, read from the text it changed.
+  let autoFixDetails: string[] | undefined;
 
   while (attempts < selfHealingOptions.maxAttempts) {
     attempts++;
@@ -1254,8 +1259,11 @@ async function runStoryGenerationPipeline(
     try {
       astResult = validateStoryCode(aiText, validationFileName, config);
       if (astResult.fixedCode) {
+        autoFixDetails = describeAutoFix(aiText, astResult.fixedCode, astResult.errors);
         aiText = astResult.fixedCode;
-        logger.log('🔧 Auto-fix applied for syntax issues');
+        logger.log(autoFixDetails.length
+          ? `🔧 Auto-fix: ${autoFixDetails.join('; ')}`
+          : '🔧 Auto-fix reported, but the code is unchanged');
       }
     } catch (astError) {
       // A validator that crashed has not passed. Leaving astResult null here
@@ -2245,11 +2253,16 @@ async function runStoryGenerationPipeline(
    * model's generic ideas. "Fix the contrast on the muted labels" is a
    * suggestion the user can act on; "Add a dark mode toggle" is filler.
    */
+  /**
+   * Only what the story can fix. A chip is a promise; outside React nothing
+   * can say whether a finding is the story's markup or the library's, so
+   * such findings stay in the list as information and are never offered as
+   * one — on Vuetify, "class v-card--density-default is not defined" was
+   * the library's own class and became a "Fix:" chip.
+   */
   const grounded: string[] = [];
   if (verification && verification.outcome !== 'not_verified') {
-    const unresolved = verification.findings
-      .filter(f => f.class !== 'infrastructure' && (f.severity === 'blocker' || f.severity === 'warning'))
-      .filter(f => f.repairable || f.severity === 'blocker');
+    const unresolved = repairableByStory(verification.findings, detectedFramework);
     for (const f of unresolved.slice(0, 2)) {
       const target = f.selector ? ` (${f.selector})` : '';
       grounded.push(`Fix: ${f.message.replace(/\s+—.*$/, '').slice(0, 90)}${target}`);
@@ -2422,6 +2435,7 @@ async function runStoryGenerationPipeline(
       selfHealingUsed,
       attempts,
       autoFixApplied: !!validationResult?.fixedCode || !!lastAstResult?.fixedCode,
+      fixDetails: autoFixDetails ?? (validationResult?.fixedCode ? validationResult.warnings : undefined),
       isFallback: isFallbackStory,
     },
     runtimeValidation: {

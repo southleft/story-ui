@@ -13,7 +13,7 @@
 
 import { logger } from '../logger.js';
 import { resolveHostTooling, canLaunchBrowser } from './hostTooling.js';
-import { renderStory, waitForStoryIndexed, indexIsStale } from './renderHarness.js';
+import { renderStory, waitForStoryIndexed, indexIsStale, type IndexLookup } from './renderHarness.js';
 import { runDomCensus } from './probes/domCensus.js';
 import { runLayoutProbe } from './probes/layout.js';
 import { runClassEffectProbe } from './probes/classEffect.js';
@@ -74,14 +74,102 @@ const notVerified = (
   started: number,
   extra: Finding[] = [],
   storyId?: string,
-): VerifyReport => ({
-  outcome: 'not_verified',
-  reason,
-  findings: extra,
-  metrics: {},
-  durationMs: Date.now() - started,
-  storyId,
-});
+): VerifyReport => {
+  // Every verification that did not happen says so in the log. A `verified`
+  // has a line, an `issues` has a line; a `not_verified` had none, so a
+  // Storybook that was down for an hour left the log looking exactly like
+  // one where nothing needed checking.
+  logger.log(`🔍 Verification not run: ${reason}`);
+  return {
+    outcome: 'not_verified',
+    reason,
+    findings: extra,
+    metrics: {},
+    durationMs: Date.now() - started,
+    storyId,
+  };
+};
+
+/**
+ * Why a story could not be looked up in Storybook's index, in the words the
+ * user needs. Three situations that used to share one message:
+ *
+ *  - Storybook was never reached: nothing on the port, or an error page.
+ *    Start it, or point verification at the right URL.
+ *  - Storybook answered, and its index knows fewer generated stories than
+ *    the directory holds: the file watcher has died. Restart it.
+ *  - Storybook answered, the counts agree, and the story is not there: it
+ *    was not picked up in time.
+ *
+ * Every reason names the URL that was checked, because "did not appear in
+ * the index" was also what a story indexed on :6103 got when verification
+ * had been looking at :6006.
+ */
+export function classifyIndexMiss(
+  storybookUrl: string,
+  lookup: Pick<IndexLookup, 'reachable' | 'error'>,
+  staleness: { stale: boolean; onDisk: number; indexed: number },
+  storyIdPrefix: string,
+): { reason: string; finding: Finding } {
+  const url = storybookUrl.replace(/\/+$/, '');
+  if (!lookup.reachable) {
+    const why = lookup.error ? ` (${lookup.error})` : '';
+    return {
+      reason: `Storybook at ${url} is not reachable${why} — start it, or point verification at the Storybook this project uses`,
+      finding: {
+        id: 'storybook-unreachable', severity: 'warning', class: 'infrastructure',
+        message: `Storybook at ${url} is not reachable, so the story was not verified`,
+        evidence: lookup.error ? `${url}/index.json: ${lookup.error}` : `${url}/index.json never answered`,
+        repairable: false,
+      },
+    };
+  }
+  if (staleness.stale) {
+    return {
+      reason: `Storybook's index at ${url} is behind the filesystem — its file watcher has stopped picking up changes. Restart Storybook to verify.`,
+      finding: {
+        id: 'stale-index', severity: 'warning', class: 'infrastructure',
+        message: 'Storybook\'s story index is stale — this is a dev-server problem, not a defect in the generated story',
+        evidence: `${staleness.onDisk} generated story files on disk, ${staleness.indexed} in the index at ${url}`,
+        repairable: false,
+      },
+    };
+  }
+  return {
+    reason: `Story did not appear in the index at ${url} — it may not have been picked up yet`,
+    finding: {
+      id: 'not-indexed', severity: 'warning', class: 'infrastructure',
+      message: `Storybook at ${url} has not indexed the generated story`,
+      evidence: `no entry starting with "${storyIdPrefix}--" after polling ${url}/index.json`,
+      repairable: false,
+    },
+  };
+}
+
+/**
+ * Which verification findings may be offered as "Fix: …" chips.
+ *
+ * A chip sends its text as the next prompt, so it is a promise that the
+ * story can fix this. That holds only when the finding is repairable AND the
+ * finding can be attributed to the story: ownership is read from React's
+ * fiber, so outside React a warning like "class v-card--density-default is
+ * not defined by any loaded stylesheet" may be — and on Vuetify is — the
+ * library's own markup. Such findings stay in the list as information and
+ * never become a chip. Infrastructure findings describe our environment and
+ * are never the story's to fix.
+ */
+export function attributionSupported(framework: string | undefined): boolean {
+  return !framework || framework === 'react';
+}
+
+export function repairableByStory(findings: Finding[], framework: string | undefined): Finding[] {
+  if (!attributionSupported(framework)) return [];
+  return findings.filter(f =>
+    f.class !== 'infrastructure' &&
+    f.repairable &&
+    (f.severity === 'blocker' || f.severity === 'warning'),
+  );
+}
 
 /**
  * Map census problems onto typed findings with deliberate severity choices.
@@ -180,31 +268,20 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
   // separates "generated badly" from "Storybook never noticed the file".
   const indexed = await waitForStoryIndexed(storybookUrl, storyIdPrefix, Math.min(10000, timeoutMs), 250, title);
   if (!indexed.indexed || !indexed.storyId) {
-    // Stale watcher or broken story? The counts answer it, and the two need
-    // very different responses from whoever reads this.
-    const staleness = generatedDir
+    // Down, stale watcher, or not picked up yet? Reachability and the counts
+    // answer it, and the three need different responses from whoever reads
+    // this. The counts are only worth asking for when the index answered.
+    const staleness = indexed.reachable && generatedDir
       ? await indexIsStale(storybookUrl, generatedDir)
       : { stale: false, onDisk: 0, indexed: 0 };
-
-    return notVerified(
-      staleness.stale
-        ? `Storybook's index is behind the filesystem — its file watcher has stopped picking up changes. Restart Storybook to verify.`
-        : `Story did not appear in Storybook's index — it may not have been picked up yet`,
-      started,
-      [{
-        id: staleness.stale ? 'stale-index' : 'not-indexed',
-        severity: 'warning', class: 'infrastructure',
-        message: staleness.stale
-          ? 'Storybook\'s story index is stale — this is a dev-server problem, not a defect in the generated story'
-          : 'Storybook has not indexed the generated story',
-        evidence: staleness.stale
-          ? `${staleness.onDisk} generated story files on disk, ${staleness.indexed} in Storybook's index`
-          : `no entry starting with "${storyIdPrefix}--" after polling /index.json`,
-        repairable: false,
-      }],
-    );
+    const miss = classifyIndexMiss(storybookUrl, indexed, staleness, storyIdPrefix);
+    return notVerified(miss.reason, started, [miss.finding]);
   }
 
+  // Which Storybook. A result that names no URL cannot be told apart from one
+  // measured against the wrong server — the panel used to verify against
+  // :6006 "by convention" and nothing in the log said so once it succeeded.
+  logger.log(`🔍 Verifying ${indexed.storyId} at ${storybookUrl.replace(/\/+$/, '')}`);
   const render = await renderStory({ storybookUrl, storyId: indexed.storyId, tooling, timeoutMs });
 
   if (!render.ok) {
@@ -216,7 +293,7 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
     // code spends a repair rewriting something already correct.
     if (render.failureClass === 'infrastructure') {
       return notVerified(
-        `Could not render the story in a browser: ${render.reason || 'unknown error'}`,
+        `Could not render the story from ${storybookUrl.replace(/\/+$/, '')} in a browser: ${render.reason || 'unknown error'}`,
         started,
         [{
           id: 'render-unavailable', severity: 'warning', class: 'infrastructure',

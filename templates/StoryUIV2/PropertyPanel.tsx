@@ -59,10 +59,44 @@ interface PropertyPanelProps {
   onResolved?: (name: string | null) => void;
 }
 
+/**
+ * The framework's display name, from the config value the server reports.
+ * "This project is vue" is a config key leaking into a sentence.
+ */
+const FRAMEWORK_NAMES: Record<string, string> = {
+  react: 'React',
+  vue: 'Vue',
+  angular: 'Angular',
+  svelte: 'Svelte',
+  'web-components': 'Web Components',
+  lit: 'Lit',
+};
+
+export function frameworkDisplayName(framework: string | undefined): string | undefined {
+  if (!framework || typeof framework !== 'string') return undefined;
+  const key = framework.trim().toLowerCase();
+  if (!key) return undefined;
+  return FRAMEWORK_NAMES[key] ?? key.charAt(0).toUpperCase() + key.slice(1);
+}
+
+/** What the inspector says when the server answers 501 for this project. */
+export function unsupportedFrameworkMessage(framework: string | undefined): string {
+  const name = frameworkDisplayName(framework);
+  return name
+    ? `Property editing is available for React projects only. This project is ${name} — describe the change in the chat instead.`
+    : 'Property editing is available for React projects only. Describe the change in the chat instead.';
+}
+
 export function PropertyPanel({ apiBase, target, fileName, onApplied, onClose, onResolved }: PropertyPanelProps) {
   const [props, setProps] = useState<EditableProp[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * The server said property editing does not exist for this project (501).
+   * Rendered on its own: the "changes apply immediately" hint above an
+   * explanation that nothing can be applied read as a contradiction.
+   */
+  const [unsupported, setUnsupported] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   /**
@@ -151,6 +185,7 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onClose, o
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setUnsupported(null);
     (async () => {
       try {
         // The server tries `component` FIRST, so it must carry the best
@@ -174,15 +209,19 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onClose, o
         if (occ !== undefined && occ !== null) params.set('occurrence', String(occ));
         const res = await apiFetch(`${apiBase}/mcp/editable-props?${params.toString()}`);
         if (!res.ok) {
-          // The server explains itself — a 501 says property editing is
-          // React-only and names the project's framework. Throwing that
-          // away left a Vue user with "could not read", which reads as a bug.
           const body = await res.json().catch(() => ({}));
-          throw new Error(
-            res.status === 501
-              ? (body.error || `Property editing is available for React projects only${body.framework ? ` — this project is ${body.framework}` : ''}.`)
-              : (body.error || 'lookup failed'),
-          );
+          // A 501 is a limit of the tool, not a failure of the lookup: the
+          // server names the project's framework, and the panel words the
+          // explanation itself — the server's copy talks about JSX, which
+          // means nothing to the person who clicked a button.
+          if (res.status === 501) {
+            if (!cancelled) {
+              setUnsupported(unsupportedFrameworkMessage(body.framework));
+              setProps([]);
+            }
+            return;
+          }
+          throw new Error(body.error || 'lookup failed');
         }
         const data = await res.json();
         if (!cancelled) {
@@ -369,6 +408,22 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onClose, o
   };
 
   if (!target) return null;
+
+  if (unsupported) {
+    return (
+      <Flex direction="column" gap="2" p="3">
+        <Flex align="center" justify="between">
+          <Badge color="green" variant="soft">{displayName}</Badge>
+          {onClose && (
+            <IconButton size="1" variant="ghost" color="gray" aria-label="Close inspector" onClick={onClose}>
+              <XIcon size={14} />
+            </IconButton>
+          )}
+        </Flex>
+        <Text size="1" color="gray" className="suiw-inspector-unsupported">{unsupported}</Text>
+      </Flex>
+    );
+  }
 
   if (!component) {
     return (

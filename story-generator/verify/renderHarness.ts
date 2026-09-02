@@ -352,7 +352,7 @@ export async function waitForStoryIndexed(
    * same mismatch left the canvas empty. Both resolvers have to agree.
    */
   title?: string,
-): Promise<{ indexed: boolean; storyId?: string }> {
+): Promise<IndexLookup> {
   const deadline = Date.now() + timeoutMs;
   const base = storybookUrl.replace(/\/+$/, '');
   const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -360,12 +360,23 @@ export async function waitForStoryIndexed(
   const candidates = [storyIdPrefix];
   if (title) candidates.push(`generated-${slug(title)}`, slug(title));
 
+  // Whether ANY poll got an index back. Without this, a Storybook that was
+  // not running and a Storybook whose watcher had died produced the same
+  // `indexed: false`, and the caller told the user to restart a server that
+  // was never up.
+  let reachable = false;
+  let lastError: string | undefined;
+
   while (Date.now() < deadline) {
     try {
       const res = await fetch(`${base}/index.json?t=${Date.now()}`, {
         headers: { 'Cache-Control': 'no-cache' },
       });
+      if (!res.ok) {
+        lastError = `HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ''} from ${base}/index.json`;
+      }
       if (res.ok) {
+        reachable = true;
         const index: any = await res.json();
         const entries = index?.entries ?? {};
         const ids = Object.keys(entries);
@@ -375,7 +386,7 @@ export async function waitForStoryIndexed(
           const match =
             ids.find(id => id.startsWith(`${prefix}--`) && entries[id].type === 'story') ||
             ids.find(id => id.startsWith(`${prefix}--`));
-          if (match) return { indexed: true, storyId: match };
+          if (match) return { indexed: true, storyId: match, reachable: true };
         }
 
         // Last resort: the entry's own title, which no id-derivation rule can
@@ -386,15 +397,49 @@ export async function waitForStoryIndexed(
               typeof entries[id].title === 'string' &&
               entries[id].title.replace(/^Generated\//, '').toLowerCase() === title.toLowerCase(),
           );
-          if (byTitle) return { indexed: true, storyId: byTitle };
+          if (byTitle) return { indexed: true, storyId: byTitle, reachable: true };
         }
       }
-    } catch {
-      // Storybook may not be up yet; keep polling until the deadline.
+    } catch (err) {
+      // Storybook may not be up yet; keep polling until the deadline, but
+      // remember why, so a server that never answered is reported as such.
+      lastError = describeFetchError(err);
     }
     await new Promise(r => setTimeout(r, intervalMs));
   }
-  return { indexed: false };
+  return reachable ? { indexed: false, reachable: true } : { indexed: false, reachable: false, error: lastError };
+}
+
+/**
+ * The result of looking for a story in Storybook's index.
+ *
+ * `reachable: false` means no poll ever received an index — the server is
+ * down, refusing connections, or answering with an error — and `error` says
+ * which. `reachable: true, indexed: false` means the index answered and the
+ * story was not in it. The two need opposite advice.
+ */
+export interface IndexLookup {
+  indexed: boolean;
+  storyId?: string;
+  reachable: boolean;
+  /** The last failure seen when unreachable, e.g. "ECONNREFUSED" or "HTTP 502". */
+  error?: string;
+}
+
+/**
+ * The failure behind a fetch that threw, named by its cause when there is
+ * one. Node wraps a refused connection as `TypeError: fetch failed` with the
+ * useful part — `ECONNREFUSED 127.0.0.1:6103` — on `cause`.
+ */
+export function describeFetchError(err: unknown): string {
+  const e = err as { message?: string; cause?: { code?: string; message?: string; address?: string; port?: number } } | undefined;
+  const cause = e?.cause;
+  if (cause?.code) {
+    const where = cause.address ? ` ${cause.address}${cause.port ? `:${cause.port}` : ''}` : '';
+    return `${cause.code}${where}`;
+  }
+  if (cause?.message) return cause.message;
+  return e?.message || String(err);
 }
 
 /**

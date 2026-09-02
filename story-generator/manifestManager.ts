@@ -59,6 +59,13 @@ export interface ManifestEntry {
     /** The original generation prompt */
     prompt?: string;
     /**
+     * The conversation was reconstructed after the fact — seeded from the
+     * prompt, or restored from a browser's localStorage — rather than held
+     * with the user. Set by the writer of such a conversation so the write
+     * is not mistaken for activity; see touchesUpdatedAt.
+     */
+    backfilled?: boolean;
+    /**
      * Props the user set by hand in the property panel. Re-applied after every
      * model rewrite so a chat edit cannot undo a direct one. See editing/pins.ts.
      */
@@ -157,6 +164,58 @@ export function sanitizeThumbnails(value: unknown): string[] | undefined {
 }
 
 // ── ManifestManager ────────────────────────────────────────────────────────
+
+/** Message-by-message equality: role, content and thumbnails. */
+export function sameConversation(a: ManifestMessage[] | undefined, b: ManifestMessage[] | undefined): boolean {
+  const x = a ?? [];
+  const y = b ?? [];
+  if (x.length !== y.length) return false;
+  return x.every((m, i) => {
+    const n = y[i];
+    if (m.role !== n.role || m.content !== n.content) return false;
+    const mt = m.thumbnails ?? [];
+    const nt = n.thumbnails ?? [];
+    return mt.length === nt.length && mt.every((t, j) => t === nt[j]);
+  });
+}
+
+/**
+ * Whether a write to an existing entry counts as activity.
+ *
+ * `updatedAt` orders the workspace's Recent work, so it must move only when
+ * the story or its conversation genuinely changed: a message was added, the
+ * title was edited, the generation metadata was replaced. Two writes that
+ * look like changes are not:
+ *
+ *  - a no-op upsert — the same fields sent again (the classic panel re-syncs
+ *    its chats on open);
+ *  - a backfill — a conversation reconstructed from the prompt, or restored
+ *    from a browser's localStorage, to make an older story openable. The
+ *    writer marks it `metadata.backfilled`; the manifest gains a history it
+ *    was missing (and, from the classic panel, a `source` of `panel` in
+ *    place of `mcp-external`), but nothing happened to the story.
+ *
+ * A NEW entry is always stamped; this only judges writes onto an existing one.
+ */
+export function touchesUpdatedAt(
+  existing: Pick<ManifestEntry, 'id' | 'title' | 'source' | 'permanent' | 'conversation' | 'metadata'>,
+  next: Pick<ManifestEntry, 'id' | 'title' | 'source' | 'permanent' | 'conversation' | 'metadata'>,
+  backfill = false,
+): boolean {
+  // A backfill is bookkeeping in every field, not only the conversation:
+  // the classic panel adopts a reconciled `mcp-external` entry as `panel`
+  // in the same write, and that reclassification is not activity either.
+  if (backfill) return false;
+  if (existing.id !== next.id) return true;
+  if (existing.title !== next.title) return true;
+  if (existing.source !== next.source) return true;
+  if ((existing.permanent ?? false) !== (next.permanent ?? false)) return true;
+  // The marker itself is bookkeeping, not a change to the story.
+  const { backfilled: _a, ...em } = existing.metadata ?? {};
+  const { backfilled: _b, ...nm } = next.metadata ?? {};
+  if (JSON.stringify(em) !== JSON.stringify(nm)) return true;
+  return !sameConversation(existing.conversation, next.conversation);
+}
 
 export class ManifestManager {
   private readonly manifestPath: string;
@@ -262,6 +321,13 @@ export class ManifestManager {
         ...(data.metadata ?? {}),
       },
     };
+    // updatedAt is what "Recent work" sorts by, so it has to mean activity.
+    // Stamping it on every write meant opening the classic panel — which
+    // seeds a synthetic conversation into every entry that lacks one — moved
+    // every older story to "just now".
+    if (existing && !touchesUpdatedAt(existing, entry, data.metadata?.backfilled === true)) {
+      entry.updatedAt = existing.updatedAt;
+    }
 
     this.manifest.stories[fileName] = entry;
     this.scheduleFlush();
@@ -275,13 +341,17 @@ export class ManifestManager {
   updateConversation(fileName: string, conversation: ManifestMessage[]): void {
     const existing = this.manifest.stories[fileName];
     if (!existing) return;
-    existing.conversation = truncateConversation(
+    const next = truncateConversation(
       conversation.map(m => {
         const thumbnails = sanitizeThumbnails(m.thumbnails);
         return { role: m.role, content: m.content, ...(thumbnails ? { thumbnails } : {}) };
       }),
     );
-    existing.updatedAt = new Date().toISOString();
+    // Re-sending the conversation the entry already holds is not activity.
+    if (!sameConversation(existing.conversation, next)) {
+      existing.updatedAt = new Date().toISOString();
+    }
+    existing.conversation = next;
     this.scheduleFlush();
   }
 

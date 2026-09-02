@@ -127,6 +127,11 @@ interface ValidationFeedback {
   isValid: boolean;
   errors?: string[];
   autoFixApplied?: boolean;
+  /**
+   * What the auto-fix actually changed, one clause each ("rewrote 3 import
+   * paths to 'vuetify/components'"). Absent on a server that predates it.
+   */
+  fixDetails?: string[];
 }
 
 interface RetryInfo {
@@ -746,7 +751,9 @@ async function migrateLocalStorageToManifest(
         await apiFetch(`${MANIFEST_API()}/${encodeURIComponent(chat.fileName)}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: chat.id, title: chat.title, source: 'panel', conversation }),
+          // `backfilled`: this restores history the manifest was missing, it
+          // is not new activity — the server leaves updatedAt alone for it.
+          body: JSON.stringify({ id: chat.id, title: chat.title, source: 'panel', conversation, metadata: { backfilled: true } }),
         });
         migrated++;
       }
@@ -766,7 +773,9 @@ async function migrateLocalStorageToManifest(
         await apiFetch(`${MANIFEST_API()}/${encodeURIComponent(chat.fileName)}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: chat.id, title: chat.title, source: 'panel', conversation }),
+          // `backfilled`: this restores history the manifest was missing, it
+          // is not new activity — the server leaves updatedAt alone for it.
+          body: JSON.stringify({ id: chat.id, title: chat.title, source: 'panel', conversation, metadata: { backfilled: true } }),
         });
         migrated++;
       }
@@ -778,6 +787,11 @@ async function migrateLocalStorageToManifest(
     // v3: seed synthetic conversations for any manifest entry with metadata.prompt but no conversation.
     // Runs regardless of localStorage — covers MCP-external and voice-saved stories.
     // This makes all generated stories openable and continuable from the chat UI.
+    //
+    // Marked `backfilled` so the server does not stamp updatedAt: this runs
+    // once per browser origin, and without the marker every older story
+    // jumped to "just now" in the workspace's Recent work the first time the
+    // classic panel was opened.
     if (!localStorage.getItem(MIGRATION_FLAG_V3)) {
       const toSeed = Object.entries(manifestEntries).filter(([, e]) =>
         (e.conversation?.length ?? 0) === 0 && e.metadata?.prompt
@@ -791,6 +805,7 @@ async function migrateLocalStorageToManifest(
               { role: 'user', content: e.metadata.prompt },
               { role: 'ai', content: `Story generated: "${e.title}"` },
             ],
+            metadata: { backfilled: true },
           }),
         }).catch(() => {}),
       ));
@@ -2037,7 +2052,17 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     }
 
     if (completion.validation?.autoFixApplied) {
-      parts.push(`\n\n[WRENCH] **Auto-fixed:** Minor syntax issues were automatically corrected.`);
+      // Say what was fixed, not "minor syntax issues": on Vue every story
+      // carried that line, and the fix was actually import paths being
+      // rewritten onto the configured barrel. A server that reports the
+      // fix but describes it as having changed nothing gets no banner —
+      // there is nothing to tell the user about.
+      const details = completion.validation.fixDetails;
+      if (details === undefined) {
+        parts.push(`\n\n[WRENCH] **Auto-fixed:** the generated code was automatically corrected before it was saved.`);
+      } else if (details.length > 0) {
+        parts.push(`\n\n[WRENCH] **Auto-fixed:** ${details.join('; ')}.`);
+      }
     }
     if (completion.runtimeValidation?.enabled && !completion.runtimeValidation.success) {
       parts.push(`\n\n⚠️ **Heads up:** the story saved but may not render correctly in Storybook (${completion.runtimeValidation.error || 'runtime error'}). Ask me to fix it or try regenerating.`);
@@ -2323,9 +2348,13 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           model: state.selectedModel || undefined,
           considerations: state.considerations || undefined,
           useStorybookMcp: state.storybookMcpAvailable && state.useStorybookMcp,
-          // The panel runs inside Storybook, so it knows the origin where the
-          // MCP addon lives — lets the server fetch context with zero config.
-          storybookUrl: state.storybookMcpAvailable && state.useStorybookMcp ? window.location.origin : undefined,
+          // The panel runs inside Storybook's docs iframe, so it knows the
+          // origin. Sent unconditionally, as the V2 workspace does
+          // (useGeneration.ts): it used to ride only with the Storybook-MCP
+          // toggle, so with the toggle off the server verified against port
+          // 6006 "by convention" and reported a story indexed on :6103 within
+          // seconds as "did not appear in Storybook's index".
+          storybookUrl: typeof window !== 'undefined' ? window.location.origin : undefined,
           voiceMode: voiceModeActiveRef.current || undefined,
         };
         const response = await apiFetch(MCP_STREAM_API(), {
@@ -2443,9 +2472,13 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
               model: state.selectedModel || undefined,
               considerations: state.considerations || undefined,
               useStorybookMcp: state.storybookMcpAvailable && state.useStorybookMcp,
-          // The panel runs inside Storybook, so it knows the origin where the
-          // MCP addon lives — lets the server fetch context with zero config.
-          storybookUrl: state.storybookMcpAvailable && state.useStorybookMcp ? window.location.origin : undefined,
+          // The panel runs inside Storybook's docs iframe, so it knows the
+          // origin. Sent unconditionally, as the V2 workspace does
+          // (useGeneration.ts): it used to ride only with the Storybook-MCP
+          // toggle, so with the toggle off the server verified against port
+          // 6006 "by convention" and reported a story indexed on :6103 within
+          // seconds as "did not appear in Storybook's index".
+          storybookUrl: typeof window !== 'undefined' ? window.location.origin : undefined,
             }),
           });
           const data = await res.json();

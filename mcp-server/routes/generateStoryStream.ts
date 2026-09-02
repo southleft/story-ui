@@ -246,6 +246,7 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
         errors: outcome.validation.errors,
         warnings: outcome.validation.warnings,
         autoFixApplied: outcome.validation.autoFixApplied,
+        fixDetails: outcome.validation.fixDetails,
       },
       code: outcome.code,
     });
