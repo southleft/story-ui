@@ -29,6 +29,7 @@ import ts from 'typescript';
 import fs from 'fs';
 import path from 'path';
 import { contentFingerprint, knowledgeCacheFile, pruneStaleKnowledge } from './cacheKey.js';
+import { packageNameOf } from './packageLocator.js';
 import { createRequire } from 'module';
 import { logger } from '../logger.js';
 import { findLocalSourceFiles, readLocalSourceTree } from './localComponentFacts.js';
@@ -1042,9 +1043,7 @@ function packageRoot(projectRoot: string, importPath: string): ResolvedRoot | nu
   // A path that is not on disk is nothing — never a reason to read node_modules.
   if (path.isAbsolute(importPath) || importPath.startsWith('.')) return null;
 
-  const pkgName = importPath.startsWith('@')
-    ? importPath.split('/').slice(0, 2).join('/')
-    : importPath.split('/')[0];
+  const pkgName = packageNameOf(importPath);
   if (!pkgName) return null;
   try {
     const req = createRequire(path.join(projectRoot, 'package.json'));
@@ -1131,7 +1130,7 @@ function reexportPackages(entryFile: string | null): string[] {
 
   const packageOf = (spec: string): string | null => {
     if (!spec || spec.startsWith('.')) return null;   // relative: already walked
-    return spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0];
+    return packageNameOf(spec);
   };
 
   ts.forEachChild(source, node => {
@@ -1376,7 +1375,32 @@ async function readLocalRoot(
   return extracted;
 }
 
-/** Read ONE package's own declarations. No federation; cached under its own key. */
+/**
+ * The name a specifier's knowledge is filed under.
+ *
+ * A path is its own root: `./src/ui` and `./src/ui/button` are different
+ * trees. A package specifier is filed under the PACKAGE — `vuetify/components/
+ * VBtn` under `vuetify`, `@mui/material/Button` under `@mui/material` —
+ * because the package is the unit that is installed, versioned and read: the
+ * resolver finds the package directory and the walk reads the whole of it,
+ * whatever came after the package name. `@atlaskit/button` is already a
+ * package name, so a package-per-component system stays one record per
+ * package, exactly as before.
+ *
+ * Measured on Vuetify before this: discovery reports one home per component
+ * (`vuetify/components/VBtn`, 126 of them); each was keyed on its own
+ * specifier, so each MISSED the cache and re-read the package's entire
+ * declaration tree — 126 reads of ~1s each and 193 identical 47KB records
+ * under `.story-ui/knowledge/`, for a first generation that spent 105s in
+ * "Reading your design system". MUI (`@mui/material/Button`) has the same
+ * shape.
+ */
+export function knowledgeRootOf(specifier: string): string {
+  if (path.isAbsolute(specifier) || specifier.startsWith('.')) return specifier;
+  return packageNameOf(specifier) || specifier;
+}
+
+/** Read ONE package's own declarations. No federation; cached under the PACKAGE's key. */
 async function readOnePackage(
   importPath: string,
   projectRoot: string = process.cwd(),
@@ -1386,6 +1410,9 @@ async function readOnePackage(
   if (!resolved) return null;
   if (resolved.local) return readLocalRoot(importPath, projectRoot, resolved.dir, options);
   const root = resolved.dir;
+  // Every subpath of a package resolves to the same directory and reads the
+  // same tree, so it is filed once, under the package (see knowledgeRootOf).
+  const pkgName = knowledgeRootOf(importPath);
 
   let version = options.version;
   if (!version) {
@@ -1400,7 +1427,7 @@ async function readOnePackage(
   const filesToRead = () => (declarationFiles ??= findDeclarationFiles(root));
   const fingerprint = contentFingerprint({ root, version, entryFile: typesEntryFile(root), files: filesToRead });
 
-  const cacheFile = cachePath(projectRoot, importPath, version, fingerprint);
+  const cacheFile = cachePath(projectRoot, pkgName, version, fingerprint);
   if (!options.force && fs.existsSync(cacheFile)) {
     try {
       const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf-8')) as ExtractedProps;
@@ -1468,7 +1495,7 @@ async function readOnePackage(
     }
   }
   if (crossFilled > 0) {
-    logger.log(`🧠 Resolved option values across files for ${crossFilled} prop(s) in ${importPath}`);
+    logger.log(`🧠 Resolved option values across files for ${crossFilled} prop(s) in ${pkgName}`);
   }
 
   const entry = typesEntryFile(root);
@@ -1476,7 +1503,9 @@ async function readOnePackage(
 
   const extracted: ExtractedProps = {
     schema: EXTRACTOR_SCHEMA,
-    importPath,
+    // The record is the PACKAGE's and is served to every specifier under it,
+    // so it must not carry whichever subpath happened to write it first.
+    importPath: pkgName,
     version,
     components,
     inheritedOnly,
@@ -1487,7 +1516,11 @@ async function readOnePackage(
   try {
     fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
     fs.writeFileSync(cacheFile, JSON.stringify(extracted), 'utf-8');
-    pruneStaleKnowledge(projectRoot, importPath, cacheFile, '.props.json');
+    // Also the per-subpath records an earlier extractor filed for this package
+    // (`vuetify-components-VBtn@…`): their names do not say so, their contents do.
+    pruneStaleKnowledge(projectRoot, pkgName, cacheFile, '.props.json', record =>
+      typeof (record as ExtractedProps)?.importPath === 'string' &&
+      knowledgeRootOf((record as ExtractedProps).importPath) === pkgName);
   } catch { /* cache is an optimisation */ }
 
   /**
@@ -1507,7 +1540,7 @@ async function readOnePackage(
         ? ' — declares nothing and re-exports from nothing'
         : '';
   logger.log(
-    `🧠 Extracted props for ${count} components from ${importPath}` +
+    `🧠 Extracted props for ${count} components from ${pkgName}` +
     `${version ? `@${version}` : ''} in ${Date.now() - started}ms ` +
     `(${inheritedOnly.length} inherit-only, ${linked} linked by declared props type)${why}`,
   );
@@ -1546,7 +1579,7 @@ export async function extractProps(
   mergeComponents(components, base.components);
   const inheritedOnly = [...base.inheritedOnly];
 
-  const seen = new Set<string>([importPath]);
+  const seen = new Set<string>([importPath, knowledgeRootOf(importPath)]);
   let queue = base.reexportedFrom.map(name => ({ name, depth: 1 }));
   let read = 0;
   let unresolved = 0;
@@ -1607,8 +1640,21 @@ export async function extractPropsForPackages(
   projectRoot: string = process.cwd(),
   options: { force?: boolean } = {},
 ): Promise<ExtractedProps | null> {
-  const unique = [...new Set(packages.filter(Boolean))];
-  if (unique.length === 0) return null;
+  const specifiers = [...new Set(packages.filter(Boolean))];
+  if (specifiers.length === 0) return null;
+  /**
+   * One read per PACKAGE, not per home.
+   *
+   * Vuetify's 126 homes are 126 subpaths of one package; MUI's are subpaths
+   * of `@mui/material`. Each maps to the same directory and the same record,
+   * and reading it through each name in turn was 126 reads of ~1s for a
+   * first generation. Atlassian's homes are each their own package and
+   * collapse to nothing, which is the correct answer there.
+   */
+  const unique = [...new Set(specifiers.map(knowledgeRootOf))];
+  if (unique.length < specifiers.length) {
+    logger.log(`🧠 ${specifiers.length} component home(s) live in ${unique.length} package(s); reading each package once`);
+  }
 
   const merged: Record<string, ComponentFacts> = {};
   const inheritedOnly: string[] = [];

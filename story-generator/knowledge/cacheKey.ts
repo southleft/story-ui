@@ -90,6 +90,11 @@ export function listSourceFiles(root: string, limit = 3000): string[] {
 
 /**
  * `<safe>@<version>.<fingerprint><suffix>` under the project's knowledge dir.
+ *
+ * `importPath` is the PACKAGE (or local directory) the record describes —
+ * `vuetify`, `@mui/material`, `@atlaskit/button`, `./src/ui` — never a
+ * subpath of one. A record keyed on `vuetify/components/VBtn` is the same
+ * data as one keyed on `vuetify`, and keying per subpath wrote it 193 times.
  */
 export function knowledgeCacheFile(projectRoot: string, importPath: string, version: string | undefined, fingerprint: string, suffix: string): string {
   const safe = importPath.replace(/[^a-z0-9]+/gi, '-');
@@ -99,17 +104,35 @@ export function knowledgeCacheFile(projectRoot: string, importPath: string, vers
 /**
  * Remove earlier records for the same package and suffix, so a workspace that
  * is edited daily does not accumulate one file per edit.
+ *
+ * `ownedBy`, when given, is asked about records whose NAME does not match —
+ * they are parsed and the record itself decides. The extractor used to file
+ * one record per subpath (`vuetify-components-VBtn@3.11.0…`, 193 of them for
+ * one package); the name cannot say those belong to `vuetify`, but the
+ * `importPath` written inside each one can. Parsing happens only on a cache
+ * miss, which is once per install.
  */
-export function pruneStaleKnowledge(projectRoot: string, importPath: string, keep: string, suffix: string): void {
+export function pruneStaleKnowledge(
+  projectRoot: string,
+  importPath: string,
+  keep: string,
+  suffix: string,
+  ownedBy?: (record: unknown) => boolean,
+): void {
   const safe = importPath.replace(/[^a-z0-9]+/gi, '-');
   const dir = path.join(projectRoot, '.story-ui', 'knowledge');
   let entries: string[];
   try { entries = fs.readdirSync(dir); } catch { return; }
   for (const name of entries) {
     if (name === path.basename(keep)) continue;
-    if (!name.startsWith(`${safe}@`) || !name.endsWith(suffix)) continue;
+    if (!name.endsWith(suffix)) continue;
     // `-fx-ds@1.0.0.props.json` and `-fx-ds-button@...` share a prefix only up
     // to the `@`; the `@` anchors the package name exactly.
+    let stale = name.startsWith(`${safe}@`);
+    if (!stale && ownedBy) {
+      try { stale = ownedBy(JSON.parse(fs.readFileSync(path.join(dir, name), 'utf-8'))); } catch { stale = false; }
+    }
+    if (!stale) continue;
     try { fs.unlinkSync(path.join(dir, name)); } catch { /* best effort */ }
   }
 }
