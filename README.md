@@ -29,7 +29,7 @@ npm packages and local source. Other frameworks get the classic panel; see
 ## Requirements
 
 - Node 20 or newer.
-- Storybook 8 or newer; 9 and 10 are what development runs against. The manager page (`?path=/workspace/`) and the "Edit in Story UI" toolbar button need Storybook 9+.
+- Storybook 9 or newer. Development runs against 10; 9 is verified with the same flow matrix. Storybook 8 is not supported.
 - A React + TypeScript design system for the full workspace.
 - An API key for Anthropic, OpenAI or Google Gemini.
 - For verification: `playwright` installed in your project with a browser downloaded (`npx playwright install chromium`). `axe-core` is optional and enables the accessibility check.
