@@ -103,7 +103,7 @@ const STYLE_ATTRS = new Set([
  * showed none of them. Deriving the prefix would be guesswork; not depending
  * on its absence is free.
  */
-function categorise(name: string): string {
+export function categorise(name: string): string {
   /**
    * camelCase is a segment boundary too.
    *
@@ -130,7 +130,7 @@ function categorise(name: string): string {
    * reachable at all.
    */
   if (has(/^(radius|rounded|corner)$/)) return 'radius';
-  if (has(/^(color|colour|bg|background|fill|stroke|border|ring|accent|primary|secondary|muted|destructive|success|warning|info|danger|error|foreground|layer|support|interactive)$/)) return 'color';
+  if (has(/^(color|colour|bg|fg|background|fill|stroke|border|ring|accent|primary|secondary|muted|destructive|success|warning|info|danger|error|foreground|layer|support|interactive)$/)) return 'color';
   if (has(/^(space|spacing|gap|inset|margin|padding)$/)) return 'spacing';
   if (has(/^(shadow|elevation)$/)) return 'shadow';
   if (has(/^(font|leading|tracking|weight|type|typography|heading|body|label)$/)) return 'typography';

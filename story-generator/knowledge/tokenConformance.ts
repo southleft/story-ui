@@ -13,6 +13,8 @@
  * model's judgement; this only refuses names the project does not declare.
  */
 
+import { categorise } from './stylingFacts.js';
+
 export interface TokenViolation {
   line: number;
   name: string;
@@ -38,11 +40,20 @@ function distance(a: string, b: string): number {
   return prev[b.length];
 }
 
-/** The declared token closest to an invented one, if anything is close. */
+/**
+ * The declared token closest to an invented one, if anything is close.
+ *
+ * Same category first: `--cbds-fg-secondary` is a colour, and the nearest
+ * name by spelling was `--cbds-font-secondary` — a real token, the wrong
+ * kind, and the model would have used it. A colour is suggested for a colour.
+ */
 export function nearestToken(name: string, known: Iterable<string>): string | undefined {
   let best: { name: string; d: number } | undefined;
   const lower = name.toLowerCase();
-  for (const candidate of known) {
+  const wanted = categorise(name);
+  const all = [...known];
+  const pool = wanted === 'other' ? all : all.filter(c => categorise(c) === wanted);
+  for (const candidate of pool.length ? pool : all) {
     const d = distance(lower, candidate.toLowerCase());
     if (!best || d < best.d) best = { name: candidate, d };
   }
