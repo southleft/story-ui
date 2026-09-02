@@ -148,7 +148,7 @@ export type StreamFinishReason =
 
 // Streaming response
 export interface StreamChunk {
-  type: 'text' | 'tool_call' | 'error' | 'done';
+  type: 'text' | 'thinking' | 'tool_call' | 'error' | 'done';
   content?: string;
   toolCall?: Partial<ToolCall>;
   error?: string;

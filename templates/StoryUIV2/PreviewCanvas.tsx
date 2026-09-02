@@ -72,6 +72,12 @@ interface PreviewCanvasProps {
   codeLoading?: boolean;
   /** When set, the canvas shows this instead of any story. */
   failure?: PreviewFailure | null;
+  /**
+   * The preview column fills the workspace. Owned by the workspace, which
+   * owns the grid the rail sits in; the canvas only draws the toggle.
+   */
+  fullscreen?: boolean;
+  onToggleFullscreen?: () => void;
 }
 
 /**
@@ -104,6 +110,8 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
   codeFileName,
   codeLoading = false,
   failure = null,
+  fullscreen = false,
+  onToggleFullscreen,
 }, ref) {
   const [picking, setPicking] = useState(false);
   const [viewport, setViewport] = useState<Viewport>('fit');
@@ -335,6 +343,21 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
         )}
 
         {historySlot}
+
+        {/* Works with no manager addon at all: it only moves the rail out of
+            the way. Storybook's own sidebar is the Focus button's job. */}
+        {onToggleFullscreen && (
+          <Button
+            size="1"
+            variant={fullscreen ? 'soft' : 'ghost'}
+            color="gray"
+            onClick={onToggleFullscreen}
+            aria-pressed={fullscreen}
+            title={fullscreen ? 'Bring the conversation back' : 'Give the preview the whole workspace'}
+          >
+            {fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+          </Button>
+        )}
 
         <Button
           size="1"

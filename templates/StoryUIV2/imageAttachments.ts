@@ -24,7 +24,14 @@ export interface AttachedImage {
   preview: string;
 }
 
-export const MAX_IMAGES = 4;
+/**
+ * Per-message cap. The server puts no ceiling on the count (only ~10MB per
+ * image and a 25MB body), but the manifest keeps at most FOUR thumbnails per
+ * message (story-generator/manifestManager.ts MAX_THUMBNAILS_PER_MESSAGE), so
+ * a fifth image is sent to the model and simply has no preview once the
+ * conversation is reopened.
+ */
+export const MAX_IMAGES = 5;
 const MAX_IMAGE_SIZE_MB = 20;
 const MAX_IMAGE_DIMENSION = 1568;
 const JPEG_FALLBACK_BYTES = 1.5 * 1024 * 1024;

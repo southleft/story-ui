@@ -196,7 +196,8 @@ export interface GenerationStarted {
  */
 /** A slice of the model's prose as it streams. */
 export interface LlmText {
-  phase: 'plan' | 'summary';
+  /** thinking: the model's summarised reasoning before its first token; plan: the sentences before the code; summary: after. */
+  phase: 'thinking' | 'plan' | 'summary';
   delta: string;
   accumulated: string;
 }

@@ -50,6 +50,7 @@ import {
   waitForStory,
   readPendingGeneration,
   clearPendingGeneration,
+  composeAssistantText,
   type Verification,
   type VerificationFinding,
 } from './useGeneration';
@@ -80,6 +81,24 @@ import {
 
 /** sessionStorage key for the story the workspace had open. */
 const ACTIVE_KEY = 'story-ui-v2-active';
+/**
+ * localStorage key for focus mode — shared with the manager addon, which
+ * reads the same key (same origin) to decide whether to fold Storybook's
+ * sidebar and panel away while the workspace is open. "false" is the only
+ * opt-out; absent means on.
+ */
+const FOCUS_KEY = 'story-ui-focus';
+const FOCUS_MESSAGE = 'story-ui:focus';
+const FOCUS_STATE_MESSAGE = 'story-ui:focus-state';
+
+const readFocusPreference = (): boolean => {
+  try { return localStorage.getItem(FOCUS_KEY) !== 'false'; } catch { return true; }
+};
+
+/** True inside Storybook's preview iframe — the only place a manager can hear us. */
+const hasManagerParent = (): boolean => {
+  try { return typeof window !== 'undefined' && window.parent !== window; } catch { return false; }
+};
 
 interface Turn {
   id: string;
@@ -106,6 +125,8 @@ interface Turn {
   notice?: string;
   /** The generation behind this reply did not produce a working story. */
   failed?: boolean;
+  /** How many reference images the request behind this reply carried. */
+  imageCount?: number;
   storyId?: string;
   fileName?: string;
   title?: string;
@@ -383,7 +404,48 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const threadRef = useRef<HTMLDivElement>(null);
-  const { generate, cancel, steps, busy, error, errorInfo, notice } = useGeneration(apiBase);
+  const { generate, cancel, steps, busy, error, errorInfo, notice, liveText } = useGeneration(apiBase);
+
+  /**
+   * Fullscreen: the preview column fills the workspace and the rail folds to
+   * a strip. Needs nothing from Storybook, so it works whether or not the
+   * manager addon is wired.
+   */
+  const [fullscreen, setFullscreen] = useState(false);
+  /**
+   * Focus: Storybook's own sidebar and addons panel, folded away by the
+   * manager addon while this page is open. The workspace only asks; the
+   * manager answers with what it actually did, so the button never claims
+   * chrome it could not move. Default on, remembered in localStorage.
+   */
+  const [focus, setFocus] = useState<boolean>(readFocusPreference);
+  const inFrame = useMemo(hasManagerParent, []);
+
+  useEffect(() => {
+    if (!inFrame) return;
+    const onMessage = (e: MessageEvent) => {
+      if (e.origin !== window.location.origin) return;
+      const msg = e.data;
+      if (!msg || msg.type !== FOCUS_STATE_MESSAGE || typeof msg.on !== 'boolean') return;
+      setFocus(msg.on);
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [inFrame]);
+
+  const requestFocus = useCallback((on: boolean) => {
+    setFocus(on);
+    try { localStorage.setItem(FOCUS_KEY, on ? 'true' : 'false'); } catch { /* private mode */ }
+    if (!inFrame) return;
+    try { window.parent.postMessage({ type: FOCUS_MESSAGE, on }, window.location.origin); } catch { /* no manager */ }
+  }, [inFrame]);
+
+  // Announce the remembered preference once, so a manager that is listening
+  // applies it as soon as the workspace is up.
+  useEffect(() => {
+    if (!inFrame) return;
+    try { window.parent.postMessage({ type: FOCUS_MESSAGE, on: readFocusPreference() }, window.location.origin); } catch { /* no manager */ }
+  }, [inFrame]);
 
   /**
    * Dictation. Interim results are shown in the textarea so speech feels live,
@@ -847,6 +909,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
           verification: summarizeVerification(result.verification),
           findings: result.verification?.findings?.length ? result.verification.findings : undefined,
           failed: true,
+          imageCount: sentImages.length || undefined,
         },
       ]);
       reloadSessions();
@@ -897,7 +960,9 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
         id: uid(),
         role: 'assistant',
         text: [
-          result.chatSummary || `Created ${result.title}.`,
+          // The streamed plan leads, the summary follows — unless the summary
+          // restates it, in which case the sentence appears once.
+          composeAssistantText(result.planText, result.chatSummary, `Created ${result.title}.`),
           (() => {
             const kept = [...(result.pins?.applied ?? []), ...(result.pins?.kept ?? [])];
             return kept.length ? `Kept your hand-set props: ${kept.join(', ')}.` : '';
@@ -913,6 +978,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
         storyId,
         fileName: result.fileName,
         title: result.title,
+        imageCount: sentImages.length || undefined,
       },
     ]);
     // Only adopt a story that actually succeeded. A failed generation used to
@@ -1546,6 +1612,21 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
         Components
       </Button>
 
+      {/* Only inside Storybook: outside it there is no chrome to fold. The
+          manager addon does the folding; this button asks and reflects. */}
+      {inFrame && (
+        <Button
+          size="1"
+          variant={focus ? 'soft' : 'ghost'}
+          color="gray"
+          onClick={() => requestFocus(!focus)}
+          aria-pressed={focus}
+          title={focus ? "Show Storybook's sidebar and panel again" : "Hide Storybook's sidebar and panel while working here"}
+        >
+          Focus
+        </Button>
+      )}
+
       {shortcutsHelp}
 
       {connectionBadge}
@@ -1710,11 +1791,28 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       <Theme appearance={appearance} accentColor="jade" radius="medium">
         {header}
 
-        <div className="suiw-body">
+        <div className={`suiw-body${fullscreen ? ' suiw-body--fullscreen' : ''}`}>
+          {fullscreen ? (
+            // The rail folds to a strip; the chevron is the way back. The
+            // thread and composer unmount rather than hide so keyboard focus
+            // cannot land in something invisible.
+            <div className="suiw-rail suiw-rail--collapsed">
+              <IconButton
+                size="1"
+                variant="ghost"
+                color="gray"
+                aria-label="Show the conversation"
+                title="Show the conversation"
+                onClick={() => setFullscreen(false)}
+              >
+                <Text size="2" aria-hidden>›</Text>
+              </IconButton>
+            </div>
+          ) : (
           <div className="suiw-rail">
             <Box className="suiw-scroll" p="3" ref={threadRef as any}>
               <Flex direction="column" gap="3">
-                {turns.map(turn => (
+                {turns.map((turn, i) => (
                   <Flex
                     key={turn.id}
                     direction="column"
@@ -1741,6 +1839,18 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                     ) : (
                       <Text as="div" size="2" color={turn.failed ? 'red' : 'gray'} className="suiw-turn-body">{turn.text}</Text>
                     )}
+
+                    {turn.role === 'assistant' && (() => {
+                      // A restored turn carries no count, but the user turn
+                      // before it carries its thumbnails — same fact.
+                      const prev = turns[i - 1];
+                      const used = turn.imageCount ?? (prev?.role === 'user' ? prev.thumbnails?.length : undefined);
+                      return used ? (
+                        <Text as="div" size="1" color="gray" className="suiw-turn-images">
+                          Used {used} reference image{used === 1 ? '' : 's'}
+                        </Text>
+                      ) : null;
+                    })()}
 
                     {turn.role === 'assistant' && turn.notice && (
                       <Text as="div" size="1" className="suiw-turn-notice">{turn.notice}</Text>
@@ -1852,6 +1962,31 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                 )}
 
                 {/*
+                  * The model, thinking out loud. Deltas append as they
+                  * arrive; the caret says the sentence is still being
+                  * written. Reasoning (`thinking`) is muted and is replaced
+                  * outright by the first plan delta; the plan becomes the top
+                  * of the assistant turn when the run completes, so nothing
+                  * the user read as an answer vanishes.
+                  */}
+                {busy && liveText && liveText.text && (
+                  <Flex
+                    direction="column"
+                    gap="1"
+                    className={`suiw-live suiw-live--${liveText.phase}`}
+                    aria-live="polite"
+                  >
+                    <Text size="1" color="gray" className="suiw-live-label">
+                      {liveText.phase === 'summary' ? 'Summary' : liveText.phase === 'thinking' ? 'Thinking…' : 'Plan'}
+                    </Text>
+                    <Text as="div" size="2" color="gray" className="suiw-turn-body">
+                      {liveText.text}
+                      <span className="suiw-caret" aria-hidden="true" />
+                    </Text>
+                  </Flex>
+                )}
+
+                {/*
                   * Kept after the run ends: gating on `busy` erased the whole
                   * narration the moment it finished, so nothing recorded what
                   * the pipeline did — least of all on the failure path.
@@ -1938,9 +2073,12 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
 
             {composer}
           </div>
+          )}
 
           <PreviewCanvas
             ref={canvasRef}
+            fullscreen={fullscreen}
+            onToggleFullscreen={() => setFullscreen(v => !v)}
             historySlot={
               <VersionHistory
                 apiBase={apiBase}

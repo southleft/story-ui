@@ -142,15 +142,20 @@ const EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
  * Thinking + effort for a request. Effort comes from the call, then
  * CLAUDE_EFFORT, then 'high'. Haiku 4.5 and older take neither.
  */
-function reasoningParams(model: string, options?: ChatOptions): Record<string, unknown> {
+function reasoningParams(model: string, options?: ChatOptions, streaming = false): Record<string, unknown> {
   if (!supportsAdaptiveThinking(model)) return {};
   const requested = (options?.effort || process.env.CLAUDE_EFFORT || 'high').toLowerCase();
   const effort = EFFORT_LEVELS.has(requested) ? requested : 'high';
   return {
-    thinking: { type: 'adaptive' },
+    // Streaming asks for the summarised reasoning so the wait before the
+    // first token can be narrated; buffered calls have nobody to narrate to.
+    thinking: streaming ? { type: 'adaptive', display: 'summarized' } : { type: 'adaptive' },
     output_config: { effort },
   };
 }
+
+/** Absolute ceiling on one streamed call, silence or not. */
+const STREAM_HARD_CAP_MS = Number(process.env.CLAUDE_STREAM_MAX_MS) || 15 * 60 * 1000;
 
 interface AnthropicMessage {
   role: 'user' | 'assistant';
@@ -312,7 +317,23 @@ export class ClaudeProvider extends BaseLLMProvider {
       max_tokens: options?.maxTokens || this.getSelectedModel()?.maxOutputTokens || 4096,
       messages: anthropicMessages,
       stream: true,
-      ...reasoningParams(model, options),
+      ...reasoningParams(model, options, /* streaming */ true),
+    };
+
+    // Idle watchdog: reset on every chunk, aborts the fetch after `timeout`
+    // ms of silence. Composed with the caller's own signal.
+    const idleMs = this.config.timeout || 120000;
+    const idleController = new AbortController();
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    const bump = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => idleController.abort(new Error(`no bytes from Claude for ${idleMs}ms`)), idleMs);
+      idleTimer.unref?.();
+    };
+    bump();
+    const idle = {
+      signal: options?.signal ? AbortSignal.any([idleController.signal, options.signal]) : idleController.signal,
+      stop: () => { if (idleTimer) clearTimeout(idleTimer); },
     };
 
     if (systemPrompt) {
@@ -331,7 +352,15 @@ export class ClaudeProvider extends BaseLLMProvider {
           'anthropic-version': ANTHROPIC_VERSION,
         },
         body: JSON.stringify(requestBody),
-      }, { timeoutMs: this.config.timeout || 120000, signal: options?.signal });
+      /**
+       * A stream is bounded by SILENCE, not by wall clock. Opus 5 thinks for
+       * 30–60s before its first token and writes an 8k-token story over two
+       * minutes; a 120s total budget cut a healthy call mid-stream (observed:
+       * "The operation was aborted due to timeout" at 120.9s on a support
+       * inbox). The configured timeout now means "no bytes for this long",
+       * with a separate hard cap so a wedged connection still ends.
+       */
+      }, { timeoutMs: STREAM_HARD_CAP_MS, signal: idle.signal });
 
       if (!response.ok) {
         const errorBody = await response.text();
@@ -357,9 +386,10 @@ export class ClaudeProvider extends BaseLLMProvider {
       let servedModel: string | undefined;
       let streamError: string | undefined;
 
-      while (true) {
+      try { while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        bump();
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
@@ -375,6 +405,10 @@ export class ClaudeProvider extends BaseLLMProvider {
 
               if (event.type === 'content_block_delta' && event.delta?.text) {
                 yield { type: 'text', content: event.delta.text };
+              } else if (event.type === 'content_block_delta' && event.delta?.type === 'thinking_delta' && typeof event.delta.thinking === 'string') {
+                // The summarised reasoning, when display: 'summarized' was
+                // requested. Narration for the user, never part of the answer.
+                if (event.delta.thinking) yield { type: 'thinking', content: event.delta.thinking };
               } else if (event.type === 'message_start' && event.message) {
                 // message_start carries the served model and the INPUT side
                 // of usage, including the prompt-cache counters.
@@ -410,7 +444,7 @@ export class ClaudeProvider extends BaseLLMProvider {
       if (streamError) {
         yield { type: 'error', error: `Claude API stream error: ${streamError}` };
         return;
-      }
+      } } finally { idle.stop(); }
 
       this.logCacheUsage({
         input_tokens: inputTokens,

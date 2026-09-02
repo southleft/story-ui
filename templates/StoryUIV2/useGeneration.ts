@@ -112,6 +112,88 @@ export interface GenStep {
   startedAt: number;
 }
 
+/**
+ * The model's own words, streamed while it works.
+ *
+ * `thinking` comes first: a running summary of the model's reasoning, for
+ * models that reason for 30-60s before their first visible token — without
+ * it the bubble sat empty for exactly that long. `plan` arrives BEFORE the
+ * code: two to four sentences about what it is going to build and which
+ * components it will use. `summary` may arrive after the write. The step
+ * list narrates the pipeline; this narrates the model — it is the difference
+ * between watching a progress bar and watching someone think.
+ *
+ * Thinking is shown and then REPLACED by the plan; it never reaches the
+ * finished turn. It is scaffolding, not the answer.
+ */
+export type LiveTextPhase = 'thinking' | 'plan' | 'summary';
+
+export interface LiveText {
+  phase: LiveTextPhase;
+  text: string;
+}
+
+/**
+ * The live-text reducer, pure so it can be tested without React.
+ *
+ * Deltas are appended; a phase change starts a fresh buffer (so the first
+ * `plan` delta clears the thinking text outright). For `plan` and `summary`,
+ * `accumulated` is the server's view of the whole text so far and is
+ * authoritative: it replaces the local buffer whenever it is at least as long
+ * (a delta lost to a parse failure leaves the buffer short, and no longer a
+ * prefix); a shorter one is stale and ignored. For `thinking`, `accumulated`
+ * is a capped sliding tail (up to ~2000 chars) and REPLACES the text on
+ * every event, shorter or not. The two are only ever compared, never both
+ * shown.
+ */
+export function applyLiveText(
+  prev: LiveText | null,
+  data: { delta?: unknown; accumulated?: unknown; phase?: unknown },
+): LiveText | null {
+  const phase: LiveTextPhase =
+    data.phase === 'summary' ? 'summary' : data.phase === 'thinking' ? 'thinking' : 'plan';
+  const delta = typeof data.delta === 'string' ? data.delta : '';
+  const accumulated = typeof data.accumulated === 'string' ? data.accumulated : null;
+
+  const base = prev && prev.phase === phase ? prev.text : '';
+  let text = base + delta;
+  if (phase === 'thinking') {
+    // A capped SLIDING TAIL of the reasoning, not a prefix: the server's
+    // `accumulated` replaces whatever was shown, however long that was.
+    if (accumulated !== null) text = accumulated;
+  } else if (accumulated !== null && accumulated.length >= text.length) {
+    text = accumulated;
+  }
+  if (!text && !prev) return null;
+  return { phase, text };
+}
+
+const normalizeProse = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+/**
+ * The text of the finished assistant turn: the streamed plan first, then the
+ * completion's summary — unless one already contains the other, in which
+ * case the longer one stands alone. The model is asked for the plan and
+ * then, separately, for a summary, and it often opens the summary by
+ * restating the plan; showing that sentence twice reads as a stutter.
+ */
+export function composeAssistantText(
+  plan: string | undefined,
+  summary: string | undefined,
+  fallback: string,
+): string {
+  const p = plan?.trim() ?? '';
+  const s = summary?.trim() ?? '';
+  if (!p && !s) return fallback;
+  if (!p) return s;
+  if (!s) return p;
+  const np = normalizeProse(p);
+  const ns = normalizeProse(s);
+  if (ns.startsWith(np)) return s;
+  if (np.startsWith(ns)) return p;
+  return `${p}\n\n${s}`;
+}
+
 export interface VerificationFinding {
   id: string;
   severity: 'blocker' | 'warning' | 'info';
@@ -142,6 +224,8 @@ export interface GenerationResult {
   notice?: string;
   /** Hand-set props re-applied after the model's rewrite. */
   pins?: { applied: string[]; kept: string[]; lost: string[] };
+  /** What the model said it would build, streamed before the code. */
+  planText?: string;
 }
 
 /** The error the run ended on, with whatever the server said to do about it. */
@@ -326,6 +410,8 @@ export function useGeneration(apiBase: string) {
    * deliberate action is not painted as a fault.
    */
   const [notice, setNotice] = useState<string | null>(null);
+  /** The model's streamed narration for the run in flight; null between runs. */
+  const [liveText, setLiveText] = useState<LiveText | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const startedRef = useRef(0);
   /** Server-side id for the in-flight generation, so Stop can cancel it. */
@@ -336,6 +422,7 @@ export function useGeneration(apiBase: string) {
     setError(null);
     setErrorInfo(null);
     setNotice(null);
+    setLiveText(null);
   }, []);
 
   const pushStep = useCallback((id: string, label: string, detail?: string, state?: StepState) => {
@@ -410,6 +497,13 @@ export function useGeneration(apiBase: string) {
 
       let completion: any = null;
       let failure: string | null = null;
+      /**
+       * Kept locally as well as in state: the state is for rendering the
+       * bubble, this is for handing the plan to the finished turn — reading
+       * it back through a closure would see whatever render last committed.
+       */
+      let live: LiveText | null = null;
+      let planText = '';
       let failureInfo: Omit<ErrorInfo, 'message'> = { network: false };
       /** True only for a rejection that means the server never started work. */
       let neverStarted = false;
@@ -477,6 +571,13 @@ export function useGeneration(apiBase: string) {
               case 'completion':
                 completion = data;
                 break;
+              case 'llm_text':
+                live = applyLiveText(live, data);
+                // Only the plan is kept for the turn; thinking is never shown
+                // again once the plan replaces it.
+                if (live?.phase === 'plan') planText = live.text;
+                setLiveText(live);
+                break;
               case 'started':
                 // The server names the run so Stop can cancel it.
                 if (data.generationId) generationIdRef.current = data.generationId;
@@ -534,6 +635,8 @@ export function useGeneration(apiBase: string) {
 
       finishSteps(!!completion);
       setBusy(false);
+      // The bubble's job is done; the plan lives on at the top of the turn.
+      setLiveText(null);
 
       if (failure && !completion) {
         setError(failure);
@@ -559,12 +662,13 @@ export function useGeneration(apiBase: string) {
         pins: completion.pins,
         verification: completion.verification,
         elapsedMs: Date.now() - startedRef.current,
+        planText: planText.trim() || undefined,
       };
     },
     [apiBase, pushStep, finishSteps, reset],
   );
 
-  return { generate, cancel, steps, busy, error, errorInfo, notice, reset };
+  return { generate, cancel, steps, busy, error, errorInfo, notice, liveText, reset };
 }
 
 /**

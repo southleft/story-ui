@@ -958,6 +958,8 @@ async function runStoryGenerationPipeline(
     // only). The one-per-second progress event is the only evidence of life
     // the user gets during the longest phase of the run.
     let lastStreamEmit = 0;
+    let lastThinkEmit = 0;
+    let thinkingText = '';
     let planSent = '';
     const llmResult = processedImages.length > 0
       ? await callLLM(messages, processedImages, { provider, model })
@@ -978,6 +980,14 @@ async function runStoryGenerationPipeline(
           if (now - lastStreamEmit < 1000) return;
           lastStreamEmit = now;
           events.onProgress?.(4, totalSteps, 'llm_thinking', 'AI is generating your story...', { charsWritten: chars });
+        }, (delta) => {
+          // The model's own summary of its reasoning, while nothing else is
+          // visible. Capped so a long think does not become a wall of text.
+          thinkingText = (thinkingText + delta).slice(-2000);
+          const now = Date.now();
+          if (now - lastThinkEmit < 300) return;
+          lastThinkEmit = now;
+          events.onLlmText?.({ phase: 'thinking', delta, accumulated: thinkingText });
         });
     const claudeResponse = llmResult.content;
 
@@ -2602,6 +2612,7 @@ async function callLLMStreaming(
   messages: { role: 'user' | 'assistant' | 'system'; content: string }[],
   options: { provider?: string; model?: string; maxTokens?: number; signal?: AbortSignal },
   onDelta: (charsWritten: number, accumulated: string) => void,
+  onThinking?: (delta: string) => void,
 ): Promise<{ content: string; truncated: boolean }> {
   if (!isProviderConfigured()) {
     throw new Error('No LLM provider configured');
@@ -2615,6 +2626,7 @@ async function callLLMStreaming(
     model: options.model,
     maxTokens: options.maxTokens ?? providerInfo.maxOutputTokens ?? 8192,
     ...(options.signal ? { signal: options.signal } : {}),
+    ...(onThinking ? { onThinking } : {}),
   }, (_delta, accumulated) => onDelta(accumulated.length, accumulated));
   onDelta(result.content.length, result.content);
   if (result.usage) {
@@ -2640,6 +2652,16 @@ async function callLLM(
 ): Promise<{ content: string; truncated: boolean }> {
   if (!isProviderConfigured()) {
     throw new Error('No LLM provider configured');
+  }
+
+  // Every text-only call streams: the stream is bounded by silence rather than
+  // by a wall clock, which is what a two-minute repair of an 8k-token story
+  // needs. Only a call with images takes the buffered path.
+  if (!images || images.length === 0) {
+    return callLLMStreaming(messages, {
+      provider: options?.provider, model: options?.model,
+      ...(options?.signal ? { signal: options.signal } : {}),
+    }, () => {});
   }
 
   if (options?.provider) {

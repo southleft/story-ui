@@ -443,3 +443,62 @@
   background: transparent;
   border: 1px solid var(--gray-a7);
 }
+
+/* ---- live narration ----------------------------------------------------- */
+
+/* The model's own words while it works, above the step list. It is prose,
+   not a status line, so it wears the assistant turn's treatment plus a caret
+   to say the sentence is still being written. */
+.suiw-live {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Reasoning is provisional and reads as such: muted and italic, so the
+   moment the plan replaces it the change of register is visible. */
+.suiw-live--thinking .suiw-turn-body {
+  font-style: italic;
+  opacity: 0.7;
+}
+
+.suiw-live-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.suiw-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--accent-9);
+  animation: suiw-caret 1s steps(2, start) infinite;
+}
+
+@keyframes suiw-caret {
+  50% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .suiw-caret { animation: none; }
+}
+
+/* ---- fullscreen preview ------------------------------------------------- */
+
+/* The preview takes the whole workspace; the rail folds to a strip wide
+   enough for the chevron that brings it back. Independent of Storybook's own
+   chrome, which the manager addon handles when it is wired. */
+.suiw-body--fullscreen {
+  grid-template-columns: 36px 1fr;
+}
+
+.suiw-rail--collapsed {
+  align-items: center;
+  padding-top: var(--space-2);
+}
+
+@media (max-width: 1100px) {
+  .suiw-body--fullscreen { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  .suiw-rail--collapsed { max-height: none; flex-direction: row; padding: var(--space-1) var(--space-2); }
+}

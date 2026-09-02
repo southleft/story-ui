@@ -131,7 +131,7 @@ function truncateConversation(conv: ManifestMessage[]): ManifestMessage[] {
 }
 
 /** Hard ceilings so persisted previews can't grow into full-size payloads. */
-const MAX_THUMBNAILS_PER_MESSAGE = 4;
+const MAX_THUMBNAILS_PER_MESSAGE = 5;
 const MAX_THUMBNAIL_CHARS = 96 * 1024;
 
 /**

@@ -155,6 +155,8 @@ export interface ChatStreamOptions {
   signal?: AbortSignal;
   /** Send the system prompt as a cacheable block (default true; Claude only). */
   cacheSystemPrompt?: boolean;
+  /** Summarised reasoning as it streams (Claude, streaming only). Narration, not content. */
+  onThinking?: (delta: string) => void;
 }
 
 /**
@@ -225,6 +227,8 @@ export async function* chatCompletionStream(
     if (chunk.type === 'text' && chunk.content) {
       content += chunk.content;
       yield chunk.content;
+    } else if (chunk.type === 'thinking' && chunk.content) {
+      options?.onThinking?.(chunk.content);
     } else if (chunk.type === 'done') {
       finishReason = chunk.finishReason;
       usage = chunk.usage;
