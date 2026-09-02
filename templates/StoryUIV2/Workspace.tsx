@@ -79,6 +79,20 @@ import {
   type StoryVersionSummary,
 } from './VersionHistory';
 
+/**
+ * The model writes component names in backticks. Render those as code
+ * rather than showing the backticks, without pulling in a markdown library.
+ */
+function withInlineCode(text: string): React.ReactNode {
+  if (!text.includes('`')) return text;
+  const parts = text.split(/(`[^`\n]+`)/g);
+  return parts.map((part, i) =>
+    part.startsWith('`') && part.endsWith('`') && part.length > 2
+      ? <code key={i} className="suiw-inline-code">{part.slice(1, -1)}</code>
+      : <React.Fragment key={i}>{part}</React.Fragment>,
+  );
+}
+
 /** sessionStorage key for the story the workspace had open. */
 const ACTIVE_KEY = 'story-ui-v2-active';
 /**
@@ -1834,10 +1848,10 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                             ))}
                           </Flex>
                         )}
-                        <Text as="div" size="2" className="suiw-turn-body">{turn.text}</Text>
+                        <Text as="div" size="2" className="suiw-turn-body">{withInlineCode(turn.text)}</Text>
                       </Card>
                     ) : (
-                      <Text as="div" size="2" color={turn.failed ? 'red' : 'gray'} className="suiw-turn-body">{turn.text}</Text>
+                      <Text as="div" size="2" color={turn.failed ? 'red' : 'gray'} className="suiw-turn-body">{withInlineCode(turn.text)}</Text>
                     )}
 
                     {turn.role === 'assistant' && (() => {
@@ -1980,7 +1994,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                       {liveText.phase === 'summary' ? 'Summary' : liveText.phase === 'thinking' ? 'Thinking…' : 'Plan'}
                     </Text>
                     <Text as="div" size="2" color="gray" className="suiw-turn-body">
-                      {liveText.text}
+                      {withInlineCode(liveText.text)}
                       <span className="suiw-caret" aria-hidden="true" />
                     </Text>
                   </Flex>
