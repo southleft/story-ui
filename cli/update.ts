@@ -5,7 +5,7 @@ import chalk from 'chalk';
 import { fileURLToPath } from 'url';
 import inquirer from 'inquirer';
 import { createRequire } from 'module';
-import { ensureManagerAddonWiring, ensureStoriesGlobCoversMdx, missingReactStorybookDep, ensureManagerHeadPort, readConfiguredPort, ensureScriptPort } from './setup.js';
+import { ensureManagerAddonWiring, ensureStoriesGlobCoversMdx, missingReactStorybookDep, ensureManagerHeadPort, readConfiguredPort, ensureScriptPort, viteFinalConfigSnippet, insertConfigProperty, missingViteCjsIncludes } from './setup.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
