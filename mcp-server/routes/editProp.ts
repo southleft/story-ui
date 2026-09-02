@@ -147,11 +147,14 @@ export function resolveComponentInSource(
 ): string | undefined {
   if (owners) {
     const declared = topLevelDeclarations(source);
-    const authored = ordered.find(name => {
+    const authored = ordered.filter(name => {
       const owner = name ? owners[name] : undefined;
       return name && owner && declared.has(owner) && occurrencesInSource(source, name) > 0;
     });
-    if (authored) return authored;
+    // The same demotion as below: an authored Box beside an authored Button
+    // is still the wrapper, not the thing that was clicked.
+    const pick = authored.find(name => !GENERIC_WRAPPERS.has(name)) ?? authored[0];
+    if (pick) return pick;
   }
   /**
    * A layout primitive is the last resort, not the first hit. A click on a
