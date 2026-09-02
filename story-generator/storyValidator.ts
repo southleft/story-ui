@@ -60,6 +60,12 @@ export function validateStory(storyContent: string): ValidationError[] {
   const forbiddenPatterns = [
     { pattern: /UNSAFE_style\s*=\s*\{/i, message: 'The `UNSAFE_style` prop is strictly forbidden. Do not use it for any reason.' },
     { pattern: /UNSAFE_className\s*=\s*['"]/i, message: 'The `UNSAFE_className` prop is forbidden.' },
+    // A repair once "fixed" a tint that a component ignored by injecting a
+    // <style> block with !important next to it. It rendered, verification
+    // passed, and the story was now styled by a stylesheet no design system
+    // owns. Both are escape hatches around the component's own props.
+    { pattern: /<style[\s>]/, message: 'Do not inject a <style> element. Style through the component\'s own props, the design system\'s tokens, or a layout component.' },
+    { pattern: /!important/, message: 'Do not use !important. Style through the component\'s own props or the design system\'s tokens.' },
     { pattern: /<Text\s+as\s*=\s*["']h[1-6]["']/i, message: 'Text component does not support heading elements (h1-h6) in the "as" prop. Use Heading component instead.' },
     // Catch imports that don't exist in production environments
     { pattern: /from\s+['"]@storybook\/addon-actions['"]/i, message: 'Do not import from @storybook/addon-actions. Use argTypes with action property instead: argTypes: { onClick: { action: "clicked" } }' },
