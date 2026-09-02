@@ -193,7 +193,19 @@ app.patch('/story-ui/manifest/:fileName', manifestPatchHandler);
 app.delete('/story-ui/manifest/:fileName', manifestDeleteHandler);
 // Expose design-system config for auto-registry loading
 app.get('/mcp/canvas-config', (_req, res) => {
+  // Whether the host Storybook lists @storybook/addon-mcp. Read from
+  // .storybook/main.* so the classic panel can decide whether the addon's
+  // /mcp endpoint is worth asking for — probing blindly logged a 404 on
+  // every load in every project without it.
+  const storybookMcpAddon = (() => {
+    try {
+      const sbDir = path.join(process.cwd(), '.storybook');
+      const main = ['main.ts', 'main.mts', 'main.js', 'main.mjs', 'main.cjs'].map(f => path.join(sbDir, f)).find(f => fs.existsSync(f));
+      return !!main && fs.readFileSync(main, 'utf8').includes('@storybook/addon-mcp');
+    } catch { return false; }
+  })();
   res.json({
+    storybookMcpAddon,
     importPath: config.importPath || '',
     importStyle: config.importStyle || 'barrel',
     componentPrefix: config.componentPrefix || '',

@@ -352,6 +352,32 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
       });
     }
 
+    /**
+     * React's own warnings are findings too. "React does not recognize the
+     * `InputProps` prop on a DOM element" means the story used a prop the
+     * installed major removed and it is being spread onto a <div>; "a props
+     * object containing a key is being spread" is a React 19 break. Both
+     * rendered fine, so nothing else noticed; the bench saw them as console
+     * errors on every page that showed the story's thumbnail.
+     */
+    const reactWarning = /does not recognize the [`'"]?(\w+)[`'"]? prop|containing a "key" prop is being spread|Each child in a list should have a unique "key"|Invalid DOM property|Received `?(true|false)`? for a non-boolean attribute/;
+    const seenWarnings = new Set<string>();
+    for (const line of render.consoleErrors) {
+      const m = reactWarning.exec(line);
+      if (!m) continue;
+      const key = (m[1] || m[0]).toLowerCase();
+      if (seenWarnings.has(key) || seenWarnings.size >= 3) continue;
+      seenWarnings.add(key);
+      findings.push({
+        id: `react-warning-${key.replace(/\W+/g, '-')}`, severity: 'warning', class: 'code',
+        message: m[1]
+          ? `React does not recognize the \`${m[1]}\` prop — it is reaching a DOM element, so the component ignores it`
+          : 'React reported a rendering warning for this story',
+        evidence: line.replace(/%s/g, m[1] || '').replace(/\s+/g, ' ').slice(0, 300),
+        repairable: true,
+      });
+    }
+
     const census = await runDomCensus(render.page, { libraryComponents });
     coverage.census = { ran: true };
 

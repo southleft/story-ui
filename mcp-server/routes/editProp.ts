@@ -152,8 +152,14 @@ export function resolveComponentInSource(
       return name && owner && declared.has(owner) && occurrencesInSource(source, name) > 0;
     });
     // The same demotion as below: an authored Box beside an authored Button
-    // is still the wrapper, not the thing that was clicked.
-    const pick = authored.find(name => !GENERIC_WRAPPERS.has(name)) ?? authored[0];
+    // is still the wrapper, not the thing that was clicked. A helper the
+    // story DECLARES (`function SmallCard() { … }`) is a wrapper too: it has
+    // no props to edit, and the design-system component inside it is what
+    // the click landed on — measured as an inspector that said "declares no
+    // directly editable properties" for a click on a Button.
+    const pick = authored.find(name => !GENERIC_WRAPPERS.has(name) && !declared.has(name))
+      ?? authored.find(name => !GENERIC_WRAPPERS.has(name))
+      ?? authored[0];
     if (pick) return pick;
   }
   /**
@@ -165,7 +171,10 @@ export function resolveComponentInSource(
    * generic wrapper when one appears in the file.
    */
   const present = ordered.filter(name => name && occurrencesInSource(source, name) > 0);
-  return present.find(name => !GENERIC_WRAPPERS.has(name)) ?? present[0];
+  const local = topLevelDeclarations(source);
+  return present.find(name => !GENERIC_WRAPPERS.has(name) && !local.has(name))
+    ?? present.find(name => !GENERIC_WRAPPERS.has(name))
+    ?? present[0];
 }
 
 /** Names that wrap anything and therefore identify nothing. */

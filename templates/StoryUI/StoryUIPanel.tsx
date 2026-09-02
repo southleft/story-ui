@@ -1438,6 +1438,18 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   // Detect Storybook MCP addon availability
   useEffect(() => {
     const checkStorybookMcp = async () => {
+      // Ask only when there is reason to: the server saw the addon in
+      // .storybook/main.*, or the user turned the toggle on before. A blind
+      // probe answered 404 in the console on every load of every project
+      // without the addon.
+      let worthAsking = loadStorybookMcpPref();
+      if (!worthAsking) {
+        try {
+          const cfg = await apiFetch(`${getApiBase()}/mcp/canvas-config`);
+          if (cfg.ok) worthAsking = !!(await cfg.json())?.storybookMcpAddon;
+        } catch { /* server down: nothing to detect */ }
+      }
+      if (!worthAsking) return;
       const available = await detectStorybookMcp();
       dispatch({ type: 'SET_STORYBOOK_MCP_AVAILABLE', payload: available });
 
