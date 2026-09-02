@@ -372,17 +372,83 @@ function checkForLocalComponents(config: StoryUIConfig): boolean {
   return false;
 }
 
+/** The file stems `storybook init` writes into its scaffold stories directory. */
+export const STORYBOOK_SCAFFOLD_STEMS = ['Button', 'Header', 'Page', 'Introduction', 'Configure'];
+
+/**
+ * Is this story file Storybook's own scaffold? Every story imports from
+ * `storybook`, so the package name proves nothing for a story file. The
+ * scaffold's stories carry one of five file stems, link to storybook.js.org
+ * from their comments and title themselves `Example/…`; a project's own
+ * Button.stories.tsx does neither.
+ */
+export function isStorybookScaffoldStory(fileName: string, content: string): boolean {
+  const stem = path.basename(fileName).split('.')[0];
+  if (!STORYBOOK_SCAFFOLD_STEMS.includes(stem)) return false;
+  return /storybook\.js\.org|title:\s*['"]Example\//.test(content);
+}
+
+/** Directories a local component library usually lives in, most common first. */
+export const LOCAL_COMPONENT_DIR_CANDIDATES = [
+  'src/components', 'src/ui', 'components', 'src/lib/components', 'lib/components', 'src/design-system', 'packages/ui/src', 'ui',
+];
+
+const isComponentSourceFile = (f: string) =>
+  /^[A-Z][\w-]*\.(tsx|jsx|vue|svelte)$/.test(f) && !/\.(stories|test|spec)\./.test(f);
+
+/**
+ * Is this component file Storybook's scaffold (src/stories/Button.tsx and
+ * friends)? Only the scaffold's stems are read; the scaffold names its own
+ * CSS classes `storybook-button`, a project's Button does not.
+ */
+function isStorybookScaffoldComponent(file: string): boolean {
+  if (!STORYBOOK_SCAFFOLD_STEMS.includes(path.basename(file).split('.')[0])) return false;
+  try { return /storybook/i.test(fs.readFileSync(file, 'utf-8')); } catch { return false; }
+}
+
+/** How many component source files `dir` holds, two levels deep, Storybook's scaffold excluded; 0 when it does not exist. */
+export function countComponentFiles(dir: string): number {
+  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return 0;
+  let count = 0;
+  const walk = (d: string, depth: number) => {
+    if (depth > 2) return;
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      if (e.isDirectory()) { if (!/node_modules|__tests__|stories|generated/.test(e.name)) walk(path.join(d, e.name), depth + 1); }
+      else if (isComponentSourceFile(e.name) && !isStorybookScaffoldComponent(path.join(d, e.name))) count++;
+    }
+  };
+  try { walk(dir, 0); } catch { return 0; }
+  return count;
+}
+
+/**
+ * The local component directory, found on disk: the candidate holding the
+ * most component source files. Null when none holds any — a project whose
+ * only components are Storybook's scaffold has no component library.
+ */
+export function findLocalComponentDirectory(cwd: string): { dir: string; count: number } | null {
+  let best: { dir: string; count: number } | null = null;
+  for (const rel of LOCAL_COMPONENT_DIR_CANDIDATES) {
+    const count = countComponentFiles(path.join(cwd, rel));
+    if (count > 0 && (!best || count > best.count)) best = { dir: rel, count };
+  }
+  return best;
+}
+
 /**
  * Analyzes existing Storybook files to detect design system patterns
  */
 export function analyzeExistingStories(projectRoot: string = process.cwd()): {
   storyFiles: string[];
+  /** Storybook's scaffold stories — seen, and left out of every other list. */
+  scaffoldFiles: string[];
   componentDirs: string[];
   importPaths: string[];
   componentPrefixes: string[];
   layoutPatterns: string[];
 } {
   const storyFiles: string[] = [];
+  const scaffoldFiles: string[] = [];
   const componentDirs: string[] = [];
   const importPaths: string[] = [];
   const componentPrefixes: string[] = [];
@@ -403,6 +469,15 @@ export function analyzeExistingStories(projectRoot: string = process.cwd()): {
         if (entry.isDirectory()) {
           findStoryFiles(fullPath, depth + 1);
         } else if (entry.name.match(/\.stories\.(tsx?|jsx?)$/)) {
+          // The scaffold's stories say nothing about the project: their
+          // parent is src/stories, which is where init would then have
+          // pointed componentsPath — and deleted a moment later.
+          let content = '';
+          try { content = fs.readFileSync(fullPath, 'utf-8'); } catch { /* unreadable: treated as the project's own */ }
+          if (isStorybookScaffoldStory(entry.name, content)) {
+            scaffoldFiles.push(fullPath);
+            continue;
+          }
           storyFiles.push(fullPath);
 
           // Track component directory (parent of story file)
@@ -474,6 +549,7 @@ export function analyzeExistingStories(projectRoot: string = process.cwd()): {
 
   return {
     storyFiles,
+    scaffoldFiles,
     componentDirs,
     importPaths,
     componentPrefixes,
@@ -520,7 +596,7 @@ export function autoDetectDesignSystem(): Partial<StoryUIConfig> | null {
 
     // Analyze existing Storybook files for patterns
     const analysis = analyzeExistingStories(cwd);
-    console.log(`📊 Analysis found: ${analysis.storyFiles.length} story files, ${analysis.componentDirs.length} component directories`);
+    console.log(`📊 Analysis found: ${analysis.storyFiles.length} story files, ${analysis.componentDirs.length} component directories${analysis.scaffoldFiles.length ? ` (${analysis.scaffoldFiles.length} Storybook scaffold stories ignored)` : ''}`);
 
     const generatedStoriesPath = path.join(cwd, 'src/stories/generated/');
 
@@ -565,12 +641,23 @@ export function autoDetectDesignSystem(): Partial<StoryUIConfig> | null {
       undefined;
 
     // A local library is imported by a path RELATIVE to the generated stories
-    // directory (the form init writes for local libraries everywhere else);
-    // the project's own package name is never emitted.
+    // directory (the form init writes for local libraries everywhere else),
+    // and one that resolves — see localImportForComponents; the project's
+    // own package name is never emitted.
+    let importStyle: 'individual' | undefined;
     if (!importPath) {
-      importPath = componentPath && fs.existsSync(componentPath)
-        ? relativeImportPath(generatedStoriesPath, componentPath)
-        : 'your-component-library';
+      if (componentPath && fs.existsSync(componentPath)) {
+        const local = localImportForComponents(generatedStoriesPath, componentPath, cwd);
+        importPath = local.importPath;
+        importStyle = local.importStyle;
+        if (local.barrel && path.dirname(local.barrel) !== path.resolve(componentPath)) {
+          console.log(`ℹ️  ${path.relative(cwd, componentPath)} has no index; stories import the barrel at ${path.relative(cwd, local.barrel)} as ${importPath}`);
+        } else if (importStyle === 'individual') {
+          console.log(`ℹ️  ${path.relative(cwd, componentPath)} has no index and no ancestor barrel re-exports it; stories import each component by its own path (importStyle: individual)`);
+        }
+      } else {
+        importPath = 'your-component-library';
+      }
     }
 
     // Determine component prefix
@@ -594,6 +681,9 @@ export function autoDetectDesignSystem(): Partial<StoryUIConfig> | null {
     // Only set componentsPath for local component libraries
     if (componentPath && !isExternalPackage) {
       config.componentsPath = componentPath;
+    }
+    if (importStyle) {
+      config.importStyle = importStyle;
     }
 
     // Merge with known system config if available
@@ -714,24 +804,12 @@ function detectKnownDesignSystems(dependencies: Record<string, string>): Partial
 /**
  * Finds the most likely component directory based on story file locations
  */
-function findMostLikelyComponentDirectory(componentDirs: string[], projectRoot: string): string {
+export function findMostLikelyComponentDirectory(componentDirs: string[], projectRoot: string): string {
+  const local = findLocalComponentDirectory(projectRoot);
   if (componentDirs.length === 0) {
-    // Fallback to common patterns
-    const commonPaths = [
-      path.join(projectRoot, 'src/components'),
-      path.join(projectRoot, 'components'),
-      path.join(projectRoot, 'lib/components'),
-      path.join(projectRoot, 'src/ui'),
-      path.join(projectRoot, 'ui')
-    ];
-
-    for (const commonPath of commonPaths) {
-      if (fs.existsSync(commonPath)) {
-        return commonPath;
-      }
-    }
-
-    return path.join(projectRoot, 'src/components');
+    // No stories of the project's own to learn from: the directory that
+    // holds component files, or the conventional default when none does.
+    return path.join(projectRoot, local ? local.dir : 'src/components');
   }
 
   // Find the common parent directory of most story files
@@ -757,6 +835,13 @@ function findMostLikelyComponentDirectory(componentDirs: string[], projectRoot: 
     }
   }
 
+  // Stories that live apart from their components (src/stories importing
+  // ../components/Button) name a directory with no component in it. The
+  // directory that holds the components is the one to record.
+  if (local && countComponentFiles(bestDir) === 0) {
+    return path.join(projectRoot, local.dir);
+  }
+
   return bestDir;
 }
 
@@ -765,6 +850,82 @@ export function relativeImportPath(fromDir: string, toDir: string): string {
   let rel = path.relative(path.resolve(fromDir), path.resolve(toDir)).split(path.sep).join('/');
   if (!rel.startsWith('.')) rel = './' + rel;
   return rel;
+}
+
+const MODULE_EXTS = ['ts', 'tsx', 'js', 'jsx', 'mjs'];
+
+/** The index module in `dir`, or null. */
+export function moduleIndexIn(dir: string): string | null {
+  for (const ext of MODULE_EXTS) {
+    const f = path.join(dir, `index.${ext}`);
+    if (fs.existsSync(f)) return f;
+  }
+  return null;
+}
+
+/**
+ * Would a bundler resolve `specifier` from a file in `fromDir`? A module
+ * file (with or without its extension), or a directory with an index. This
+ * is the check a written importPath must pass: `../../components` pointing
+ * at a directory with no index is "Failed to resolve import" in every
+ * generated story, and Storybook's red overlay on all of them.
+ */
+export function relativeImportResolves(fromDir: string, specifier: string): boolean {
+  if (!specifier.startsWith('.') && !path.isAbsolute(specifier)) return false;
+  const target = path.resolve(fromDir, specifier);
+  try {
+    if (fs.existsSync(target) && fs.statSync(target).isFile()) return /\.(tsx?|jsx?|mjs)$/.test(target);
+    for (const ext of MODULE_EXTS) {
+      if (fs.existsSync(`${target}.${ext}`)) return true;
+    }
+    if (fs.existsSync(target) && fs.statSync(target).isDirectory()) return moduleIndexIn(target) !== null;
+  } catch { /* unreadable: does not resolve */ }
+  return false;
+}
+
+/** Does the index module at `barrel` re-export anything from inside `componentsDir`? */
+function barrelReexportsFrom(barrel: string, componentsDir: string): boolean {
+  let content = '';
+  try { content = fs.readFileSync(barrel, 'utf-8'); } catch { return false; }
+  const root = path.resolve(componentsDir);
+  for (const m of content.matchAll(/(?:export|import)\b[^;]*?\bfrom\s*["'](\.[^"']+)["']/g)) {
+    const target = path.resolve(path.dirname(barrel), m[1]);
+    if (target === root || target.startsWith(root + path.sep)) return true;
+  }
+  return false;
+}
+
+/**
+ * The import a generated story uses for a local component directory, chosen
+ * so that it RESOLVES from the generated stories directory:
+ *
+ * 1. the directory itself, when it has an index;
+ * 2. the nearest ancestor (up to the project root) whose index re-exports
+ *    from it — a project with `src/index.ts` re-exporting `./components/*`
+ *    and no `src/components/index.ts` is imported as `../..`, the directory
+ *    form, which is what the prop extractor and a bundler both resolve;
+ * 3. otherwise the directory with `importStyle: 'individual'`, so the prompt
+ *    shows per-component paths rather than a barrel that does not exist.
+ */
+export function localImportForComponents(
+  generatedDir: string,
+  componentsDir: string,
+  projectRoot: string,
+): { importPath: string; importStyle?: 'individual'; barrel?: string } {
+  const target = path.resolve(componentsDir);
+  const own = moduleIndexIn(target);
+  if (own) return { importPath: relativeImportPath(generatedDir, target), barrel: own };
+  const root = path.resolve(projectRoot);
+  let dir = path.dirname(target);
+  while (dir.startsWith(root) && dir !== path.dirname(dir)) {
+    const index = moduleIndexIn(dir);
+    if (index && barrelReexportsFrom(index, target)) {
+      return { importPath: relativeImportPath(generatedDir, dir), barrel: index };
+    }
+    if (dir === root) break;
+    dir = path.dirname(dir);
+  }
+  return { importPath: relativeImportPath(generatedDir, target), importStyle: 'individual' };
 }
 
 /**

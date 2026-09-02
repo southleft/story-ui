@@ -5,7 +5,7 @@ import chalk from 'chalk';
 import { fileURLToPath } from 'url';
 import inquirer from 'inquirer';
 import { createRequire } from 'module';
-import { ensureManagerAddonWiring, ensureStoriesGlobCoversMdx, missingReactStorybookDep, ensureManagerHeadPort, readConfiguredPort } from './setup.js';
+import { ensureManagerAddonWiring, ensureStoriesGlobCoversMdx, missingReactStorybookDep, ensureManagerHeadPort, readConfiguredPort, ensureScriptPort } from './setup.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -159,6 +159,18 @@ function getPackageVersion(): string {
 }
 
 /**
+ * The string value of a top-level field in story-ui.config.js text. Init
+ * writes the file with JSON.stringify, so the key is quoted; a hand-written
+ * config leaves it bare. A regex that accepted only the bare form reported
+ * every init-written install as version "unknown".
+ */
+export function readConfigField(configContent: string, key: string): string | undefined {
+  const re = new RegExp(`(?:^|[{,\\s])["']?${key}["']?\\s*:\\s*(["'])((?:\\\\.|(?!\\1)[^\\\\])*)\\1`, 'm');
+  const m = configContent.match(re);
+  return m ? m[2] : undefined;
+}
+
+/**
  * Detect if Story UI is initialized in the current directory
  */
 function detectStoryUIInstallation(): {
@@ -193,18 +205,9 @@ function detectStoryUIInstallation(): {
   if (configPath) {
     try {
       const configContent = fs.readFileSync(configPath, 'utf-8');
-      const versionMatch = configContent.match(/_storyUIVersion:\s*['"]([^'"]+)['"]/);
-      if (versionMatch) {
-        installedVersion = versionMatch[1];
-      }
-      const storiesPathMatch = configContent.match(/generatedStoriesPath:\s*['"]([^'"]+)['"]/);
-      if (storiesPathMatch) {
-        configuredStoriesPath = storiesPathMatch[1];
-      }
-      const frameworkMatch = configContent.match(/componentFramework:\s*['"]([^'"]+)['"]/);
-      if (frameworkMatch) {
-        componentFramework = frameworkMatch[1];
-      }
+      installedVersion = readConfigField(configContent, '_storyUIVersion');
+      configuredStoriesPath = readConfigField(configContent, 'generatedStoriesPath');
+      componentFramework = readConfigField(configContent, 'componentFramework');
     } catch (error) {
       // Ignore read errors
     }
@@ -583,6 +586,17 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
         }
       } catch (headError: any) {
         result.errors.push(`manager-head.html: ${headError.message}`);
+      }
+      // The third place the port lives. When .env is the source, the script
+      // follows it; when the script itself was the source there is nothing
+      // to reconcile.
+      try {
+        const script = ensureScriptPort(process.cwd(), configured.port);
+        if (script.action === 'created' || script.action === 'updated') {
+          console.log(chalk.green(`   ✅ ${script.action === 'created' ? 'Added' : 'Updated'} the package.json "story-ui" script — npm run story-ui starts on port ${configured.port} (from ${configured.source})`));
+        }
+      } catch (scriptError: any) {
+        result.errors.push(`package.json story-ui script: ${scriptError.message}`);
       }
     } else {
       console.log(chalk.yellow('   ⚠️  No port in .env (VITE_STORY_UI_PORT) or the story-ui script — .storybook/manager-head.html was not written'));

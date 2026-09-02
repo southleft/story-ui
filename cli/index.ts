@@ -5,7 +5,7 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { setupCommand, cleanupDefaultStorybookComponents } from './setup.js';
+import { setupCommand, cleanupDefaultStorybookComponents, readConfiguredPort } from './setup.js';
 import { deployCommand } from './deploy.js';
 import { updateCommand, statusCommand } from './update.js';
 import net from 'net';
@@ -243,14 +243,18 @@ program
 program
   .command('mcp')
   .description('Start Story UI as an MCP server (for use with Claude Desktop and other MCP clients)')
-  .option('--http-port <port>', 'Port for the HTTP server', '4001')
+  .option('--http-port <port>', 'Port of the running Story UI HTTP server (default: the port init configured in .env or the story-ui script, else 4001)')
   .action(async (options) => {
     // For MCP mode, DO NOT output anything to stdout - it's reserved for JSON-RPC
     // Use stderr for all logging
     console.error('🚀 Starting Story UI as MCP server...');
     console.error('📡 This server uses stdio transport for MCP communication');
-    console.error('⚠️  Note: The HTTP server must be running on port ' + options.httpPort);
-    console.error('    Run "story-ui start" in another terminal if not already running.\n');
+
+    // One resolution, printed once — by the stdio server, which announces
+    // the port it will actually call. This command used to say 4001 while
+    // the child resolved .env's port and said something else.
+    const configured = options.httpPort ? null : readConfiguredPort(process.cwd());
+    const httpPort = String(options.httpPort || configured?.port || process.env.VITE_STORY_UI_PORT || process.env.STORY_UI_HTTP_PORT || process.env.PORT || 4001);
 
     // Use absolute path to MCP stdio server
     const pkgRoot = path.resolve(__dirname, '..');
@@ -258,7 +262,7 @@ program
 
     const env: NodeJS.ProcessEnv = {
       ...process.env,
-      STORY_UI_HTTP_PORT: options.httpPort
+      STORY_UI_HTTP_PORT: httpPort
     };
 
     const mcpServer = spawn('node', [mcpServerPath], {

@@ -36,8 +36,10 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 // Set MCP mode to suppress emojis in logging
 process.env.STORY_UI_MCP_MODE = 'true';
 
-// Get HTTP server port from environment variables (check multiple possible names)
-const HTTP_PORT = process.env.VITE_STORY_UI_PORT || process.env.STORY_UI_HTTP_PORT || process.env.PORT || '4001';
+// The HTTP server's port. STORY_UI_HTTP_PORT is what `story-ui mcp` resolved
+// (its --http-port flag, else the port init configured) and wins; the .env
+// port and PORT are for running this file directly.
+const HTTP_PORT = process.env.STORY_UI_HTTP_PORT || process.env.VITE_STORY_UI_PORT || process.env.PORT || '4001';
 // Allow configurable base URL for Railway/cloud deployments, fallback to localhost for local dev
 const HTTP_BASE_URL = process.env.STORY_UI_HTTP_BASE_URL || `http://localhost:${HTTP_PORT}`;
 
@@ -205,12 +207,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     switch (name) {
       case "test-connection": {
-        return {
-          content: [{
-            type: "text",
-            text: "MCP connection is working! Story UI is connected and ready."
-          }]
-        };
+        // The stdio transport answering proves nothing about the HTTP
+        // server every other tool calls. Ask it, and say what came back.
+        const healthUrl = `${HTTP_BASE_URL}/health`;
+        try {
+          const res = await fetch(healthUrl, { signal: AbortSignal.timeout(3000) as any });
+          let body = '';
+          try { body = (await res.text()).slice(0, 300); } catch { /* no body */ }
+          const text = res.ok
+            ? `Story UI HTTP server is reachable at ${HTTP_BASE_URL} (GET /health → ${res.status}${body ? `: ${body}` : ''}). Tools are ready.`
+            : `Story UI HTTP server at ${HTTP_BASE_URL} answered GET /health with ${res.status}${body ? `: ${body}` : ''}. Tools will fail until it is healthy.`;
+          return { content: [{ type: "text", text }], isError: !res.ok };
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          return {
+            content: [{
+              type: "text",
+              text: `Cannot reach the Story UI HTTP server at ${HTTP_BASE_URL} (GET /health failed: ${reason}). Start it with "npm run story-ui" (or "story-ui start --port ${HTTP_PORT}") in the project, then try again.`
+            }],
+            isError: true
+          };
+        }
       }
 
       case "generate-story": {
@@ -663,8 +680,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   // Log to stderr so it doesn't interfere with stdio communication
   console.error("Story UI MCP Server starting...");
-  console.error(`Note: This requires the Story UI HTTP server to be running on port ${HTTP_PORT}`);
-  console.error("Run 'story-ui start' in a separate terminal if not already running.\n");
+  console.error(`HTTP server expected at ${HTTP_BASE_URL} — start it with "npm run story-ui" in the project if it is not running.\n`);
 
   // Create stdio transport
   const transport = new StdioServerTransport();

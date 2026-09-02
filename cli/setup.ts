@@ -2,7 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
-import { autoDetectDesignSystem } from '../story-generator/configLoader.js';
+import { autoDetectDesignSystem, findLocalComponentDirectory, isStorybookScaffoldStory, localImportForComponents } from '../story-generator/configLoader.js';
+import { mergeEnv, parseEnv, isUsableApiKey } from './envFile.js';
 import * as ts from 'typescript';
 import { deriveHostContract, type HostContract } from '../story-generator/knowledge/hostContract.js';
 import { fileURLToPath } from 'url';
@@ -73,6 +74,36 @@ export function isStorybookScaffold(content: string): boolean {
   return /storybook/i.test(content);
 }
 
+/** The images `storybook init` writes into src/stories/assets for Configure.mdx. */
+const SCAFFOLD_ASSETS = new Set([
+  'accessibility.png', 'accessibility.svg', 'addon-library.png', 'assets.png', 'avif-test-image.avif',
+  'context.png', 'discord.svg', 'docs.png', 'figma-plugin.png', 'github.svg', 'share.png', 'styling.png',
+  'testing.png', 'theming.png', 'tutorials.svg', 'youtube.svg',
+]);
+
+/**
+ * Remove the files in `assetsDir` that Configure.mdx (`mdxContent`) imported
+ * or that Storybook's scaffold is known to ship, then the directory itself
+ * when nothing else is in it. Returns how many files went; anything left is
+ * the project's and is reported through `kept`.
+ */
+function removeScaffoldAssets(assetsDir: string, mdxContent: string, kept: string[]): number {
+  if (!fs.existsSync(assetsDir) || !fs.statSync(assetsDir).isDirectory()) return 0;
+  const referenced = new Set<string>();
+  for (const m of mdxContent.matchAll(/from\s+["']\.\/assets\/([^"']+)["']/g)) referenced.add(m[1]);
+  let removed = 0;
+  for (const name of fs.readdirSync(assetsDir)) {
+    const file = path.join(assetsDir, name);
+    if (referenced.has(name) || SCAFFOLD_ASSETS.has(name)) {
+      try { fs.unlinkSync(file); removed++; } catch { kept.push(file); }
+    } else {
+      kept.push(file);
+    }
+  }
+  if (fs.readdirSync(assetsDir).length === 0) fs.rmdirSync(assetsDir);
+  return removed;
+}
+
 /**
  * Remove Storybook's own scaffold components, which otherwise show up in
  * component discovery. Never removes a file it cannot prove is the scaffold.
@@ -99,7 +130,7 @@ export function cleanupDefaultStorybookComponents() {
     // CSS files
     'button.css', 'header.css', 'page.css', 'introduction.css',
     // MDX files
-    'Introduction.stories.mdx', 'Configure.stories.mdx'
+    'Introduction.stories.mdx', 'Configure.stories.mdx', 'Configure.mdx'
   ];
 
   let cleanedFiles = 0;
@@ -112,15 +143,24 @@ export function cleanupDefaultStorybookComponents() {
       const filePath = path.join(storiesDir, fileName);
       if (!fs.existsSync(filePath)) continue;
       // Only Storybook's own scaffold goes. A project's own Button.tsx that
-      // happens to share the name is the user's code and stays.
+      // happens to share the name is the user's code and stays. A story or
+      // MDX file mentions Storybook by importing it, so those are judged by
+      // the scaffold's own markers instead.
       let content = '';
       try { content = fs.readFileSync(filePath, 'utf-8'); } catch { kept.push(filePath); continue; }
-      if (!isStorybookScaffold(content)) { kept.push(filePath); continue; }
+      const scaffold = /\.stories\.|\.mdx$/.test(fileName) ? isStorybookScaffoldStory(fileName, content) : isStorybookScaffold(content);
+      if (!scaffold) { kept.push(filePath); continue; }
       try {
         fs.unlinkSync(filePath);
         cleanedFiles++;
       } catch (error) {
         console.warn(`Could not remove ${fileName}: ${error}`);
+        continue;
+      }
+      // Configure.mdx imports the images beside it. Those go with it; any
+      // other file in assets/ is the project's and keeps the directory.
+      if (fileName === 'Configure.mdx') {
+        cleanedFiles += removeScaffoldAssets(path.join(storiesDir, 'assets'), content, kept);
       }
     }
   }
@@ -513,15 +553,75 @@ export function readConfiguredPort(cwd: string): { port: number; source: string 
       if (m) return { port: Number(m[1]), source: '.env VITE_STORY_UI_PORT' };
     }
   }
-  const pkgPath = path.join(cwd, 'package.json');
-  if (fs.existsSync(pkgPath)) {
-    try {
-      const script = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'))?.scripts?.['story-ui'];
-      const m = typeof script === 'string' ? script.match(/--port[ =](\d+)/) : null;
-      if (m) return { port: Number(m[1]), source: 'package.json "story-ui" script' };
-    } catch { /* unreadable package.json — no port from it */ }
-  }
+  const fromScript = readScriptPort(cwd);
+  if (fromScript !== null) return { port: fromScript, source: 'package.json "story-ui" script' };
   return null;
+}
+
+const SCRIPT_PORT_RE = /--port[ =](\d+)/;
+
+/** The `--port` a `story-ui` npm script names, or null when it names none. */
+export function scriptPort(script: string | undefined | null): number | null {
+  const m = typeof script === 'string' ? script.match(SCRIPT_PORT_RE) : null;
+  return m ? Number(m[1]) : null;
+}
+
+/** The `story-ui` script with its `--port` set to `port`: replaced when present, appended when not, created when there is no script. */
+export function withScriptPort(script: string | undefined | null, port: string | number): string {
+  if (!script) return `story-ui start --port ${port}`;
+  if (SCRIPT_PORT_RE.test(script)) return script.replace(SCRIPT_PORT_RE, `--port ${port}`);
+  return `${script} --port ${port}`;
+}
+
+/** The port the package.json `story-ui` script names, or null. */
+export function readScriptPort(cwd: string): number | null {
+  const pkgPath = path.join(cwd, 'package.json');
+  if (!fs.existsSync(pkgPath)) return null;
+  try {
+    return scriptPort(JSON.parse(fs.readFileSync(pkgPath, 'utf-8'))?.scripts?.['story-ui']);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Make the package.json `story-ui` script start the server on `port`. The
+ * port lives in three places — .env, manager-head.html and this script —
+ * and a script left on 4001 started a server the other two never looked at.
+ */
+export function ensureScriptPort(
+  cwd: string,
+  port: string | number,
+): { action: 'created' | 'updated' | 'unchanged' | 'no-package-json' } {
+  const pkgPath = path.join(cwd, 'package.json');
+  if (!fs.existsSync(pkgPath)) return { action: 'no-package-json' };
+  const raw = fs.readFileSync(pkgPath, 'utf-8');
+  const pkg = JSON.parse(raw);
+  const scripts = pkg.scripts || {};
+  const before = scripts['story-ui'];
+  const after = withScriptPort(before, port);
+  if (before === after) return { action: 'unchanged' };
+  scripts['story-ui'] = after;
+  pkg.scripts = scripts;
+  const indent = raw.match(/^[ \t]+/m)?.[0] || '  ';
+  fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, indent) + (raw.endsWith('\n') ? '\n' : ''));
+  return { action: before ? 'updated' : 'created' };
+}
+
+/**
+ * A path as init writes it into story-ui.config.js: relative to the project,
+ * POSIX separators, `./`-prefixed, trailing slash kept. The loader resolves
+ * it against the config file's directory, so the file works after a clone
+ * or a move; an absolute machine path did not. A path outside the project
+ * stays absolute — there is nothing else it could be.
+ */
+export function toProjectRelative(p: string, cwd: string = process.cwd()): string {
+  const abs = path.resolve(cwd, p);
+  let rel = path.relative(cwd, abs).split(path.sep).join('/');
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return abs;
+  rel = rel ? `./${rel}` : '.';
+  if (/[\\/]$/.test(p) && !rel.endsWith('/')) rel += '/';
+  return rel;
 }
 
 /**
@@ -967,6 +1067,8 @@ interface SetupAnswers {
   componentPrefix?: string;
   generatedStoriesPath?: string;
   componentsPath?: string;
+  /** Set when the local library has no barrel: stories import each component by its own path. */
+  importStyle?: 'individual';
   llmProvider?: 'claude' | 'openai' | 'gemini';
   hasApiKey?: boolean;
   apiKey?: string;
@@ -1256,29 +1358,17 @@ export function isNonInteractive(
 export function detectLocalComponentLibrary(
   cwd: string,
   generatedStoriesPath: string,
-): { componentsPath: string; importPath: string; count: number } | null {
-  const candidates = ['src/components', 'src/ui', 'components', 'src/lib/components', 'lib/components', 'src/design-system', 'packages/ui/src'];
-  const isComponentFile = (f: string) => /^[A-Z][\w-]*\.(tsx|jsx|vue|svelte)$/.test(f) && !/\.(stories|test|spec)\./.test(f);
-  let best: { componentsPath: string; count: number } | null = null;
-  for (const rel of candidates) {
-    const dir = path.join(cwd, rel);
-    if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) continue;
-    let count = 0;
-    const walk = (d: string, depth: number) => {
-      if (depth > 2) return;
-      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
-        if (e.isDirectory()) { if (!/node_modules|__tests__|stories/.test(e.name)) walk(path.join(d, e.name), depth + 1); }
-        else if (isComponentFile(e.name)) count++;
-      }
-    };
-    try { walk(dir, 0); } catch { continue; }
-    if (count > 0 && (!best || count > best.count)) best = { componentsPath: rel, count };
-  }
+): { componentsPath: string; importPath: string; count: number; importStyle?: 'individual' } | null {
+  const best = findLocalComponentDirectory(cwd);
   if (!best) return null;
   const from = path.resolve(cwd, generatedStoriesPath);
-  let importPath = path.relative(from, path.resolve(cwd, best.componentsPath)).split(path.sep).join('/');
-  if (!importPath.startsWith('.')) importPath = './' + importPath;
-  return { componentsPath: './' + best.componentsPath.replace(/^\.\//, ''), importPath, count: best.count };
+  const local = localImportForComponents(from, path.resolve(cwd, best.dir), cwd);
+  return {
+    componentsPath: './' + best.dir.replace(/^\.\//, ''),
+    importPath: local.importPath,
+    count: best.count,
+    ...(local.importStyle ? { importStyle: local.importStyle } : {}),
+  };
 }
 
 export async function setupCommand(options: SetupOptions = {}) {
@@ -1482,9 +1572,11 @@ export async function setupCommand(options: SetupOptions = {}) {
     let importPath = options.importPath;
     let componentsPath = options.componentsPath;
     let componentPrefix = options.componentPrefix;
+    let importStyle: 'individual' | undefined;
     if (designSystem === 'custom' && (!importPath || !componentsPath)) {
       const local = detectLocalComponentLibrary(process.cwd(), generatedStoriesPath);
       if (local) {
+        if (!importPath) importStyle = local.importStyle;
         importPath = importPath || local.importPath;
         componentsPath = componentsPath || local.componentsPath;
         console.log(chalk.green(`✅ Found a local component library: ${local.componentsPath} (${local.count} component file(s)); stories will import from ${importPath}`));
@@ -1506,6 +1598,7 @@ export async function setupCommand(options: SetupOptions = {}) {
       ...(importPath ? { importPath } : {}),
       ...(componentsPath ? { componentsPath } : {}),
       ...(componentPrefix ? { componentPrefix } : {}),
+      ...(importStyle ? { importStyle } : {}),
     };
 
     console.log(chalk.blue(`📦 Design system: ${designSystem}`));
@@ -1516,7 +1609,16 @@ export async function setupCommand(options: SetupOptions = {}) {
       console.log(chalk.yellow('⏭️  Skipping package installation'));
     }
   } else {
-    // Interactive mode - use inquirer prompts
+    // Interactive mode - use inquirer prompts.
+    //
+    // Both defaults are computed BEFORE the first prompt renders. The port
+    // scan is asynchronous, and an answer typed while a prompt was still
+    // resolving its default landed in the question after it.
+    const suggestedPort = String(await findAvailablePort(4001));
+    const localLibrary = detectLocalComponentLibrary(process.cwd(), './src/stories/generated/');
+    if (localLibrary) {
+      console.log(chalk.gray(`   Local component library: ${localLibrary.componentsPath} (${localLibrary.count} component file(s)) — offered as the default below`));
+    }
     answers = await inquirer.prompt<SetupAnswers>([
       {
         type: 'list',
@@ -1539,8 +1641,9 @@ export async function setupCommand(options: SetupOptions = {}) {
       {
         type: 'input',
         name: 'importPath',
-        message: 'What is the import path for your components?',
+        message: 'What is the import path for your components? (a package name, or a path relative to the generated stories directory)',
         when: (promptAnswers) => promptAnswers.designSystem === 'custom',
+        ...(localLibrary ? { default: localLibrary.importPath } : {}),
         validate: (input) => input.trim() ? true : 'Import path is required'
       },
       {
@@ -1561,17 +1664,14 @@ export async function setupCommand(options: SetupOptions = {}) {
         type: 'input',
         name: 'componentsPath',
         message: 'Where are your component files located?',
-        default: './src/components',
+        default: localLibrary?.componentsPath || './src/components',
         when: (promptAnswers) => promptAnswers.designSystem === 'custom'
       },
       {
         type: 'input',
         name: 'mcpPort',
         message: 'Port for the Story UI MCP server',
-        default: async () => {
-          const port = await findAvailablePort(4001);
-          return String(port);
-        },
+        default: suggestedPort,
         validate: async (input) => {
           const value = parseInt(input, 10);
           if (isNaN(value) || value <= 0) return 'Enter a valid port number';
@@ -1790,7 +1890,8 @@ Material UI (MUI) is a React component library implementing Material Design.
     config = {
       importPath: answers.importPath,
       componentPrefix: answers.componentPrefix || '',
-      componentsPath: answers.componentsPath ? path.resolve(answers.componentsPath) : undefined,
+      componentsPath: answers.componentsPath ? toProjectRelative(answers.componentsPath) : undefined,
+      ...(answers.importStyle ? { importStyle: answers.importStyle } : {}),
       layoutRules: {
         multiColumnWrapper: 'div',
         columnComponent: 'div',
@@ -1805,8 +1906,13 @@ Material UI (MUI) is a React component library implementing Material Design.
     };
   }
 
-  // Add common configuration
-  config.generatedStoriesPath = path.resolve(answers.generatedStoriesPath || './src/stories/generated/');
+  // Add common configuration. Paths are written project-relative: the
+  // loader resolves them against the config's own directory, and a config
+  // holding /Users/<name>/… broke for the next person to clone the repo.
+  config.generatedStoriesPath = toProjectRelative(answers.generatedStoriesPath || './src/stories/generated/');
+  if (config.componentsPath) config.componentsPath = toProjectRelative(config.componentsPath);
+  /** Where generated stories go, for this process's own filesystem work. */
+  const generatedStoriesAbs = path.resolve(process.cwd(), config.generatedStoriesPath);
   config.storyPrefix = 'Generated/';
   config.componentFramework = componentFramework; // react, angular, vue, svelte, or web-components
   config.storybookFramework = storybookFramework; // e.g., @storybook/react-vite, @storybook/angular
@@ -1834,8 +1940,7 @@ Material UI (MUI) is a React component library implementing Material Design.
   // it from the start; a check that said "does not exist yet" was honest but
   // the fix belonged here.
   try {
-    const generatedDir = path.resolve(process.cwd(), answers.generatedStoriesPath || './src/stories/generated/');
-    fs.mkdirSync(generatedDir, { recursive: true });
+    fs.mkdirSync(generatedStoriesAbs, { recursive: true });
   } catch { /* reported by check */ }
 
   if (fs.existsSync(configPath) && !options.force) {
@@ -1867,7 +1972,7 @@ Material UI (MUI) is a React component library implementing Material Design.
   }
 
   // Create generated stories directory
-  const storiesDir = path.dirname(config.generatedStoriesPath);
+  const storiesDir = path.dirname(generatedStoriesAbs);
   if (!fs.existsSync(storiesDir)) {
     fs.mkdirSync(storiesDir, { recursive: true });
   }
@@ -2047,7 +2152,12 @@ export default registry;
     if (fs.existsSync(placeholderSrc)) {
       fs.copyFileSync(placeholderSrc, path.join(canvasTargetDir, 'componentRegistry.ts'));
     }
-    console.log(chalk.yellow(`⚠️  Voice Canvas registry is empty — populate voice/canvas/componentRegistry.ts manually`));
+    const registryRel = path.relative(process.cwd(), path.join(canvasTargetDir, 'componentRegistry.ts'));
+    if (fs.existsSync(path.join(canvasTargetDir, 'componentRegistry.ts'))) {
+      console.log(chalk.yellow(`⚠️  Voice Canvas registry is empty — populate ${registryRel} manually`));
+    } else {
+      console.log(chalk.gray(`ℹ️  Voice Canvas registry not written: no barrel (index.ts) found for ${config.importPath || 'the import path'}. The Voice Canvas needs one at ${registryRel} to render components.`));
+    }
   }
 
   // Configure Storybook bundler for StoryUIPanel requirements
@@ -2271,32 +2381,41 @@ export default registry;
   const selectedProvider = answers.llmProvider || 'claude';
   const providerConfig = LLM_PROVIDERS[selectedProvider as keyof typeof LLM_PROVIDERS];
 
-  if (!fs.existsSync(envPath)) {
-    // Generate .env content based on selected provider
-    let envContent = `# Story UI Configuration
-# Generated by: npx story-ui init
-
-# LLM Provider: ${providerConfig?.name || selectedProvider}
-DEFAULT_PROVIDER=${selectedProvider}
-
-# API Key for ${providerConfig?.name || selectedProvider}
-# Get your key from: ${providerConfig?.docsUrl || 'your provider dashboard'}
-${providerConfig?.envKey || 'API_KEY'}=${answers.apiKey || 'your-api-key-here'}
-
-# Story UI MCP Server Port
-VITE_STORY_UI_PORT=${answers.mcpPort || '4001'}
-
-# Optional: Add additional provider keys if you want to switch providers later
-# ANTHROPIC_API_KEY=your-anthropic-key
-# OPENAI_API_KEY=your-openai-key
-# GEMINI_API_KEY=your-gemini-key
-`;
-
-    fs.writeFileSync(envPath, envContent);
-    console.log(chalk.green(`✅ Created .env file for ${providerConfig?.name || selectedProvider}${answers.apiKey ? ' with your API key' : ''}`));
-  } else {
-    console.log(chalk.yellow('⚠️  .env file already exists, skipping'));
+  const envKeyName = providerConfig?.envKey || 'API_KEY';
+  {
+    const existingEnv = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : null;
+    // A key typed at the prompt is written whether or not .env exists; with
+    // none typed, a real key already in the file stays and only a
+    // placeholder is (re)written. Every other line is left untouched.
+    const merged = mergeEnv(existingEnv, [
+      { key: 'DEFAULT_PROVIDER', value: selectedProvider, comment: `Story UI: LLM provider (${providerConfig?.name || selectedProvider})` },
+      {
+        key: envKeyName,
+        value: answers.apiKey || 'your-api-key-here',
+        comment: `API key for ${providerConfig?.name || selectedProvider}\nGet your key from: ${providerConfig?.docsUrl || 'your provider dashboard'}`,
+        onlyIfPlaceholder: !answers.apiKey,
+      },
+      { key: 'VITE_STORY_UI_PORT', value: String(answers.mcpPort || '4001'), comment: 'Story UI server port' },
+    ]);
+    const header = existingEnv === null
+      ? `# Story UI Configuration\n# Generated by: npx story-ui init\n\n`
+      : '';
+    if (existingEnv === null || merged.replaced.length || merged.appended.length) {
+      fs.writeFileSync(envPath, header + merged.content);
+    }
+    const keyState = answers.apiKey
+      ? `${envKeyName} set`
+      : isUsableApiKey(parseEnv(merged.content)[envKeyName]) ? `existing ${envKeyName} kept` : `${envKeyName} still needs your key`;
+    if (existingEnv === null) {
+      console.log(chalk.green(`✅ Created .env for ${providerConfig?.name || selectedProvider} (${keyState}, VITE_STORY_UI_PORT=${answers.mcpPort || '4001'})`));
+    } else if (merged.replaced.length || merged.appended.length) {
+      console.log(chalk.green(`✅ Updated .env (${keyState}, VITE_STORY_UI_PORT=${answers.mcpPort || '4001'}); other lines untouched`));
+    } else {
+      console.log(chalk.gray(`ℹ️  .env already has DEFAULT_PROVIDER, ${envKeyName} and VITE_STORY_UI_PORT as init would write them — left as is`));
+    }
   }
+  /** Whether .env now carries a key a provider would accept. */
+  const envHasUsableKey = isUsableApiKey(parseEnv(fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '')[envKeyName]);
 
   // The manager page (?path=/workspace/) cannot read .env: Storybook's own
   // esbuild bundles it, not Vite. The port reaches it through a <meta> in
@@ -2317,7 +2436,9 @@ VITE_STORY_UI_PORT=${answers.mcpPort || '4001'}
     // The StoryUI panel component needs to be deployed to Railway/production environments
     const patterns = [
       '.env',
-      path.relative(process.cwd(), config.generatedStoriesPath),
+      path.relative(process.cwd(), generatedStoriesAbs),
+      // The story tracker's title→file map, beside the generated directory.
+      path.relative(process.cwd(), path.join(storiesDir, '.story-mappings.json')),
       '.story-ui-history/',
       // Knowledge caches (props, runtime reflection), keyed on content
       // fingerprints. Machine-local by construction; never worth committing.
@@ -2344,14 +2465,9 @@ VITE_STORY_UI_PORT=${answers.mcpPort || '4001'}
   // Update package.json with convenience scripts
   if (packageJson) {
     const scripts = packageJson.scripts || {};
-    // FIRST_EDIT: include chosen port in script
-    const portFlag = `--port ${answers.mcpPort || '4001'}`;
-
-    if (!scripts['story-ui']) {
-      scripts['story-ui'] = `story-ui start ${portFlag}`;
-    } else if (!scripts['story-ui'].includes('--port')) {
-      scripts['story-ui'] += ` ${portFlag}`;
-    }
+    // The chosen port, whatever the script said before: .env, manager-head
+    // and this script must agree, and `check` fails when they do not.
+    scripts['story-ui'] = withScriptPort(scripts['story-ui'], answers.mcpPort || '4001');
 
     if (!scripts['storybook-with-ui'] && scripts['storybook']) {
       scripts['storybook-with-ui'] = 'concurrently "npm run storybook" "npm run story-ui"';
@@ -2500,23 +2616,24 @@ VITE_STORY_UI_PORT=${answers.mcpPort || '4001'}
     console.log(`📦 Import path: ${chalk.cyan(config.importPath)}`);
   }
 
-  if (!answers.apiKey) {
+  if (!envHasUsableKey) {
     const provider = LLM_PROVIDERS[answers.llmProvider as keyof typeof LLM_PROVIDERS] || LLM_PROVIDERS.claude;
-    console.log(chalk.yellow(`\n⚠️  Don't forget to add your ${provider.name} API key to .env file!`));
+    console.log(chalk.yellow(`\n⚠️  .env has no ${provider.name} API key yet — set ${envKeyName}=… in .env before starting the server`));
     console.log(`   Get your key from: ${provider.docsUrl}`);
   }
 
   const providerName = LLM_PROVIDERS[answers.llmProvider as keyof typeof LLM_PROVIDERS]?.name || 'your LLM provider';
   console.log('\n🚀 Next steps:');
-  console.log('1. ' + (answers.apiKey ? 'Start' : `Add your ${providerName} API key to .env, then start`) + ' Story UI: npm run story-ui');
+  console.log('1. ' + (envHasUsableKey ? 'Start' : `Add your ${providerName} API key to .env, then start`) + ' Story UI: npm run story-ui');
   console.log('2. Start Storybook: npm run storybook');
-  console.log('3. Navigate to "Story UI > Story Generator" in your Storybook sidebar');
+  console.log('3. Click "Story UI" in Storybook\'s toolbar, or open ?path=/workspace/ — the workspace');
+  console.log('   (the classic chat panel is still there under "Story UI > Story Generator" in the sidebar)');
   console.log('4. Start generating UI with natural language prompts!');
 
   console.log('\n💡 Tips:');
   console.log('- Run both together: npm run storybook-with-ui');
+  console.log(`- Check the install any time: npx story-ui check (port ${answers.mcpPort || '4001'} in .env, manager-head.html and the story-ui script)`);
   console.log('- Generated stories are automatically excluded from git');
-  console.log('- The Story UI panel is in your stories under "Story UI/Story Generator"');
   console.log('- You can modify story-ui.config.js to customize the configuration');
 
   console.log('\n📚 Teach the AI your design system (highly recommended):');

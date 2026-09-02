@@ -13,7 +13,9 @@ import chalk from 'chalk';
 import { loadUserConfig } from '../story-generator/configLoader.js';
 import { EnhancedComponentDiscovery } from '../story-generator/enhancedComponentDiscovery.js';
 import { extractProps } from '../story-generator/knowledge/propExtractor.js';
-import { storiesGlobCoversMdx, storybookMainSyntaxError, managerHeadPort } from './setup.js';
+import { storiesGlobCoversMdx, storybookMainSyntaxError, managerHeadPort, readScriptPort } from './setup.js';
+import { isUsableApiKey } from './envFile.js';
+import { relativeImportResolves, localImportForComponents } from '../story-generator/configLoader.js';
 import { resolveHostTooling, canLaunchBrowser } from '../story-generator/verify/hostTooling.js';
 import { closeBrowserSession } from '../story-generator/verify/browserSession.js';
 import { describeLaunchFailure } from '../story-generator/verify/verifyStory.js';
@@ -67,7 +69,12 @@ export async function runChecks(opts: { server?: string; cwd?: string } = {}): P
     return { ok: false, items, summary };
   }
   summary.importPath = config.importPath;
-  summary.componentsPath = config.componentsPath;
+  // As init writes it — project-relative — not the loader's resolved absolute.
+  summary.componentsPath = config.componentsPath
+    ? (path.isAbsolute(config.componentsPath) && !path.relative(cwd, config.componentsPath).startsWith('..')
+      ? `./${path.relative(cwd, config.componentsPath).split(path.sep).join('/')}`
+      : config.componentsPath)
+    : undefined;
 
   // 2. Import path resolves: an npm package present, or a local directory.
   const importPath: string = config.importPath || '';
@@ -77,15 +84,30 @@ export async function runChecks(opts: { server?: string; cwd?: string } = {}): P
   if (importPath.startsWith('.') || importPath.startsWith('/') || isOwnName) {
     // The project's own package name is local source, not an npm package:
     // nothing can install it, so the directory is what must exist.
-    const dir = config.componentsPath || path.resolve(cwd, config.generatedStoriesPath || './src/stories/generated/', importPath);
+    const generatedFrom = path.resolve(cwd, config.generatedStoriesPath || './src/stories/generated/');
+    const dir = config.componentsPath || path.resolve(generatedFrom, importPath);
     const exists = fs.existsSync(dir);
     const where = `local components at ${path.relative(cwd, dir) || '.'}`;
+    // The directory existing is not enough: the specifier a story writes
+    // must resolve from the generated directory, which means a module file
+    // or a directory WITH an index. `../../components` over a directory
+    // without one failed every story at Vite's resolver.
+    const resolves = !importPath.startsWith('.') || config.importStyle === 'individual' || relativeImportResolves(generatedFrom, importPath);
+    let resolveFix: string | undefined;
+    if (exists && !resolves && config.componentsPath) {
+      const better = localImportForComponents(generatedFrom, config.componentsPath, cwd);
+      resolveFix = better.importStyle
+        ? `no barrel found for ${path.relative(cwd, config.componentsPath)}: add an index.ts that exports the components, or set importStyle: 'individual' in story-ui.config.js (re-running npx story-ui init --force does this)`
+        : `set importPath: '${better.importPath}' in story-ui.config.js (the barrel at ${path.relative(cwd, better.barrel || '')} re-exports the components), or re-run npx story-ui init --force`;
+    }
     items.push({
-      id: 'import-path', ok: exists,
-      detail: exists
-        ? (isOwnName ? `${where} (importPath ${importPath} is this project's own package name — local source)` : where)
-        : (isOwnName ? `importPath ${importPath} is this project's own package name and componentsPath does not resolve to a directory` : `local import path ${importPath} does not resolve to a directory`),
-      fix: exists ? undefined : 'set componentsPath and importPath in story-ui.config.js to the component directory (importPath relative to the generated stories directory), or re-run init --force',
+      id: 'import-path', ok: exists && resolves,
+      detail: !exists
+        ? (isOwnName ? `importPath ${importPath} is this project's own package name and componentsPath does not resolve to a directory` : `local import path ${importPath} does not resolve to a directory`)
+        : !resolves
+          ? `importPath ${importPath} does not resolve from ${path.relative(cwd, generatedFrom)}: no index module there, so every generated story would fail with "Failed to resolve import"`
+          : (isOwnName ? `${where} (importPath ${importPath} is this project's own package name — local source)` : `${where}, imported as ${importPath}${config.importStyle === 'individual' ? ' (per-component paths)' : ''}`),
+      fix: exists && resolves ? undefined : resolveFix || 'set componentsPath and importPath in story-ui.config.js to the component directory (importPath relative to the generated stories directory, resolving to a module or a directory with an index), or re-run init --force',
     });
   } else if (importPath === 'your-component-library') {
     items.push({ id: 'import-path', ok: false, detail: 'importPath is the placeholder "your-component-library" — init found neither an npm design system nor a component directory', fix: 'npx story-ui init --force --components-path ./path/to/components (or set importPath/componentsPath in story-ui.config.js)' });
@@ -151,6 +173,23 @@ export async function runChecks(opts: { server?: string; cwd?: string } = {}): P
   const port = Number(env.VITE_STORY_UI_PORT || env.PORT || config.mcpPort || 4001);
   summary.port = port;
 
+  // The `story-ui` script starts the server. It is the third place the port
+  // lives, and init once wrote 4001 into it whatever .env said, so the
+  // server came up where neither the docs page nor the manager was looking.
+  {
+    const scriptPortValue = readScriptPort(cwd);
+    const hasScript = (() => { try { return typeof JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf-8'))?.scripts?.['story-ui'] === 'string'; } catch { return false; } })();
+    if (!hasScript) {
+      items.push({ id: 'script-port', ok: null, detail: 'package.json has no "story-ui" script (npm run story-ui will not work; start the server with npx story-ui start)', fix: `npx story-ui update (adds "story-ui": "story-ui start --port ${port}")` });
+    } else if (scriptPortValue === null) {
+      items.push({ id: 'script-port', ok: false, detail: `the "story-ui" script names no --port, so npm run story-ui starts on 4001 while .env/manager-head expect ${port}`, fix: `npx story-ui update (sets --port ${port} in the script)` });
+    } else if (scriptPortValue !== port) {
+      items.push({ id: 'script-port', ok: false, detail: `the "story-ui" script starts the server on port ${scriptPortValue} but .env says ${port} — npm run story-ui would come up where the workspace is not looking`, fix: `npx story-ui update (rewrites the script's --port to ${port}), or set VITE_STORY_UI_PORT=${scriptPortValue} in .env` });
+    } else {
+      items.push({ id: 'script-port', ok: true, detail: `the "story-ui" script starts the server on port ${port}, the same as .env` });
+    }
+  }
+
   const mainPath = ['main.ts', 'main.tsx', 'main.js', 'main.mjs'].map(f => path.join(cwd, '.storybook', f)).find(f => fs.existsSync(f));
   if (mainPath) {
     const main = fs.readFileSync(mainPath, 'utf-8');
@@ -191,9 +230,19 @@ export async function runChecks(opts: { server?: string; cwd?: string } = {}): P
     items.push({ id: 'storybook-globs', ok: false, detail: 'no .storybook/main.* found', fix: 'run this from the project that hosts Storybook' });
   }
 
-  // 5. A provider key.
-  const keyName = PROVIDER_KEYS.find(k => env[k] && !/your-.*-key|api-key-here/.test(env[k] as string));
-  items.push({ id: 'provider-key', ok: Boolean(keyName), detail: keyName ? `${keyName} is set` : 'no provider API key in .env or the environment', fix: keyName ? undefined : 'put ANTHROPIC_API_KEY=… (or OPENAI_API_KEY / GEMINI_API_KEY) in .env' });
+  // 5. A provider key. A placeholder, "undefined", or a dozen characters
+  // is a line, not a key; the server would start and every request fail.
+  const keyName = PROVIDER_KEYS.find(k => isUsableApiKey(env[k]));
+  const placeholderName = keyName ? undefined : PROVIDER_KEYS.find(k => env[k] !== undefined && env[k] !== '');
+  items.push({
+    id: 'provider-key', ok: Boolean(keyName),
+    detail: keyName
+      ? `${keyName} is set`
+      : placeholderName
+        ? `${placeholderName} is set to a placeholder or an invalid value ("${String(env[placeholderName]).slice(0, 12)}…" — not a key)`
+        : 'no provider API key in .env or the environment',
+    fix: keyName ? undefined : `put ${placeholderName || 'ANTHROPIC_API_KEY'}=<your real key> in .env (or OPENAI_API_KEY / GEMINI_API_KEY), or re-run npx story-ui init --api-key <key>`,
+  });
 
   // 6. The server, if asked or if the config names a port.
   const server = opts.server || `http://localhost:${port}`;

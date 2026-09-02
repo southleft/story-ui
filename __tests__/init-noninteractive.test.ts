@@ -29,7 +29,8 @@ describe('detectLocalComponentLibrary', () => {
     fs.mkdirSync(path.join(root, 'src/components/Alert'), { recursive: true });
     fs.writeFileSync(path.join(root, 'src/components/Alert/Alert.tsx'), 'export const Alert = () => null;');
     const found = detectLocalComponentLibrary(root, './src/stories/generated/');
-    expect(found).toEqual({ componentsPath: './src/components', importPath: '../../components', count: 2 });
+    // No index anywhere in this fixture: the directory is the import path, per component.
+    expect(found).toEqual({ componentsPath: './src/components', importPath: '../../components', count: 2, importStyle: 'individual' });
   });
 
   it('returns null when nothing looks like a component library', () => {
