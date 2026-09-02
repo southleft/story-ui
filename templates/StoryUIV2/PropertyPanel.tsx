@@ -15,9 +15,19 @@
  */
 
 import { apiFetch } from './api';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Badge, Button, Flex, Select, Switch, Text, TextField } from '@radix-ui/themes';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Badge, Button, Flex, IconButton, Select, Switch, Text, TextField } from '@radix-ui/themes';
 import type { ElementTarget } from './elementTargeting';
+import { XIcon } from './icons';
+import {
+  appliedLabel,
+  draftDiffers,
+  echoValue,
+  undoValue,
+  type EditStatus,
+  type PropKind,
+  type PropValue,
+} from './propEditStatus';
 
 interface EditableProp {
   name: string;
@@ -38,8 +48,8 @@ interface PropertyPanelProps {
    * the edit without another round trip.
    */
   onApplied: (code?: string) => void;
-  /** Escape hatch to the model for anything structural. */
-  onAskInstead?: () => void;
+  /** The × in the inspector's header. Closing also clears the selection. */
+  onClose?: () => void;
   /**
    * Reports the server-resolved component name (null while unresolved), so
    * the composer chip can call the selection what the FILE calls it. The
@@ -49,12 +59,27 @@ interface PropertyPanelProps {
   onResolved?: (name: string | null) => void;
 }
 
-export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInstead, onResolved }: PropertyPanelProps) {
+export function PropertyPanel({ apiBase, target, fileName, onApplied, onClose, onResolved }: PropertyPanelProps) {
   const [props, setProps] = useState<EditableProp[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  /**
+   * What the last change did, and how to take it back. The panel used to
+   * apply every change silently — an AST edit in ~80ms, preview reloaded —
+   * and nothing on screen said so, which read as "does this do anything?".
+   */
+  const [status, setStatus] = useState<EditStatus>(null);
+  /** The control that just changed, highlighted for a moment. */
+  const [flash, setFlash] = useState<string | null>(null);
+  const flashTimer = useRef<number | null>(null);
+  /**
+   * Text typed into a string/number field but not yet committed. Blur
+   * commits, but a blur is invisible, so a field whose draft differs from
+   * the source shows an Apply button as well.
+   */
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
 
   const component = target?.component ?? null;
 
@@ -119,6 +144,9 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
 
   useEffect(() => {
     setResolved(null);
+    setStatus(null);
+    setNote(null);
+    setDrafts({});
     if (!component) { setProps([]); return; }
     let cancelled = false;
     setLoading(true);
@@ -166,7 +194,11 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
   /** What the panel calls the component: the file's name for it, when known. */
   const displayName = resolved ?? component;
 
-  const apply = useCallback(async (prop: string, value: string | number | boolean | null) => {
+  const apply = useCallback(async (
+    prop: string,
+    value: PropValue,
+    opts: { kind?: PropKind; isUndo?: boolean } = {},
+  ) => {
     if (!component || !fileName) {
       // Reachable: "New" does not clear the selection or close this panel, so
       // you can sit on the home screen with a live chip over a story that is
@@ -176,6 +208,9 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
     }
     setPending(prop);
     setNote(null);
+    setStatus({ kind: 'applying', prop });
+    // What Undo must put back: the source text before THIS change.
+    const previous = current[prop];
     /**
      * The element the edit targets — the server-resolved name when the lookup
      * reported one (the name the FILE contains), else the owner-sorted top
@@ -248,15 +283,30 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
             ? `${data.error || 'That change is ambiguous.'} Click the exact ${targetName} you mean in the preview and try again.`
             : (data?.error || 'That change could not be applied.'),
         );
+        setStatus(null);
         return;
       }
 
       // Optimistic local echo so the control shows the new value immediately;
       // the authoritative values arrive with the next fetch.
-      setCurrent(prev => ({
-        ...prev,
-        [prop]: value === null ? undefined : String(value),
-      }));
+      setCurrent(prev => ({ ...prev, [prop]: echoValue(value) }));
+      setDrafts(prev => {
+        if (!(prop in prev)) return prev;
+        const next = { ...prev };
+        delete next[prop];
+        return next;
+      });
+      setStatus({
+        kind: 'applied',
+        prop,
+        value,
+        previous,
+        kindOfProp: opts.kind,
+        canUndo: !opts.isUndo,
+      });
+      setFlash(prop);
+      if (flashTimer.current) window.clearTimeout(flashTimer.current);
+      flashTimer.current = window.setTimeout(() => setFlash(null), 1500);
 
       /**
        * Say when one edit affects several elements.
@@ -272,18 +322,25 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
         setNote(`Applied to every item in this list — one ${targetName} in the source renders all of them.`);
       } else if (typeof data.occurrencesInSource === 'number' && data.occurrencesInSource > 1) {
         setNote(`Applied. This ${targetName} appears ${data.occurrencesInSource} times in the source — check whether they all changed.`);
-      } else {
-        // The ordinary case said nothing at all, so a subtle change — a size
-        // bump, a variant swap — was indistinguishable from a dead control.
-        setNote(`Set ${prop}${value === null ? ' back to its default' : ` to ${String(value)}`}.`);
       }
+      // The ordinary case is the status line at the bottom of the panel.
       onApplied(typeof data?.code === 'string' ? data.code : undefined);
     } catch {
       setNote('That change could not be applied.');
+      setStatus(null);
     } finally {
       setPending(null);
     }
-  }, [apiBase, component, candidates, detailByName, resolved, fileName, target, onApplied]);
+  }, [apiBase, component, candidates, detailByName, resolved, fileName, target, onApplied, current]);
+
+  useEffect(() => () => { if (flashTimer.current) window.clearTimeout(flashTimer.current); }, []);
+
+  /** Put the previous value back. Undoing an undo is not offered. */
+  const undo = useCallback(() => {
+    if (!status || status.kind !== 'applied' || !status.canUndo) return;
+    const kind = status.kindOfProp ?? 'string';
+    void apply(status.prop, undoValue(kind, status.previous), { kind, isUndo: true });
+  }, [status, apply]);
 
   /**
    * Commit a text/number field, on Enter OR blur, and only when it changed.
@@ -292,12 +349,12 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
    * happens and nothing says why. Comparing against the current value keeps a
    * blur from re-sending an unchanged prop on every focus change.
    */
-  const commitText = (p: { name: string; kind: string }, raw: string) => {
+  const commitText = (p: { name: string; kind: PropKind }, raw: string) => {
     const next = raw.trim();
     const now = current[p.name] ?? '';
     if (next === now) return;
-    if (!next) { apply(p.name, null); return; }   // empty means reset, not ""
-    apply(p.name, p.kind === 'number' ? Number(next) : next);
+    if (!next) { apply(p.name, null, { kind: p.kind }); return; }   // empty means reset, not ""
+    apply(p.name, p.kind === 'number' ? Number(next) : next, { kind: p.kind });
   };
 
   if (!target) return null;
@@ -308,11 +365,8 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
         <Text size="2" weight="medium">No component identified</Text>
         <Text size="1" color="gray">
           This element could not be traced to a design system component, so there are no
-          properties to edit directly.
+          properties to edit directly. Describe the change in the chat instead.
         </Text>
-        {onAskInstead && (
-          <Button size="1" variant="soft" onClick={onAskInstead}>Describe the change instead</Button>
-        )}
       </Flex>
     );
   }
@@ -341,10 +395,17 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
               : null;
           })()}
         </Flex>
-        {onAskInstead && (
-          <Button size="1" variant="ghost" onClick={onAskInstead}>Ask instead</Button>
+        {onClose && (
+          <IconButton size="1" variant="ghost" color="gray" aria-label="Close inspector" onClick={onClose}>
+            <XIcon size={14} />
+          </IconButton>
         )}
       </Flex>
+
+      {/* The one sentence that answers "do I submit this?". */}
+      <Text size="1" color="gray" className="suiw-inspector-hint">
+        Changes apply to the story immediately. For anything else, describe it in the chat.
+      </Text>
 
       {loading && <Text size="1" color="gray">Reading properties…</Text>}
       {error && <Text size="1" color="red">{error}</Text>}
@@ -356,7 +417,13 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
       )}
 
       {props.map(p => (
-        <Flex key={p.name} direction="column" gap="1">
+        <Flex
+          key={p.name}
+          direction="column"
+          gap="1"
+          className={`suiw-prop${flash === p.name ? ' suiw-prop--flash' : ''}`}
+          data-prop={p.name}
+        >
           <Text size="1" weight="medium">{p.name}</Text>
           {p.doc && <Text size="1" color="gray">{p.doc}</Text>}
 
@@ -367,7 +434,7 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
               // "this prop is not set" rather than "we did not look".
               value={current[p.name] ?? undefined}
               disabled={pending === p.name}
-              onValueChange={v => apply(p.name, v === '__default__' ? null : v)}
+              onValueChange={v => apply(p.name, v === '__default__' ? null : v, { kind: 'enum' })}
             >
               <Select.Trigger placeholder={p.defaultValue ? `default: ${p.defaultValue}` : 'choose…'} />
               <Select.Content>
@@ -384,32 +451,64 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onAskInste
               // A bare `<X loading />` reads back as the string "true".
               checked={current[p.name] === 'true' || current[p.name] === p.name}
               disabled={pending === p.name}
-              onCheckedChange={c => apply(p.name, c ? true : null)}
+              onCheckedChange={c => apply(p.name, c ? true : null, { kind: 'boolean' })}
             />
           )}
 
           {(p.kind === 'number' || p.kind === 'string') && (
-            <TextField.Root
-              size="1"
-              // Keyed on the value so a fresh fetch re-seeds the input without
-              // making it fully controlled (which would fight typing).
-              key={`${p.name}:${current[p.name] ?? ''}`}
-              defaultValue={current[p.name] ?? ''}
-              placeholder={p.defaultValue || (p.kind === 'number' ? 'number' : 'text')}
-              disabled={pending === p.name}
-              onKeyDown={e => {
-                if (e.key !== 'Enter') return;
-                commitText(p, (e.target as HTMLInputElement).value);
-              }}
-              // Committing on blur too. Enter-only meant typing a value and
-              // clicking away did nothing, with no hint that it would.
-              onBlur={e => commitText(p, e.target.value)}
-            />
+            <Flex align="center" gap="2">
+              <TextField.Root
+                size="1"
+                style={{ flex: '1 1 auto', minWidth: 0 }}
+                value={drafts[p.name] ?? current[p.name] ?? ''}
+                placeholder={p.defaultValue || (p.kind === 'number' ? 'number' : 'text')}
+                disabled={pending === p.name}
+                aria-label={p.name}
+                onChange={e => setDrafts(prev => ({ ...prev, [p.name]: e.target.value }))}
+                onKeyDown={e => {
+                  if (e.key !== 'Enter') return;
+                  commitText(p, (e.target as HTMLInputElement).value);
+                }}
+                // Committing on blur too. Enter-only meant typing a value and
+                // clicking away did nothing, with no hint that it would.
+                onBlur={e => commitText(p, e.target.value)}
+              />
+              {/* A blur commit is invisible; the button says the draft is
+                  not yet in the file. */}
+              {draftDiffers(drafts[p.name], current[p.name]) && (
+                <Button
+                  size="1"
+                  variant="soft"
+                  disabled={pending === p.name}
+                  onMouseDown={e => e.preventDefault()} /* keep the field's blur from firing first */
+                  onClick={() => commitText(p, drafts[p.name] ?? '')}
+                >
+                  Apply
+                </Button>
+              )}
+            </Flex>
           )}
         </Flex>
       ))}
 
       {note && <Text size="1" color="gray">{note}</Text>}
+
+      {status && (
+        <Flex align="center" gap="3" className="suiw-inspector-status" role="status" aria-live="polite">
+          {status.kind === 'applying' ? (
+            <Text size="1" color="gray">Applying…</Text>
+          ) : (
+            <>
+              <Text size="1" color="green">Applied · {appliedLabel(status.prop, status.value)}</Text>
+              {status.canUndo && (
+                <Button size="1" variant="ghost" color="gray" onClick={undo} disabled={pending !== null}>
+                  Undo
+                </Button>
+              )}
+            </>
+          )}
+        </Flex>
+      )}
     </Flex>
   );
 }

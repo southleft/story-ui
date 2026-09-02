@@ -391,7 +391,6 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
    * is how a good dashboard picks up new problems while fixing a small one.
    */
   const [selection, setSelection] = useState<ElementTarget | null>(null);
-  const [showProperties, setShowProperties] = useState(false);
   /**
    * The FILE's name for the selected element, resolved by the server.
    *
@@ -1314,7 +1313,6 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     // nothing.
     setSelection(null);
     setResolvedName(null);
-    setShowProperties(false);
     setImages([]);
     setDocs([]);
     setInput('');
@@ -1547,9 +1545,12 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
         {/* The chip is the contract: whatever it names is what the next
             instruction applies to. Without it the user cannot tell whether a
             selection is still armed. */}
+        {/* The chip scopes the NEXT chat instruction; the inspector beside
+            the preview is where a property is changed directly. Both are
+            on screen at once, on purpose. */}
         {selection && (
-          <Flex direction="column" gap="2" mt="2">
-            <Flex align="center" gap="2">
+          <Flex direction="column" gap="2" mt="2" className="suiw-selection-row">
+            <Flex align="center" gap="3">
               <Badge color="jade" variant="soft" className="suiw-ellipsis">
                 {/* The FILE's name for the element once the server resolves it
                     — "Button", not the "UnstyledButton" internal the fiber
@@ -1565,46 +1566,22 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
               >
                 Clear
               </Button>
-              <Button
-                size="1"
-                variant={showProperties ? 'soft' : 'ghost'}
-                color="gray"
-                onClick={() => setShowProperties(v => !v)}
-                title="Change a property directly, without asking the model"
-              >
-                Properties
-              </Button>
             </Flex>
-
-            {/* Direct manipulation for the class of change that has exactly one
-                correct answer. The model stays available for anything
-                structural, one button away. */}
-            {showProperties && (
-              <div className="suiw-properties">
-                <PropertyPanel
-                  apiBase={apiBase}
-                  target={selection}
-                  fileName={activeFile?.fileName}
-                  onApplied={next => {
-                    setReloadToken(t => t + 1);
-                    if (typeof next === 'string') setCode(next);
-                    else if (activeFile) void loadCode(activeFile.fileName);
-                  }}
-                  onAskInstead={() => setShowProperties(false)}
-                  onResolved={setResolvedName}
-                />
-              </div>
-            )}
           </Flex>
         )}
 
-        <Flex align="center" gap="1" mt="2" wrap="nowrap" className="suiw-composer-row">
+        <Flex align="center" gap="2" mt="2" wrap="nowrap" className="suiw-composer-row">
+          {/* Visually hidden, NOT display:none: WebKit ignores a programmatic
+              click on a file input that is not rendered, so `hidden` made the
+              "+" button do nothing in Safari. */}
           <input
             ref={fileInputRef}
             type="file"
             accept={ACCEPT}
             multiple
-            hidden
+            className="suiw-visually-hidden"
+            tabIndex={-1}
+            aria-hidden="true"
             data-testid="suiw-file-input"
             onChange={e => {
               const files = Array.from(e.target.files ?? []);
@@ -1858,7 +1835,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
   );
 
   const header = (
-    <Flex align="center" gap="2" px="3" className="suiw-header">
+    <Flex align="center" gap="3" px="3" className="suiw-header">
       {/* Only where a manager can move Storybook's chrome: inside the preview
           iframe, or on the manager page once it has answered. */}
       {(inFrame || managerHeard) && (
@@ -1876,11 +1853,14 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
         </Tooltip>
       )}
 
-      <Text className="suiw-wordmark">Story UI</Text>
-
-      {/* Only once there is a story to name: a first story being written has
-          no title yet, and "Untitled ▾" in the header claimed one. */}
-      {started && (activeFile || activeStory) && storySwitcher}
+      {/* Wordmark and switcher are one reading unit: 8px between them,
+          12px between everything else in the row. */}
+      <Flex align="center" gap="2" minWidth="0">
+        <Text className="suiw-wordmark">Story UI</Text>
+        {/* Only once there is a story to name: a first story being written
+            has no title yet, and "Untitled ▾" in the header claimed one. */}
+        {started && (activeFile || activeStory) && storySwitcher}
+      </Flex>
 
       <Box flexGrow="1" minWidth="0" />
 
@@ -2406,6 +2386,22 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
             }
             onSelectElement={t => { setResolvedName(null); setSelection(t); }}
             hasSelection={!!selection}
+            // Direct manipulation lives beside the preview it changes, not in
+            // the chat. Opens with a pick; the × (or Clear) closes it.
+            inspector={selection ? (
+              <PropertyPanel
+                apiBase={apiBase}
+                target={selection}
+                fileName={activeFile?.fileName}
+                onApplied={next => {
+                  setReloadToken(t => t + 1);
+                  if (typeof next === 'string') setCode(next);
+                  else if (activeFile) void loadCode(activeFile.fileName);
+                }}
+                onResolved={setResolvedName}
+                onClose={() => { setSelection(null); setResolvedName(null); }}
+              />
+            ) : null}
             storyId={activeStory?.id}
             title={activeStory?.title}
             reloadToken={reloadToken}

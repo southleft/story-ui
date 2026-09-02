@@ -241,15 +241,65 @@
   display: block;
 }
 
-/* The property panel sits under the selection chip, in the conversation
-   column, so the canvas keeps its full width — the space the reviewer just
-   asked to have back. */
-.suiw-properties {
-  border: 1px solid var(--gray-a5);
-  border-radius: var(--radius-3);
-  background: var(--gray-a2);
-  max-height: 320px;
+/* ---- inspector ---------------------------------------------------------- */
+
+/* The stage and the inspector share the canvas body: the frame takes what is
+   left, the inspector is a fixed column at the right edge. */
+.suiw-canvas-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+}
+
+.suiw-canvas-body > .suiw-stage {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.suiw-inspector {
+  flex: 0 0 300px;
+  width: 300px;
+  min-height: 0;
   overflow-y: auto;
+  border-left: 1px solid var(--gray-a5);
+  background: var(--color-panel-solid);
+  scrollbar-width: thin;
+  scrollbar-color: var(--gray-a6) transparent;
+}
+
+.suiw-inspector-hint {
+  padding-bottom: var(--space-1);
+  border-bottom: 1px solid var(--gray-a4);
+}
+
+.suiw-inspector-status {
+  /* Pinned: the answer to "did that apply?" must not scroll off with a long
+     property list — that is the ambiguity the inspector exists to remove. */
+  position: sticky;
+  bottom: 0;
+  margin: 0 calc(-1 * var(--space-3)) calc(-1 * var(--space-3));
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-panel-solid);
+  border-top: 1px solid var(--gray-a4);
+}
+
+/* The control that just changed, for a moment. */
+.suiw-prop {
+  border-radius: var(--radius-2);
+  margin: 0 calc(-1 * var(--space-1));
+  padding: var(--space-1);
+  transition: background 600ms ease;
+}
+
+.suiw-prop--flash {
+  background: var(--green-a3);
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .suiw-prop { transition: none; }
 }
 
 /* ---------------------------------------------------------------------------
@@ -833,4 +883,34 @@
 .suiw-turn-actions {
   max-width: 100%;
   min-width: 0;
+}
+
+/* ---- spacing between independent controls ------------------------------ */
+
+/* Radix ghost buttons carry a negative margin so their label aligns with
+   surrounding text. In a row of controls that margin eats the row's gap —
+   the header's buttons measured 4px apart with gap 8 — so rows of controls
+   zero it and let the gap be the gap. */
+.suiw-header .rt-BaseButton,
+.suiw-toolbar .rt-BaseButton,
+.suiw-composer-row .rt-BaseButton,
+.suiw-selection-row .rt-BaseButton,
+.suiw-inspector-status .rt-BaseButton {
+  margin: 0;
+}
+
+/* A file input the browser must still render: WebKit ignores .click() on a
+   display:none input, which is what `hidden` gives it. */
+.suiw-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  opacity: 0;
+  clip-path: inset(50%);
+  pointer-events: none;
+  white-space: nowrap;
 }

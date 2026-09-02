@@ -75,6 +75,12 @@ interface PreviewCanvasProps {
    */
   fullscreen?: boolean;
   onToggleFullscreen?: () => void;
+  /**
+   * The inspector, docked at the right edge of the stage while an element is
+   * selected. Owned by the workspace (it knows the file and the selection);
+   * the canvas only gives it the column. Hidden in fullscreen.
+   */
+  inspector?: React.ReactNode;
 }
 
 /**
@@ -110,6 +116,7 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
   failure = null,
   fullscreen = false,
   onToggleFullscreen,
+  inspector = null,
 }, ref) {
   const [picking, setPicking] = useState(false);
   const [view, setView] = useState<CanvasView>('preview');
@@ -261,7 +268,7 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
 
   return (
     <div className="suiw-canvas">
-      <Flex align="center" gap="2" px="3" className="suiw-toolbar">
+      <Flex align="center" gap="3" px="3" className="suiw-toolbar">
         {/* Preview | Code | Changes. Code is present whenever the source is
             known — including a story Storybook has not indexed, and while
             it is still being written — and Changes only when there is
@@ -335,6 +342,7 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
         )}
       </Flex>
 
+      <div className="suiw-canvas-body">
       {/* `--fit` only when a frame is actually on screen: it swaps the stage's
           `place-items: center` for `stretch`, which is right for a full-bleed
           frame and wrong for every placeholder state. */}
@@ -415,6 +423,13 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
             </Text>
           </Flex>
         )}
+      </div>
+
+      {inspector && !fullscreen && (
+        <aside className="suiw-inspector" aria-label="Inspector">
+          {inspector}
+        </aside>
+      )}
       </div>
     </div>
   );
