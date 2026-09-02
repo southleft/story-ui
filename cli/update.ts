@@ -567,6 +567,35 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
     }
     // The V2 workspace is an MDX docs page — a stories glob that never matches
     // .mdx installs it invisibly. Same check init performs, same helper.
+    /**
+     * The Vite optimizeDeps block `init` writes. An install that predates it
+     * (or one made by hand) loses the docs-page workspace the first time
+     * Vite's cache is cleared: "classnames does not provide an export named
+     * default". `update` applies the same block, idempotently, and warns
+     * with the exact strings when a user-authored viteFinal is missing them.
+     */
+    try {
+      const sbDir = path.join(process.cwd(), '.storybook');
+      const mainPath = ['main.ts', 'main.mts', 'main.js', 'main.mjs', 'main.cjs']
+        .map(f => path.join(sbDir, f)).find(f => fs.existsSync(f));
+      if (mainPath && !/webpack/i.test(fs.readFileSync(mainPath, 'utf8'))) {
+        const mainContent = fs.readFileSync(mainPath, 'utf8');
+        if (!mainContent.includes('viteFinal')) {
+          const inserted = insertConfigProperty(mainContent, viteFinalConfigSnippet());
+          if (inserted) {
+            fs.writeFileSync(mainPath, inserted);
+            console.log(chalk.green(`   ✅ Added the Story UI viteFinal block to .storybook/${path.basename(mainPath)}`));
+          }
+        } else {
+          const missing = missingViteCjsIncludes(mainContent);
+          if (missing.length) {
+            console.log(chalk.yellow(`   ⚠️  .storybook/${path.basename(mainPath)} has its own viteFinal excluding @tpitre/story-ui but its optimizeDeps.include lacks: ${missing.join(', ')}`));
+          }
+        }
+      }
+    } catch (viteError: any) {
+      result.errors.push(`viteFinal: ${viteError.message}`);
+    }
     const globResult = ensureStoriesGlobCoversMdx(path.resolve(process.cwd(), storiesDirRel));
     if (!globResult.checked) {
       console.log(chalk.yellow('   ⚠️  No .storybook/main.ts or main.js found — MDX glob coverage was NOT checked'));
