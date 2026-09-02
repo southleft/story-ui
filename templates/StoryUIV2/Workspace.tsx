@@ -1936,9 +1936,14 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
             <Box px="5" py="8" style={{ maxWidth: 820, marginInline: 'auto' }}>
               <Heading size="7" weight="medium" align="center">What should we build?</Heading>
               <Text as="p" size="2" color="gray" align="center" mt="2" className="suiw-home-sub">
-                {designSystem
+                {/* A relative importPath is a path from the generated stories
+                    directory — "../../components" means nothing to a reader.
+                    The npm name is the design system's name; a path is not. */}
+                {designSystem && !/^[./]/.test(designSystem)
                   ? `Composed from ${designSystem}, the design system installed in this project.`
-                  : 'Composed from the design system installed in this project.'}
+                  : designSystem
+                    ? 'Composed from this project\'s own components.'
+                    : 'Composed from the design system installed in this project.'}
               </Text>
 
               <Box mt="4">{composer}</Box>
