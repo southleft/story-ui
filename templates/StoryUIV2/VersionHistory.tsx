@@ -15,6 +15,7 @@
 import { apiFetch } from './api';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Badge, Button, Callout, Flex, Popover, ScrollArea, Text } from '@radix-ui/themes';
+import { ClockIcon } from './icons';
 
 export interface StoryVersionSummary {
   id: string;
@@ -131,6 +132,7 @@ export const VersionHistory: React.FC<VersionHistoryProps> = ({
           title={fileName ? 'Earlier versions of this story' : 'Generate a story to see its history'}
           className="suiw-history-trigger"
         >
+          <ClockIcon />
           History
         </Button>
       </Popover.Trigger>

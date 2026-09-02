@@ -8,39 +8,24 @@
  * written to disk, rendered by the project's own providers and theme.
  *
  * Nothing here simulates a preview. It IS the preview.
+ *
+ * The frame fills the stage at its real pixel size — no device widths, no
+ * zoom. Both existed and neither earned the toolbar room: a story reviewed at
+ * 390px is what Storybook's own viewport addon is for, and it is one click
+ * away in the tab "Open in Storybook" opens.
  */
 
-import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { Badge, Button, Callout, DropdownMenu, Flex, Text } from '@radix-ui/themes';
+import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { Badge, Button, Callout, Flex, IconButton, SegmentedControl, Text, Tooltip } from '@radix-ui/themes';
 import { attachElementPicker, describeElement, type ElementTarget } from './elementTargeting';
 import { CodeView } from './CodeView';
 import { DiffView } from './DiffView';
+import { CursorIcon, MaximizeIcon, MinimizeIcon } from './icons';
 import type { LiveCode } from './useGeneration';
 import type { LineDiff } from './lineDiff';
 
-export type Viewport = 'fit' | 'desktop' | 'tablet' | 'mobile';
-
 /** What the stage shows in place of the frame, when anything. */
 export type CanvasView = 'preview' | 'code' | 'changes';
-
-/**
- * `fit` uses the whole stage; the rest are real device widths.
- *
- * The canvas was pinned to a 1280px desktop frame that only ever scaled DOWN,
- * so on any wider stage the user got grid backdrop instead of preview and had
- * no way to reclaim it. The device widths are worth keeping — checking a
- * composition at 390px is exactly what they are for — but they are a
- * deliberate act, not a sensible default. Reviewing the work should use all
- * the room there is.
- *
- * Width 0 means "measure the stage"; see `spec` below.
- */
-const VIEWPORTS: Record<Viewport, { w: number; h: number; label: string }> = {
-  fit: { w: 0, h: 0, label: 'Fit' },
-  desktop: { w: 1280, h: 900, label: 'Desktop' },
-  tablet: { w: 834, h: 1000, label: 'Tablet' },
-  mobile: { w: 390, h: 844, label: 'Mobile' },
-};
 
 /** A generation that ended without a working story. Shown instead of the frame. */
 export interface PreviewFailure {
@@ -56,13 +41,6 @@ interface PreviewCanvasProps {
   /** Bumped by the caller to force a reload after a regeneration. */
   reloadToken?: number;
   busy?: boolean;
-  onOpenInStorybook?: () => void;
-  onHandoff?: () => void;
-  /**
-   * False when there is no generated file to commit — e.g. a story opened from
-   * Recent work. Disabled with a reason beats a button that does nothing.
-   */
-  canHandoff?: boolean;
   /** Set when the story was written but Storybook never indexed it. */
   notIndexed?: { fileName?: string; title?: string } | null;
   onRecheck?: () => void;
@@ -86,7 +64,7 @@ interface PreviewCanvasProps {
   /**
    * What the last update changed. Null when there is nothing to compare —
    * a fresh story, or a session restored from the manifest — and then the
-   * Changes toggle is simply absent.
+   * Changes segment is simply absent.
    */
   diff?: LineDiff | null;
   /** When set, the canvas shows this instead of any story. */
@@ -119,9 +97,6 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
   title,
   reloadToken = 0,
   busy = false,
-  onOpenInStorybook,
-  onHandoff,
-  canHandoff = true,
   notIndexed,
   onRecheck,
   onSelectElement,
@@ -137,11 +112,7 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
   onToggleFullscreen,
 }, ref) {
   const [picking, setPicking] = useState(false);
-  const [viewport, setViewport] = useState<Viewport>('fit');
-  const [zoom, setZoom] = useState(1);
   const [view, setView] = useState<CanvasView>('preview');
-  const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
-  const stageRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const lastSrc = useRef<string | null>(null);
 
@@ -163,40 +134,6 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
     },
   }), []);
 
-  useEffect(() => {
-    const el = stageRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(entries => {
-      const box = entries[0]?.contentRect;
-      if (box) setStageSize({ w: box.width, h: box.height });
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  /**
-   * In `fit` the frame IS the stage: real pixel size, no scaling, so the story
-   * sees the width it is actually being shown at and its media queries are
-   * honest. Falls back to the desktop frame until the stage has been measured.
-   */
-  const spec = useMemo(() => {
-    if (viewport !== 'fit') return VIEWPORTS[viewport];
-    if (!stageSize.w || !stageSize.h) return VIEWPORTS.desktop;
-    return { w: Math.round(stageSize.w), h: Math.round(stageSize.h), label: 'Fit' };
-  }, [viewport, stageSize]);
-
-  // Fit the chosen viewport inside the stage. Never scale UP — a 390px mobile
-  // frame blown up to fill 1200px would misrepresent the design.
-  const fitScale = useMemo(() => {
-    // `fit` is already stage-sized; scaling it would shrink it away from the
-    // edges it was just measured to fill.
-    if (viewport === 'fit') return 1;
-    if (!stageSize.w || !stageSize.h) return 1;
-    const pad = 48;
-    return Math.min(1, (stageSize.w - pad) / spec.w, (stageSize.h - pad) / spec.h);
-  }, [stageSize, spec, viewport]);
-
-  const scale = fitScale * zoom;
   const src = storyId ? `/iframe.html?id=${encodeURIComponent(storyId)}&viewMode=story` : undefined;
 
   // Navigate the SAME iframe rather than remounting it. Keying the frame on a
@@ -287,10 +224,6 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
   // a version restored): back to the preview rather than an empty pane.
   useEffect(() => { if (view === 'changes' && !diff) setView('preview'); }, [view, diff]);
 
-  const cycleZoom = useCallback(() => {
-    setZoom(z => (z >= 1 ? 0.5 : z >= 0.75 ? 1 : z + 0.25));
-  }, []);
-
   /**
    * Code arriving from the model, for this run. `busy` gates it: the hook
    * clears the buffer between runs, but the completion's code and the
@@ -316,190 +249,104 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
           : writing && !src ? 'writing'
             : null;
   const frameHidden = overlay !== null;
-  /** The viewport and zoom controls only mean something with a frame showing. */
-  const frameControlsHeld = overlay === 'code' || overlay === 'changes' || overlay === 'writing';
   /** What the Code view shows: the stream while it runs, the file otherwise. */
   const shownCode = writing ? liveCode!.text : code;
+  const codeAvailable = shownCode != null || codeLoading;
+
+  /** What the segmented control reads as selected. */
+  const segment: CanvasView =
+    overlay === 'code' || overlay === 'writing' ? 'code'
+      : overlay === 'changes' ? 'changes'
+        : 'preview';
 
   return (
     <div className="suiw-canvas">
-      <Flex align="center" gap="3" px="3" py="2" style={{ borderBottom: '1px solid var(--gray-a5)' }}>
-        {/* One quiet trigger instead of a four-way segmented row: the device
-            widths are a deliberate act, not a default, so they can live a click
-            away — and the toolbar stops fighting the right-side actions for
-            room in a narrow pane. Styling matches the workspace's other
-            compact pickers (soft gray, size 1). */}
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger>
-            <Button size="1" variant="soft" color="gray" aria-label="Viewport" style={{ flexShrink: 0 }} disabled={frameControlsHeld}>
-              {VIEWPORTS[viewport].label}
-              <DropdownMenu.TriggerIcon />
-            </Button>
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Content size="1">
-            <DropdownMenu.RadioGroup value={viewport} onValueChange={v => setViewport(v as Viewport)}>
-              {(Object.keys(VIEWPORTS) as Viewport[]).map(v => (
-                <DropdownMenu.RadioItem key={v} value={v}>
-                  <Flex align="center" justify="between" gap="4" width="100%">
-                    <Text size="1">{VIEWPORTS[v].label}</Text>
-                    <Text size="1" color="gray">
-                      {VIEWPORTS[v].w ? `${VIEWPORTS[v].w}` : 'auto'}
-                    </Text>
-                  </Flex>
-                </DropdownMenu.RadioItem>
-              ))}
-            </DropdownMenu.RadioGroup>
-          </DropdownMenu.Content>
-        </DropdownMenu.Root>
-
-        <Button size="1" variant="ghost" color="gray" onClick={cycleZoom} title="Zoom" style={{ flexShrink: 0 }} disabled={frameControlsHeld}>
-          {Math.round(scale * 100)}%
-        </Button>
-
-        {/* Preview / Code. Code is available whenever the source is known,
-            which includes a story Storybook has not indexed — reading the
-            file is sometimes the only way to see what was built — and while
-            it is still being written. While the stream IS the stage (a first
-            story, nothing else to show) the toggle reads as pressed and
-            held: there is no preview to go back to yet. */}
-        <Button
+      <Flex align="center" gap="2" px="3" className="suiw-toolbar">
+        {/* Preview | Code | Changes. Code is present whenever the source is
+            known — including a story Storybook has not indexed, and while
+            it is still being written — and Changes only when there is
+            something to compare against. While the stream IS the stage (a
+            first story, nothing else to show) the control is held on Code:
+            there is no preview to go back to yet. */}
+        <SegmentedControl.Root
           size="1"
-          variant={overlay === 'code' || overlay === 'writing' ? 'soft' : 'ghost'}
-          color={overlay === 'code' || overlay === 'writing' ? undefined : 'gray'}
-          onClick={() => setView(v => (v === 'code' ? 'preview' : 'code'))}
-          disabled={overlay === 'writing' || (shownCode == null && !codeLoading)}
-          aria-pressed={overlay === 'code' || overlay === 'writing'}
-          title={
-            overlay === 'code' ? 'Back to the preview'
-              : streaming ? 'Watch the story being written'
-                : 'Show the story source'
-          }
-          style={{ flexShrink: 0 }}
+          value={segment}
+          onValueChange={v => setView(v as CanvasView)}
+          disabled={overlay === 'writing' || overlay === 'failure'}
+          aria-label="Canvas view"
         >
-          {overlay === 'code' ? 'Preview' : 'Code'}
-        </Button>
-
-        {/* Only when there is something to compare against: a story just
-            updated in this session. Absent, not disabled, for a fresh story
-            or one restored from the manifest — there the button would never
-            do anything. */}
-        {diff && (
-          <Button
-            size="1"
-            variant={overlay === 'changes' ? 'soft' : 'ghost'}
-            color={overlay === 'changes' ? undefined : 'gray'}
-            onClick={() => setView(v => (v === 'changes' ? 'preview' : 'changes'))}
-            aria-pressed={overlay === 'changes'}
-            title={overlay === 'changes' ? 'Back to the preview' : 'Show what the last update changed'}
-            style={{ flexShrink: 0 }}
-          >
-            Changes
-          </Button>
-        )}
+          <SegmentedControl.Item value="preview">Preview</SegmentedControl.Item>
+          {codeAvailable && <SegmentedControl.Item value="code">Code</SegmentedControl.Item>}
+          {diff && <SegmentedControl.Item value="changes">Changes</SegmentedControl.Item>}
+        </SegmentedControl.Root>
 
         <Flex flexGrow="1" minWidth="0" justify="center">
           {/* An update writing over a preview that stays put: the count is
               the only sign the file is moving. The code view's own bar
               carries the same figure, so it is not repeated there. */}
-          {streaming && src && overlay !== 'code' ? (
+          {streaming && src && overlay !== 'code' && (
             <Text size="1" color="gray" className="suiw-ellipsis suiw-writing" aria-live="polite">
               <span className="suiw-pulse">Writing changes…</span>
               {' '}{liveCode!.text.length.toLocaleString()} characters
             </Text>
-          ) : title ? (
-            <Text size="1" color="gray" className="suiw-ellipsis">{title}</Text>
-          ) : null}
+          )}
         </Flex>
 
         {onSelectElement && (
-          <Button
-            size="1"
-            variant={picking ? 'solid' : hasSelection ? 'soft' : 'ghost'}
-            color={picking || hasSelection ? undefined : 'gray'}
-            highContrast={picking}
-            disabled={!storyId || busy || frameHidden}
-            onClick={() => {
-              if (picking) { setPicking(false); return; }
-              // Starting a new pick clears the old one, so the chip in the
-              // composer never disagrees with what is highlighted.
-              onSelectElement(null);
-              setPicking(true);
-            }}
-            title="Point at an element to describe a change to just that element (Esc to cancel)"
-          >
-            {picking ? 'Click an element…' : hasSelection ? 'Selected' : 'Select'}
-          </Button>
+          <Tooltip content={picking ? 'Click an element in the preview (Esc to cancel)' : 'Point at an element to change just that element'}>
+            <Button
+              size="1"
+              variant={picking ? 'solid' : hasSelection ? 'soft' : 'ghost'}
+              color={picking || hasSelection ? undefined : 'gray'}
+              highContrast={picking}
+              disabled={!storyId || busy || frameHidden}
+              aria-pressed={picking}
+              onClick={() => {
+                if (picking) { setPicking(false); return; }
+                // Starting a new pick clears the old one, so the chip in the
+                // composer never disagrees with what is highlighted.
+                onSelectElement(null);
+                setPicking(true);
+              }}
+            >
+              <CursorIcon />
+              Select
+            </Button>
+          </Tooltip>
         )}
 
         {historySlot}
 
         {/* Works with no manager addon at all: it only moves the rail out of
-            the way. Storybook's own sidebar is the Focus button's job. */}
+            the way. Storybook's own sidebar is the header toggle's job. */}
         {onToggleFullscreen && (
-          <Button
-            size="1"
-            variant={fullscreen ? 'soft' : 'ghost'}
-            color="gray"
-            onClick={onToggleFullscreen}
-            aria-pressed={fullscreen}
-            title={fullscreen ? 'Bring the conversation back' : 'Give the preview the whole workspace'}
-          >
-            {fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-          </Button>
+          <Tooltip content={fullscreen ? 'Bring the conversation back' : 'Give the preview the whole workspace'}>
+            <IconButton
+              size="1"
+              variant={fullscreen ? 'soft' : 'ghost'}
+              color="gray"
+              onClick={onToggleFullscreen}
+              aria-pressed={fullscreen}
+              aria-label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+            >
+              {fullscreen ? <MinimizeIcon /> : <MaximizeIcon />}
+            </IconButton>
+          </Tooltip>
         )}
-
-        <Button
-          size="1"
-          variant="ghost"
-          color="gray"
-          disabled={!storyId}
-          onClick={onOpenInStorybook}
-          title="Open this story in Storybook, in a new tab"
-        >
-          Open in Storybook
-        </Button>
-        {/* highContrast: solid-on-accent-9 measures 3.15:1 for this accent,
-            under AA. See the Build button in Workspace.tsx. */}
-        <Button
-          size="1"
-          highContrast
-          disabled={!storyId || !canHandoff}
-          onClick={onHandoff}
-          title={
-            !canHandoff
-              ? 'Generate or update a story in this session to hand it off'
-              : 'Commit this story to a new branch'
-          }
-        >
-          Hand off
-        </Button>
       </Flex>
 
       {/* `--fit` only when a frame is actually on screen: it swaps the stage's
           `place-items: center` for `stretch`, which is right for a full-bleed
-          frame and wrong for every placeholder state — with the default
-          viewport being `fit`, the Building/empty states were stretched and
-          their content pinned to the top instead of dead-centre. */}
-      <div className={`suiw-stage${viewport === 'fit' && src && !frameHidden ? ' suiw-stage--fit' : ''}`} ref={stageRef}>
+          frame and wrong for every placeholder state. */}
+      <div className={`suiw-stage${src && !frameHidden ? ' suiw-stage--fit' : ''}`}>
         {src && (
           <div
             className={`suiw-frame${busy ? ' suiw-frame--stale' : ''}${frameHidden ? ' suiw-frame--hidden' : ''}`}
-            style={{ width: spec.w * scale, height: spec.h * scale }}
             aria-hidden={frameHidden || undefined}
           >
-            {/* Rendered at true viewport size and scaled down, so the story sees
-                the media queries it would see at that width. Scaling the
-                container instead would lie about breakpoints. */}
-            <iframe
-              ref={frameRef}
-              title={title || 'Generated story preview'}
-              style={{
-                width: spec.w,
-                height: spec.h,
-                transform: `scale(${scale})`,
-                transformOrigin: '0 0',
-              }}
-            />
+            {/* Real pixel size: the story sees the width it is shown at, so
+                its media queries are honest. */}
+            <iframe ref={frameRef} title={title || 'Generated story preview'} />
           </div>
         )}
 

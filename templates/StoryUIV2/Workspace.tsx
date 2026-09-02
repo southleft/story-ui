@@ -32,10 +32,13 @@ import {
   Heading,
   IconButton,
   Kbd,
+  Popover,
+  ScrollArea,
   Select,
   Separator,
   Text,
   TextArea,
+  TextField,
   Theme,
   Tooltip,
 } from '@radix-ui/themes';
@@ -44,6 +47,31 @@ import './workspace.css';
 import { PreviewCanvas, type PreviewCanvasHandle, type PreviewFailure } from './PreviewCanvas';
 import { HandoffDialog } from './HandoffDialog';
 import { ComponentsDrawer } from './ComponentsDrawer';
+import { AssistantMarkdown } from './AssistantMarkdown';
+import { cleanNotice } from './notice';
+import {
+  ACCEPT,
+  partitionFiles,
+  processDocumentFiles,
+  formatBytes,
+  toPayload,
+  type AttachedDocument,
+} from './fileAttachments';
+import {
+  ArrowUpIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  ExternalLinkIcon,
+  FileIcon,
+  GearIcon,
+  GridIcon,
+  MicIcon,
+  PanelLeftIcon,
+  PlusIcon,
+  SearchIcon,
+  StopIcon,
+  XIcon,
+} from './icons';
 import { useAppearance, type AppearanceSetting } from './useAppearance';
 import {
   useGeneration,
@@ -120,6 +148,8 @@ interface Turn {
   role: 'user' | 'assistant';
   text: string;
   thumbnails?: string[];
+  /** Names of the documents sent with this turn, live turns only. */
+  attachments?: string[];
   elapsedMs?: number;
   suggestions?: string[];
   /** What this instruction was pointed at, when the user selected an element. */
@@ -171,8 +201,16 @@ interface WorkspaceProps {
 interface SendRequest {
   prompt: string;
   images: AttachedImage[];
+  docs: AttachedDocument[];
   selection: ElementTarget | null;
 }
+
+/** "1:42" past a minute, "42s" under it. */
+const formatDuration = (ms: number): string => {
+  const secs = Math.max(0, Math.round(ms / 1000));
+  const m = Math.floor(secs / 60);
+  return m ? `${m}:${String(secs % 60).padStart(2, '0')}` : `${secs}s`;
+};
 
 /** True when the keyboard event came from somewhere text is being edited. */
 const inTextField = (target: EventTarget | null): boolean => {
@@ -305,7 +343,7 @@ const SEVERITY_TONE: Record<VerificationFinding['severity'], 'red' | 'amber' | '
 
 /** The badge's label. "Verified" alone is only claimed when every check ran. */
 const verificationLabel = (v: VerificationSummary): string => {
-  if (v.outcome === 'issues') return `${v.blockers} issue(s) found`;
+  if (v.outcome === 'issues') return `${v.blockers} issue${v.blockers === 1 ? '' : 's'} found`;
   if (v.outcome === 'not_verified') return 'Not verified';
   if (v.checksRun !== undefined && v.checksTotal !== undefined) {
     return `Verified · ${v.checksRun}/${v.checksTotal} checks`;
@@ -416,6 +454,22 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
 
   /** Images staged for the next message, already encoded for upload. */
   const [images, setImages] = useState<AttachedImage[]>([]);
+  /** Documents staged for the next message, already read. */
+  const [docs, setDocs] = useState<AttachedDocument[]>([]);
+  /**
+   * Whether this project can hand a story off to a branch. Read once the
+   * server answers; the switcher's action is disabled with the reason until
+   * then, and stays disabled when the project is not a git repository.
+   */
+  const [handoffStatus, setHandoffStatus] = useState<{ available: boolean; reason?: string } | null>(null);
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [switcherQuery, setSwitcherQuery] = useState('');
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  /** The finished run's step list, folded to one line until asked for. */
+  const [stepsOpen, setStepsOpen] = useState(false);
+  /** When the last run stopped being busy, for the folded line's duration. */
+  const [runEndedAt, setRunEndedAt] = useState<number | null>(null);
   /**
    * How many recent-work cards to render.
    *
@@ -437,7 +491,21 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const threadRef = useRef<HTMLDivElement>(null);
-  const { generate, cancel, steps, busy, error, errorInfo, notice, liveText, liveCode } = useGeneration(apiBase);
+  const { generate, cancel, steps, busy, error, errorInfo, notice, liveText, liveCode, reset: resetRun } = useGeneration(apiBase);
+
+  // The folded step line needs to know when the run ended; the hook only
+  // says whether it is running.
+  const wasBusy = useRef(false);
+  useEffect(() => {
+    if (busy) {
+      wasBusy.current = true;
+      setStepsOpen(false);
+      setRunEndedAt(null);
+    } else if (wasBusy.current) {
+      wasBusy.current = false;
+      setRunEndedAt(Date.now());
+    }
+  }, [busy]);
 
   /**
    * Fullscreen: the preview column fills the workspace and the rail folds to
@@ -568,6 +636,24 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     if (errorInfo?.network) void checkConnection();
   }, [errorInfo, checkConnection]);
 
+  // Can this project hand off at all? Asked once the server is known to be
+  // up; a project outside git keeps the action disabled with the reason.
+  useEffect(() => {
+    if (connected !== true) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch(`${apiBase}/story-ui/handoff/status`);
+        if (!res.ok) { if (!cancelled) setHandoffStatus({ available: false }); return; }
+        const data = await res.json();
+        if (!cancelled) setHandoffStatus({ available: !!data?.available, reason: data?.reason });
+      } catch {
+        if (!cancelled) setHandoffStatus({ available: false });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [apiBase, connected]);
+
   /**
    * Read the story file for the Code view.
    *
@@ -633,6 +719,10 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     setSelection(null);
     setResolvedName(null);
     setFindingNotes({});
+    // The step list belongs to the run that produced it. Shown under a
+    // different story it claimed work that never happened here.
+    resetRun();
+    setStepsOpen(false);
     setReloadToken(t => t + 1);
     // No "before" for a restored story, so nothing to show as changes.
     setChanges(null);
@@ -640,7 +730,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     // The persisted code is a fine first frame; the file is authoritative.
     setCode(completion?.code ?? null);
     void loadCode(session.fileName);
-  }, [loadCode]);
+  }, [loadCode, resetRun]);
 
   /**
    * Recover a generation the iframe reload cut off.
@@ -845,7 +935,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
           : null;
   const canSend = blocked === null;
 
-  const send = useCallback(async (text?: string, opts?: { images?: AttachedImage[]; selection?: ElementTarget | null }) => {
+  const send = useCallback(async (text?: string, opts?: { images?: AttachedImage[]; docs?: AttachedDocument[]; selection?: ElementTarget | null }) => {
     const prompt = (text ?? input).trim();
     // `recovering` counts as busy here: a turn sent while recovery polls
     // would be replaced when the recovered conversation lands, and its reply
@@ -857,15 +947,17 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     committedInputRef.current = '';
     setInput('');
     const sentImages = opts?.images ?? images;
+    const sentDocs = opts?.docs ?? docs;
     const sentSelection = opts?.selection !== undefined ? opts.selection : selection;
     const sentLabeled = sentSelection
       ? (sentSelection === selection ? labeledSelection : sentSelection)
       : null;
     setImages([]);
+    setDocs([]);
     setImageError(null);
     setFailure(null);
     setFindingNotes({});
-    setRetryRequest({ prompt, images: sentImages, selection: sentSelection });
+    setRetryRequest({ prompt, images: sentImages, docs: sentDocs, selection: sentSelection });
     // The previous update's diff describes a version this run is about to
     // replace; the turn that owns it keeps its own copy.
     setChanges(null);
@@ -881,6 +973,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       // The label the chip showed — the resolved name when the lookup answered.
       target: sentLabeled ? targetLabel(sentLabeled) : undefined,
       thumbnails: sentImages.length ? sentImages.map(i => i.preview) : undefined,
+      attachments: sentDocs.length ? sentDocs.map(d => d.name) : undefined,
     };
     setSelection(null);
     setResolvedName(null);
@@ -906,6 +999,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       images: sentImages.length
         ? sentImages.map(img => ({ type: 'base64' as const, data: img.base64, mediaType: img.mediaType }))
         : undefined,
+      files: sentDocs.length ? sentDocs.map(toPayload) : undefined,
       provider: provider || undefined,
       model: model || undefined,
       considerations: considerations || undefined,
@@ -939,6 +1033,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       setInput(prev => prev || prompt);
       committedInputRef.current = committedInputRef.current || prompt;
       setImages(prev => (prev.length ? prev : sentImages));
+      setDocs(prev => (prev.length ? prev : sentDocs));
       return;
     }
 
@@ -952,12 +1047,13 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       setFailure({
         message: result.chatSummary || '',
         notice: result.notice,
-        onRetry: () => { void send(prompt, { images: sentImages, selection: sentSelection }); },
+        onRetry: () => { void send(prompt, { images: sentImages, docs: sentDocs, selection: sentSelection }); },
         onEditPrompt: () => {
           setFailure(null);
           setInput(prompt);
           committedInputRef.current = prompt;
           setImages(sentImages);
+          setDocs(sentDocs);
           setSelection(sentSelection);
           textareaRef.current?.focus();
         },
@@ -1064,15 +1160,30 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       setActiveFile({ fileName: result.fileName, title: result.title || 'Story' });
     }
     reloadSessions();
-  }, [input, busy, recovering, turns, provider, model, considerations, activeFile, activeStory, code, selection, labeledSelection, images, voice, generate, reloadSessions, byFileName]);
+  }, [input, busy, recovering, turns, provider, model, considerations, activeFile, activeStory, code, selection, labeledSelection, images, docs, voice, generate, reloadSessions, byFileName]);
 
   /* ---- attachments ----------------------------------------------------- */
 
+  /**
+   * Images go through the image pipeline (downscale, re-encode, thumbnail);
+   * documents are read as text or base64. Anything else is named in the
+   * error line rather than dropped.
+   */
   const addFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
     setImageError(null);
-    const { images: added, errors } = await processImageFiles(files, MAX_IMAGES - images.length);
-    if (added.length) setImages(prev => [...prev, ...added].slice(0, MAX_IMAGES));
+    const { images: imageFiles, documents: docFiles, rejected } = partitionFiles(files);
+    const errors: string[] = rejected.map(f => `${f.name}: not a supported file`);
+    if (imageFiles.length) {
+      const { images: added, errors: imageErrors } = await processImageFiles(imageFiles, MAX_IMAGES - images.length);
+      if (added.length) setImages(prev => [...prev, ...added].slice(0, MAX_IMAGES));
+      errors.push(...imageErrors);
+    }
+    if (docFiles.length) {
+      const { documents, errors: docErrors } = await processDocumentFiles(docFiles);
+      if (documents.length) setDocs(prev => [...prev, ...documents]);
+      errors.push(...docErrors);
+    }
     if (errors.length) setImageError(errors.join(' · '));
   }, [images.length]);
 
@@ -1101,7 +1212,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragging(false);
-    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+    const files = Array.from(e.dataTransfer.files);
     if (files.length) void addFiles(files);
   }, [addFiles]);
 
@@ -1205,6 +1316,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     setResolvedName(null);
     setShowProperties(false);
     setImages([]);
+    setDocs([]);
     setInput('');
     committedInputRef.current = '';
     setCode(null);
@@ -1212,8 +1324,10 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     setWritingFileName(null);
     setFailure(null);
     setFindingNotes({});
+    resetRun();
+    setStepsOpen(false);
     reloadSessions();
-  }, [reloadSessions]);
+  }, [reloadSessions, resetRun]);
 
   const confirmDelete = useCallback(async () => {
     if (!activeFile) return;
@@ -1251,22 +1365,111 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     setSelection(target);
   }, []);
 
-  /**
-   * Only a generated turn carries a fileName. A story opened from Recent work
-   * has an id and a title but no file this session is entitled to commit, so
-   * handoff stays disabled rather than committing the wrong thing.
-   */
-  const handoffCandidate = useMemo(
-    () => [...turns].reverse().find(t => t.fileName),
-    [turns],
-  );
-
   const models = useMemo(
     () => providers.find(p => p.type === provider)?.models ?? [],
     [providers, provider],
   );
 
+  const openInStorybook = (storyId: string) => {
+    if (onOpenStory) { onOpenStory(storyId); return; }
+    // A new tab. Navigating the top window replaced the workspace — and the
+    // conversation in it — with the story, which is the opposite of "open".
+    window.open(storybookUrlFor(storyId), '_blank', 'noopener');
+  };
+
+  /** Hand off the story in hand. The dialog reads repository status itself. */
+  const openHandoff = () => {
+    if (!activeFile) return;
+    setSwitcherOpen(false);
+    setHandoffTarget(activeFile);
+    onHandoff?.(activeFile.fileName, activeFile.title);
+  };
+
   /* ---- composer, shared by both states -------------------------------- */
+
+  const shortcutsList = (
+    <Flex direction="column" gap="1" className="suiw-shortcuts">
+      <Flex justify="between" gap="3"><Text size="1">Send</Text><Text size="1"><Kbd size="1">Enter</Kbd> / <Kbd size="1">{MOD}</Kbd>+<Kbd size="1">Enter</Kbd></Text></Flex>
+      <Flex justify="between" gap="3"><Text size="1">New line</Text><Text size="1"><Kbd size="1">Shift</Kbd>+<Kbd size="1">Enter</Kbd></Text></Flex>
+      <Flex justify="between" gap="3"><Text size="1">Leave select mode</Text><Text size="1"><Kbd size="1">Esc</Kbd></Text></Flex>
+      <Flex justify="between" gap="3"><Text size="1">Restore previous version</Text><Text size="1"><Kbd size="1">{MOD}</Kbd>+<Kbd size="1">Z</Kbd> outside a text field</Text></Flex>
+    </Flex>
+  );
+
+  /**
+   * Provider and model, behind a gear. Two selects in the composer row left
+   * no room for the primary action in a 400px rail; a choice made once per
+   * session does not need to be on screen for every message.
+   */
+  const settingsMenu = (
+    <Popover.Root open={settingsOpen} onOpenChange={o => { setSettingsOpen(o); if (!o) setShortcutsOpen(false); }}>
+      <Tooltip content="Generation settings">
+        <Popover.Trigger>
+          <IconButton size="1" variant="ghost" color="gray" aria-label="Generation settings" className="suiw-settings-trigger">
+            <GearIcon />
+          </IconButton>
+        </Popover.Trigger>
+      </Tooltip>
+      <Popover.Content size="1" width="300px" align="end" className="suiw-settings">
+        <Flex direction="column" gap="3">
+          <Text size="1" weight="medium" color="gray">Generation settings</Text>
+          {providers.length > 0 ? (
+            <>
+              <Flex direction="column" gap="1">
+                <Text as="label" size="1" htmlFor="suiw-provider">Provider</Text>
+                {/*
+                  * Changing provider must move the model with it. `setProvider`
+                  * alone left the previous provider's model id selected — the
+                  * trigger rendered blank (no matching item) and `send()` posted
+                  * {provider:'openai', model:'claude-sonnet-5'}.
+                  */}
+                <Select.Root
+                  value={provider}
+                  onValueChange={next => {
+                    setProvider(next);
+                    const next_models = providers.find(p => p.type === next)?.models ?? [];
+                    setModel(next_models[0] ?? '');
+                  }}
+                  size="1"
+                >
+                  <Select.Trigger id="suiw-provider" variant="soft" color="gray" aria-label="Provider" />
+                  <Select.Content>
+                    {providers.map(p => (
+                      <Select.Item key={p.type} value={p.type}>{p.name}</Select.Item>
+                    ))}
+                  </Select.Content>
+                </Select.Root>
+              </Flex>
+              <Flex direction="column" gap="1">
+                <Text as="label" size="1" htmlFor="suiw-model">Model</Text>
+                <Select.Root value={model} onValueChange={setModel} size="1">
+                  <Select.Trigger id="suiw-model" variant="soft" color="gray" aria-label="Model" />
+                  <Select.Content>
+                    {models.map(m => <Select.Item key={m} value={m}>{m}</Select.Item>)}
+                  </Select.Content>
+                </Select.Root>
+              </Flex>
+            </>
+          ) : (
+            <Text size="1" color="gray">No AI provider is configured on the server.</Text>
+          )}
+          <Separator size="4" />
+          <Button
+            size="1"
+            variant="ghost"
+            color="gray"
+            onClick={() => setShortcutsOpen(v => !v)}
+            aria-expanded={shortcutsOpen}
+            style={{ justifyContent: 'space-between' }}
+          >
+            Keyboard shortcuts
+            <ChevronDownIcon size={14} />
+          </Button>
+          {shortcutsOpen && shortcutsList}
+        </Flex>
+      </Popover.Content>
+    </Popover.Root>
+  );
 
   const composer = (
     <Box
@@ -1302,9 +1505,9 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
         />
 
         {/* Staged attachments. Each is removable until the message is sent —
-            after that the turn keeps the thumbnails as its record. */}
-        {images.length > 0 && (
-          <Flex gap="2" wrap="wrap" mt="2">
+            after that the turn keeps the record. */}
+        {(images.length > 0 || docs.length > 0) && (
+          <Flex gap="2" wrap="wrap" mt="2" align="center" className="suiw-attachments">
             {images.map(img => (
               <span key={img.id} className="suiw-attach-thumb">
                 <img src={img.preview} alt={img.name} />
@@ -1314,6 +1517,20 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                   onClick={() => setImages(prev => prev.filter(i => i.id !== img.id))}
                 >
                   ×
+                </button>
+              </span>
+            ))}
+            {docs.map(d => (
+              <span key={d.id} className="suiw-attach-doc" title={d.name}>
+                <FileIcon size={14} />
+                <span className="suiw-attach-doc-name">{d.name}</span>
+                <span className="suiw-attach-doc-size">{formatBytes(d.size)}</span>
+                <button
+                  type="button"
+                  aria-label={`Remove ${d.name}`}
+                  onClick={() => setDocs(prev => prev.filter(x => x.id !== d.id))}
+                >
+                  <XIcon size={12} />
                 </button>
               </span>
             ))}
@@ -1331,7 +1548,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
             instruction applies to. Without it the user cannot tell whether a
             selection is still armed. */}
         {selection && (
-          <Flex direction="column" gap="2" mb="2">
+          <Flex direction="column" gap="2" mt="2">
             <Flex align="center" gap="2">
               <Badge color="jade" variant="soft" className="suiw-ellipsis">
                 {/* The FILE's name for the element once the server resolves it
@@ -1381,43 +1598,38 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
           </Flex>
         )}
 
-        <Flex align="center" gap="2" mt="2" wrap="nowrap">
+        <Flex align="center" gap="1" mt="2" wrap="nowrap" className="suiw-composer-row">
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            accept={ACCEPT}
             multiple
             hidden
+            data-testid="suiw-file-input"
             onChange={e => {
               const files = Array.from(e.target.files ?? []);
               e.target.value = '';
               void addFiles(files);
             }}
           />
-          <Button
-            size="1"
-            variant="ghost"
-            color="gray"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={busy || recovering || images.length >= MAX_IMAGES}
-            title={
-              images.length >= MAX_IMAGES
-                ? `Up to ${MAX_IMAGES} images per message`
-                : 'Attach an image — or paste or drop one here'
-            }
-          >
-            Attach
-          </Button>
+          <Tooltip content={images.length >= MAX_IMAGES ? `Up to ${MAX_IMAGES} images per message; documents still attach` : 'Attach images or files'}>
+            <IconButton
+              size="1"
+              variant="ghost"
+              color="gray"
+              aria-label="Attach images or files"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={busy || recovering}
+              className="suiw-attach-trigger"
+            >
+              <PlusIcon />
+            </IconButton>
+          </Tooltip>
           {/* Disabled rather than hidden when the browser lacks the Web Speech
               API: a control that exists in one browser and not another reads
               as breakage, not absence. */}
-          <Button
-            size="1"
-            variant={voice.isListening ? 'soft' : 'ghost'}
-            color={voice.isListening ? 'red' : 'gray'}
-            onClick={voice.toggle}
-            disabled={!voice.isSupported || recovering}
-            title={
+          <Tooltip
+            content={
               !voice.isSupported
                 ? 'Dictation needs a browser with the Web Speech API (Chrome, Edge or Safari)'
                 : voice.isListening
@@ -1425,116 +1637,72 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                   : 'Dictate into the prompt'
             }
           >
-            {voice.isListening ? 'Listening…' : 'Dictate'}
-          </Button>
-
-          {/* Only on home. In the workspace the rail is 400px, and badge + two
-              selects + Build does not fit — the Build button was being pushed
-              clean out of the row. The header already names the active story,
-              so the badge has nothing to add here. */}
-          {designSystem && !started && (
-            <Badge
-              color="gray"
-              variant="soft"
-              className="suiw-ellipsis"
-              title="Generated using the design system installed in this project"
+            <IconButton
+              size="1"
+              variant={voice.isListening ? 'soft' : 'ghost'}
+              color={voice.isListening ? 'red' : 'gray'}
+              aria-label={voice.isListening ? 'Stop dictating' : 'Dictate'}
+              aria-pressed={voice.isListening}
+              onClick={voice.toggle}
+              disabled={!voice.isSupported || recovering}
+              className={`suiw-mic${voice.isListening ? ' suiw-mic--on' : ''}`}
             >
-              {designSystem}
-            </Badge>
-          )}
+              <MicIcon />
+            </IconButton>
+          </Tooltip>
 
           {/* Pushes the primary action to the trailing edge. */}
           <Box flexGrow="1" minWidth="0" />
 
-          {providers.length > 0 && (
-            <>
-              {/*
-                * Changing provider must move the model with it. `setProvider`
-                * alone left the previous provider's model id selected — the
-                * trigger rendered blank (no matching item) and `send()` posted
-                * {provider:'openai', model:'claude-sonnet-5'}.
-                */}
-              <Select.Root
-                value={provider}
-                onValueChange={next => {
-                  setProvider(next);
-                  const models = providers.find(p => p.type === next)?.models ?? [];
-                  setModel(models[0] ?? '');
-                }}
-                size="1"
-              >
-                <Select.Trigger
-                  variant="soft"
-                  color="gray"
-                  aria-label="Provider"
-                  className="suiw-ellipsis"
-                  style={{ maxWidth: 108 }}
-                />
-                <Select.Content>
-                  {providers.map(p => (
-                    <Select.Item key={p.type} value={p.type}>{p.name}</Select.Item>
-                  ))}
-                </Select.Content>
-              </Select.Root>
-
-              {/* Model ids run long (`gemini-3.1-flash-lite`), so this one is
-                  capped and truncates rather than eating the row. */}
-              <Select.Root value={model} onValueChange={setModel} size="1">
-                <Select.Trigger
-                  variant="soft"
-                  color="gray"
-                  aria-label="Model"
-                  className="suiw-ellipsis"
-                  style={{ maxWidth: 148 }}
-                />
-                <Select.Content>
-                  {models.map(m => <Select.Item key={m} value={m}>{m}</Select.Item>)}
-                </Select.Content>
-              </Select.Root>
-            </>
-          )}
+          {settingsMenu}
 
           {busy ? (
-            <Button
-              size="2"
-              variant="soft"
-              color="gray"
-              onClick={cancel}
-              className="suiw-btn-stop"
-              style={{ flexShrink: 0 }}
-            >
-              Stop
-            </Button>
+            <Tooltip content="Stop generating">
+              <IconButton
+                size="2"
+                radius="full"
+                variant="solid"
+                highContrast
+                aria-label="Stop"
+                onClick={cancel}
+                className="suiw-btn-stop"
+              >
+                <StopIcon size={14} />
+              </IconButton>
+            </Tooltip>
           ) : (
             /* highContrast, because Radix's solid variant puts white text on
-               accent-9 and jade-9 only reaches 3.15:1 — under AA for a 14px
-               label. highContrast swaps to accent-12 on accent-1 and measures
-               14.5:1. Every non-purple accent has this problem, so changing
-               hue would only have hidden it. */
-            <Button
-              size="2"
-              highContrast
-              onClick={() => send()}
-              // Recovering counts as busy: a turn sent mid-recovery would be
-              // clobbered when the recovered conversation lands. send() also
-              // guards, for the Enter key and suggestion chips.
-              disabled={!input.trim() || recovering || !canSend}
-              className="suiw-btn-build"
-              style={{ flexShrink: 0 }}
-              title={
+               accent-9 and jade-9 only reaches 3.15:1 — under AA. highContrast
+               swaps to accent-12 on accent-1 and measures 14.5:1. */
+            <Tooltip
+              content={
                 blocked === 'unreachable' ? 'The Story UI server is not reachable'
                   : blocked === 'no-providers' ? 'No AI provider is configured'
                     : blocked === 'checking' ? 'Checking the server…'
-                      : `Build (${MOD}+Enter)`
+                      : `Send (Enter)`
               }
             >
-              Build
-            </Button>
+              <IconButton
+                size="2"
+                radius="full"
+                variant="solid"
+                highContrast
+                aria-label="Send"
+                onClick={() => send()}
+                // Recovering counts as busy: a turn sent mid-recovery would be
+                // clobbered when the recovered conversation lands. send() also
+                // guards, for the Enter key and suggestion chips.
+                disabled={!input.trim() || recovering || !canSend}
+                className="suiw-btn-send"
+              >
+                <ArrowUpIcon size={16} />
+              </IconButton>
+            </Tooltip>
           )}
         </Flex>
       </Card>
 
-      {/* Why Build is held, and what to do about it. A disabled button with
+      {/* Why Send is held, and what to do about it. A disabled button with
           no explanation was the first thing a new install showed. */}
       {(blocked === 'unreachable' || blocked === 'no-providers') && (
         <Callout.Root color={blocked === 'unreachable' ? 'red' : 'amber'} size="1" mt="2" role="status" className="suiw-gate">
@@ -1566,119 +1734,153 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     </Box>
   );
 
-  const connectionBadge = (
+  /* ---- header ----------------------------------------------------------- */
+
+  const connectionIndicator = connected === false ? (
     // Three states, not two. `connected` starts null and is only set true
     // on a successful probe — so a 500, or a probe that had not returned
     // yet, used to render a green "Connected" badge for a server we had
     // heard nothing from.
-    <Badge
-      color={connected === false ? 'red' : connected === true ? 'green' : 'gray'}
-      variant="soft"
-      title={connected === false ? `No answer from ${apiBase}` : apiBase}
-    >
-      {connected === false ? 'Server unreachable' : connected === true ? 'Connected' : 'Checking…'}
+    <Badge color="red" variant="soft" title={`No answer from ${apiBase}`} className="suiw-conn">
+      Server unreachable
     </Badge>
+  ) : (
+    <Flex align="center" gap="1" title={apiBase} className="suiw-conn" role="status">
+      <span className={`suiw-conn-dot${connected ? ' suiw-conn-dot--on' : ''}`} aria-hidden="true" />
+      <Text size="1" color={connected ? 'green' : 'gray'}>{connected ? 'Connected' : 'Checking…'}</Text>
+    </Flex>
   );
 
-  const shortcutsHelp = (
-    <Tooltip
-      content={
-        // Spans throughout: Radix renders tooltip content inside a <p>, and
-        // a <div> in a <p> is invalid markup React warns about.
-        <Flex as="span" direction="column" gap="1" style={{ minWidth: 220 }}>
-          <Flex as="span" justify="between" gap="3"><span>Send</span><span><Kbd size="1">Enter</Kbd> / <Kbd size="1">{MOD}</Kbd>+<Kbd size="1">Enter</Kbd></span></Flex>
-          <Flex as="span" justify="between" gap="3"><span>New line</span><span><Kbd size="1">Shift</Kbd>+<Kbd size="1">Enter</Kbd></span></Flex>
-          <Flex as="span" justify="between" gap="3"><span>Leave pick mode</span><Kbd size="1">Esc</Kbd></Flex>
-          <Flex as="span" justify="between" gap="3"><span>Restore previous version</span><span><Kbd size="1">{MOD}</Kbd>+<Kbd size="1">Z</Kbd> outside a text field</span></Flex>
-        </Flex>
-      }
-    >
-      <IconButton size="1" variant="ghost" color="gray" aria-label="Keyboard shortcuts">
-        <Text size="1" weight="bold">?</Text>
-      </IconButton>
-    </Tooltip>
-  );
+  const storyTitle = activeStory?.title ?? activeFile?.title ?? 'Untitled';
+  const switcherMatches = (() => {
+    const q = switcherQuery.trim().toLowerCase();
+    return q ? sessions.filter(s => s.title.toLowerCase().includes(q)) : sessions;
+  })();
 
-  const currentSessionFile = activeFile && sessions.some(s => s.fileName === activeFile.fileName)
-    ? activeFile.fileName
-    : '';
-
-  const header = (
-    <Flex
-      align="center"
-      gap="3"
-      px="3"
-      py="2"
-      style={{ borderBottom: '1px solid var(--gray-a5)', flex: '0 0 auto' }}
-    >
-      <Flex align="center" gap="2">
-        {/* Soft rather than solid for the same reason as the Build button:
-            `--accent-contrast` on `--accent-9` is only 3.15:1 for jade. The
-            a4/11 pair is the one Radix guarantees for text. */}
-        <Flex
-          align="center"
-          justify="center"
-          width="20px"
-          height="20px"
-          style={{ background: 'var(--accent-a4)', borderRadius: 'var(--radius-2)' }}
+  /**
+   * The story switcher: the current title, and under it every story in the
+   * project plus what can be done with this one. Changing stories used to
+   * mean New → Home → card; the actions used to be spread across a "⋯"
+   * menu in the header and two buttons in the canvas toolbar.
+   */
+  const storySwitcher = (
+    <Popover.Root open={switcherOpen} onOpenChange={o => { setSwitcherOpen(o); if (!o) setSwitcherQuery(''); }}>
+      <Popover.Trigger>
+        <Button
+          size="1"
+          variant="ghost"
+          color="gray"
+          className="suiw-switcher"
+          aria-label={`Story: ${storyTitle}. Switch story`}
+          disabled={busy || recovering}
         >
-          <Text size="1" weight="bold" style={{ color: 'var(--accent-11)' }}>S</Text>
-        </Flex>
-        <Text size="2" weight="medium">Story UI</Text>
-      </Flex>
-
-      {started && (
-        <>
-          <Separator orientation="vertical" size="1" />
-          {/* The story switcher. Changing stories used to mean New → Home →
-              card; the header already named the story, so it now lists them. */}
-          <Select.Root
-            value={currentSessionFile}
-            onValueChange={fileName => {
-              const session = byFileName(fileName);
-              if (session && fileName !== activeFile?.fileName) openSession(session);
-            }}
+          <span className="suiw-ellipsis suiw-switcher-title">{storyTitle}</span>
+          <ChevronDownIcon size={14} />
+        </Button>
+      </Popover.Trigger>
+      <Popover.Content size="1" width="320px" align="start" className="suiw-switcher-pop">
+        <Flex direction="column" gap="2">
+          <TextField.Root
             size="1"
-            disabled={busy || recovering}
+            placeholder="Find a story"
+            aria-label="Find a story"
+            value={switcherQuery}
+            onChange={e => setSwitcherQuery(e.target.value)}
+            autoFocus
           >
-            <Select.Trigger
+            <TextField.Slot><SearchIcon size={14} /></TextField.Slot>
+          </TextField.Root>
+          <ScrollArea style={{ maxHeight: 260 }}>
+            <div role="listbox" aria-label="Stories" className="suiw-switcher-list">
+              {switcherMatches.map(s => {
+                const current = s.fileName === activeFile?.fileName;
+                return (
+                  <button
+                    key={s.fileName}
+                    type="button"
+                    role="option"
+                    aria-selected={current}
+                    className={`suiw-switcher-item${current ? ' suiw-switcher-item--current' : ''}`}
+                    onClick={() => {
+                      setSwitcherOpen(false);
+                      setSwitcherQuery('');
+                      if (!current) openSession(s);
+                    }}
+                  >
+                    <Text as="div" size="2" truncate>{s.title}</Text>
+                    <Text as="div" size="1" color="gray" truncate>{relativeTime(s.updatedAt)}</Text>
+                  </button>
+                );
+              })}
+              {switcherMatches.length === 0 && (
+                <Text as="div" size="1" color="gray" className="suiw-switcher-empty">No story matches.</Text>
+              )}
+            </div>
+          </ScrollArea>
+          <Separator size="4" />
+          <Flex direction="column" gap="1" className="suiw-switcher-actions">
+            <Button
+              size="1"
               variant="ghost"
               color="gray"
-              aria-label="Switch story"
-              className="suiw-ellipsis"
-              placeholder={activeStory?.title ?? activeFile?.title ?? 'Untitled'}
-              style={{ maxWidth: 280 }}
-            />
-            <Select.Content position="popper">
-              {sessions.map(s => (
-                <Select.Item key={s.fileName} value={s.fileName}>{s.title}</Select.Item>
-              ))}
-            </Select.Content>
-          </Select.Root>
+              disabled={!activeStory}
+              onClick={() => { setSwitcherOpen(false); if (activeStory) openInStorybook(activeStory.id); }}
+            >
+              <ExternalLinkIcon size={14} />
+              Open in Storybook
+            </Button>
+            {handoffStatus?.available && activeFile ? (
+              <Button size="1" variant="ghost" color="gray" onClick={openHandoff}>
+                Hand off to a branch…
+              </Button>
+            ) : (
+              <Tooltip content={handoffStatus === null ? 'Checking the repository…' : 'Needs a git repository'}>
+                <span className="suiw-tooltip-anchor" tabIndex={0}>
+                  <Button size="1" variant="ghost" color="gray" disabled style={{ pointerEvents: 'none', width: '100%' }}>
+                    Hand off to a branch…
+                  </Button>
+                </span>
+              </Tooltip>
+            )}
+            <Button
+              size="1"
+              variant="ghost"
+              color="red"
+              disabled={!activeFile}
+              onClick={() => { setSwitcherOpen(false); setDeleteError(null); setDeleteOpen(true); }}
+            >
+              Delete story…
+            </Button>
+          </Flex>
+        </Flex>
+      </Popover.Content>
+    </Popover.Root>
+  );
 
-          {activeFile && (
-            <DropdownMenu.Root>
-              <DropdownMenu.Trigger>
-                <IconButton size="1" variant="ghost" color="gray" aria-label="Story actions" disabled={busy || recovering}>
-                  <Text size="2" weight="bold" aria-hidden>⋯</Text>
-                </IconButton>
-              </DropdownMenu.Trigger>
-              <DropdownMenu.Content size="1">
-                <DropdownMenu.Item
-                  disabled={!activeStory}
-                  onSelect={() => { if (activeStory) openInStorybook(activeStory.id); }}
-                >
-                  Open in Storybook
-                </DropdownMenu.Item>
-                <DropdownMenu.Separator />
-                <DropdownMenu.Item color="red" onSelect={() => { setDeleteError(null); setDeleteOpen(true); }}>
-                  Delete story…
-                </DropdownMenu.Item>
-              </DropdownMenu.Content>
-            </DropdownMenu.Root>
-          )}
-        </>
+  const header = (
+    <Flex align="center" gap="2" px="3" className="suiw-header">
+      {/* Only where a manager can move Storybook's chrome: inside the preview
+          iframe, or on the manager page once it has answered. */}
+      {(inFrame || managerHeard) && (
+        <Tooltip content={focus ? 'Show Storybook sidebar' : 'Hide Storybook sidebar'}>
+          <IconButton
+            size="1"
+            variant="ghost"
+            color="gray"
+            aria-label={focus ? 'Show Storybook sidebar' : 'Hide Storybook sidebar'}
+            onClick={() => requestFocus(!focus)}
+            className="suiw-sidebar-toggle"
+          >
+            <PanelLeftIcon />
+          </IconButton>
+        </Tooltip>
       )}
+
+      <Text className="suiw-wordmark">Story UI</Text>
+
+      {/* Only once there is a story to name: a first story being written has
+          no title yet, and "Untitled ▾" in the header claimed one. */}
+      {started && (activeFile || activeStory) && storySwitcher}
 
       <Box flexGrow="1" minWidth="0" />
 
@@ -1690,42 +1892,20 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
         disabled={connected !== true}
         title="What the server discovered in this project"
       >
+        <GridIcon />
         Components
       </Button>
 
-      {/* Only inside Storybook: outside it there is no chrome to fold. The
-          manager addon does the folding; this button asks and reflects. */}
-      {(inFrame || managerHeard) && (
-        <Button
-          size="1"
-          variant={focus ? 'soft' : 'ghost'}
-          color="gray"
-          onClick={() => requestFocus(!focus)}
-          aria-pressed={focus}
-          title={focus ? "Show Storybook's sidebar and panel again" : "Hide Storybook's sidebar and panel while working here"}
-        >
-          Focus
-        </Button>
-      )}
-
-      {shortcutsHelp}
-
-      {connectionBadge}
+      {connectionIndicator}
 
       {started && (
-        <Button size="1" variant="soft" color="gray" onClick={goHome}>
+        <Button size="1" variant="soft" color="gray" onClick={goHome} className="suiw-new">
+          <PlusIcon size={14} />
           New
         </Button>
       )}
     </Flex>
   );
-
-  const openInStorybook = (storyId: string) => {
-    if (onOpenStory) { onOpenStory(storyId); return; }
-    // A new tab. Navigating the top window replaced the workspace — and the
-    // conversation in it — with the story, which is the opposite of "open".
-    window.open(storybookUrlFor(storyId), '_blank', 'noopener');
-  };
 
   const deleteDialog = (
     <AlertDialog.Root open={deleteOpen} onOpenChange={o => { if (!deleting) setDeleteOpen(o); }}>
@@ -1886,7 +2066,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                 title="Show the conversation"
                 onClick={() => setFullscreen(false)}
               >
-                <Text size="2" aria-hidden>›</Text>
+                <ChevronRightIcon />
               </IconButton>
             </div>
           ) : (
@@ -1915,10 +2095,22 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                             ))}
                           </Flex>
                         )}
+                        {turn.attachments && turn.attachments.length > 0 && (
+                          <Flex gap="1" wrap="wrap" mb="1" className="suiw-turn-files">
+                            {turn.attachments.map((name, i) => (
+                              <Badge key={i} size="1" color="gray" variant="soft" className="suiw-ellipsis">
+                                <FileIcon size={12} />
+                                {name}
+                              </Badge>
+                            ))}
+                          </Flex>
+                        )}
                         <Text as="div" size="2" className="suiw-turn-body">{withInlineCode(turn.text)}</Text>
                       </Card>
                     ) : (
-                      <Text as="div" size="2" color={turn.failed ? 'red' : 'gray'} className="suiw-turn-body">{withInlineCode(turn.text)}</Text>
+                      <Text as="div" size="2" color={turn.failed ? 'red' : 'gray'} className="suiw-turn-body suiw-turn-body--md">
+                        <AssistantMarkdown text={turn.text} />
+                      </Text>
                     )}
 
                     {turn.role === 'assistant' && (() => {
@@ -1992,8 +2184,8 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                             Playwright missing, Storybook unreachable, the story
                             not indexed yet. The server always sends a reason;
                             withholding it just moved the confusion downstream. */}
-                        {turn.verification.outcome === 'not_verified' && turn.verification.reason && (
-                          <Text size="1" color="gray">{turn.verification.reason}</Text>
+                        {turn.verification.outcome === 'not_verified' && cleanNotice(turn.verification.reason) && (
+                          <Text size="1" color="gray" className="suiw-verify-reason">{cleanNotice(turn.verification.reason)}</Text>
                         )}
 
                         {turn.findings && turn.findings.length > 0 && (
@@ -2094,7 +2286,28 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                   * narration the moment it finished, so nothing recorded what
                   * the pipeline did — least of all on the failure path.
                   */}
-                {steps.length > 0 && (
+                {steps.length > 0 && !busy && (
+                  // Folded to one line once the run is over: the list is a
+                  // record, not the reply, and it was taller than the reply.
+                  <Flex align="center" gap="2" className="suiw-steps-summary">
+                    <Text size="1" color="gray">
+                      {steps.length} step{steps.length === 1 ? '' : 's'}
+                      {runEndedAt != null && steps[0] ? ` · ${formatDuration(runEndedAt - steps[0].startedAt)}` : ''}
+                    </Text>
+                    <Text size="1" color="gray" aria-hidden>·</Text>
+                    <Button
+                      size="1"
+                      variant="ghost"
+                      color="gray"
+                      onClick={() => setStepsOpen(v => !v)}
+                      aria-expanded={stepsOpen}
+                      className="suiw-steps-toggle"
+                    >
+                      {stepsOpen ? 'Hide steps' : 'Show steps'}
+                    </Button>
+                  </Flex>
+                )}
+                {steps.length > 0 && (busy || stepsOpen) && (
                   <Flex direction="column" gap="1" className="suiw-steps">
                     {steps.map(s => (
                       <Flex key={s.id} align="center" gap="2" className={`suiw-step suiw-step--${s.state}`}>
@@ -2155,7 +2368,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                             const r = retryRequest;
                             setInput('');
                             committedInputRef.current = '';
-                            void send(r.prompt, { images: r.images, selection: r.selection });
+                            void send(r.prompt, { images: r.images, docs: r.docs, selection: r.selection });
                           }}
                         >
                           Retry
@@ -2205,14 +2418,6 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
             liveCode={liveCode}
             diff={changes}
             failure={failure}
-            onOpenInStorybook={() => activeStory && openInStorybook(activeStory.id)}
-            canHandoff={!!handoffCandidate}
-            onHandoff={() => {
-              if (!handoffCandidate?.fileName) return;
-              const next = { fileName: handoffCandidate.fileName, title: handoffCandidate.title || 'Story' };
-              setHandoffTarget(next);
-              onHandoff?.(next.fileName, next.title);
-            }}
           />
         </div>
 

@@ -188,7 +188,9 @@ export const StoryUIPage: React.FC = () => {
   const base = (useStorybookState() as any)?.theme?.base;
   const appearance = base === 'dark' || base === 'light' ? base : 'auto';
   const [apiBase] = useState<string>(() => resolveApiBase());
-  const { focus, setFocus } = useTabFocus(api);
+  // The sidebar toggle lives in the workspace's header; it posts
+  // `story-ui:focus` to this window and this hook answers with the state.
+  useTabFocus(api);
 
   return (
     <div
@@ -204,38 +206,6 @@ export const StoryUIPage: React.FC = () => {
       }}
     >
       <Workspace apiBase={apiBase} appearance={appearance} />
-      {/*
-        The workspace only renders its own Focus button when it is inside an
-        iframe (it asks `window.parent`); in the page there is no parent, so
-        the sidebar toggle lives here until the workspace learns to ask this
-        document too. Bottom-left, under the conversation rail's composer,
-        where nothing else sits.
-      */}
-      <button
-        type="button"
-        onClick={() => setFocus(!focus)}
-        aria-pressed={focus}
-        title={focus ? "Show Storybook's sidebar" : "Hide Storybook's sidebar while working here"}
-        style={{
-          position: 'absolute',
-          left: 8,
-          bottom: 8,
-          zIndex: 3,
-          height: 22,
-          padding: '0 8px',
-          border: '1px solid rgba(128,128,128,0.35)',
-          borderRadius: 11,
-          background: 'rgba(128,128,128,0.12)',
-          color: 'inherit',
-          font: 'inherit',
-          fontSize: 11,
-          lineHeight: '20px',
-          cursor: 'pointer',
-          opacity: 0.8,
-        }}
-      >
-        {focus ? 'Show sidebar' : 'Hide sidebar'}
-      </button>
     </div>
   );
 };

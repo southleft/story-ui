@@ -41,12 +41,20 @@
   min-height: 0;
   display: grid;
   grid-template-columns: 400px 1fr;
+  /*
+   * One row, exactly the container's height. An implicit `auto` row sizes to
+   * its content, and a long thread made the rail 941px tall inside an 806px
+   * page: the composer sat below the fold and nothing could scroll to it.
+   */
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .suiw-rail {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
   border-right: 1px solid var(--gray-a5);
 }
 
@@ -94,18 +102,11 @@
 }
 
 /**
- * Fit mode: the frame IS the stage.
- *
- * The padding and the grid backdrop both exist to make a fixed-width frame
- * read as an artifact sitting on a surface. At full width there is no surface
- * left to show, and every pixel spent on it is preview the reviewer cannot
- * see — which was the complaint.
- *
- * Applied ONLY while a frame is mounted (see PreviewCanvas). `stretch` is
- * right for a full-bleed frame and wrong for every placeholder state: with
- * `fit` as the default viewport, the Building/empty states were stretched
- * across the stage and their content pinned to the top instead of centred by
- * the base rule above.
+ * With a frame on screen the frame IS the stage: no padding, no grid — every
+ * pixel spent on a backdrop is preview the reviewer cannot see. Applied ONLY
+ * while a frame is mounted (see PreviewCanvas): `stretch` is right for a
+ * full-bleed frame and wrong for every placeholder state, which the base
+ * rule centres.
  */
 .suiw-stage--fit {
   padding: 0;
@@ -116,28 +117,17 @@
 
 .suiw-frame {
   background: #fff;
-  border-radius: var(--radius-4);
-  border: 1px solid var(--gray-a6);
   overflow: hidden;
-  box-shadow: var(--shadow-5);
-  transition: opacity 180ms ease, width 180ms ease, height 180ms ease;
-}
-
-/* At full width the rounded corners, border and drop shadow are framing a
-   frame that has nothing to sit on — they only eat preview area. */
-.suiw-stage--fit .suiw-frame {
-  border-radius: 0;
-  border: none;
-  box-shadow: none;
-  width: 100% !important;
-  height: 100% !important;
+  width: 100%;
+  height: 100%;
+  transition: opacity 180ms ease;
 }
 
 /* The canvas keeps showing the previous composition while a new one builds, so
    you can still read what you are iterating on. Dimming beats blanking. */
 .suiw-frame--stale { opacity: 0.55; }
 
-.suiw-frame iframe { display: block; border: 0; }
+.suiw-frame iframe { display: block; border: 0; width: 100%; height: 100%; }
 
 /* ---- recent work -------------------------------------------------------- */
 
@@ -186,8 +176,8 @@
   .suiw-frame { transition: none; }
 }
 
-/* Keeps model/provider pills from ever pushing the primary action out of the
-   composer row. */
+/* Truncate rather than grow: a long story title must never push the header's
+   right-hand controls out of the row. */
 .suiw-ellipsis {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -584,8 +574,263 @@
 }
 
 @media (max-width: 1100px) {
-  .suiw-body--fullscreen { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  .suiw-body--fullscreen { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
   .suiw-rail--collapsed { max-height: none; flex-direction: row; padding: var(--space-1) var(--space-2); }
 }
 
 .suiw-inline-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; padding: 0 4px; border-radius: 3px; background: var(--gray-a3); color: var(--gray-12); }
+
+/* ---- chrome ------------------------------------------------------------- */
+
+/* One 40px row each. The header holds the sidebar toggle, wordmark, story
+   switcher, Components, connection and New; the toolbar holds the view
+   control, Select, History and fullscreen. Nothing else. */
+.suiw-header,
+.suiw-toolbar {
+  height: 40px;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--gray-a5);
+}
+
+.suiw-wordmark {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  line-height: 1;
+}
+
+/* Icon + label buttons: the icon sits on the text's baseline box, not above it. */
+.suiw-header .rt-Button > svg,
+.suiw-toolbar .rt-Button > svg,
+.suiw-switcher-actions .rt-Button > svg {
+  margin-right: 2px;
+}
+
+.suiw-switcher {
+  max-width: 280px;
+  min-width: 0;
+}
+
+.suiw-switcher-title {
+  display: block;
+}
+
+.suiw-switcher-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.suiw-switcher-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-2);
+  padding: var(--space-1) var(--space-2);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.suiw-switcher-item:hover,
+.suiw-switcher-item:focus-visible {
+  background: var(--gray-a3);
+  outline: none;
+}
+
+.suiw-switcher-item--current {
+  background: var(--accent-a3);
+}
+
+.suiw-switcher-empty {
+  padding: var(--space-2);
+}
+
+.suiw-switcher-actions .rt-Button {
+  justify-content: flex-start;
+  width: 100%;
+}
+
+.suiw-tooltip-anchor {
+  display: inline-flex;
+  width: 100%;
+}
+
+/* Connection: a dot and a word. The red "Server unreachable" state is a
+   badge, since it is the one that needs to be seen. */
+.suiw-conn-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--gray-a7);
+}
+
+.suiw-conn-dot--on {
+  background: var(--green-9);
+}
+
+/* ---- composer ----------------------------------------------------------- */
+
+/* Pinned: the thread scrolls above it, never the rail. */
+.suiw-composer {
+  flex: 0 0 auto;
+}
+
+.suiw-composer-row .rt-IconButton svg {
+  display: block;
+}
+
+.suiw-btn-send:disabled {
+  opacity: 0.45;
+}
+
+.suiw-mic--on {
+  animation: suiw-pulse 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .suiw-mic--on { animation: none; }
+}
+
+/* A document chip: icon, name, size, remove. */
+.suiw-attach-doc {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  height: 28px;
+  padding: 0 var(--space-1) 0 var(--space-2);
+  border: 1px solid var(--gray-a6);
+  border-radius: var(--radius-2);
+  background: var(--gray-a2);
+  font-size: var(--font-size-1);
+  color: var(--gray-12);
+}
+
+.suiw-attach-doc-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 180px;
+}
+
+.suiw-attach-doc-size {
+  color: var(--gray-11);
+  white-space: nowrap;
+}
+
+.suiw-attach-doc button {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--gray-11);
+  cursor: pointer;
+}
+
+.suiw-attach-doc button:hover {
+  background: var(--gray-a4);
+  color: var(--gray-12);
+}
+
+.suiw-turn-files .rt-Badge svg {
+  margin-right: 2px;
+}
+
+.suiw-settings label {
+  color: var(--gray-11);
+}
+
+/* ---- assistant markdown ------------------------------------------------- */
+
+/* The block model from markdownLite. The turn body's pre-wrap would double
+   every paragraph gap, so blocks own their spacing and the body does not. */
+.suiw-turn-body--md {
+  white-space: normal;
+}
+
+.suiw-md p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.suiw-md ul {
+  margin: 0;
+  padding-left: 1.25em;
+}
+
+.suiw-md li + li {
+  margin-top: 2px;
+}
+
+.suiw-md p + p,
+.suiw-md p + ul,
+.suiw-md ul + p,
+.suiw-md ul + ul {
+  margin-top: var(--space-2);
+}
+
+.suiw-md strong {
+  font-weight: 600;
+}
+
+/* ---- folded steps ------------------------------------------------------- */
+
+.suiw-steps-summary {
+  min-height: 24px;
+}
+
+.suiw-verify-reason {
+  overflow-wrap: anywhere;
+}
+
+/* ---- portals over Storybook's manager ----------------------------------- */
+
+/* Storybook's manager gives its page slot a stacking context (a flex item
+   with z-index: 1). Everything Radix portals to <body> — popovers, menus,
+   selects, tooltips, dialog overlays — lands there with z-index auto and
+   painted UNDER the workspace: the story switcher was in the DOM, reported a
+   bounding box, and could not be seen or clicked. Radix Popper copies the
+   content's computed z-index onto its fixed wrapper, so the content classes
+   are where it must be set. */
+.rt-PopoverContent,
+.rt-DropdownMenuContent,
+.rt-ContextMenuContent,
+.rt-SelectContent,
+.rt-HoverCardContent,
+.rt-TooltipContent,
+.rt-BaseDialogOverlay {
+  z-index: 20;
+}
+
+/* Ghost buttons carry a negative margin for their hit area; stacked full
+   width in a popover that margin overflows the panel. */
+.suiw-switcher-actions .rt-Button {
+  margin: 0;
+}
+
+/* A suggestion is one line of prose in a chip; a long one truncates rather
+   than widening the rail. */
+.suiw-turn-actions .rt-Button {
+  display: block;
+  min-width: 0; /* a flex item's auto minimum is its full text width */
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+
+/* The chip row is itself a flex item in a column with `align-items: start`,
+   so it would size to its longest chip; cap it at the column. */
+.suiw-turn-actions {
+  max-width: 100%;
+  min-width: 0;
+}

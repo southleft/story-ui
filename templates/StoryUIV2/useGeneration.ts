@@ -304,6 +304,12 @@ export interface ErrorInfo {
 export interface GenerationRequest {
   prompt: string;
   images?: Array<{ type: 'base64'; data: string; mediaType: string }>;
+  /**
+   * Documents attached beside the prompt: `data` is the text itself for
+   * text-like files (md, txt, csv, json) and raw base64 for PDFs. A server
+   * that predates the field ignores it.
+   */
+  files?: Array<{ name: string; mediaType: string; data: string }>;
   provider?: string;
   model?: string;
   considerations?: string;
