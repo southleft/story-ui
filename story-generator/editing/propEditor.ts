@@ -117,27 +117,77 @@ export function topLevelDeclarations(code: string): Set<string> {
  * class named `owner` — the caller must treat that as "cannot place", not as
  * "first one".
  */
-export function occurrencesWithinOwner(code: string, component: string, owner: string): number[] {
+/** Names Storybook gives the component that wraps an anonymous story `render`. */
+export const STORYBOOK_RENDER_WRAPPERS = new Set(['unboundStoryFn', 'StoryFn', 'boundStoryFn', 'renderer', 'StoryRender']);
+
+/**
+ * The span of each story's render function: `export const X = { render: () => … }`
+ * (CSF3), `render() {}` methods, and `export const X = () => …` (CSF2).
+ * Keyed by export name, in source order.
+ */
+export function storyRenderSpans(code: string): Array<{ name: string; start: number; end: number }> {
+  const source = ts.createSourceFile('story.tsx', code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const spans: Array<{ name: string; start: number; end: number }> = [];
+  for (const stmt of source.statements) {
+    if (!ts.isVariableStatement(stmt)) continue;
+    const exported = stmt.modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword);
+    if (!exported) continue;
+    for (const decl of stmt.declarationList.declarations) {
+      if (!ts.isIdentifier(decl.name) || !decl.initializer) continue;
+      let init: ts.Expression = decl.initializer;
+      while (ts.isAsExpression(init) || ts.isSatisfiesExpression(init) || ts.isParenthesizedExpression(init)) init = init.expression;
+      if (ts.isObjectLiteralExpression(init)) {
+        for (const prop of init.properties) {
+          const isRender = (ts.isPropertyAssignment(prop) || ts.isMethodDeclaration(prop))
+            && prop.name && ts.isIdentifier(prop.name) && prop.name.text === 'render';
+          if (isRender) spans.push({ name: decl.name.text, start: prop.getStart(source), end: prop.getEnd() });
+        }
+      } else if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) {
+        if (decl.name.text !== 'meta') spans.push({ name: decl.name.text, start: decl.getStart(source), end: decl.getEnd() });
+      }
+    }
+  }
+  return spans;
+}
+
+export function occurrencesWithinOwner(
+  code: string,
+  component: string,
+  owner: string,
+  /** The story export the preview is showing, when the client knows it. */
+  storyExport?: string,
+): number[] {
   const source = ts.createSourceFile('story.tsx', code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 
   let span: { start: number; end: number } | null = null;
-  for (const stmt of source.statements) {
-    if (ts.isFunctionDeclaration(stmt) && stmt.name?.text === owner) {
-      span = { start: stmt.getStart(source), end: stmt.getEnd() };
-      break;
+  /**
+   * An anonymous `render: () => …` has no name of its own; React reports
+   * Storybook's wrapper (`unboundStoryFn`) as the owner, and no declaration
+   * is named that. The region that corresponds to the DOM is the story's
+   * render function. One story, or the named one, is unambiguous; several
+   * stories all holding <component> are not, and stay a refusal.
+   */
+  const stories = storyRenderSpans(code);
+  const isWrapper = STORYBOOK_RENDER_WRAPPERS.has(owner) || stories.some(st => st.name === owner);
+  if (isWrapper) {
+    const named = stories.find(st => st.name === (storyExport || owner));
+    if (named) span = named;
+    else if (stories.length === 1) span = stories[0];
+    else {
+      const holding = stories.filter(st => new RegExp(`<${component}(?=[\\s/>])`).test(code.slice(st.start, st.end)));
+      if (holding.length === 1) span = holding[0];
     }
-    if (ts.isClassDeclaration(stmt) && stmt.name?.text === owner) {
-      span = { start: stmt.getStart(source), end: stmt.getEnd() };
-      break;
-    }
-    if (ts.isVariableStatement(stmt)) {
-      for (const decl of stmt.declarationList.declarations) {
-        if (ts.isIdentifier(decl.name) && decl.name.text === owner) {
-          span = { start: decl.getStart(source), end: decl.getEnd() };
-          break;
+  }
+  if (!span) {
+    for (const stmt of source.statements) {
+      if (ts.isFunctionDeclaration(stmt) && stmt.name?.text === owner) { span = { start: stmt.getStart(source), end: stmt.getEnd() }; break; }
+      if (ts.isClassDeclaration(stmt) && stmt.name?.text === owner) { span = { start: stmt.getStart(source), end: stmt.getEnd() }; break; }
+      if (ts.isVariableStatement(stmt)) {
+        for (const decl of stmt.declarationList.declarations) {
+          if (ts.isIdentifier(decl.name) && decl.name.text === owner) { span = { start: decl.getStart(source), end: decl.getEnd() }; break; }
         }
+        if (span) break;
       }
-      if (span) break;
     }
   }
   if (!span) return [];

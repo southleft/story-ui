@@ -21,7 +21,7 @@
 import type { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
-import { editProp, readProps, occurrencesInSource, occurrencesWithinOwner, topLevelDeclarations } from '../../story-generator/editing/propEditor.js';
+import { editProp, readProps, occurrencesInSource, occurrencesWithinOwner, topLevelDeclarations, STORYBOOK_RENDER_WRAPPERS } from '../../story-generator/editing/propEditor.js';
 import { extractProps, extractPropsForPackages, type PropFact, type ComponentFacts } from '../../story-generator/knowledge/propExtractor.js';
 import { mergePropFactsFromSource, readSourceFacts } from '../../story-generator/knowledge/sourceFacts.js';
 import { EnhancedComponentDiscovery } from '../../story-generator/enhancedComponentDiscovery.js';
@@ -449,7 +449,7 @@ export async function editablePropsHandler(req: Request, res: Response): Promise
 
 export async function editPropHandler(req: Request, res: Response): Promise<void> {
   try {
-    const { fileName, component, candidates, owners, occurrence, owner, prop, value } = req.body ?? {};
+    const { fileName, component, candidates, owners, occurrence, owner, prop, value, storyExport } = req.body ?? {};
     if (!fileName || (!component && !Array.isArray(candidates)) || !prop) {
       res.status(400).json({ error: 'fileName, component and prop are required' });
       return;
@@ -542,12 +542,14 @@ export async function editPropHandler(req: Request, res: Response): Promise<void
     if (total <= 1) {
       targetOccurrence = 0;
     } else if (ownerName) {
-      const scoped = occurrencesWithinOwner(before, resolved, ownerName);
+      const scoped = occurrencesWithinOwner(before, resolved, ownerName, typeof storyExport === 'string' ? storyExport : undefined);
       if (!scoped.length) {
         // The client counted within this owner; reading its number as a
         // whole-file position would be a guess at a different question.
         res.status(409).json({
-          error: `Cannot place this <${resolved}>: the file has ${total} of them and no top-level component named ${ownerName} to narrow by.`,
+          error: STORYBOOK_RENDER_WRAPPERS.has(ownerName)
+            ? `Cannot place this <${resolved}>: the file has ${total} of them across more than one story, and the preview did not say which story it shows.`
+            : `Cannot place this <${resolved}>: the file has ${total} of them and no top-level component named ${ownerName} to narrow by.`,
           occurrencesInSource: total,
         });
         return;
