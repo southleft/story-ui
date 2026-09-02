@@ -6,6 +6,7 @@ import { EnhancedComponentDiscovery } from '../../story-generator/enhancedCompon
 import { PropInfo } from '../../story-generator/componentDiscovery.js';
 import { saysMoreThanName } from '../../story-generator/knowledge/descriptionQuality.js';
 import { enrichWithSourceFacts } from '../../story-generator/knowledge/sourceFacts.js';
+import { extractProps } from '../../story-generator/knowledge/propExtractor.js';
 
 // Cache discovered components for performance (includes propTypes for rich type info)
 interface CachedComponent {
@@ -125,6 +126,20 @@ async function loadDiscovered(): Promise<{ raw: InventorySource[]; api: CachedCo
   } catch (error) {
     console.warn('Could not read local source facts for the inventory:', error);
   }
+  /**
+   * The npm library's declarations, the same knowledge the prompt is built
+   * from. Discovery alone knows Carbon's 254 names and none of their props,
+   * so the drawer said "0 props" for every one of them while the model was
+   * shown the full declarations — two views of one catalog, disagreeing.
+   */
+  if (config.importPath && !/^[./]/.test(config.importPath)) {
+    try {
+      const extracted = await extractProps(config.importPath, process.cwd());
+      if (extracted?.components) mergeExtractedProps(components as any[], extracted.components as any);
+    } catch (error) {
+      console.warn('Could not read the library declarations for the inventory:', error);
+    }
+  }
   cachedRaw = components as unknown as InventorySource[];
   cachedComponents = components.map(comp => ({
     name: comp.name,
@@ -218,4 +233,29 @@ export async function getProps(req: Request, res: Response) {
     console.error('Error getting component props:', error);
     res.json({});
   }
+}
+
+/**
+ * Fill prop lists and descriptions the extractor knows where discovery has
+ * none. Discovery's own facts win: a declared `components[]` entry or a story's
+ * argTypes outrank a declaration file. Pure, so it is tested without a project.
+ */
+export function mergeExtractedProps(
+  components: Array<{ name: string; propTypes?: any[]; props?: any[]; description?: string }>,
+  extracted: Record<string, { props?: Array<{ name: string; type?: string; required?: boolean; doc?: string }>; description?: string }>,
+): number {
+  let filled = 0;
+  for (const c of components) {
+    const entry = extracted[c.name];
+    if (!entry) continue;
+    const hasProps = (Array.isArray(c.propTypes) && c.propTypes.length > 0) || (Array.isArray(c.props) && c.props.length > 0);
+    if (!hasProps && entry.props?.length) {
+      c.propTypes = entry.props.map(p => ({ name: p.name, type: p.type || 'unknown', required: !!p.required, description: p.doc }));
+      filled++;
+    }
+    if (!saysMoreThanName(c.name, c.description || '') && entry.description && saysMoreThanName(c.name, entry.description)) {
+      c.description = entry.description;
+    }
+  }
+  return filled;
 }
