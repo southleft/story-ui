@@ -493,6 +493,16 @@ function collectFromFile(
 
     if (ts.isTypeReferenceNode(node)) {
       const name = node.typeName.getText(source);
+      /**
+       * MUI: `variant?: OverridableStringUnion<'text' | 'outlined' | 'contained', ButtonPropsVariantOverrides>`.
+       * The literals are the first type argument; the second is a module-
+       * augmentation hook that is empty in every project that has not
+       * augmented it. Dropping the whole reference left Button with one
+       * editable prop (loadingPosition) and no variant/color/size.
+       */
+      if (/^(OverridableStringUnion|OverridableComponentProps|LiteralUnion)$/.test(name) && node.typeArguments?.length) {
+        return literalOptions(node.typeArguments[0], depth + 1, seen);
+      }
       if (seen.has(name)) return [];
       seen.add(name);
       const target = namedTypes.get(name);

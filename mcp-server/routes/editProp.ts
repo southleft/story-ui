@@ -153,8 +153,20 @@ export function resolveComponentInSource(
     });
     if (authored) return authored;
   }
-  return ordered.find(name => name && occurrencesInSource(source, name) > 0);
+  /**
+   * A layout primitive is the last resort, not the first hit. A click on a
+   * Mantine <Button> in a story with an anonymous `render` arrived as
+   * [Box, Button, …] (Box is Button's own internal), the file also used
+   * <Box p="xl">, and first-appears picked the Box: the inspector offered
+   * hiddenFrom/visibleFrom for a button. Prefer any candidate that is not a
+   * generic wrapper when one appears in the file.
+   */
+  const present = ordered.filter(name => name && occurrencesInSource(source, name) > 0);
+  return present.find(name => !GENERIC_WRAPPERS.has(name)) ?? present[0];
 }
+
+/** Names that wrap anything and therefore identify nothing. */
+const GENERIC_WRAPPERS = new Set(['Box', 'div', 'span', 'Fragment', 'Group', 'Stack', 'Flex', 'Center', 'Container', 'Grid', 'SimpleGrid', 'Paper']);
 
 /**
  * The absolute path of a story file, confined to the generated stories

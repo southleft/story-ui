@@ -13,7 +13,7 @@ import chalk from 'chalk';
 import { loadUserConfig } from '../story-generator/configLoader.js';
 import { EnhancedComponentDiscovery } from '../story-generator/enhancedComponentDiscovery.js';
 import { extractProps } from '../story-generator/knowledge/propExtractor.js';
-import { storiesGlobCoversMdx, storybookMainSyntaxError, managerHeadPort, readScriptPort } from './setup.js';
+import { readConfiguredPort, storiesGlobCoversMdx, storybookMainSyntaxError, managerHeadPort, readScriptPort } from './setup.js';
 import { isUsableApiKey } from './envFile.js';
 import { relativeImportResolves, localImportForComponents } from '../story-generator/configLoader.js';
 import { resolveHostTooling, canLaunchBrowser } from '../story-generator/verify/hostTooling.js';
@@ -170,7 +170,10 @@ export async function runChecks(opts: { server?: string; cwd?: string } = {}): P
   items.push({ id: 'generated-dir', ok: fs.existsSync(generatedDir), detail: fs.existsSync(generatedDir) ? `generated stories go to ${path.relative(cwd, generatedDir)}` : `${path.relative(cwd, generatedDir)} does not exist yet`, fix: fs.existsSync(generatedDir) ? undefined : `mkdir -p ${path.relative(cwd, generatedDir)}` });
   // Read what init wrote, before anything that depends on the port.
   const env = { ...readEnv(cwd), ...process.env } as Record<string, string | undefined>;
-  const port = Number(env.VITE_STORY_UI_PORT || env.PORT || config.mcpPort || 4001);
+  // .env first, then the story-ui script — the same order update uses. Reading
+  // only .env sent mui-material's check to 4001, where another project's
+  // server answered, and reported it as this project's.
+  const port = readConfiguredPort(cwd)?.port ?? Number(env.PORT || config.mcpPort || 4001);
   summary.port = port;
 
   // The `story-ui` script starts the server. It is the third place the port

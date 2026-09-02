@@ -548,6 +548,35 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
   const resolveTarget = (target: string): string =>
     target.replace(/^src\/stories/, storiesDirRel);
 
+  /**
+   * Manager addon + stories glob, idempotent. Ran only at the END of an
+   * update, after an early return for "all files already up to date" — so a
+   * project whose files were current could never get the toolbar button,
+   * and `check` kept sending people back to `update` in a circle. Also ran
+   * only when the panel directory already existed, so a first `update` on a
+   * fresh project skipped it. Called before the early return and again at
+   * the end; both calls are no-ops when nothing needs doing.
+   */
+  const wireStorybookEntries = () => {
+    if (options.dryRun) return;
+    const panelDir = installation.storyUIDir ?? path.resolve(process.cwd(), storiesDirRel, 'StoryUI');
+    try {
+      ensureManagerAddonWiring(panelDir);
+    } catch (wireError: any) {
+      result.errors.push(`manager wiring: ${wireError.message}`);
+    }
+    // The V2 workspace is an MDX docs page — a stories glob that never matches
+    // .mdx installs it invisibly. Same check init performs, same helper.
+    const globResult = ensureStoriesGlobCoversMdx(path.resolve(process.cwd(), storiesDirRel));
+    if (!globResult.checked) {
+      console.log(chalk.yellow('   ⚠️  No .storybook/main.ts or main.js found — MDX glob coverage was NOT checked'));
+    } else if (globResult.added) {
+      console.log(chalk.green(`   ✅ Added ${globResult.added} to the Storybook stories array`));
+    } else if (!globResult.covered) {
+      console.log(chalk.yellow('   ⚠️  Could not extend the stories array — the V2 workspace stays hidden until a glob matches its MDX'));
+    }
+  };
+
   // Step 2: Show what will be updated
   console.log(chalk.bold('\n📦 Managed files to update:'));
 
@@ -604,6 +633,7 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
   }
 
   if (filesToUpdate.length === 0) {
+    wireStorybookEntries();
     console.log(chalk.green('\n✅ All files are already up to date!'));
     result.success = result.errors.length === 0;
     return result;
@@ -664,28 +694,7 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
     result.errors.push(...depsResult.errors);
   }
 
-  // Wire the manager toolbar button for installs that predate it (no-op when
-  // already wired or on Storybook <9).
-  if (!options.dryRun && installation.storyUIDir) {
-    try {
-      ensureManagerAddonWiring(installation.storyUIDir);
-    } catch (wireError: any) {
-      result.errors.push(`manager wiring: ${wireError.message}`);
-    }
-  }
-
-  // The V2 workspace is an MDX docs page — a stories glob that never matches
-  // .mdx installs it invisibly. Same check init performs, same helper.
-  if (!options.dryRun) {
-    const globResult = ensureStoriesGlobCoversMdx(path.resolve(process.cwd(), storiesDirRel));
-    if (!globResult.checked) {
-      console.log(chalk.yellow('   ⚠️  No .storybook/main.ts or main.js found — MDX glob coverage was NOT checked'));
-    } else if (globResult.added) {
-      console.log(chalk.green(`   ✅ Added ${globResult.added} to the Storybook stories array`));
-    } else if (!globResult.covered) {
-      console.log(chalk.yellow('   ⚠️  Could not extend the stories array — the V2 workspace stays hidden until a glob matches its .mdx'));
-    }
-  }
+  wireStorybookEntries();
 
   // Step 6: Update config version tracking
   if (!options.dryRun && installation.configPath) {

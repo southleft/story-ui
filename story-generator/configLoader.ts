@@ -658,6 +658,22 @@ export function autoDetectDesignSystem(): Partial<StoryUIConfig> | null {
       } else {
         importPath = 'your-component-library';
       }
+    } else if (importPath.startsWith('.') && componentPath && fs.existsSync(componentPath)
+      && !relativeImportResolves(generatedStoriesPath, importPath)) {
+      /**
+       * A configured relative importPath that does not resolve is a story
+       * Vite cannot serve. An earlier init wrote `../../components` for a
+       * directory with no index (the barrel was src/index.ts); every story
+       * imported it and every preview was a red overlay. The config is the
+       * user's, so it is not rewritten — but the runtime uses the path that
+       * resolves and says so, and `check` names the fix.
+       */
+      const local = localImportForComponents(generatedStoriesPath, componentPath, cwd);
+      if (local.importPath && local.importPath !== importPath) {
+        console.warn(`⚠️  importPath "${importPath}" does not resolve from ${path.relative(cwd, generatedStoriesPath)} — using "${local.importPath}"${local.importStyle === 'individual' ? ' with per-component imports' : ''}. Update story-ui.config.js (npx story-ui check shows the fix).`);
+        importPath = local.importPath;
+        importStyle = local.importStyle;
+      }
     }
 
     // Determine component prefix
