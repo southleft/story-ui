@@ -75,8 +75,10 @@ import {
   buildMessageWithImages, chatCompletionStreamDetailed,
 } from '../../story-generator/llm-providers/story-llm-service.js';
 import { processImageInputs, ImageInput } from '../../story-generator/imageProcessor.js';
+import { processFileInputs, fileFraming, FileInput } from '../../story-generator/fileAttachments.js';
+import { checkTokenUsage, formatTokenErrors } from '../../story-generator/knowledge/tokenConformance.js';
 import { VisionPromptType, buildVisionAwarePrompt } from '../../story-generator/visionPrompts.js';
-import { ImageContent } from '../../story-generator/llm-providers/types.js';
+import { ImageContent, MessageContent, TextContent } from '../../story-generator/llm-providers/types.js';
 import {
   createStorybookMcpClient,
   formatStorybookContext,
@@ -100,7 +102,7 @@ import { saysMoreThanName } from '../../story-generator/knowledge/descriptionQua
 const GEOMETRY_PROP = /^(sm|md|lg|xl|xxl|max|xs|span|offset|start|end|gap|columns|narrow|condensed|fullWidth|orientation)$/;
 const LAYOUT_PROSE = /\b(column|columns|grid|breakpoint|gutter|span|spacing|width|row|layout)\b/i;
 import { enrichWithSourceFacts } from '../../story-generator/knowledge/sourceFacts.js';
-import { readStylingFacts, formatStylingGuidance } from '../../story-generator/knowledge/stylingFacts.js';
+import { readStylingFacts, formatStylingGuidance, readDesignTokens } from '../../story-generator/knowledge/stylingFacts.js';
 import { inheritCompoundExamples } from '../../story-generator/knowledge/storybookCatalog.js';
 import { checkConformance, formatConformanceErrors } from '../../story-generator/knowledge/conformance.js';
 import { isSafeStoryFileName,
@@ -133,6 +135,8 @@ export interface GenerationRequest {
   framework?: string;
   autoDetectFramework?: boolean;
   images?: ImageInput[];
+  /** Reference files: text-like ones are inlined, PDFs go to Claude as documents. */
+  files?: FileInput[];
   visionMode?: string;
   designSystem?: string;
   considerations?: string;
@@ -309,6 +313,7 @@ async function runStoryGenerationPipeline(
    * once had the catalog offering a component the validator then rejected.
    */
   let knownProps: Awaited<ReturnType<typeof extractProps>> = null;
+  let knownTokens: Set<string> | null = null;
 
   const {
     prompt,
@@ -320,6 +325,7 @@ async function runStoryGenerationPipeline(
     framework,
     autoDetectFramework,
     images,
+    files,
     visionMode,
     designSystem,
     considerations,
@@ -379,10 +385,10 @@ async function runStoryGenerationPipeline(
   logger.log(`🔧 Using framework adapter: ${frameworkAdapter.name}`);
 
   // Process images if provided
-  let processedImages: ImageContent[] = [];
+  let attachments: MessageContent[] = [];
   if (images && Array.isArray(images) && images.length > 0) {
     try {
-      processedImages = await processImageInputs(images);
+      attachments = await processImageInputs(images);
     } catch (imageError) {
       throw new GenerationError('IMAGE_PROCESSING_ERROR', 'Failed to process images', {
         httpStatus: 400,
@@ -391,6 +397,23 @@ async function runStoryGenerationPipeline(
         suggestion: 'Try again without images or use a different format',
       });
     }
+  }
+  // Reference files. Text is inlined for every provider; a PDF is a document
+  // block only Claude reads, so on another provider it is refused, not
+  // silently dropped — the user asked the model to read it.
+  const skippedFiles: { name: string; reason: string }[] = [];
+  if (files && Array.isArray(files) && files.length > 0) {
+    const processed = processFileInputs(files);
+    skippedFiles.push(...processed.skipped);
+    const providerNow = getProviderInfo({ provider: provider as any, model }).currentProvider;
+    for (const block of processed.blocks) {
+      if (block.type === 'document' && providerNow !== 'claude') {
+        skippedFiles.push({ name: block.source.name || 'document', reason: `PDFs are only read by Claude; the request used ${providerNow}` });
+        continue;
+      }
+      attachments.push(block);
+    }
+    logger.log(`📎 Attached ${processed.summary.text} text file(s), ${processed.summary.pdf} PDF(s)${skippedFiles.length ? `; skipped ${skippedFiles.length}` : ''}`);
   }
 
   // Step 2: Discover components
@@ -825,7 +848,7 @@ async function runStoryGenerationPipeline(
   const intent = analyzeIntent(prompt, config, conversation, previousCode, {
     framework: detectedFramework,
     designSystem,
-    hasImages: processedImages.length > 0,
+    hasImages: attachments.some(a => a.type === 'image'),
   });
   events.onIntent?.(intent);
 
@@ -967,8 +990,8 @@ async function runStoryGenerationPipeline(
     let planSent = '';
     let codeSent = '';
     let lastCodeEmit = 0;
-    const llmResult = processedImages.length > 0
-      ? await callLLM(messages, processedImages, { provider, model })
+    const llmResult = attachments.length > 0
+      ? await callLLM(messages, attachments, { provider, model })
       : await callLLMStreaming(messages, { provider, model }, (chars, accumulated) => {
           /**
            * The model is asked to say, in a few sentences, what it is about to
@@ -1231,6 +1254,18 @@ async function runStoryGenerationPipeline(
       : (logger.log(`📐 Conformance: not applicable to ${detectedFramework} (JSX-only check) — skipped, not passed`), []);
     if (conformanceErrors.length) {
       logger.log(`📐 Conformance: ${conformanceErrors.length} violation(s) of the catalog we supplied`);
+    }
+    // Every var(--x) must be a token the project declares. Skipped, and said
+    // so, when the project declares none — absent and zero look different.
+    if (knownTokens === null) {
+      knownTokens = new Set(readDesignTokens(process.cwd(), config.importPath).flatMap(g => g.names));
+    }
+    const tokenErrors = knownTokens.size
+      ? formatTokenErrors(checkTokenUsage(aiText, knownTokens))
+      : (logger.log('🎨 Token check: project declares no CSS custom properties — skipped, not passed'), []);
+    if (tokenErrors.length) {
+      logger.log(`🎨 Token check: ${tokenErrors.length} invented token(s): ${tokenErrors.map(e => e.split('var(')[1]?.split(')')[0]).filter(Boolean).join(', ')}`);
+      conformanceErrors.push(...tokenErrors);
     }
 
     const importErrors = [
@@ -1676,7 +1711,7 @@ async function runStoryGenerationPipeline(
         const healed = await attemptRuntimeHealing({
           runtimeResult,
           messages,
-          images: processedImages,
+          images: attachments,
           provider,
           model,
           framework: detectedFramework,
@@ -2144,6 +2179,7 @@ async function runStoryGenerationPipeline(
   const noticeParts: string[] = [];
   if (isFallbackStory) noticeParts.push('The generation did not produce a working story. Try rephrasing the request, or make it narrower.');
   else if (hasValidationWarnings) noticeParts.push('Some automatic fixes were applied; check the code view.');
+  for (const f of skippedFiles) noticeParts.push(`${f.name} was not attached: ${f.reason}.`);
   if (pinReport.lost.size) noticeParts.push(`Could not keep ${pinReport.lost.size} hand-set prop(s) because the element is gone: ${[...pinReport.lost].join(', ')}.`);
   const notice = noticeParts.length ? noticeParts.join(' ') : undefined;
 
@@ -2716,11 +2752,23 @@ async function callLLMStreaming(
 
 async function callLLM(
   messages: { role: 'user' | 'assistant' | 'system'; content: string }[],
-  images?: ImageContent[],
+  attachments?: MessageContent[],
   options?: { provider?: string; model?: string; signal?: AbortSignal }
 ): Promise<{ content: string; truncated: boolean }> {
   if (!isProviderConfigured()) {
     throw new Error('No LLM provider configured');
+  }
+
+  // Text attachments are just more text: fold them into the user turn so the
+  // call keeps the streaming path (narration, idle-bounded timeout). Only an
+  // image or a PDF needs the multi-part message.
+  const textBlocks = (attachments || []).filter((a): a is TextContent => a.type === 'text');
+  const images = (attachments || []).filter(a => a.type !== 'text');
+  if (textBlocks.length) {
+    const targetIndex = messages.findIndex(m => m.role === 'user');
+    if (targetIndex === -1) throw new Error('Cannot attach files: no user message in the request');
+    const preface = `${fileFraming(textBlocks.length + images.filter(a => a.type === 'document').length)}\n\n${textBlocks.map(b => b.text).join('\n\n')}\n\n`;
+    messages = messages.map((m, i) => i === targetIndex ? { ...m, content: preface + m.content } : m);
   }
 
   // Every text-only call streams: the stream is bounded by silence rather than
@@ -2753,7 +2801,8 @@ async function callLLM(
   if (images && images.length > 0) {
     // Check the provider/model the request actually asked for, not the default.
     const providerInfo = getProviderInfo({ provider: options?.provider as any, model: options?.model });
-    if (!providerInfo.supportsVision) {
+    const imageCount = images.filter(a => a.type === 'image').length;
+    if (imageCount > 0 && !providerInfo.supportsVision) {
       throw new Error(
         `${providerInfo.currentProvider} (${providerInfo.currentModel}) does not support vision. ` +
         `Choose a vision-capable model to generate from an image.`
@@ -2776,15 +2825,15 @@ async function callLLM(
      * catalog and the rules were all in the system block; the images were the
      * last thing it saw. The framing goes with them.
      */
-    const IMAGE_FRAMING =
-      `The ${images.length === 1 ? 'attached image is a reference' : `${images.length} attached images are references`} ` +
+    const IMAGE_FRAMING = imageCount === 0 ? '' :
+      `The ${imageCount === 1 ? 'attached image is a reference' : `${imageCount} attached images are references`} ` +
       'for layout, density and tone — not a source to copy. Build what the request asks for as a ' +
       'Storybook story in exactly the format and with exactly the components and import paths the ' +
       'rules above require. Do not reproduce colours, class names or a component library from the ' +
       'image; express everything through this design system.';
     const messagesWithImages = messages.map((msg, index) => {
       if (index === targetIndex) {
-        const text = typeof msg.content === 'string' ? `${IMAGE_FRAMING}\n\n${msg.content}` : msg.content;
+        const text = typeof msg.content === 'string' && IMAGE_FRAMING ? `${IMAGE_FRAMING}\n\n${msg.content}` : msg.content;
         return {
           role: msg.role,
           content: buildMessageWithImages(text as string, images),
@@ -2792,7 +2841,7 @@ async function callLLM(
       }
       return msg;
     });
-    logger.log(`🖼️ Attached ${images.length} image(s) to message ${targetIndex} for ${providerInfo.currentProvider}/${providerInfo.currentModel}`);
+    logger.log(`🖼️ Attached ${imageCount} image(s) and ${images.length - imageCount} document(s) to message ${targetIndex} for ${providerInfo.currentProvider}/${providerInfo.currentModel}`);
     const visionResult = await chatCompletionWithImagesDetailed(messagesWithImages as any, llmOptions);
     return { content: visionResult.content, truncated: visionResult.truncated };
   }
@@ -2807,7 +2856,7 @@ async function callLLM(
 async function attemptRuntimeHealing(args: {
   runtimeResult: RuntimeValidationResult;
   messages: { role: 'user' | 'assistant' | 'system'; content: string }[];
-  images: ImageContent[];
+  images: MessageContent[];
   provider?: string;
   model?: string;
   framework: FrameworkType;

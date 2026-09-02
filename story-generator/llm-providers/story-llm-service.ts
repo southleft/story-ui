@@ -494,7 +494,7 @@ export async function chatCompletionWithImagesDetailed(
  */
 export function buildMessageWithImages(
   text: string,
-  images: ImageContent[]
+  images: MessageContent[]
 ): MessageContent[] {
   const content: MessageContent[] = [];
 

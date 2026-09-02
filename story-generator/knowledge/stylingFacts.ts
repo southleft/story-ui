@@ -38,6 +38,13 @@ export interface TokenGroup {
   category: string;
   /** Token names as authored, without the leading `--`. */
   names: string[];
+  /**
+   * The declared value per name, when one was read. `--cbds-font-size-1` is
+   * 72px: shown only as a name it read as "the smallest size", and a data
+   * table came back with 72px cell text. A value beside the name makes the
+   * scale legible; a name alone invites the model to guess its direction.
+   */
+  values?: Record<string, string>;
 }
 
 export interface StylingIdiom {
@@ -288,6 +295,7 @@ function packageStyleFiles(projectRoot: string, importPath?: string, limit = 6):
 
 export function readDesignTokens(projectRoot: string, importPath?: string): TokenGroup[] {
   const byCategory = new Map<string, Set<string>>();
+  const values = new Map<string, string>();
 
   for (const file of [...styleFiles(projectRoot), ...packageStyleFiles(projectRoot, importPath)]) {
     let css: string;
@@ -301,11 +309,14 @@ export function readDesignTokens(projectRoot: string, importPath?: string): Toke
      * tokens, which is the absent-vs-zero conflation in its purest form —
      * Carbon escapes it today only because the unminified file is found first.
      */
-    for (const m of css.matchAll(/--([a-zA-Z][\w-]*)\s*:/g)) {
+    for (const m of css.matchAll(/--([a-zA-Z][\w-]*)\s*:\s*([^;{}]*)/g)) {
       const name = m[1];
       const category = categorise(name);
       if (!byCategory.has(category)) byCategory.set(category, new Set());
       byCategory.get(category)!.add(name);
+      // First declaration wins: the base sheet is found before theme overrides.
+      const value = (m[2] || '').trim();
+      if (value && !values.has(name)) values.set(name, value);
     }
   }
 
@@ -321,10 +332,12 @@ export function readDesignTokens(projectRoot: string, importPath?: string): Toke
    */
   const depth = (n: string) => n.split('-').filter(Boolean).length;
   return [...byCategory.entries()]
-    .map(([category, names]) => ({
-      category,
-      names: [...names].sort((a, b) => depth(a) - depth(b) || a.localeCompare(b)),
-    }))
+    .map(([category, names]) => {
+      const sorted = [...names].sort((a, b) => depth(a) - depth(b) || a.localeCompare(b));
+      const known: Record<string, string> = {};
+      for (const n of sorted) { const v = values.get(n); if (v) known[n] = v; }
+      return { category, names: sorted, ...(Object.keys(known).length ? { values: known } : {}) };
+    })
     .sort((a, b) => b.names.length - a.names.length);
 }
 
@@ -444,8 +457,23 @@ export function formatStylingGuidance(facts: StylingFacts, maxPerGroup = 24): st
       if (group.category === 'other') continue;
       const shown = group.names.slice(0, maxPerGroup);
       const more = group.names.length - shown.length;
-      lines.push(`- ${group.category}: ${shown.map(n => `--${n}`).join(', ')}${more > 0 ? `, …${more} more` : ''}`);
+      // Scale tokens carry their value: `--font-size-1 (72px)` says which end
+      // of the scale it is; a colour's hex says nothing the name does not.
+      const withValue = (n: string) => {
+        const v = group.category !== 'color' ? group.values?.[n] : undefined;
+        return v && v.length <= 24 && !/^var\(/.test(v) ? `--${n} (${v})` : `--${n}`;
+      };
+      lines.push(`- ${group.category}: ${shown.map(withValue).join(', ')}${more > 0 ? `, …${more} more` : ''}`);
     }
+  }
+
+  if (tokens.length) {
+    lines.push(
+      '',
+      'Only the tokens listed above exist. A var(--name) that is not in this list',
+      'resolves to nothing in the browser and is rejected by validation — do not',
+      'invent a token by analogy with another system\'s naming.',
+    );
   }
 
   lines.push(

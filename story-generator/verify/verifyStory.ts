@@ -173,7 +173,7 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
 
   const launch = await canLaunchBrowser(tooling);
   if (!launch.ok) {
-    return notVerified(`Browser could not launch: ${launch.error}`, started);
+    return notVerified(describeLaunchFailure(launch.error || ''), started);
   }
 
   // The story has to be in the index before it can be rendered by id. This also
@@ -557,4 +557,21 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
   } finally {
     await render.dispose();
   }
+}
+
+/**
+ * One readable line for a browser that would not start.
+ *
+ * Playwright's own message is a boxed, multi-line paragraph ("Executable
+ * doesn't exist at ~/Library/Caches/ms-playwright/chromium_headless_shell-1187
+ * ╔══ ... ║ Looks like Playwright Test or Playwright was just installed or
+ * updated ..."). Shown raw in a chat bubble it read as a crash. The fact is
+ * simple — the package is installed, its browser is not — and so is the fix.
+ */
+export function describeLaunchFailure(error: string): string {
+  if (/Executable doesn't exist|please run the following command|playwright install/i.test(error)) {
+    return 'Playwright is installed but its browser is not. Run: npx playwright install chromium';
+  }
+  const firstLine = error.split('\n').map(l => l.replace(/[\u2500-\u257f]/g, '').trim()).find(Boolean) || 'unknown error';
+  return `Browser could not launch: ${firstLine.slice(0, 200)}`;
 }

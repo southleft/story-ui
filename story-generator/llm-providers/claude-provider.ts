@@ -163,7 +163,7 @@ interface AnthropicMessage {
 }
 
 interface AnthropicContent {
-  type: 'text' | 'image';
+  type: 'text' | 'image' | 'document';
   text?: string;
   source?: {
     type: 'base64' | 'url';
@@ -171,6 +171,8 @@ interface AnthropicContent {
     data?: string;
     url?: string;
   };
+  /** Document blocks only: the filename, shown to the model. */
+  title?: string;
 }
 
 interface AnthropicResponse {
@@ -551,11 +553,16 @@ export class ClaudeProvider extends BaseLLMProvider {
           },
         };
       }
-      // Document type - convert to text representation for now
+      // A PDF goes as a native document block; the model reads its pages
+      // (text and layout) directly. Placeholder text here used to hide the
+      // whole file from the model while the log said it was attached.
       if (item.type === 'document') {
         return {
-          type: 'text' as const,
-          text: `[Document: ${item.source.name || 'unnamed'}]`,
+          type: 'document' as const,
+          source: item.source.type === 'url'
+            ? { type: 'url' as const, url: item.source.url }
+            : { type: 'base64' as const, media_type: item.source.mediaType || 'application/pdf', data: item.source.data },
+          ...(item.source.name ? { title: item.source.name.slice(0, 200) } : {}),
         };
       }
       return { type: 'text' as const, text: '' };
