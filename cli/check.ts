@@ -12,6 +12,7 @@ import path from 'path';
 import chalk from 'chalk';
 import { loadUserConfig } from '../story-generator/configLoader.js';
 import { EnhancedComponentDiscovery } from '../story-generator/enhancedComponentDiscovery.js';
+import { extractProps } from '../story-generator/knowledge/propExtractor.js';
 import { storiesGlobCoversMdx } from './setup.js';
 
 export interface CheckItem {
@@ -84,7 +85,16 @@ export async function runChecks(opts: { server?: string; cwd?: string } = {}): P
     const discovery = new EnhancedComponentDiscovery(config);
     const components = await discovery.discoverAll();
     summary.components = components.length;
-    const withProps = components.filter((c: any) => Array.isArray(c.props) && c.props.length > 0).length;
+    // Props come from the extractor (declarations, cva maps, story docs), the
+    // same source the prompt is built from — discovery alone knows names.
+    let withProps = components.filter((c: any) => Array.isArray(c.props) && c.props.length > 0).length;
+    try {
+      const extracted = config.importPath ? await extractProps(config.importPath, cwd) : null;
+      if (extracted?.components) {
+        const names = new Set(components.map((c: any) => c.name));
+        withProps = Object.entries(extracted.components).filter(([n, f]: [string, any]) => names.has(n) && Array.isArray(f?.props) && f.props.length > 0).length;
+      }
+    } catch { /* discovery count still stands */ }
     items.push({
       id: 'discovery', ok: components.length > 0,
       detail: components.length > 0

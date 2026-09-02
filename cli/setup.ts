@@ -1532,6 +1532,14 @@ Material UI (MUI) is a React component library implementing Material Design.
   const configContent = `module.exports = ${JSON.stringify(config, null, 2)};`;
   const configPath = path.join(process.cwd(), 'story-ui.config.js');
 
+  // The directory the first generation writes into. Storybook's globs cover
+  // it from the start; a check that said "does not exist yet" was honest but
+  // the fix belonged here.
+  try {
+    const generatedDir = path.resolve(process.cwd(), answers.generatedStoriesPath || './src/stories/generated/');
+    fs.mkdirSync(generatedDir, { recursive: true });
+  } catch { /* reported by check */ }
+
   if (fs.existsSync(configPath) && !options.force) {
     console.log(chalk.yellow('ℹ️  story-ui.config.js already exists — kept as is. Re-run with --force to replace it.'));
   } else {
