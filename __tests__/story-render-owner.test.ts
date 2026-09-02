@@ -41,3 +41,18 @@ describe('a story render function as the owner region', () => {
     expect(occurrencesWithinOwner(withOwner, 'Heading', 'Card')).toEqual([0]);
   });
 });
+
+describe('render that delegates to a story-local component', () => {
+  const delegated = `import { Heading } from '../..';
+function ResumeCard() {
+  return (<section>
+    <Heading level={2} visual="h3">Anna Marlow</Heading>
+    <Heading level={3} visual="h5">Experience</Heading>
+    <Heading level={3} visual="h5">Education</Heading>
+  </section>);
+}
+export const Default = { render: () => <ResumeCard /> };`;
+  it('follows the render into the component it renders', () => {
+    expect(occurrencesWithinOwner(delegated, 'Heading', 'unboundStoryFn')).toEqual([0, 1, 2]);
+  });
+});

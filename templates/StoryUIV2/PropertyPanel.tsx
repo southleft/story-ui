@@ -502,7 +502,7 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onClose, o
               disabled={pending === p.name}
               onValueChange={v => apply(p.name, v === '__default__' ? null : v, { kind: 'enum' })}
             >
-              <Select.Trigger placeholder={p.defaultValue ? `default: ${p.defaultValue}` : 'choose…'} />
+              <Select.Trigger aria-label={p.name} placeholder={p.defaultValue ? `default: ${p.defaultValue}` : 'choose…'} />
               <Select.Content>
                 {/* Removing the attribute is how a prop returns to its default,
                     and there is no other way to express that in a picker. */}

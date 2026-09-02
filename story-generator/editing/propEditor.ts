@@ -177,6 +177,36 @@ export function occurrencesWithinOwner(
       const holding = stories.filter(st => new RegExp(`<${component}(?=[\\s/>])`).test(code.slice(st.start, st.end)));
       if (holding.length === 1) span = holding[0];
     }
+    /**
+     * `render: () => <ResumeCard />` holds no <Heading> itself: the headings
+     * live in the story-local ResumeCard declared above it. Follow the
+     * render into the local components it renders (two hops) and take their
+     * declarations as the region, in source order.
+     */
+    if (span && !new RegExp(`<${component}(?=[\\s/>])`).test(code.slice(span.start, span.end))) {
+      const declared = new Map<string, { start: number; end: number }>();
+      for (const stmt of source.statements) {
+        if ((ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) && stmt.name) declared.set(stmt.name.text, { start: stmt.getStart(source), end: stmt.getEnd() });
+        else if (ts.isVariableStatement(stmt)) for (const d of stmt.declarationList.declarations) if (ts.isIdentifier(d.name)) declared.set(d.name.text, { start: d.getStart(source), end: d.getEnd() });
+      }
+      let regions = [span]; let found: Array<{ start: number; end: number }> = [];
+      for (let hop = 0; hop < 2 && !found.length; hop++) {
+        const next: Array<{ start: number; end: number }> = [];
+        for (const r of regions) {
+          for (const m of code.slice(r.start, r.end).matchAll(/<([A-Z][\w.]*)/g)) {
+            const d = declared.get(m[1]);
+            if (d && !next.includes(d)) next.push(d);
+          }
+        }
+        found = next.filter(r => new RegExp(`<${component}(?=[\\s/>])`).test(code.slice(r.start, r.end)));
+        regions = next;
+        if (!next.length) break;
+      }
+      if (found.length) {
+        found.sort((a, b) => a.start - b.start);
+        span = { start: found[0].start, end: found[found.length - 1].end };
+      }
+    }
   }
   if (!span) {
     for (const stmt of source.statements) {
