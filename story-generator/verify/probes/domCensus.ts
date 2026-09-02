@@ -264,6 +264,12 @@ export async function runDomCensus(page: any, options: CensusOptions = {}): Prom
       if (!isVisible(el)) continue;
       // A real field anywhere inside means this is not a fake.
       if (el.querySelector('input, textarea, select, [contenteditable="true"]')) continue;
+      // MUI's OutlinedInput draws its border as an aria-hidden <fieldset> whose
+      // <legend> repeats the label, BESIDE the real <input>. Hidden-from-AT
+      // decoration is not an affordance, and a real field one level up is
+      // the field this decoration belongs to.
+      if (el.closest('[aria-hidden="true"]')) continue;
+      if (el.parentElement?.querySelector(':scope > input, :scope > textarea, :scope > select, :scope > [contenteditable="true"]')) continue;
       if (el.closest('input, textarea, select, [contenteditable="true"], label')) continue;
       // Inside a real control, placeholder-ish text is just a label.
       if (el.closest('button, a[href], [role="button"], [role="combobox"], [role="searchbox"], [role="textbox"]')) continue;

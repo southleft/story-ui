@@ -173,6 +173,13 @@ export async function runLayoutProbe(page: any, options: LayoutOptions = {}): Pr
           break;
         }
         if (!measurable || used === 0) continue;
+        /**
+         * One child on the row is a content column, not a shortfall. Carbon
+         * sets a 12-of-16 reading column on purpose and the model's repair
+         * "did not improve" it three times; a row of several children that
+         * leaves a gap beside them is the defect this probe exists for.
+         */
+        if (spans.length === 1) continue;
 
         /**
          * Only a SUBSTANTIAL shortfall, and only when the row is trying to

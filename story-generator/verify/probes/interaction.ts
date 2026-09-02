@@ -278,6 +278,22 @@ export async function runInteractionProbe(
        */
       const allTriggers = queryAll('[aria-haspopup], [aria-expanded]')
         .filter(el => {
+          /**
+           * A disclosure is not an overlay. An accordion summary carries
+           * aria-expanded and is SUPPOSED to push the content below it; only a
+           * popup, menu, listbox or dialog must float. Without this, every
+           * accordion on Carbon, MUI and Atlassian was reported as an in-flow
+           * menu, and on MUI (no fiber owner found) it blocked and cost a
+           * 75s repair of nothing.
+           */
+          if (!el.hasAttribute('aria-haspopup') && el.getAttribute('role') !== 'combobox') {
+            const id = el.getAttribute('aria-controls');
+            const target = id ? document.getElementById(id) : null;
+            const pos = target ? getComputedStyle(target).position : '';
+            const role = target?.getAttribute('role') || '';
+            if (!target) return false;
+            if (pos !== 'fixed' && pos !== 'absolute' && !/^(menu|listbox|dialog|tooltip)$/.test(role)) return false;
+          }
           const r = el.getBoundingClientRect();
           if (r.width === 0 && r.height === 0) return false;
           if (el.getAttribute('aria-expanded') === 'true') return false;   // already open
