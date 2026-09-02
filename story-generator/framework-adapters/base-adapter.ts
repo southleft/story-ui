@@ -593,8 +593,9 @@ export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
     return `
 GENERAL RULES:
 - Follow the component library's design patterns
-- Use meaningful story names that describe the variant
-- Include multiple stories showing different states/variants
+- Export ONE story (\`Default\`) unless the request asks for variants or states. The
+  composition is the deliverable; a second and third story double the output for
+  nothing the user asked to see (measured: three stories, 16k tokens, 141s to preview)
 - Ensure accessibility by using proper ARIA attributes
 - Use realistic placeholder content
 

@@ -250,6 +250,12 @@ export function composeAssistantText(
   const ns = normalizeProse(s);
   if (ns.startsWith(np)) return s;
   if (np.startsWith(ns)) return p;
+  // The model's own account of what it built is the reply. The summary is a
+  // second model's paraphrase of the same code, written for the case where
+  // the first said nothing; shown together they read as two contradictory
+  // answers (observed: "Below is a notification preferences page…" followed
+  // by "I've created a clean notification preferences page…").
+  if (np.length >= 120) return p;
   return `${p}\n\n${s}`;
 }
 
@@ -759,8 +765,6 @@ export function useGeneration(apiBase: string) {
   return {
     generate, cancel, steps, busy, error, errorInfo, notice, liveText, reset,
     liveCode,
-    /** True from the first code delta until the file is finished or on disk. */
-    codeStreaming: liveCode?.streaming ?? false,
   };
 }
 
