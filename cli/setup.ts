@@ -135,8 +135,10 @@ export function cleanupDefaultStorybookComponents() {
 
 
 /**
- * Wire the Story UI manager addon (the "Edit in Story UI" toolbar button on
- * generated stories) into .storybook/manager.ts(x). Creates the file when
+ * Wire the Story UI manager addon into .storybook/manager.ts(x): the Story UI
+ * page (`?path=/workspace/`, where the workspace keeps a generation on screen
+ * for the whole run because the manager never remounts on index changes) and
+ * the "Story UI" / "Edit in Story UI" toolbar buttons. Creates the file when
  * missing, prepends the import when the file exists without it.
  *
  * Skipped on Storybook <9 — the addon imports 'storybook/manager-api', which
@@ -157,7 +159,7 @@ export function ensureManagerAddonWiring(storyUITargetDir: string): void {
     sbMajor = parseInt(String(version).replace(/^[^\d]*/, ''), 10) || 0;
   } catch { /* unknown version — treat as unsupported */ }
   if (sbMajor < 9) {
-    console.log(chalk.gray('   Skipping "Edit in Story UI" toolbar button (requires Storybook 9+)'));
+    console.log(chalk.gray('   Skipping the Story UI manager tab and toolbar button (requires Storybook 9+); the docs entry "Story UI / Workspace" is the surface instead'));
     return;
   }
 
@@ -176,13 +178,13 @@ export function ensureManagerAddonWiring(storyUITargetDir: string): void {
     const content = fs.readFileSync(existing, 'utf-8');
     if (content.includes('StoryUI/manager')) return; // already wired
     fs.writeFileSync(existing, `${importLine}\n${content}`);
-    console.log(chalk.green(`✅ Added the "Edit in Story UI" toolbar button to .storybook/${path.basename(existing)}`));
+    console.log(chalk.green(`✅ Added the Story UI tab and toolbar button to .storybook/${path.basename(existing)}`));
   } else {
     fs.writeFileSync(
       path.join(storybookDir, 'manager.ts'),
       `// Storybook manager customizations\n${importLine}\n`
     );
-    console.log(chalk.green('✅ Created .storybook/manager.ts with the "Edit in Story UI" toolbar button'));
+    console.log(chalk.green('✅ Created .storybook/manager.ts with the Story UI tab and toolbar button'));
   }
 }
 
@@ -1525,7 +1527,7 @@ Material UI (MUI) is a React component library implementing Material Design.
     }
   }
 
-  // Wire the "Edit in Story UI" toolbar button into the Storybook manager
+  // Wire the Story UI tab and the "Edit in Story UI" toolbar button into the Storybook manager
   ensureManagerAddonWiring(storyUITargetDir);
 
   /**

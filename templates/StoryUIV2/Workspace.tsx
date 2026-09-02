@@ -453,32 +453,39 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
    */
   const [focus, setFocus] = useState<boolean>(readFocusPreference);
   const inFrame = useMemo(hasManagerParent, []);
+  /**
+   * The workspace can live in two places: Storybook's preview iframe (the
+   * docs entry) or Storybook's manager document itself (the tab). In the
+   * iframe the manager is `window.parent`; in the tab it is this window.
+   * The button is shown only once a manager has actually answered, so the
+   * control never promises chrome nothing can move.
+   */
+  const managerWindow = useCallback((): Window => (inFrame ? window.parent : window), [inFrame]);
+  const [managerHeard, setManagerHeard] = useState(false);
 
   useEffect(() => {
-    if (!inFrame) return;
     const onMessage = (e: MessageEvent) => {
       if (e.origin !== window.location.origin) return;
       const msg = e.data;
       if (!msg || msg.type !== FOCUS_STATE_MESSAGE || typeof msg.on !== 'boolean') return;
+      setManagerHeard(true);
       setFocus(msg.on);
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [inFrame]);
+  }, []);
 
   const requestFocus = useCallback((on: boolean) => {
     setFocus(on);
     try { localStorage.setItem(FOCUS_KEY, on ? 'true' : 'false'); } catch { /* private mode */ }
-    if (!inFrame) return;
-    try { window.parent.postMessage({ type: FOCUS_MESSAGE, on }, window.location.origin); } catch { /* no manager */ }
-  }, [inFrame]);
+    try { managerWindow().postMessage({ type: FOCUS_MESSAGE, on }, window.location.origin); } catch { /* no manager */ }
+  }, [managerWindow]);
 
   // Announce the remembered preference once, so a manager that is listening
   // applies it as soon as the workspace is up.
   useEffect(() => {
-    if (!inFrame) return;
-    try { window.parent.postMessage({ type: FOCUS_MESSAGE, on: readFocusPreference() }, window.location.origin); } catch { /* no manager */ }
-  }, [inFrame]);
+    try { managerWindow().postMessage({ type: FOCUS_MESSAGE, on: readFocusPreference() }, window.location.origin); } catch { /* no manager */ }
+  }, [managerWindow]);
 
   /**
    * Dictation. Interim results are shown in the textarea so speech feels live,
@@ -1688,7 +1695,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
 
       {/* Only inside Storybook: outside it there is no chrome to fold. The
           manager addon does the folding; this button asks and reflects. */}
-      {inFrame && (
+      {(inFrame || managerHeard) && (
         <Button
           size="1"
           variant={focus ? 'soft' : 'ghost'}

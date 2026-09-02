@@ -64,7 +64,7 @@ const MANAGED_FILES = [
   {
     source: 'templates/StoryUI/manager.tsx',
     target: 'src/stories/StoryUI/manager.tsx',
-    description: '"Edit in Story UI" manager toolbar button'
+    description: 'Story UI manager tab (?path=/workspace/) and "Edit in Story UI" toolbar button'
   },
   // Panel siblings. StoryUIPanel.tsx imports each of these by relative path,
   // so shipping the panel without them leaves the consumer with three

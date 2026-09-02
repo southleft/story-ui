@@ -1,10 +1,19 @@
 {/*
-  Story UI V2 workspace.
+  Story UI V2 workspace — the DOCS-PAGE surface.
 
-  Rendered through an MDX docs page for the same reason V1 was: addon-docs always
-  uses React, so this surface works even when the project itself is Vue, Angular,
-  Svelte or Web Components. The workspace then fills the frame and escapes the
-  docs padding via CSS, so it reads as an application rather than a page.
+  On Storybook 9+ with the manager addon wired (.storybook/manager.ts imports
+  StoryUI/manager), the workspace runs as a manager page at ?path=/workspace/,
+  and that is the surface to use: the manager never remounts when a story
+  enters the index, so a generation's live narration and steps stay on screen
+  for the whole run. This docs page re-renders from scratch on every index
+  change — which every generation causes — and recovers the thread from the
+  manifest afterwards.
+
+  It stays for two reasons: Storybook 8 has no `storybook/manager-api`, and a
+  project can leave the addon un-wired. addon-docs always uses React, so this
+  page works even when the project itself is Vue, Angular, Svelte or Web
+  Components. When the addon IS present, a banner at the top says so and
+  links to the page.
 */}
 
 import { Meta } from '@storybook/addon-docs/blocks';
@@ -24,29 +33,36 @@ import { useEffect, useState } from 'react';
   hand.
 */
 import { Workspace } from '@tpitre/story-ui/workspace';
+import { resolveApiBase } from '@tpitre/story-ui/api-base';
 
 <Meta title="Story UI/Workspace" />
 
+export const TAB_FLAG_KEY = 'story-ui-tab';
+
 export const Mount = () => {
   const [apiBase, setApiBase] = useState(null);
+  const [tabRoute, setTabRoute] = useState(null);
 
   useEffect(() => {
-    // Same resolution order V1 used: explicit env, runtime override, same-origin
-    // when deployed behind a proxy, then the local default.
-    const fromEnv =
-      (typeof import.meta !== 'undefined' && import.meta.env?.VITE_STORY_UI_EDGE_URL) || null;
-    const fromWindow =
-      (typeof window !== 'undefined' && window.__STORY_UI_EDGE_URL__) || null;
-    const port =
-      (typeof import.meta !== 'undefined' && import.meta.env?.VITE_STORY_UI_PORT) ||
-      (typeof window !== 'undefined' && window.__STORY_UI_PORT__) ||
-      '4001';
-    const isRailway =
-      typeof window !== 'undefined' && /up\.railway\.app$/.test(window.location.hostname);
-    setApiBase(fromEnv || fromWindow || (isRailway ? window.location.origin : `http://localhost:${port}`));
+    // Same resolution order this page has always used (explicit env, runtime
+    // override, same-origin when deployed behind a proxy, then the local
+    // default), now shared with the manager page so the two can never disagree.
+    setApiBase(resolveApiBase());
+    // The manager addon leaves this flag when it registers the page. The
+    // preview shares sessionStorage with the manager (same origin, same tab).
+    try { setTabRoute(sessionStorage.getItem(TAB_FLAG_KEY)); } catch { /* private mode */ }
   }, []);
 
   if (!apiBase) return null;
+
+  const openTab = (e) => {
+    e.preventDefault();
+    try {
+      window.top.location.href = `${window.location.origin}/?path=${tabRoute}`;
+    } catch {
+      window.open(`/?path=${tabRoute}`, '_blank');
+    }
+  };
 
   /*
     "Open in Storybook" opens the story in a new tab; the workspace handles
@@ -58,7 +74,26 @@ export const Mount = () => {
     be read from the page, the OS preference otherwise. Pin it to "light" or
     "dark" for a project that wants the workspace fixed.
   */
-  return <Workspace apiBase={apiBase} appearance="auto" />;
+  return (
+    <>
+      {tabRoute && (
+        <div
+          role="note"
+          style={{
+            position: 'fixed', top: 8, left: '50%', transform: 'translateX(-50%)', zIndex: 20,
+            padding: '6px 12px', borderRadius: 999, font: '12px system-ui, sans-serif',
+            background: 'rgba(30, 30, 30, 0.92)', color: '#fff', boxShadow: '0 2px 10px rgba(0,0,0,0.25)',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          Story UI now runs as a Storybook tab, which keeps a generation on screen for the whole run.{' '}
+          <a href={`/?path=${tabRoute}`} onClick={openTab} style={{ color: '#7dd3fc', fontWeight: 600 }}>Open it there</a>
+          {' '}— this page stays as the fallback.
+        </div>
+      )}
+      <Workspace apiBase={apiBase} appearance="auto" />
+    </>
+  );
 };
 
 <Mount />
