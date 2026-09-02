@@ -110,3 +110,6 @@ V3_RELEASE_TASKS.md
 # Local development scripts
 start-live.sh*.png
 ENTERPRISE_READINESS_REPORT.md
+
+# fidelity bench output
+bench/results/
