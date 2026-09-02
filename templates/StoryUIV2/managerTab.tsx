@@ -25,7 +25,8 @@
  * onto `React.createElement`, CSS emitted beside it) and exported as
  * `@tpitre/story-ui/manager` + `@tpitre/story-ui/manager.css`.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { pickWorkspaceBounds, findContentCell } from './managerBounds';
 import { useStorybookApi, useStorybookState } from 'storybook/manager-api';
 import { Workspace } from './Workspace';
 import { resolveApiBase } from './apiBase';
@@ -131,13 +132,14 @@ function useTabFocus(api: ReturnType<typeof useStorybookApi>) {
 }
 
 /**
- * The page. Fills the manager's page slot; the workspace's own `.suiw-root`
- * is `position: fixed; inset: 0`, which inside the preview iframe meant
- * "the whole frame" and here would mean "the whole manager, sidebar
- * included" — the `transform` on the host makes this element the containing
- * block for fixed descendants instead, so the workspace fills the page slot
- * and nothing else. Popovers and dialogs portal to `document.body` and are
- * unaffected.
+ * The page. The workspace's own `.suiw-root` is `position: fixed`, which
+ * inside the preview iframe meant "the whole frame" and here would mean "the
+ * whole manager, sidebar included". It used to be contained by a `transform`
+ * on this host, which worked until Storybook 10.5 collapsed the page wrapper
+ * to 0×0 whenever the sidebar is hidden (see managerBounds.ts). Now the host
+ * measures the manager's `content` cell and hands the workspace its exact
+ * rectangle as CSS variables; popovers and dialogs portal to `document.body`
+ * and are unaffected either way.
  */
 export const StoryUIPage: React.FC = () => {
   const api = useStorybookApi();
@@ -150,18 +152,50 @@ export const StoryUIPage: React.FC = () => {
   // `story-ui:focus` to this window and this hook answers with the state.
   useTabFocus(api);
 
+  const hostRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const wrapper = host.closest('#main-content-wrapper') ?? host.parentElement;
+    let frame = 0;
+    const apply = () => {
+      frame = 0;
+      const cell = findContentCell(wrapper);
+      const rectOf = (el: Element | null) => {
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { left: r.left, top: r.top, width: r.width, height: r.height };
+      };
+      const b = pickWorkspaceBounds(rectOf(cell), rectOf(wrapper), { width: window.innerWidth, height: window.innerHeight });
+      host.style.setProperty('--suiw-left', `${b.left}px`);
+      host.style.setProperty('--suiw-top', `${b.top}px`);
+      host.style.setProperty('--suiw-width', `${b.width}px`);
+      host.style.setProperty('--suiw-height', `${b.height}px`);
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(apply); };
+    apply();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(schedule) : null;
+    const grid = wrapper?.parentElement;
+    if (ro && grid) { ro.observe(grid); for (const child of Array.from(grid.children)) ro.observe(child); }
+    // The grid's children change when the sidebar is shown or hidden.
+    const mo = typeof MutationObserver !== 'undefined' && grid
+      ? new MutationObserver(() => { schedule(); if (ro) for (const child of Array.from(grid.children)) ro.observe(child); })
+      : null;
+    mo?.observe(grid as Node, { childList: true, attributes: true, attributeFilter: ['style', 'class'] });
+    window.addEventListener('resize', schedule);
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      ro?.disconnect(); mo?.disconnect();
+      window.removeEventListener('resize', schedule);
+    };
+  }, []);
+
   return (
     <div
+      ref={hostRef}
       className="suiw-manager-host"
       data-story-ui-page=""
-      style={{
-        position: 'relative',
-        flex: '1 1 auto',
-        minHeight: 0,
-        height: '100%',
-        overflow: 'hidden',
-        transform: 'translate(0, 0)',
-      }}
+      style={{ position: 'relative', flex: '1 1 auto', minHeight: 0, height: '100%' }}
     >
       <Workspace apiBase={apiBase} appearance={appearance} />
     </div>

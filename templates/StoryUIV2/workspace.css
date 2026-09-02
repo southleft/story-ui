@@ -27,6 +27,16 @@
   overflow: hidden;
 }
 
+/* Inside Storybook's manager the host measures the content cell (managerBounds.ts). */
+.suiw-manager-host > .suiw-root,
+.suiw-manager-host .suiw-root {
+  inset: auto;
+  left: var(--suiw-left, 0);
+  top: var(--suiw-top, 0);
+  width: var(--suiw-width, 100vw);
+  height: var(--suiw-height, 100vh);
+}
+
 /* Radix Themes fills its container but does not position itself. */
 .suiw-root .radix-themes {
   height: 100%;
