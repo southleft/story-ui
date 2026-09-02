@@ -173,7 +173,17 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onClose, o
           ?? target?.sourceOccurrence ?? target?.occurrence;
         if (occ !== undefined && occ !== null) params.set('occurrence', String(occ));
         const res = await apiFetch(`${apiBase}/mcp/editable-props?${params.toString()}`);
-        if (!res.ok) throw new Error('lookup failed');
+        if (!res.ok) {
+          // The server explains itself — a 501 says property editing is
+          // React-only and names the project's framework. Throwing that
+          // away left a Vue user with "could not read", which reads as a bug.
+          const body = await res.json().catch(() => ({}));
+          throw new Error(
+            res.status === 501
+              ? (body.error || `Property editing is available for React projects only${body.framework ? ` — this project is ${body.framework}` : ''}.`)
+              : (body.error || 'lookup failed'),
+          );
+        }
         const data = await res.json();
         if (!cancelled) {
           setProps(Array.isArray(data.props) ? data.props : []);
@@ -182,8 +192,9 @@ export function PropertyPanel({ apiBase, target, fileName, onApplied, onClose, o
           // to show" — the controls fall back to their placeholders.
           setCurrent(data.current && typeof data.current === 'object' ? data.current : {});
         }
-      } catch {
-        if (!cancelled) setError('Could not read this component’s properties.');
+      } catch (err) {
+        const reason = err instanceof Error && err.message && err.message !== 'lookup failed' ? err.message : null;
+        if (!cancelled) setError(reason ?? 'Could not read this component’s properties.');
       } finally {
         if (!cancelled) setLoading(false);
       }

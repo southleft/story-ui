@@ -131,6 +131,19 @@ const ACTIVE_KEY = 'story-ui-v2-active';
  * opt-out; absent means on.
  */
 const FOCUS_KEY = 'story-ui-focus';
+/**
+ * The provider and model chosen in the gear menu. Held only in state, they
+ * reset to the server default on every remount — and the docs-page host
+ * remounts after each generation, so the choice was lost mid-session.
+ */
+const PROVIDER_KEY = 'story-ui-provider';
+const MODEL_KEY = 'story-ui-model';
+function readStored(key: string): string {
+  try { return localStorage.getItem(key) || ''; } catch { return ''; }
+}
+function store(key: string, value: string): void {
+  try { if (value) localStorage.setItem(key, value); else localStorage.removeItem(key); } catch { /* private mode */ }
+}
 const FOCUS_MESSAGE = 'story-ui:focus';
 const FOCUS_STATE_MESSAGE = 'story-ui:focus-state';
 
@@ -590,8 +603,15 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
         setProviders(data.providers?.filter((p: any) => p.configured) ?? []);
         // Keep a choice the user already made; only fill in the default when
         // nothing is selected yet (first probe, or the server came back).
-        setProvider(prev => prev || (data.current?.provider?.toLowerCase?.() ?? ''));
-        setModel(prev => prev || (data.current?.model ?? ''));
+        // A remembered choice wins over the server default, but only while
+        // the server still offers it — a key removed from .env must not
+        // leave the menu pointing at a provider that cannot answer.
+        const offered: Array<{ type: string; models: string[] }> = data.providers?.filter((p: any) => p.configured) ?? [];
+        const storedProvider = readStored(PROVIDER_KEY);
+        const storedModel = readStored(MODEL_KEY);
+        const remembered = offered.find(p => p.type === storedProvider);
+        setProvider(prev => prev || remembered?.type || (data.current?.provider?.toLowerCase?.() ?? ''));
+        setModel(prev => prev || (remembered && remembered.models.includes(storedModel) ? storedModel : '') || (data.current?.model ?? ''));
         setConnected(true);
       } else {
         // A reachable server that answers 500 is not "connected", and
@@ -1427,6 +1447,8 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                     setProvider(next);
                     const next_models = providers.find(p => p.type === next)?.models ?? [];
                     setModel(next_models[0] ?? '');
+                    store(PROVIDER_KEY, next);
+                    store(MODEL_KEY, next_models[0] ?? '');
                   }}
                   size="1"
                 >
@@ -1440,7 +1462,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
               </Flex>
               <Flex direction="column" gap="1">
                 <Text as="label" size="1" htmlFor="suiw-model">Model</Text>
-                <Select.Root value={model} onValueChange={setModel} size="1">
+                <Select.Root value={model} onValueChange={next => { setModel(next); store(MODEL_KEY, next); }} size="1">
                   <Select.Trigger id="suiw-model" variant="soft" color="gray" aria-label="Model" />
                   <Select.Content>
                     {models.map(m => <Select.Item key={m} value={m}>{m}</Select.Item>)}

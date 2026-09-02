@@ -171,6 +171,7 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
         framework: body.framework,
         autoDetectFramework: body.autoDetectFramework,
         images: body.images as any,
+        files: body.files,
         visionMode: body.visionMode,
         designSystem: body.designSystem,
         considerations: body.considerations,
