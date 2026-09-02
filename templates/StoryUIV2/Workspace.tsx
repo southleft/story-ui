@@ -770,11 +770,27 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     if (session) openSession(session);
   }, [sessionsLoaded, recovering, byStoryId, byFileName, openSession]);
 
-  // Remember the active story across a preview-frame reload.
+  /**
+   * Remember the active story across a remount.
+   *
+   * Storybook re-renders this docs page from scratch whenever a new story
+   * enters its index — which is exactly what a generation does — so the
+   * workspace mounts fresh with no active file. The first version of this
+   * effect then REMOVED the key on that initial mount, before the reopen
+   * effect above had loaded the sessions and read it: the thread went to
+   * Home every time a story was created. The key is cleared only when a
+   * story that was open here is closed (New, Delete), never on mount.
+   */
+  const hadActiveFile = useRef(false);
   useEffect(() => {
     try {
-      if (activeFile?.fileName) sessionStorage.setItem(ACTIVE_KEY, activeFile.fileName);
-      else sessionStorage.removeItem(ACTIVE_KEY);
+      if (activeFile?.fileName) {
+        hadActiveFile.current = true;
+        sessionStorage.setItem(ACTIVE_KEY, activeFile.fileName);
+      } else if (hadActiveFile.current) {
+        hadActiveFile.current = false;
+        sessionStorage.removeItem(ACTIVE_KEY);
+      }
     } catch { /* private mode */ }
   }, [activeFile]);
 
