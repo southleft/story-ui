@@ -33,9 +33,16 @@ export function parseImports(code) {
     let clause = m[2].trim();
     const source = m[3];
     const names = [];
+    // Richer view of the same clause, for checks that need to know WHAT was
+    // imported rather than what it is called locally: `exported` is the name
+    // the package exports (`Badge` in `Badge as Tag`), `defaultName` the local
+    // binding of a default import, whose exported name the file cannot tell us.
+    const named = [];
+    let namespace = null;
+    let defaultName = null;
 
     const ns = clause.match(/\*\s+as\s+([A-Za-z_$][\w$]*)/);
-    if (ns) { names.push(ns[1]); clause = clause.replace(ns[0], ''); }
+    if (ns) { names.push(ns[1]); namespace = ns[1]; clause = clause.replace(ns[0], ''); }
 
     const braced = clause.match(/\{([^}]*)\}/);
     if (braced) {
@@ -43,15 +50,17 @@ export function parseImports(code) {
         const p = part.trim().replace(/^type\s+/, '');
         if (!p) continue;
         const alias = p.split(/\s+as\s+/);
-        names.push(alias[alias.length - 1].trim());
+        const local = alias[alias.length - 1].trim();
+        names.push(local);
+        named.push({ exported: alias[0].trim(), local });
       }
       clause = clause.replace(braced[0], '');
     }
 
     const def = clause.replace(/,/g, '').trim();
-    if (def && /^[A-Za-z_$][\w$]*$/.test(def)) names.push(def);
+    if (def && /^[A-Za-z_$][\w$]*$/.test(def)) { names.push(def); defaultName = def; }
 
-    out.push({ names, source });
+    out.push({ names, source, named, defaultName, namespace });
   }
   return out;
 }
@@ -83,6 +92,16 @@ export function localDeclarations(code) {
   // a declaration this file makes, not a component it forgot to import.
   const re = /\b(?:function|const|let|var|class|type|interface|enum)\s+([A-Z][\w$]*)/g;
   for (const m of code.matchAll(re)) names.add(m[1]);
+  // Destructuring declares too: Carbon's `const { Table, TableRow } = DataTable;`
+  // is how its own docs expose the table statics, and each name is a
+  // component this file legitimately renders.
+  const destructure = /\b(?:const|let|var)\s*\{([^}]*)\}\s*=/g;
+  for (const m of code.matchAll(destructure)) {
+    for (const part of m[1].split(',')) {
+      const local = part.split(':').pop().split('=')[0].trim();
+      if (/^[A-Z][\w$]*$/.test(local)) names.add(local);
+    }
+  }
   return names;
 }
 
@@ -203,6 +222,127 @@ export function forbiddenPatterns(code, patterns = []) {
     if (matches.length) hits.push({ pattern: src, count: matches.length, matches: matches.slice(0, 3) });
   }
   return { pass: hits.every(h => !h.count), hits };
+}
+
+/* ------------------------------------------------------------------ */
+/* Library-agnostic checks (--generic)                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Catalog conformance: is everything the code takes from the design system
+ * something the server actually discovered?
+ *
+ * `catalog` is what GET /mcp/components(/inventory) returned, reduced to
+ * `{ names: Set, importPaths: Map<name, importPath> | null, source }`. A
+ * named import is checked by its EXPORTED name (`Badge as Tag` looks up
+ * `Badge`). A default import cannot tell us its exported name, so it is
+ * checked by specifier instead: it conforms when some catalog row declares
+ * that specifier (or a parent of it — `@atlaskit/button/new` is served by
+ * the `@atlaskit/button` row). Without per-row import paths a default import
+ * is UNVERIFIABLE and reported as such, never as a failure.
+ *
+ * Also counts distinct catalog components USED as JSX, because a story that
+ * imports three real components and then hand-rolls the page in `<div>`s
+ * conforms to nothing. `minDistinct` is the floor.
+ *
+ * Returns `pass: null` when there is no catalog to check against.
+ */
+export function catalogConformance(code, { importPath, catalog, minDistinct = 3 }) {
+  if (!catalog || !catalog.names || catalog.names.size === 0) {
+    return { pass: null, reason: catalog?.reason || 'no component catalog available', source: catalog?.source ?? null };
+  }
+  const imports = parseImports(code).filter(i => classifySource(i.source, importPath) === 'design-system');
+  const rows = catalog.importPaths || null;
+  const specifierRows = rows ? [...rows.entries()] : [];
+  const servedBy = (source) => specifierRows.filter(([, p]) => p && (source === p || source.startsWith(p + '/'))).map(([n]) => n);
+
+  const inCatalog = new Map();        // local name -> catalog name
+  const notInCatalog = [];            // `{ name, source }` — imported from the design system but unknown to discovery
+  const unverifiable = [];            // default imports with no importPath data to match on
+  const specifierMismatch = [];       // named import whose specifier differs from the catalog's, reported only
+  const utilityImports = [];          // lowercase named imports: `xcss`, `token`, `useTheme` — not components, not judged
+
+  for (const imp of imports) {
+    for (const { exported, local } of imp.named) {
+      // The catalog lists COMPONENTS. A lowercase export is a hook, a style
+      // function or a token helper, which discovery never claimed to list.
+      if (!/^[A-Z]/.test(exported)) { utilityImports.push({ name: exported, source: imp.source }); continue; }
+      if (catalog.names.has(exported)) {
+        inCatalog.set(local, exported);
+        const declared = rows?.get(exported);
+        if (declared && declared !== imp.source && !imp.source.startsWith(declared + '/') && !declared.startsWith(imp.source + '/')) {
+          specifierMismatch.push({ name: exported, imported: imp.source, catalog: declared });
+        }
+      } else {
+        notInCatalog.push({ name: exported, source: imp.source });
+      }
+    }
+    if (imp.defaultName) {
+      if (!rows) { unverifiable.push({ name: imp.defaultName, source: imp.source, reason: 'catalog has no per-component import paths' }); continue; }
+      const served = servedBy(imp.source);
+      if (served.length) {
+        // Prefer a row whose name matches the local binding; otherwise the first.
+        inCatalog.set(imp.defaultName, served.includes(imp.defaultName) ? imp.defaultName : served[0]);
+      } else {
+        notInCatalog.push({ name: imp.defaultName, source: imp.source, default: true });
+      }
+    }
+    if (imp.namespace) unverifiable.push({ name: imp.namespace, source: imp.source, reason: 'namespace import' });
+  }
+
+  const roots = new Set(jsxTags(code).map(t => t.root));
+  const used = [...new Set([...inCatalog.entries()].filter(([local]) => roots.has(local)).map(([, name]) => name))];
+  const imported = [...new Set(inCatalog.values())];
+
+  const enough = used.length >= minDistinct;
+  // An unknown import fails outright. A floor that was not reached is only a
+  // failure when every design-system import could be classified; if some
+  // could not (names-only catalog + default imports), the floor is
+  // undecidable and the check is n/a with the reason — not a fail.
+  let pass = notInCatalog.length === 0 && enough;
+  let reason;
+  if (notInCatalog.length === 0 && !enough && unverifiable.length) {
+    pass = null;
+    reason = `${unverifiable.length} design-system import(s) could not be verified (${unverifiable.map(u => u.reason).filter((v, i, a) => a.indexOf(v) === i).join('; ')}); only ${used.length} verified catalog component(s) used, floor ${minDistinct} undecidable`;
+  }
+  return {
+    pass,
+    ...(reason ? { reason } : {}),
+    catalogSize: catalog.names.size,
+    source: catalog.source,
+    designSystemImports: imports.length,
+    inCatalog: imported,
+    usedDistinct: used.length,
+    used,
+    minDistinct,
+    notInCatalog,
+    unverifiable,
+    specifierMismatch,
+    utilityImports,
+  };
+}
+
+/**
+ * Token conformance: every `var(--x)` names a custom property the project
+ * declares. The checker itself is the engine's (`dist/.../tokenConformance`),
+ * injected so this file stays pure; `known` is the set of names WITHOUT `--`
+ * as `readDesignTokens` reports them.
+ *
+ * Three outcomes that must read differently: no checker or no tokens (n/a,
+ * with the reason), var() uses all declared (ok, with the count), invented
+ * names (FAIL, with the nearest real token when one is close).
+ */
+export function tokenConformance(code, { known, check, sources } = {}) {
+  const varUses = (code.match(/var\(\s*--/g) || []).length;
+  if (typeof check !== 'function') return { pass: null, reason: 'dist tokenConformance not importable', varUses, known: known?.size ?? 0 };
+  if (!known || known.size === 0) {
+    const why = sources?.lookedAtNothing
+      ? 'project declares no CSS custom properties (no stylesheet was found to read)'
+      : `project declares no CSS custom properties (${sources?.projectFiles ?? '?'} project + ${sources?.packageFiles ?? '?'} package stylesheet(s) read)`;
+    return { pass: null, reason: why, varUses, known: 0, sources: sources ?? null };
+  }
+  const violations = check(code, known).map(v => ({ line: v.line, name: v.name, nearest: v.nearest ?? null }));
+  return { pass: violations.length === 0, varUses, known: known.size, violations, sources: sources ?? null };
 }
 
 /** Divergence threshold. `divergence` is the number editDivergence returned. */
@@ -338,17 +478,27 @@ export function completionCheck(completion, errorEvent) {
  * One step's scorecard. A step is a generation (new or follow-up) plus its
  * expectations; `previousCode` and `divergence` are present only for updates.
  */
-export function scoreStep({ code, expect = {}, events = [], completion, errorEvent, importPath, previousCode, divergence, pins }) {
+export function scoreStep({ code, expect = {}, events = [], completion, errorEvent, importPath, previousCode, divergence, pins, generic = false, catalog = null, tokens = null }) {
   const forbidden = expect.forbiddenPatterns || [];
+  const hasNameExpectations = Boolean(expect.mustUseComponents?.length || expect.mustUseAnyOf?.length || expect.mustNotUseComponents?.length);
   const checks = {
     completion: completionCheck(completion, errorEvent),
     adherence: code ? componentAdherence(code, { importPath }) : { pass: null, reason: 'no code returned' },
-    requirements: code ? componentRequirements(code, {
-      importPath,
-      mustUse: expect.mustUseComponents || [],
-      mustUseAnyOf: expect.mustUseAnyOf || [],
-      mustNot: expect.mustNotUseComponents || [],
-    }) : { pass: null, reason: 'no code returned' },
+    // In --generic mode the scenarios' component NAMES are one library's
+    // answer to the prompt and are not asked of another; the expectation is
+    // recorded as not measured, with what it would have asked, never as a fail.
+    requirements: generic
+      ? { pass: null, reason: hasNameExpectations ? 'generic mode: component-name expectations are library-specific' : 'generic mode: no component-name expectations', skipped: hasNameExpectations ? { mustUse: expect.mustUseComponents || [], mustUseAnyOf: expect.mustUseAnyOf || [], mustNot: expect.mustNotUseComponents || [] } : null }
+      : code ? componentRequirements(code, {
+        importPath,
+        mustUse: expect.mustUseComponents || [],
+        mustUseAnyOf: expect.mustUseAnyOf || [],
+        mustNot: expect.mustNotUseComponents || [],
+      }) : { pass: null, reason: 'no code returned' },
+    catalog: !generic ? { pass: null, reason: 'not in --generic mode' }
+      : code ? catalogConformance(code, { importPath, catalog }) : { pass: null, reason: 'no code returned' },
+    tokens: !generic ? { pass: null, reason: 'not in --generic mode' }
+      : code ? tokenConformance(code, tokens || {}) : { pass: null, reason: 'no code returned' },
     forbidden: code ? forbiddenPatterns(code, forbidden) : { pass: null, reason: 'no code returned' },
     verification: verificationCheck(completion),
     divergence: divergenceCheck(divergence, previousCode ? expect.maxDivergence : undefined),
@@ -404,6 +554,19 @@ export function issuesFrom(stepLabel, { events = [], completion, score }) {
       for (const g of c.requirements.unsatisfiedGroups) add('fail', `none of [${g.join(', ')}] used`);
       if (c.requirements.presentMustNot.length) add('fail', `forbidden components used: ${c.requirements.presentMustNot.join(', ')}`);
     }
+    if (c.catalog?.pass === false) {
+      if (c.catalog.notInCatalog.length) add('fail', `imported from the design system but not in the server's catalog (${c.catalog.source}, ${c.catalog.catalogSize} components): ${c.catalog.notInCatalog.map(n => `${n.name}${n.default ? ' (default)' : ''} from ${n.source}`).join(', ')}`);
+      if (c.catalog.usedDistinct < c.catalog.minDistinct) add('fail', `only ${c.catalog.usedDistinct} distinct catalog component(s) used as JSX (${c.catalog.used.join(', ') || 'none'}); floor is ${c.catalog.minDistinct}`);
+    }
+    if (c.catalog?.pass === true) add('info', `catalog: ${c.catalog.usedDistinct} distinct catalog components used (${c.catalog.used.join(', ')})`);
+    if (c.catalog?.unverifiable?.length) add('info', `catalog: could not verify ${c.catalog.unverifiable.map(u => `${u.name} from ${u.source} (${u.reason})`).join(', ')}`);
+    if (c.catalog?.utilityImports?.length) add('info', `catalog: non-component imports from the design system, not judged: ${c.catalog.utilityImports.map(u => `${u.name} from ${u.source}`).join(', ')}`);
+    if (c.catalog?.specifierMismatch?.length) add('info', `catalog: imported from a different specifier than the catalog declares: ${c.catalog.specifierMismatch.map(m => `${m.name} ${m.imported} (catalog: ${m.catalog})`).join(', ')}`);
+    if (c.catalog?.pass === null && c.catalog.reason && !/not in --generic/.test(c.catalog.reason)) add('not_measured', `catalog: ${c.catalog.reason}`);
+    if (c.tokens?.pass === false) add('fail', `invented tokens (${c.tokens.violations.length} of ${c.tokens.varUses} var() use(s), ${c.tokens.known} declared): ${c.tokens.violations.map(v => `--${v.name}${v.nearest ? ` (nearest --${v.nearest})` : ''} line ${v.line}`).join(', ')}`);
+    if (c.tokens?.pass === true) add('info', `tokens: ${c.tokens.varUses} var() use(s), all among ${c.tokens.known} declared`);
+    if (c.tokens?.pass === null && c.tokens.reason && !/not in --generic/.test(c.tokens.reason)) add('not_measured', `tokens: ${c.tokens.reason}${c.tokens.varUses ? ` — code uses var() ${c.tokens.varUses}x, unchecked` : ''}`);
+    if (c.requirements?.pass === null && c.requirements.skipped) add('not_measured', `component-name expectations not applied in generic mode: ${JSON.stringify(c.requirements.skipped)}`);
     if (c.forbidden.pass === false) for (const h of c.forbidden.hits) if (h.count) add('fail', `forbidden pattern /${h.pattern}/ matched ${h.count}x: ${h.matches.map(m => JSON.stringify(m.slice(0, 60))).join(', ')}`);
     if (c.verification.pass === false) add('fail', `verification blockers: ${c.verification.blockers.join(' | ')}`);
     if (c.divergence.pass === false) add('fail', `divergence ${c.divergence.divergence.toFixed(3)} exceeds ${c.divergence.maxDivergence} — the edit rewrote more than it was asked to`);
@@ -414,4 +577,30 @@ export function issuesFrom(stepLabel, { events = [], completion, score }) {
     if (c.adherence.foreignTags?.length) add('info', `tags from packages outside the design system: ${c.adherence.foreignTags.join(', ')}`);
   }
   return issues;
+}
+
+/* ------------------------------------------------------------------ */
+/* Summary                                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The per-step record summary.json carries: verdict, timing and the detail a
+ * combined report needs (verification, catalog, tokens, forbidden hits),
+ * without the events or the code. Shared by fidelity.mjs and the rescorer so
+ * the two cannot drift.
+ */
+export function stepSummary(st) {
+  const c = st.score?.checks || {};
+  return {
+    label: st.label, pass: st.score?.pass ?? null, failed: st.score?.failed ?? [], notMeasured: st.score?.notMeasured ?? [], fileName: st.fileName ?? null,
+    tPreviewMs: c.timing?.tPreviewMs ?? null, tTotalMs: c.timing?.tTotalMs ?? null, llmCalls: c.timing?.llmCalls ?? null, divergence: st.divergence ?? null,
+    completion: c.completion ? { pass: c.completion.pass, reason: c.completion.reason ?? null, action: c.completion.action ?? null } : null,
+    verification: c.verification ? { pass: c.verification.pass, outcome: c.verification.outcome, reason: c.verification.reason ?? null, checksRun: c.verification.checksRun, checksTotal: c.verification.checksTotal, blockers: c.verification.blockers, warnings: c.verification.warnings } : null,
+    catalog: c.catalog ? { pass: c.catalog.pass, reason: c.catalog.reason ?? null, usedDistinct: c.catalog.usedDistinct ?? null, minDistinct: c.catalog.minDistinct ?? null, used: c.catalog.used ?? null, notInCatalog: c.catalog.notInCatalog ?? null, unverifiable: c.catalog.unverifiable ?? null, specifierMismatch: c.catalog.specifierMismatch ?? null, utilityImports: c.catalog.utilityImports ?? null } : null,
+    tokens: c.tokens ? { pass: c.tokens.pass, reason: c.tokens.reason ?? null, varUses: c.tokens.varUses ?? null, known: c.tokens.known ?? null, violations: c.tokens.violations ?? null } : null,
+    forbidden: c.forbidden ? { pass: c.forbidden.pass, hits: (c.forbidden.hits || []).filter(h => h.count) } : null,
+    text: c.text ? { pass: c.text.pass, missing: c.text.missing ?? null } : null,
+    adherence: c.adherence ? { pass: c.adherence.pass, unknownTags: c.adherence.unknownTags ?? null, foreignTags: c.adherence.foreignTags ?? null } : null,
+    screenshot: st.screenshot ? { taken: st.screenshot.taken, rendered: st.screenshot.rendered ?? null, reason: st.screenshot.reason ?? null, isErrorPlaceholder: st.screenshot.isErrorPlaceholder ?? null, pageErrors: (st.screenshot.pageErrors || []).slice(0, 3) } : null,
+  };
 }

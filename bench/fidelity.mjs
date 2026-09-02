@@ -32,10 +32,10 @@ import path from 'path';
 import { createRequire } from 'module';
 import { pathToFileURL, fileURLToPath } from 'url';
 
-import { scenarios, byId, DEFAULT_FORBIDDEN } from './fidelity/scenarios.mjs';
+import { scenarios, byId, DEFAULT_FORBIDDEN, defaultForbiddenFor } from './fidelity/scenarios.mjs';
 import { streamGenerate, describeEvent } from './fidelity/sse.mjs';
 import { resolveStoryId, screenshotStory, closeBrowsers } from './fidelity/screenshot.mjs';
-import { scoreStep, issuesFrom, pinSurvived } from './fidelity/score.mjs';
+import { scoreStep, issuesFrom, pinSurvived, stepSummary } from './fidelity/score.mjs';
 
 /* ------------------------------------------------------------------ */
 /* Arguments                                                           */
@@ -50,7 +50,9 @@ const opts = {
   server: arg('server', 'http://localhost:4101').replace(/\/+$/, ''),
   storybook: arg('storybook', 'http://localhost:6101').replace(/\/+$/, ''),
   project: path.resolve(arg('project', path.join(STORY_UI_ROOT, '..', 'test-storybooks', 'react-mantine'))),
-  only: arg('only', '') ? arg('only', '').split(',').map(s => s.trim()).filter(Boolean) : null,
+  // `--scenarios` is an alias of `--only`; either selects by id.
+  only: (arg('only', '') || arg('scenarios', '')) ? (arg('only', '') || arg('scenarios', '')).split(',').map(s => s.trim()).filter(Boolean) : null,
+  generic: flag('generic'),
   rounds: Math.max(1, Number(arg('rounds', '1')) || 1),
   provider: arg('provider', ''),
   model: arg('model', ''),
@@ -69,10 +71,16 @@ const opts = {
 if (flag('help')) {
   console.log(`node bench/fidelity.mjs [--plan] [--only id,id] [--rounds N] [--server URL] [--storybook URL]
     [--project DIR] [--provider claude|openai|gemini] [--model ID] [--image PNG] [--out DIR]
-    [--timeout SECONDS] [--strict] [--reverify] [--fresh-bases] [--no-screenshot]
+    [--timeout SECONDS] [--strict] [--reverify] [--fresh-bases] [--no-screenshot] [--generic]
 
   --plan          print the scenarios and exit; no server needed
-  --only          comma-separated scenario ids (bases are generated on demand)
+  --only          comma-separated scenario ids (bases are generated on demand); --scenarios is an alias
+  --generic       library-agnostic scoring for a project that is not react-mantine: component-NAME
+                  expectations (mustUse/mustUseAnyOf/mustNot) are reported n/a, and replaced by
+                  catalog conformance (every design-system import is in GET /mcp/components, at
+                  least 3 distinct catalog components used as JSX) and token conformance (every
+                  var(--x) is declared by the project, via dist/ tokenConformance). Text, forbidden
+                  patterns, pins, divergence, verification and timing are unchanged
   --rounds        repeat every selected scenario N times
   --image         PNG for the image scenario (skipped, not failed, without it)
   --strict        exit 1 if any step failed
@@ -93,9 +101,12 @@ const selected = opts.only
 
 function describeExpect(e = {}) {
   const parts = [];
-  if (e.mustUseComponents?.length) parts.push(`use ${e.mustUseComponents.join('+')}`);
-  if (e.mustUseAnyOf?.length) parts.push(`any of ${e.mustUseAnyOf.map(g => Array.isArray(g) ? `[${g.join('|')}]` : g).join(' ')}`);
-  if (e.mustNotUseComponents?.length) parts.push(`not ${e.mustNotUseComponents.join('+')}`);
+  const names = [];
+  if (e.mustUseComponents?.length) names.push(`use ${e.mustUseComponents.join('+')}`);
+  if (e.mustUseAnyOf?.length) names.push(`any of ${e.mustUseAnyOf.map(g => Array.isArray(g) ? `[${g.join('|')}]` : g).join(' ')}`);
+  if (e.mustNotUseComponents?.length) names.push(`not ${e.mustNotUseComponents.join('+')}`);
+  if (names.length) parts.push(opts.generic ? `(n/a in --generic: ${names.join('; ')})` : names.join('; '));
+  if (opts.generic) parts.push('catalog conformance (>=3 distinct catalog components); declared tokens only');
   if (e.mustContainText?.length) parts.push(`text ${e.mustContainText.map(t => JSON.stringify(t)).join(',')}`);
   if (e.maxDivergence !== undefined) parts.push(`divergence<=${e.maxDivergence}`);
   if (e.maxTimeToPreviewMs !== undefined) parts.push(`preview<=${e.maxTimeToPreviewMs}ms`);
@@ -105,7 +116,7 @@ function describeExpect(e = {}) {
 if (opts.plan) {
   console.log(`Fidelity bench plan — ${selected.length} scenario(s), ${opts.rounds} round(s), project ${opts.project}`);
   console.log(`server ${opts.server}   storybook ${opts.storybook}   provider ${opts.provider || '(server default)'}   model ${opts.model || '(server default)'}`);
-  console.log(`default forbidden patterns (every step): ${DEFAULT_FORBIDDEN.map(p => `/${p}/`).join('  ')}\n`);
+  console.log(`default forbidden patterns (every step): ${DEFAULT_FORBIDDEN.map(p => `/${p}/`).join('  ')}\n  (the competing-library pattern is rebuilt at run time around the project's importPath)\n`);
   for (const s of selected) {
     console.log(`${s.id}  [${s.kind}]${s.base ? `  base=${s.base}` : ''}`);
     if (s.kind !== 'update' && s.kind !== 'prop-edit') {
@@ -177,6 +188,78 @@ try {
   log(`WARNING: dist/story-generator/postProcessStory.js not importable (${e.message}). Run \`npm run build\`; divergence will be reported as not measured.`);
 }
 
+/**
+ * What --generic scores against, in place of Mantine component names.
+ *
+ *   catalog  GET /mcp/components/inventory (name + importPath per component)
+ *            when the server has it, else GET /mcp/components (names only —
+ *            default imports are then unverifiable, and say so).
+ *   tokens   the project's declared CSS custom properties, read with the
+ *            engine's own readStylingFacts, checked with its checkTokenUsage
+ *            — both from dist/, so the bench and the pipeline agree on what
+ *            "declared" means.
+ *
+ * Every field carries its provenance; a missing catalog or an empty token set
+ * makes the check n/a, and the report says which.
+ */
+const genericKnowledge = { catalog: null, tokens: null };
+
+async function loadGenericKnowledge() {
+  // Catalog
+  const tryRoute = async (route) => {
+    const r = await fetch(`${opts.server}${route}`, { signal: AbortSignal.timeout(120_000) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  };
+  try {
+    const inv = await tryRoute('/mcp/components/inventory');
+    const rows = Array.isArray(inv?.components) ? inv.components : null;
+    if (rows && rows.length) {
+      genericKnowledge.catalog = {
+        source: '/mcp/components/inventory',
+        names: new Set(rows.map(r => r.name)),
+        importPaths: new Map(rows.map(r => [r.name, r.importPath])),
+        byOrigin: rows.reduce((acc, r) => { acc[r.source || '?'] = (acc[r.source || '?'] || 0) + 1; return acc; }, {}),
+        described: rows.filter(r => r.hasDescription).length,
+      };
+    } else {
+      throw new Error(`inventory answered with ${rows ? 'zero components' : 'no components array'}`);
+    }
+  } catch (e) {
+    const invError = e.message;
+    try {
+      const list = await tryRoute('/mcp/components');
+      if (Array.isArray(list) && list.length) {
+        genericKnowledge.catalog = { source: '/mcp/components', names: new Set(list.map(c => c.name)), importPaths: null, byOrigin: null, described: null, inventoryError: invError };
+      } else {
+        genericKnowledge.catalog = { source: null, names: new Set(), reason: `inventory: ${invError}; /mcp/components answered ${Array.isArray(list) ? 'zero components' : 'a non-array'}` };
+      }
+    } catch (e2) {
+      genericKnowledge.catalog = { source: null, names: new Set(), reason: `inventory: ${invError}; /mcp/components: ${e2.message}` };
+    }
+  }
+  const cat = genericKnowledge.catalog;
+  log(cat.names.size
+    ? `catalog: ${cat.names.size} components from ${cat.source}${cat.byOrigin ? ` (${Object.entries(cat.byOrigin).map(([k, v]) => `${v} ${k}`).join(', ')}; ${cat.described} with a description)` : ' (names only; default imports unverifiable)'}${cat.inventoryError ? ` — inventory route failed: ${cat.inventoryError}` : ''}`
+    : `catalog: NONE — ${cat.reason}; catalog conformance will be n/a`);
+
+  // Tokens
+  try {
+    const { readStylingFacts } = await import(pathToFileURL(path.join(STORY_UI_ROOT, 'dist', 'story-generator', 'knowledge', 'stylingFacts.js')).href);
+    const { checkTokenUsage } = await import(pathToFileURL(path.join(STORY_UI_ROOT, 'dist', 'story-generator', 'knowledge', 'tokenConformance.js')).href);
+    // readStylingFacts wants the generated DIRECTORY NAME (it excludes those stories from the idiom sample), not the path.
+    const facts = readStylingFacts(opts.project, path.basename(generatedDir), importPath);
+    const known = new Set(facts.tokens.flatMap(g => g.names));
+    genericKnowledge.tokens = { known, check: checkTokenUsage, sources: facts.sources, groups: facts.tokens.map(g => `${g.category}:${g.names.length}`) };
+    log(known.size
+      ? `tokens: ${known.size} declared (${genericKnowledge.tokens.groups.join(', ')}) from ${facts.sources.projectFiles} project + ${facts.sources.packageFiles} package stylesheet(s)`
+      : `tokens: NONE declared (${facts.sources.lookedAtNothing ? 'no stylesheet found to read' : `${facts.sources.projectFiles} project + ${facts.sources.packageFiles} package stylesheet(s) read`}); token conformance will be n/a`);
+  } catch (e) {
+    genericKnowledge.tokens = { known: null, check: null, error: e.message };
+    log(`tokens: dist knowledge modules not importable (${e.message}); token conformance will be n/a`);
+  }
+}
+
 const imageInput = (() => {
   if (!opts.image) return null;
   const file = path.resolve(opts.image);
@@ -220,7 +303,10 @@ async function preflight() {
 /* ------------------------------------------------------------------ */
 
 const readStory = (fileName) => { try { return fs.readFileSync(path.join(generatedDir, fileName), 'utf8'); } catch { return null; } };
-const withDefaults = (expect = {}) => ({ ...expect, forbiddenPatterns: [...DEFAULT_FORBIDDEN, ...(expect.forbiddenPatterns || [])] });
+// The "another design system" pattern is rebuilt around the project's own
+// importPath, so `@mui/` is forbidden on Mantine and `@mantine/` on MUI.
+const forbiddenDefaults = defaultForbiddenFor(importPath);
+const withDefaults = (expect = {}) => ({ ...expect, forbiddenPatterns: [...forbiddenDefaults, ...(expect.forbiddenPatterns || [])] });
 
 /** One generation, scored. `update` carries { fileName, title } for follow-ups. */
 async function generationStep({ label, prompt, expect, update, images, pins, tag }) {
@@ -261,6 +347,7 @@ async function generationStep({ label, prompt, expect, update, images, pins, tag
     code, expect, events: stream.events, completion,
     errorEvent: stream.errorEvent || (stream.transportError ? { data: { code: 'TRANSPORT', message: stream.transportError } } : undefined),
     importPath, previousCode, divergence, pins,
+    generic: opts.generic, catalog: genericKnowledge.catalog, tokens: genericKnowledge.tokens,
   });
 
   const shot = await captureScreenshot({ tag, fileName, storybookId: completion?.storybookId, title });
@@ -469,7 +556,10 @@ function writeReport() {
       const roundTag = opts.rounds > 1 ? ` (r${r.round})` : '';
       const notes = st.issues.filter(i => i.kind === 'fail' || i.kind === 'error').map(i => i.text).join('; ').slice(0, 160)
         + (st.screenshot?.taken ? '' : ` [no screenshot: ${st.screenshot?.reason}]`);
-      rows.push(`| ${label}${roundTag} | ${st.kind} | ${st.score.pass ? 'PASS' : 'FAIL'} | ${cell(c.completion ?? c.edit)} | ${cell(c.adherence ?? c.offered)} | ${cell(c.requirements)} | ${cell(c.forbidden)} | ${cell(c.verification)} ${checks} | ${blockers} | ${div}${c.divergence?.maxDivergence != null ? ` (≤${c.divergence.maxDivergence})` : ''} | ${cell(c.text)} | ${cell(c.pins)} | ${ms(t.tPreviewMs)} / ${ms(t.tTotalMs)}${t.llmCalls != null ? ` (${t.llmCalls} llm)` : ''} | ${notes.replace(/\|/g, '/')} |`);
+      const catalogCell = c.catalog?.pass != null ? `${cell(c.catalog)} ${c.catalog.usedDistinct}/${c.catalog.minDistinct}${c.catalog.notInCatalog?.length ? ` (${c.catalog.notInCatalog.length} unknown)` : ''}` : 'n/a';
+      const tokenCell = c.tokens?.pass != null ? `${cell(c.tokens)} ${c.tokens.violations?.length ?? 0} invented / ${c.tokens.varUses} var()` : `n/a${c.tokens?.varUses ? ` (${c.tokens.varUses} var() unchecked)` : ''}`;
+      const genericCells = opts.generic ? ` ${catalogCell} | ${tokenCell} |` : '';
+      rows.push(`| ${label}${roundTag} | ${st.kind} | ${st.score.pass ? 'PASS' : 'FAIL'} | ${cell(c.completion ?? c.edit)} | ${cell(c.adherence ?? c.offered)} | ${cell(c.requirements)} |${genericCells} ${cell(c.forbidden)} | ${cell(c.verification)} ${checks} | ${blockers} | ${div}${c.divergence?.maxDivergence != null ? ` (≤${c.divergence.maxDivergence})` : ''} | ${cell(c.text)} | ${cell(c.pins)} | ${ms(t.tPreviewMs)} / ${ms(t.tTotalMs)}${t.llmCalls != null ? ` (${t.llmCalls} llm)` : ''} | ${notes.replace(/\|/g, '/')} |`);
     }
   }
 
@@ -490,11 +580,16 @@ function writeReport() {
     `- provider/model: ${opts.provider || 'server default'} / ${opts.model || 'server default'}`,
     `- scenarios: ${results.length} run (${passed} pass, ${failed} fail, ${skipped} skipped), ${stepCount} steps, ${opts.rounds} round(s)`,
     `- divergence measured by dist \`editDivergence\`: ${editDivergence ? 'yes' : 'NO — dist not built, reported as n/a'}`,
+    ...(opts.generic ? [
+      `- mode: **--generic** — component-name expectations reported n/a; catalog: ${genericKnowledge.catalog?.names?.size ? `${genericKnowledge.catalog.names.size} components from ${genericKnowledge.catalog.source}` : `NONE (${genericKnowledge.catalog?.reason})`}; tokens: ${genericKnowledge.tokens?.known?.size ? `${genericKnowledge.tokens.known.size} declared (${genericKnowledge.tokens.groups.join(', ')})` : `none declared${genericKnowledge.tokens?.error ? ` (${genericKnowledge.tokens.error})` : genericKnowledge.tokens?.sources?.lookedAtNothing ? ' (no stylesheet found to read)' : ''}`}`,
+    ] : []),
     '',
-    'Cells: `ok` passed, `FAIL` failed, `n/a` could not be measured (never counted as a failure). Verify column shows checksRun/checksTotal from the completion.',
+    `Cells: \`ok\` passed, \`FAIL\` failed, \`n/a\` could not be measured (never counted as a failure). Verify column shows checksRun/checksTotal from the completion.${opts.generic ? ' Catalog column: distinct catalog components used as JSX / floor. Tokens column: invented var(--x) names / total var() uses.' : ''}`,
     '',
-    '| scenario › step | kind | result | completion | adherence | mustUse | forbidden | verify | blockers | divergence | text | pins | tPreview / tTotal | notes |',
-    '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|',
+    opts.generic
+      ? '| scenario › step | kind | result | completion | adherence | mustUse | catalog | tokens | forbidden | verify | blockers | divergence | text | pins | tPreview / tTotal | notes |'
+      : '| scenario › step | kind | result | completion | adherence | mustUse | forbidden | verify | blockers | divergence | text | pins | tPreview / tTotal | notes |',
+    opts.generic ? '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|' : '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|',
     ...rows,
     '',
     '## Issues observed',
@@ -508,7 +603,13 @@ function writeReport() {
   ].join('\n');
   fs.writeFileSync(path.join(runDir, 'report.md'), md);
   fs.writeFileSync(path.join(runDir, 'summary.json'), JSON.stringify({
-    stamp, opts: { ...opts }, importPath, results: results.map(r => ({ scenario: r.scenario, kind: r.kind, round: r.round, pass: r.pass, skipped: r.skipped, error: r.error ? e2(r.error) : null, durationMs: r.durationMs, steps: r.steps.map(st => ({ label: st.label, pass: st.score.pass, failed: st.score.failed, notMeasured: st.score.notMeasured, fileName: st.fileName, tPreviewMs: st.score.checks.timing?.tPreviewMs ?? null, tTotalMs: st.score.checks.timing?.tTotalMs ?? null, divergence: st.divergence ?? null })) })),
+    stamp, opts: { ...opts }, importPath,
+    generic: opts.generic ? {
+      // Names and import paths are stored so bench/fidelity-rescore.mjs can re-judge the run without the server.
+      catalog: genericKnowledge.catalog ? { source: genericKnowledge.catalog.source, size: genericKnowledge.catalog.names.size, byOrigin: genericKnowledge.catalog.byOrigin ?? null, reason: genericKnowledge.catalog.reason ?? null, names: [...genericKnowledge.catalog.names], importPaths: genericKnowledge.catalog.importPaths ? Object.fromEntries(genericKnowledge.catalog.importPaths) : null } : null,
+      tokens: genericKnowledge.tokens ? { known: genericKnowledge.tokens.known?.size ?? 0, groups: genericKnowledge.tokens.groups ?? null, sources: genericKnowledge.tokens.sources ?? null, error: genericKnowledge.tokens.error ?? null } : null,
+    } : null,
+    results: results.map(r => ({ scenario: r.scenario, kind: r.kind, round: r.round, pass: r.pass, skipped: r.skipped, error: r.error ? e2(r.error) : null, durationMs: r.durationMs, steps: r.steps.map(st => stepSummary(st)) })),
   }, null, 2));
   return { passed, failed, skipped, stepCount };
 }
@@ -519,7 +620,7 @@ function writeReport() {
 
 log(`Fidelity bench ${stamp}`);
 log(`project ${opts.project}  importPath ${importPath} (${projectConfig._source})  generated ${path.relative(opts.project, generatedDir)}`);
-log(`server ${opts.server}  storybook ${opts.storybook}  provider ${opts.provider || '(default)'}  model ${opts.model || '(default)'}  rounds ${opts.rounds}`);
+log(`server ${opts.server}  storybook ${opts.storybook}  provider ${opts.provider || '(default)'}  model ${opts.model || '(default)'}  rounds ${opts.rounds}${opts.generic ? '  mode --generic' : ''}`);
 if (imageInput) log(`image ${imageInput._file} (${imageInput.mediaType}, ${Math.round(imageInput.data.length / 1024)} KB base64)`);
 
 const problems = await preflight();
@@ -531,6 +632,7 @@ if (problems.length) {
   fs.rmSync(runDir, { recursive: true, force: true });
   process.exit(2);
 }
+if (opts.generic) await loadGenericKnowledge();
 if (opts.check) {
   log(`preflight ok; editDivergence from dist: ${editDivergence ? 'yes' : 'NO'}; ${selected.length} scenario(s) selected. Exiting (--check).`);
   logFile.end();

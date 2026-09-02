@@ -30,7 +30,7 @@ node bench/fidelity.mjs --server http://localhost:4101 --storybook http://localh
 node bench/fidelity.mjs --rounds 2 --strict
 ```
 
-Flags: `--server`, `--storybook`, `--project`, `--only id,id`, `--rounds N`,
+Flags: `--server`, `--storybook`, `--project`, `--only id,id` (alias `--scenarios`), `--rounds N`,
 `--provider`, `--model`, `--image PNG`, `--out DIR` (default `bench/results`),
 `--timeout SECONDS` per generation (default 720), `--strict`, `--reverify`
 (also run `dist/` `verifyStory` standalone), `--fresh-bases`, `--no-screenshot`,
@@ -42,6 +42,49 @@ render harness from `dist/`), the MCP server started **from the project
 directory** (`PORT=4101 node ../story-ui/dist/mcp-server/index.js`), and that
 project's Storybook. Playwright is resolved from the project's own
 `node_modules`, as verification does; the bench adds no dependency.
+
+### `--generic`: any React design system
+
+The scenarios' `mustUseComponents` are Mantine's answer to each prompt, so on
+Carbon, MUI or Atlassian they cannot be asked. `--generic` reports them as
+n/a (never a failure) and scores catalog conformance and token conformance
+instead; text, forbidden patterns, pins, divergence, verification and timing
+are unchanged.
+
+| Check | Passes when | n/a when |
+|---|---|---|
+| catalog | every capitalised named import from the design system is in `GET /mcp/components/inventory` (falls back to `/mcp/components`); a default import is matched by its specifier against the inventory's per-component `importPath`; at least 3 distinct catalog components are used as JSX. Lowercase imports (`xcss`, `token`) are utilities and are reported, not judged | no catalog; or default/namespace imports could not be verified and the floor was not reached |
+| tokens | every `var(--x)` names a token the project declares, via `dist/` `readStylingFacts` + `checkTokenUsage` | the project declares no tokens (the report says whether any stylesheet was read), or dist is not built |
+
+The "another design system" forbidden pattern is rebuilt around the project's
+`importPath` (`defaultForbiddenFor`), so `@mui/` is forbidden on Mantine and
+`@mantine/` on MUI. A hex colour inside a `var(--x, #hex)` fallback is the
+token idiom, not a raw colour, and is not flagged.
+
+```bash
+node bench/fidelity.mjs --generic --server http://localhost:4109 --storybook http://localhost:6109 \
+  --project ../test-storybooks/carbon --only pricing-page,data-table,settings-page
+```
+
+`bench/fidelity-rescore.mjs <run dir>` re-judges a finished run with the
+current scorer; it reads importPath, `--generic` and the catalog from the
+run's `summary.json`, and rewrites `summary.json` so a combined report stays
+in step.
+
+## durability.sh
+
+`bench/durability.sh dir:mcpPort:sbPort ...` runs the generic bench across
+several environments from the packed tarball: installs
+`tpitre-story-ui-*.tgz` (`npm install --no-save`) when the project's copy is
+missing, a `file:` symlink, or a different sha; runs `npx story-ui init --yes
+--json` if there is no config; copies `ANTHROPIC_API_KEY` from
+`react-mantine/.env` if absent (never printed); checks Playwright's Chromium;
+starts the server and Storybook, waits for `/health` and `/index.json`, runs
+the bench, stops both. Output: `bench/results/durability-<stamp>/README.md`
+(one row per env × scenario: time to preview, outcome, verification, catalog
+conformance, forbidden hits, invented tokens), `<env>.md`, `<env>.env.txt`
+(setup facts), and the logs. A step that cannot run skips the environment
+with the reason; it is not a failure.
 
 ### Output
 

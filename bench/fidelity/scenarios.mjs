@@ -34,12 +34,28 @@
  * utility-class frameworks, and competing component libraries.
  */
 export const DEFAULT_FORBIDDEN = [
-  '#[0-9a-fA-F]{6}\\b',                                              // raw hex colour
+  '(?<!var\\([^)]*,\\s*)#[0-9a-fA-F]{6}\\b',                            // raw hex colour — a fallback inside var(--x, #hex) is the token idiom, not a raw colour
   "style=\\{\\{[^}]*(?:padding|margin|gap):\\s*['\"]?\\d+px",        // inline pixel spacing
   '!important',
   "from ['\"](?:@mui/|@chakra-ui/|antd|react-bootstrap|@radix-ui/)",  // another design system
   "className=[\"'][^\"']*\\b(?:flex|grid|p-\\d|m-\\d|px-\\d|py-\\d|text-\\w+-\\d{3})\\b", // Tailwind utilities
 ];
+
+/**
+ * Component libraries a story on ONE design system has no business importing
+ * from. Which one is "another" depends on the project: on an MUI project
+ * `@mui/` is the design system, so the Mantine-tuned list above flagged every
+ * MUI story on its first line. `defaultForbiddenFor(importPath)` rebuilds
+ * the list with the project's own vendor removed.
+ */
+export const COMPETING_LIBRARIES = ['@mantine/', '@mui/', '@chakra-ui/', 'antd', 'react-bootstrap', '@radix-ui/', '@carbon/', '@atlaskit/', '@shopify/polaris', '@fluentui/', 'primereact'];
+
+export function defaultForbiddenFor(importPath = '@mantine/core') {
+  const own = (spec) => importPath === spec || importPath.startsWith(spec) || (spec.endsWith('/') && importPath === spec.slice(0, -1));
+  const others = COMPETING_LIBRARIES.filter(l => !own(l));
+  const escaped = others.map(l => l.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  return DEFAULT_FORBIDDEN.map(p => p.startsWith("from ['\"]") ? `from ['\"](?:${escaped.join('|')})` : p);
+}
 
 export const scenarios = [
   /* ------------------------------------------------------------ new */
