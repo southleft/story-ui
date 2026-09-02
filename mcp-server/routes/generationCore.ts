@@ -1526,7 +1526,13 @@ async function runStoryGenerationPipeline(
   if (isActualUpdate && (fileName || providedStoryId)) {
     if (providedStoryId) {
       storyId = providedStoryId;
-      const hashMatch = providedStoryId.match(/^story-([a-f0-9]{8})$/);
+      // The classic panel sends the FILE NAME as storyId. Hashing the prompt
+      // instead gave the update a brand-new id, the panel polled the index
+      // for a story that does not exist, and reported "index stalled" over a
+      // story that had rendered and verified. The file's own hash is the id.
+      const hashMatch = providedStoryId.match(/^story-([a-f0-9]{8})$/)
+        ?? providedStoryId.match(/-([a-f0-9]{8})(?:\.stories\.\w+)?$/)
+        ?? fileName?.match(/-([a-f0-9]{8})(?:\.stories\.\w+)?$/);
       hash = hashMatch ? hashMatch[1] : crypto.createHash('sha1').update(prompt).digest('hex').slice(0, 8);
     } else {
       const hashMatch = fileName?.match(/-([a-f0-9]{8})(?:\.stories\.\w+)?$/);
@@ -2470,6 +2476,11 @@ function computeStorybookId(code: string, storyIdSlug: string): string {
   if (new RegExp(`id:\\s*['"]${escapedSlug}['"]`).test(code)) {
     return storyIdSlug;
   }
+  // The file says which id it declares; that is the id Storybook indexes it
+  // under, whatever this run expected. Falling through to the title gave a
+  // slug the index never held.
+  const declared = code.match(/^\s*id:\s*['"]([a-z0-9][a-z0-9-]*)['"]/m);
+  if (declared) return declared[1];
   const titleMatch = code.match(/title:\s*["']([^"']+)["']/);
   if (!titleMatch) return storyIdSlug;
   return titleMatch[1]
@@ -2908,11 +2919,16 @@ async function callLLM(
   // monitoring layouts) are exactly the ones that truncate, burn a repair
   // attempt, and come back smaller than the user asked for.
   const providerInfo = getProviderInfo({ provider: options?.provider as any, model: options?.model });
-  const llmOptions: { provider?: any; model?: string; maxTokens: number; signal?: AbortSignal } = {
+  const llmOptions: { provider?: any; model?: string; maxTokens: number; signal?: AbortSignal; timeoutMs?: number } = {
     maxTokens: providerInfo.maxOutputTokens ?? 8192,
     provider: options?.provider,
     model: options?.model,
     ...(options?.signal ? { signal: options.signal } : {}),
+    // A vision turn is buffered, not streamed, so it has no idle watchdog —
+    // only a wall clock. 120s was too short for a full-page composition
+    // from a screenshot on Opus 5 (timed out 2/2 in the classic-panel
+    // battery). Same ceiling as streamed calls.
+    timeoutMs: Number(process.env.CLAUDE_STREAM_MAX_MS) || 15 * 60 * 1000,
   };
 
   if (images && images.length > 0) {

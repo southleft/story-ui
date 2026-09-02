@@ -703,6 +703,12 @@ async function syncWithActualStories(): Promise<ChatSession[]> {
           lastMsg.suggestions = lastCompletion.suggestions?.length ? lastCompletion.suggestions : undefined;
           lastMsg.generationTimeMs = lastCompletion.generationTimeMs || undefined;
           lastMsg.storybookComponentId = lastCompletion.storybookId || undefined;
+          // The story this reply produced. Without these a reopened chat had
+          // no "Open in Storybook", no "Hand off" and no verification badge —
+          // they existed only in the session that generated the story.
+          lastMsg.storyEntryId = lastMsg.storyEntryId || (e.id ? String(e.id) : undefined);
+          lastMsg.storyFileName = lastMsg.storyFileName || e.fileName || undefined;
+          lastMsg.verification = lastMsg.verification || (lastCompletion.verification as any) || undefined;
         }
         return {
           id: e.id ?? e.fileName.replace(/\.stories\.[a-z]+$/, ''),
@@ -1537,6 +1543,9 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                 restoredLast.code = lastCompletion.code || undefined;
                 restoredLast.suggestions = lastCompletion.suggestions?.length ? lastCompletion.suggestions : undefined;
                 restoredLast.generationTimeMs = lastCompletion.generationTimeMs || undefined;
+                restoredLast.storyEntryId = restoredLast.storyEntryId || (entry.id ? String(entry.id) : undefined);
+                restoredLast.storyFileName = restoredLast.storyFileName || entry.fileName || undefined;
+                restoredLast.verification = restoredLast.verification || (lastCompletion.verification as any) || undefined;
               }
               dispatch({ type: 'SET_CONVERSATION', payload: restored });
               dispatch({ type: 'SET_ACTIVE_CHAT', payload: { id: entry.fileName || entry.id, title: entry.title || pending.title || '' } });

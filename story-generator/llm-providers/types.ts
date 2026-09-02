@@ -89,6 +89,13 @@ export interface ChatOptions {
   cacheSystemPrompt?: boolean;
   /** Reasoning effort for models that take one: low | medium | high | xhigh | max. */
   effort?: string;
+  /**
+   * Wall-clock budget for a buffered (non-streaming) call, in ms. The
+   * provider's configured timeout applies when absent. Vision turns need
+   * more than the 120s default: a full-page composition from a screenshot
+   * on Opus 5 timed out on it every time.
+   */
+  timeoutMs?: number;
   stream?: boolean;
   tools?: ToolDefinition[];
   /**

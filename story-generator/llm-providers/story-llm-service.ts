@@ -386,6 +386,8 @@ export async function chatCompletionWithImagesDetailed(
     temperature?: number;
     /** Caller-side abort (e.g. a phase budget) — cancels the in-flight HTTP call. */
     signal?: AbortSignal;
+    /** Wall-clock budget for this buffered call; the provider default applies when absent. */
+    timeoutMs?: number;
   }
 ): Promise<ChatCompletionResult> {
   ensureInitialized();
@@ -436,6 +438,7 @@ export async function chatCompletionWithImagesDetailed(
   try {
     const response = await provider.chat(chatMessages, {
       model,
+      timeoutMs: options?.timeoutMs,
       maxTokens: options?.maxTokens,
       temperature: options?.temperature,
       signal: options?.signal,

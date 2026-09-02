@@ -260,7 +260,7 @@ export class ClaudeProvider extends BaseLLMProvider {
     // was a fire-once timer whose error message reported the CONFIGURED number
     // — a "timed out after 120000ms" was once logged for a call that had
     // actually held the pipeline for 17 minutes.
-    const timeoutMs = this.config.timeout || 120000;
+    const timeoutMs = options?.timeoutMs || this.config.timeout || 120000;
     const requestStartedAt = Date.now();
     try {
       const response = await fetchWithRetry(ANTHROPIC_API_URL, {
