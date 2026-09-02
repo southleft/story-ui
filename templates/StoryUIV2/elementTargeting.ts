@@ -288,7 +288,47 @@ export function orderSourceCandidates(chain: ChainEntry[]): string[] {
     seen.add(e.name);
     entries.push(e);
   }
-  if (entries.length < 2) return entries.map(e => e.name);
+
+  /**
+   * Compound names, as the SOURCE writes them.
+   *
+   * A Mantine `<Menu.Item>` is the fiber `MenuItem`, rendered under a `Menu`
+   * further out on the same path; Tabs.Tab, Accordion.Item, Card.Section
+   * have the same shape. The file never contains `MenuItem`, so a chain of
+   * [MenuItem, UnstyledButton, Box, …, Menu] resolved to whatever appeared
+   * first in the file — the story's own `<Box>`, which then offered
+   * `hiddenFrom`/`visibleFrom` as the props of a menu item. When an entry's
+   * name is an ancestor's name plus a capitalised suffix, the dotted form is
+   * offered immediately AFTER the plain one — ahead of every internal the
+   * sort put below it, so the file matches the element it actually wrote
+   * before it can reach the Box; and behind the plain one, so a design
+   * system whose `CardFooter` really is a separate export (shadcn) keeps
+   * its own name at the head. Derived from the chain, not from a list of
+   * namespaces: the ancestor is there or it is not. Inlined rather than
+   * shared because this function is serialised into the preview document.
+   */
+  const withCompounds = (names: string[]): string[] => {
+    const out: string[] = [];
+    for (const n of names) {
+      if (out.indexOf(n) === -1) out.push(n);
+      if (n.indexOf('.') !== -1) continue;
+      let base: string | null = null;
+      for (const e of entries) {
+        const a = e.name;
+        if (a === n || a.indexOf('.') !== -1 || n.length <= a.length || n.indexOf(a) !== 0) continue;
+        const rest = n.slice(a.length);
+        if (!/^[A-Z]/.test(rest)) continue;
+        if (!base || a.length > base.length) base = a;
+      }
+      if (base) {
+        const dotted = `${base}.${n.slice(base.length)}`;
+        if (out.indexOf(dotted) === -1) out.push(dotted);
+      }
+    }
+    return out;
+  };
+
+  if (entries.length < 2) return withCompounds(entries.map(e => e.name));
 
   // How many entries along this path each candidate owns.
   const ownedCount = new Map<string, number>();
@@ -316,14 +356,14 @@ export function orderSourceCandidates(chain: ChainEntry[]): string[] {
     cluster.push(ownerEntry);
     head = ownerEntry;
   }
-  if (cluster.length < 2) return entries.map(e => e.name);
+  if (cluster.length < 2) return withCompounds(entries.map(e => e.name));
 
   // The cluster inverts — its outermost member is the element the source
   // wrote, its inner members are that element's implementation. Everything
   // outside the cluster keeps innermost-first order, unchanged.
   const clusterNames = cluster.map(e => e.name).reverse();
   const rest = entries.map(e => e.name).filter(n => clusterNames.indexOf(n) === -1);
-  return [...clusterNames, ...rest];
+  return withCompounds([...clusterNames, ...rest]);
 }
 
 /**
@@ -653,7 +693,11 @@ export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFro
     const ordered: string[] = orderCandidates(chain.map((c) => ({ name: c.name, owner: c.owner, hostDepth: c.hostDepth })));
     sourceCandidates = ordered.slice(0, 8);
     const top = ordered[0];
-    const topEntry = chain.find((c) => c.name === top);
+    // A dotted candidate (`Menu.Item`) is the source spelling of the fiber
+    // `MenuItem`; its facts are that fiber's facts.
+    const plainName = (nm: string) => nm.replace(/\./g, '');
+    const entryFor = (nm: string) => chain.find((c) => c.name === nm) || chain.find((c) => c.name === plainName(nm));
+    const topEntry = entryFor(top);
     if (topEntry) {
       sourceComponent = top;
 
@@ -670,10 +714,10 @@ export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFro
        */
       const details: any[] = [];
       for (const nm of sourceCandidates as string[]) {
-        const e = chain.find((c) => c.name === nm);
+        const e = entryFor(nm);
         if (!e) { details.push({ name: nm }); continue; }
         const li = listInfo(e.fiber, e.owner || null);
-        details.push({ name: nm, owner: e.owner || undefined, fromList: li.fromList, _fiber: e.fiber, _group: li.groupFiber });
+        details.push({ name: nm, _fiberName: e.name, owner: e.owner || undefined, fromList: li.fromList, _fiber: e.fiber, _group: li.groupFiber });
       }
 
       /**
@@ -712,7 +756,8 @@ export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFro
           const d = details[i];
           if (!d.owner) continue;
           let inst: any = null;
-          for (const c of ch2) { if (c.name === d.name && c.owner === d.owner) { inst = c; break; } }
+          const fiberName = d._fiberName || d.name;
+          for (const c of ch2) { if (c.name === fiberName && c.owner === d.owner) { inst = c; break; } }
           if (!inst) continue;
           const il = listInfo(inst.fiber, inst.owner || null);
           const pop = pops[i];
@@ -748,6 +793,7 @@ export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFro
         }
         delete d._fiber;
         delete d._group;
+        delete d._fiberName;
       }
       sourceCandidateDetails = details;
 

@@ -55,6 +55,8 @@ import {
   processDocumentFiles,
   formatBytes,
   toPayload,
+  MAX_PDF_BYTES,
+  MAX_TEXT_BYTES,
   type AttachedDocument,
 } from './fileAttachments';
 import {
@@ -65,6 +67,7 @@ import {
   FileIcon,
   GearIcon,
   GridIcon,
+  MaximizeIcon,
   MicIcon,
   PanelLeftIcon,
   PlusIcon,
@@ -107,6 +110,16 @@ import {
   type StoryVersionSummary,
 } from './VersionHistory';
 import { diffForUpdate, describeDiff, type LineDiff } from './lineDiff';
+import {
+  findRenderFailure,
+  formatRenderFailureReason,
+  renderFailureLine,
+  rememberRenderFailure,
+  forgetRenderFailure,
+  renderFailureFor,
+} from './renderFailure';
+import { useFrameRenderStatus } from './useFrameRenderStatus';
+import { describePinForPeople, humanizePropPath, unescapeTitle } from './copy';
 
 /**
  * The model writes component names in backticks. Render those as code
@@ -183,6 +196,11 @@ interface Turn {
   notice?: string;
   /** The generation behind this reply did not produce a working story. */
   failed?: boolean;
+  /**
+   * The story this reply produced does not load in Storybook, and this is
+   * why — one line under the reply, beside a "Does not render" badge.
+   */
+  renderFailure?: string;
   /** How many reference images the request behind this reply carried. */
   imageCount?: number;
   /**
@@ -306,9 +324,24 @@ const StepClock: React.FC<{ since: number }> = ({ since }) => {
  * Mounting eight at once boots eight of them and stalls the home screen, so the
  * frame is only created once the card is actually scrolled into view.
  */
-const LazyThumb: React.FC<{ storyId: string; title: string }> = ({ storyId, title }) => {
+const LazyThumb: React.FC<{
+  storyId: string;
+  title: string;
+  /**
+   * The story is known not to render (remembered from its last completion).
+   * The frame is not mounted at all then: a thumbnail of Storybook's error
+   * page is exactly what this exists to avoid.
+   */
+  failedReason?: string | null;
+}> = ({ storyId, title, failedReason = null }) => {
   const ref = useRef<HTMLSpanElement>(null);
+  const frameRef = useRef<HTMLIFrameElement>(null);
   const [visible, setVisible] = useState(false);
+  // What the mounted frame is actually showing — the record above covers
+  // the last completion; this covers a story that broke since, or whose
+  // failure never reached a completion at all.
+  const live = useFrameRenderStatus(frameRef, { active: visible && !failedReason, storyId });
+  const failed = !!failedReason || live.status === 'failed';
 
   useEffect(() => {
     const el = ref.current;
@@ -327,17 +360,29 @@ const LazyThumb: React.FC<{ storyId: string; title: string }> = ({ storyId, titl
   }, [visible]);
 
   return (
-    <span ref={ref} className={`suiw-thumb${visible ? '' : ' suiw-thumb--idle'}`}>
-      {visible ? (
+    <span
+      ref={ref}
+      className={`suiw-thumb${visible && !failed ? '' : ' suiw-thumb--idle'}${failed ? ' suiw-thumb--failed' : ''}`}
+    >
+      {visible && !failedReason && (
         <iframe
+          ref={frameRef}
           src={`/iframe.html?id=${encodeURIComponent(storyId)}&viewMode=story`}
           title={title}
           loading="lazy"
           tabIndex={-1}
+          // The frame stays mounted under the placeholder: the story can be
+          // repaired from another tab, and the first render clears the mark.
+          aria-hidden={failed || undefined}
         />
-      ) : (
-        <Text size="1" color="gray">Preview</Text>
       )}
+      {failed ? (
+        <span className="suiw-thumb-failed" title={failedReason ?? live.reason ?? undefined}>
+          <Badge size="1" color="red" variant="soft">Does not render</Badge>
+        </span>
+      ) : !visible ? (
+        <Text size="1" color="gray">Preview</Text>
+      ) : null}
     </span>
   );
 };
@@ -356,12 +401,17 @@ const SEVERITY_TONE: Record<VerificationFinding['severity'], 'red' | 'amber' | '
 
 /** The badge's label. "Verified" alone is only claimed when every check ran. */
 const verificationLabel = (v: VerificationSummary): string => {
+  // A story that cannot be loaded is not a story with an issue in it.
+  if (v.renderFailed) return 'Does not render';
   if (v.outcome === 'issues') return `${v.blockers} issue${v.blockers === 1 ? '' : 's'} found`;
   if (v.outcome === 'not_verified') return 'Not verified';
+  // "Verified · 6/6 checks" directly above "Show 3 issues" read as a
+  // contradiction; the warnings are part of the verdict, so name them.
+  const warnings = v.warnings ? ` · ${v.warnings} warning${v.warnings === 1 ? '' : 's'}` : '';
   if (v.checksRun !== undefined && v.checksTotal !== undefined) {
-    return `Verified · ${v.checksRun}/${v.checksTotal} checks`;
+    return `Verified · ${v.checksRun}/${v.checksTotal} checks${warnings}`;
   }
-  return 'Verified in browser';
+  return `Verified in browser${warnings}`;
 };
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || '');
@@ -377,7 +427,15 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
   const [model, setModel] = useState('');
   const [considerations, setConsiderations] = useState('');
   const [connected, setConnected] = useState<boolean | null>(null);
-  const { sessions, loaded: sessionsLoaded, reload: reloadSessions, byStoryId, byFileName } = useSessions(apiBase);
+  /**
+   * Recent work refreshes on its own — every ten seconds while the tab is
+   * visible, and on focus — except while a generation is in flight here,
+   * when the list is about to change anyway and a refresh mid-run would
+   * reorder the switcher under the user. Assigned below once `busy` and
+   * `recovering` exist; the hook reads it at each tick.
+   */
+  const sessionsPausedRef = useRef(false);
+  const { sessions, loaded: sessionsLoaded, reload: reloadSessions, byStoryId, byFileName } = useSessions(apiBase, sessionsPausedRef);
   const [activeStory, setActiveStory] = useState<{ id: string; title: string } | null>(null);
   /**
    * Set when a story was written to disk but Storybook never indexed it.
@@ -453,6 +511,22 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
   const [writingFileName, setWritingFileName] = useState<string | null>(null);
   /** A generation that ended without a working story, until the next send. */
   const [failure, setFailure] = useState<PreviewFailure | null>(null);
+  /**
+   * The last completion said the story in hand does not render. Set from
+   * the `render-failed` finding, cleared by the completion that no longer
+   * carries it (a repair that worked) and by the next file written. The
+   * canvas shows a calm state instead of Storybook's error page while it
+   * stands — unless the frame itself proves the story renders.
+   */
+  const [renderFailure, setRenderFailure] = useState<{ fileName: string; reason: string } | null>(null);
+  /**
+   * The story that was opened is no longer in the manifest — deleted from
+   * another tab. `openSession` trusts the cached list, so the story opened,
+   * the canvas showed Storybook's "Couldn't find story", and a typed edit
+   * started a real update against a file that did not exist. Re-checked on
+   * open; while it stands, Send is held and the canvas says why.
+   */
+  const [deletedStory, setDeletedStory] = useState<{ fileName: string; title: string } | null>(null);
   /** The last request sent, so Retry after a transport error resends it. */
   const [retryRequest, setRetryRequest] = useState<SendRequest | null>(null);
   const [componentsOpen, setComponentsOpen] = useState(false);
@@ -504,6 +578,9 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
 
   const threadRef = useRef<HTMLDivElement>(null);
   const { generate, cancel, steps, busy, error, errorInfo, notice, liveText, liveCode, reset: resetRun } = useGeneration(apiBase);
+  // Read by useSessions at each poll tick; a ref because the hook is called
+  // above, before these two exist.
+  sessionsPausedRef.current = busy || recovering;
 
   // The folded step line needs to know when the run ended; the hook only
   // says whether it is running.
@@ -613,6 +690,10 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
         setProvider(prev => prev || remembered?.type || (data.current?.provider?.toLowerCase?.() ?? ''));
         setModel(prev => prev || (remembered && remembered.models.includes(storedModel) ? storedModel : '') || (data.current?.model ?? ''));
         setConnected(true);
+        // The server is back (or was here all along): the list of work may
+        // have moved while it was away — "Check again" used to re-probe the
+        // providers and leave Recent work as it was.
+        reloadSessions();
       } else {
         // A reachable server that answers 500 is not "connected", and
         // leaving this null would sit on "Checking…" indefinitely.
@@ -621,7 +702,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     } catch {
       if (!isCancelled()) setConnected(false);
     }
-  }, [apiBase]);
+  }, [apiBase, reloadSessions]);
 
   useEffect(() => {
     let cancelled = false;
@@ -703,6 +784,11 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
    */
   const openSession = useCallback((session: SessionSummary) => {
     const completion = session.entry.metadata?.lastCompletion;
+    // Whether this version of the story is known not to render. The
+    // manifest keeps only the verification's counts, so this comes from the
+    // record the completion left, retired by any later write to the file.
+    const knownFailure = renderFailureFor(session.fileName, session.updatedAt);
+    const restoredVerification = verificationFromCompletion(completion);
     const restored: Turn[] = (session.entry.conversation ?? []).map((m, i, all) => ({
       id: `${session.fileName}-${i}`,
       role: m.role === 'user' ? 'user' : 'assistant',
@@ -721,7 +807,10 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
             storyId: session.storyId ?? undefined,
             suggestions: completion?.suggestions?.length ? completion.suggestions : undefined,
             elapsedMs: completion?.generationTimeMs,
-            verification: verificationFromCompletion(completion),
+            verification: restoredVerification && knownFailure
+              ? { ...restoredVerification, renderFailed: true }
+              : restoredVerification,
+            renderFailure: knownFailure ?? undefined,
           }
         : {}),
     }));
@@ -735,6 +824,23 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     setActiveFile({ fileName: session.fileName, title: session.title });
     setNotIndexed(session.storyId ? null : { fileName: session.fileName, title: session.title });
     setFailure(null);
+    setRenderFailure(knownFailure ? { fileName: session.fileName, reason: knownFailure } : null);
+    setDeletedStory(null);
+    // The list this came from may be stale: a story deleted in another tab
+    // stays in it until the next refresh. Ask the manifest whether the entry
+    // is still there before trusting the canvas and the composer to it.
+    void (async () => {
+      try {
+        const res = await apiFetch(`${apiBase}/story-ui/manifest`);
+        if (!res.ok) return;
+        const stories = (await res.json())?.stories ?? {};
+        if (stories[session.fileName]) return;
+        setDeletedStory({ fileName: session.fileName, title: session.title });
+        setActiveStory(null);
+        setNotIndexed(null);
+        reloadSessions();
+      } catch { /* server away — nothing to contradict the cache with */ }
+    })();
     setSelection(null);
     setResolvedName(null);
     setFindingNotes({});
@@ -749,7 +855,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     // The persisted code is a fine first frame; the file is authoritative.
     setCode(completion?.code ?? null);
     void loadCode(session.fileName);
-  }, [loadCode, resetRun]);
+  }, [loadCode, resetRun, apiBase, reloadSessions]);
 
   /**
    * Recover a generation the iframe reload cut off.
@@ -813,6 +919,10 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       }
 
       const completion = entry.metadata?.lastCompletion;
+      // The record is keyed to the file's last write; this recovered entry
+      // IS that write, so a failure remembered for an older version is gone.
+      const knownFailure = renderFailureFor(entry.fileName, entry.updatedAt);
+      const recoveredVerification = verificationFromCompletion(completion);
       const restored: Turn[] = (entry.conversation ?? []).map((m, i, all) => ({
         id: `${entry.fileName}-${i}`,
         role: m.role === 'user' ? 'user' : 'assistant',
@@ -828,10 +938,14 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
               // The badge the live path would have shown, rebuilt from the
               // persisted summary. Undefined when the entry predates the
               // field — no badge, never a claimed pass.
-              verification: verificationFromCompletion(completion),
+              verification: recoveredVerification && knownFailure
+                ? { ...recoveredVerification, renderFailed: true }
+                : recoveredVerification,
+              renderFailure: knownFailure ?? undefined,
             }
           : {}),
       }));
+      setRenderFailure(knownFailure ? { fileName: entry.fileName, reason: knownFailure } : null);
       // Invariant: recovery must never erase a turn the user added after it
       // started. This effect seeded exactly one turn (the stashed prompt), so
       // anything beyond that is new work — in that case keep the thread as it
@@ -947,11 +1061,13 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
    * so the Build button is held until the probe answers; the card under the
    * composer says which of the two is missing and what to do about it.
    */
-  const blocked: 'checking' | 'unreachable' | 'no-providers' | null =
+  const storyDeleted = !!deletedStory && !!activeFile && deletedStory.fileName === activeFile.fileName;
+  const blocked: 'checking' | 'unreachable' | 'no-providers' | 'deleted' | null =
     connected === null ? 'checking'
       : connected === false ? 'unreachable'
         : providers.length === 0 ? 'no-providers'
-          : null;
+          : storyDeleted ? 'deleted'
+            : null;
   const canSend = blocked === null;
 
   const send = useCallback(async (text?: string, opts?: { images?: AttachedImage[]; docs?: AttachedDocument[]; selection?: ElementTarget | null }) => {
@@ -961,6 +1077,9 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     // would append to the wrong thread. The reconnecting row already says
     // why the composer is waiting.
     if (!prompt || busy || recovering) return;
+    // A story deleted elsewhere: an update would recreate a file the user
+    // just removed. The composer is already held; this is the belt.
+    if (deletedStory && activeFile && deletedStory.fileName === activeFile.fileName) return;
 
     if (voice.isListening) voice.stop();
     committedInputRef.current = '';
@@ -1036,6 +1155,9 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     }, async (preview) => {
       if (preview.code) setCode(preview.code);
       if (preview.fileName) setWritingFileName(preview.fileName);
+      // A new file on disk: the last completion's verdict was about the
+      // old one. The canvas watches the frame for this one itself.
+      setRenderFailure(null);
       if (!preview.storybookId) return;
       const resolved = await waitForStory(preview.storybookId, preview.title);
       if (!resolved) return;
@@ -1077,6 +1199,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
           textareaRef.current?.focus();
         },
       });
+      const failedFinding = findRenderFailure(result.verification?.findings);
       setTurns(prev => [
         ...prev,
         {
@@ -1087,6 +1210,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
           elapsedMs: result.elapsedMs,
           verification: summarizeVerification(result.verification),
           findings: result.verification?.findings?.length ? result.verification.findings : undefined,
+          renderFailure: failedFinding ? formatRenderFailureReason(failedFinding.evidence) : undefined,
           failed: true,
           imageCount: sentImages.length || undefined,
         },
@@ -1096,6 +1220,21 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     }
 
     if (result.code) setCode(result.code);
+
+    /**
+     * Whether the story that was just written renders. The finding is the
+     * verifier's verdict on the FINAL file — after any repair — so its
+     * absence after a `verify_repairing` phase means the repair worked and
+     * the failed state clears. Remembered per file for the Home cards,
+     * which have no completion to read.
+     */
+    const renderFailed = findRenderFailure(result.verification?.findings);
+    const renderFailedReason = renderFailed ? formatRenderFailureReason(renderFailed.evidence) : null;
+    if (result.fileName) {
+      if (renderFailedReason) rememberRenderFailure(result.fileName, renderFailedReason);
+      else forgetRenderFailure(result.fileName);
+    }
+    setRenderFailure(renderFailedReason && result.fileName ? { fileName: result.fileName, reason: renderFailedReason } : null);
 
     /**
      * What this update did, when it WAS an update of the story in hand: the
@@ -1155,7 +1294,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
           // restates it, in which case the sentence appears once.
           composeAssistantText(result.planText, result.chatSummary, `Created ${result.title}.`),
           (() => {
-            const kept = [...(result.pins?.applied ?? []), ...(result.pins?.kept ?? [])];
+            const kept = [...(result.pins?.applied ?? []), ...(result.pins?.kept ?? [])].map(describePinForPeople);
             return kept.length ? `Kept your hand-set props: ${kept.join(', ')}.` : '';
           })(),
         ].filter(Boolean).join('\n\n'),
@@ -1166,6 +1305,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
         suggestions: result.suggestions,
         verification: summarizeVerification(result.verification),
         findings: result.verification?.findings?.length ? result.verification.findings : undefined,
+        renderFailure: renderFailedReason ?? undefined,
         diff: diff ?? undefined,
         storyId,
         fileName: result.fileName,
@@ -1179,7 +1319,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       setActiveFile({ fileName: result.fileName, title: result.title || 'Story' });
     }
     reloadSessions();
-  }, [input, busy, recovering, turns, provider, model, considerations, activeFile, activeStory, code, selection, labeledSelection, images, docs, voice, generate, reloadSessions, byFileName]);
+  }, [input, busy, recovering, turns, provider, model, considerations, activeFile, activeStory, code, selection, labeledSelection, images, docs, voice, generate, reloadSessions, byFileName, deletedStory]);
 
   /* ---- attachments ----------------------------------------------------- */
 
@@ -1245,6 +1385,25 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     }
   }, [notIndexed]);
 
+  /**
+   * Retry, from the canvas's "does not render" state: the last request sent
+   * from here, through the same path the error callout's Retry uses. For a
+   * reopened story (no request in this mount) the last instruction in the
+   * thread is what "retry" means.
+   */
+  const lastUserText = [...turns].reverse().find(t => t.role === 'user')?.text;
+  const retryLast = useCallback(() => {
+    const r = retryRequest;
+    if (r) {
+      setInput('');
+      committedInputRef.current = '';
+      void send(r.prompt, { images: r.images, docs: r.docs, selection: r.selection });
+      return;
+    }
+    if (lastUserText) void send(lastUserText);
+  }, [retryRequest, lastUserText, send]);
+  const canRetry = !!retryRequest || !!lastUserText;
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Enter sends; so does Cmd/Ctrl+Enter, which is what people who live in
     // chat tools reach for. Shift+Enter is a newline.
@@ -1270,11 +1429,15 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       // content, and that version CONTAINS the edit its prompt describes —
       // "from before" named the wrong boundary, in both directions. Ordinal
       // plus prompt is exactly the row the user clicked in the history list.
-      text: `Restored version ${v.ordinal}: "${v.prompt}".`,
+      text: `Restored version ${v.ordinal}: "${humanizePropPath(v.prompt)}".`,
       fileName: activeFile?.fileName, title: activeFile?.title,
     }]);
     // The last update's diff no longer describes what is on disk.
     setChanges(null);
+    // Nor does the last completion's render verdict: the frame reloads and
+    // judges the restored version for itself.
+    setRenderFailure(null);
+    if (activeFile) forgetRenderFailure(activeFile.fileName);
     if (activeFile) void loadCode(activeFile.fileName);
     reloadSessions();
   }, [activeFile, loadCode, reloadSessions]);
@@ -1294,6 +1457,29 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       }]);
     }
   }, [activeFile, busy, recovering, apiBase, handleRestored]);
+
+  /**
+   * Escape closes the inspector. The canvas already leaves select mode on
+   * Escape (capture phase, only while picking); an open inspector had no
+   * handler at all, though the shortcuts list promised one. Arming a pick
+   * clears the selection, so the two never compete: with the inspector
+   * open Esc closes it, with the picker armed Esc disarms it. Anything
+   * Radix has open — a dialog, a menu, a select — owns the key while focus
+   * is inside it.
+   */
+  useEffect(() => {
+    if (!selection) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      const el = e.target as Element | null;
+      if (el?.closest?.('[role="dialog"],[role="alertdialog"],[role="menu"],[role="listbox"],[data-radix-popper-content-wrapper]')) return;
+      e.preventDefault();
+      setSelection(null);
+      setResolvedName(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selection]);
 
   // Cmd/Ctrl+Z outside a text field is undo for the story, not the textarea.
   useEffect(() => {
@@ -1341,6 +1527,8 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     setChanges(null);
     setWritingFileName(null);
     setFailure(null);
+    setRenderFailure(null);
+    setDeletedStory(null);
     setFindingNotes({});
     resetRun();
     setStepsOpen(false);
@@ -1409,7 +1597,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     <Flex direction="column" gap="1" className="suiw-shortcuts">
       <Flex justify="between" gap="3"><Text size="1">Send</Text><Text size="1"><Kbd size="1">Enter</Kbd> / <Kbd size="1">{MOD}</Kbd>+<Kbd size="1">Enter</Kbd></Text></Flex>
       <Flex justify="between" gap="3"><Text size="1">New line</Text><Text size="1"><Kbd size="1">Shift</Kbd>+<Kbd size="1">Enter</Kbd></Text></Flex>
-      <Flex justify="between" gap="3"><Text size="1">Leave select mode</Text><Text size="1"><Kbd size="1">Esc</Kbd></Text></Flex>
+      <Flex justify="between" gap="3"><Text size="1">Close the inspector, or leave select mode</Text><Text size="1"><Kbd size="1">Esc</Kbd></Text></Flex>
       <Flex justify="between" gap="3"><Text size="1">Restore previous version</Text><Text size="1"><Kbd size="1">{MOD}</Kbd>+<Kbd size="1">Z</Kbd> outside a text field</Text></Flex>
     </Flex>
   );
@@ -1611,7 +1799,14 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
               void addFiles(files);
             }}
           />
-          <Tooltip content={images.length >= MAX_IMAGES ? `Up to ${MAX_IMAGES} images per message; documents still attach` : 'Attach images or files'}>
+          <Tooltip
+            content={
+              images.length >= MAX_IMAGES
+                ? `Up to ${MAX_IMAGES} images per message; documents still attach`
+                // The real caps, from the same constants that enforce them.
+                : `Attach up to ${MAX_IMAGES} images, PDFs up to ${formatBytes(MAX_PDF_BYTES)}, or text files up to ${formatBytes(MAX_TEXT_BYTES)}`
+            }
+          >
             <IconButton
               size="1"
               variant="ghost"
@@ -1750,10 +1945,10 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     </Flex>
   );
 
-  const storyTitle = activeStory?.title ?? activeFile?.title ?? 'Untitled';
+  const storyTitle = unescapeTitle(activeStory?.title ?? activeFile?.title) || 'Untitled';
   const switcherMatches = (() => {
     const q = switcherQuery.trim().toLowerCase();
-    return q ? sessions.filter(s => s.title.toLowerCase().includes(q)) : sessions;
+    return q ? sessions.filter(s => unescapeTitle(s.title).toLowerCase().includes(q)) : sessions;
   })();
 
   /**
@@ -1806,7 +2001,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                       if (!current) openSession(s);
                     }}
                   >
-                    <Text as="div" size="2" truncate>{s.title}</Text>
+                    <Text as="div" size="2" truncate>{unescapeTitle(s.title)}</Text>
                     <Text as="div" size="1" color="gray" truncate>{relativeTime(s.updatedAt)}</Text>
                   </button>
                 );
@@ -1898,6 +2093,22 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
         Components
       </Button>
 
+      {/* One pane at a time below 900px: the rail is the workspace and this
+          is the way to the preview. The canvas's own toggle is the way back.
+          Hidden by CSS at every wider size. */}
+      {started && !fullscreen && (
+        <Button
+          size="1"
+          variant="ghost"
+          color="gray"
+          className="suiw-narrow-only"
+          onClick={() => setFullscreen(true)}
+        >
+          <MaximizeIcon />
+          Preview
+        </Button>
+      )}
+
       {connectionIndicator}
 
       {started && (
@@ -1914,10 +2125,15 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       <AlertDialog.Content maxWidth="420px">
         <AlertDialog.Title>Delete this story?</AlertDialog.Title>
         <AlertDialog.Description size="2">
-          {activeFile ? `"${activeFile.title}" (${activeFile.fileName})` : 'This story'} and its conversation
+          {activeFile ? <strong>{unescapeTitle(activeFile.title) || 'This story'}</strong> : 'This story'} and its conversation
           will be removed from this project. Versions kept by the server are not touched, but nothing in the
           workspace will list them.
         </AlertDialog.Description>
+        {/* The title is what the user knows the story as; the file is a
+            fact worth a small line, not the name. */}
+        {activeFile && (
+          <Text as="div" size="1" color="gray" mt="1" className="suiw-ellipsis">{activeFile.fileName}</Text>
+        )}
         {deleteError && (
           <Callout.Root color="red" size="1" mt="3">
             <Callout.Text>{deleteError}</Callout.Text>
@@ -2004,12 +2220,16 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                               the story itself at half scale, mounted only when
                               scrolled into view. */}
                           {session.storyId
-                            ? <LazyThumb storyId={session.storyId} title={session.title} />
+                            ? <LazyThumb
+                                storyId={session.storyId}
+                                title={session.title}
+                                failedReason={renderFailureFor(session.fileName, session.updatedAt)}
+                              />
                             : <span className="suiw-thumb suiw-thumb--idle">
                                 <Text size="1" color="gray">Not indexed</Text>
                               </span>}
                           <Box p="2">
-                            <Text as="div" size="2" weight="medium" truncate>{session.title}</Text>
+                            <Text as="div" size="2" weight="medium" truncate>{unescapeTitle(session.title)}</Text>
                             <Text as="div" size="1" color="gray" truncate>
                               {session.messageCount > 0
                                 ? `${session.messageCount} message${session.messageCount === 1 ? '' : 's'} · ${relativeTime(session.updatedAt)}`
@@ -2120,6 +2340,15 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                       </Text>
                     )}
 
+                    {/* The reply describes what the model built; this says
+                        that Storybook could not load it. Ours, not the
+                        model's, so it sits outside the markdown body. */}
+                    {turn.role === 'assistant' && turn.renderFailure && (
+                      <Text as="div" size="2" color="red" className="suiw-turn-body suiw-turn-render-failed">
+                        {renderFailureLine(turn.renderFailure)}
+                      </Text>
+                    )}
+
                     {turn.role === 'assistant' && (() => {
                       // A restored turn carries no count, but the user turn
                       // before it carries its thumbnails — same fact.
@@ -2164,7 +2393,11 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                           {/* A pass with checks missing is amber, not green:
                               "Verified · 3/6 checks" must not look like 6/6. */}
                           <Badge
-                            color={isPartialVerification(turn.verification) ? 'amber' : VERIFY_TONE[turn.verification.outcome]}
+                            color={
+                              turn.verification.renderFailed ? 'red'
+                                : isPartialVerification(turn.verification) ? 'amber'
+                                  : VERIFY_TONE[turn.verification.outcome]
+                            }
                             variant="soft"
                             title={
                               turn.verification.outcome === 'verified' && turn.verification.reason
@@ -2443,6 +2676,13 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
             liveCode={liveCode}
             diff={changes}
             failure={failure}
+            renderFailure={
+              renderFailure && activeFile && renderFailure.fileName === activeFile.fileName
+                ? { reason: renderFailure.reason }
+                : null
+            }
+            onRetryRender={canRetry && canSend && !recovering ? retryLast : undefined}
+            deleted={storyDeleted && deletedStory ? { title: unescapeTitle(deletedStory.title), onHome: goHome } : null}
           />
         </div>
 

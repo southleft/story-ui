@@ -16,6 +16,7 @@ import { apiFetch } from './api';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Badge, Button, Callout, Flex, Popover, ScrollArea, Text } from '@radix-ui/themes';
 import { ClockIcon } from './icons';
+import { humanizePropPath } from './copy';
 
 export interface StoryVersionSummary {
   id: string;
@@ -176,7 +177,7 @@ export const VersionHistory: React.FC<VersionHistoryProps> = ({
                       {/* The prompt is what makes a version recognisable — a
                           timestamp alone tells the user nothing about which one
                           they want back. */}
-                      <Text size="1" style={{ wordBreak: 'break-word' }}>{v.prompt}</Text>
+                      <Text size="1" style={{ wordBreak: 'break-word' }}>{humanizePropPath(v.prompt)}</Text>
                     </Flex>
 
                     {!v.current && (

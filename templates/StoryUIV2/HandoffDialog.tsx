@@ -131,9 +131,12 @@ export const HandoffDialog: React.FC<HandoffDialogProps> = ({ apiBase, target, o
         <Dialog.Title>Hand off this story</Dialog.Title>
         <Dialog.Description size="2" color="gray" mb="4">
           {target
-            ? <>Commits <strong>{target.title}</strong> to a new branch so an engineer can pick it up. <Text size="1" color="gray">({target.fileName})</Text></>
+            ? <>Commits <strong>{target.title.replace(/\\(["'`])/g, '$1')}</strong> to a new branch so an engineer can pick it up.</>
             : ''}
         </Dialog.Description>
+        {target && (
+          <Text as="div" size="1" color="gray" mt="-3" mb="4" className="suiw-ellipsis">{target.fileName}</Text>
+        )}
 
         {!status && !result && (
           <Text size="2" color="gray">Checking the repository…</Text>

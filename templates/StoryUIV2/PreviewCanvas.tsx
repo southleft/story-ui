@@ -23,6 +23,8 @@ import { DiffView } from './DiffView';
 import { CursorIcon, MaximizeIcon, MinimizeIcon } from './icons';
 import type { LiveCode } from './useGeneration';
 import type { LineDiff } from './lineDiff';
+import { useFrameRenderStatus } from './useFrameRenderStatus';
+import { DEFAULT_REASON } from './renderFailure';
 
 /** What the stage shows in place of the frame, when anything. */
 export type CanvasView = 'preview' | 'code' | 'changes';
@@ -70,6 +72,21 @@ interface PreviewCanvasProps {
   /** When set, the canvas shows this instead of any story. */
   failure?: PreviewFailure | null;
   /**
+   * The last completion's verdict on the story in the frame: it did not
+   * render, and this is why. The canvas also watches the frame itself (a
+   * story that fails before verification runs, or where verification could
+   * not run at all), and the frame's own outcome wins in both directions —
+   * a document that is actually showing the story is never hidden.
+   */
+  renderFailure?: { reason: string | null } | null;
+  /** Re-send the last request. Absent when there is nothing to re-send. */
+  onRetryRender?: () => void;
+  /**
+   * The open story was deleted from another tab. Shown instead of
+   * Storybook's own "Couldn't find story" page, with the way out.
+   */
+  deleted?: { title: string; onHome: () => void } | null;
+  /**
    * The preview column fills the workspace. Owned by the workspace, which
    * owns the grid the rail sits in; the canvas only draws the toggle.
    */
@@ -114,6 +131,9 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
   liveCode = null,
   diff = null,
   failure = null,
+  renderFailure = null,
+  onRetryRender,
+  deleted = null,
   fullscreen = false,
   onToggleFullscreen,
   inspector = null,
@@ -122,6 +142,8 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
   const [view, setView] = useState<CanvasView>('preview');
   const frameRef = useRef<HTMLIFrameElement>(null);
   const lastSrc = useRef<string | null>(null);
+  /** "Show anyway": the raw error page, for the person who wants the stack. */
+  const [revealed, setRevealed] = useState(false);
 
   useImperativeHandle(ref, () => ({
     targetBySelector(selector: string) {
@@ -160,6 +182,18 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
     }
     lastSrc.current = src;
   }, [src, reloadToken]);
+
+  /**
+   * Whether the story in the frame actually rendered. Storybook draws its
+   * own red error page inside the iframe for a module that will not load
+   * and for a story that throws; the canvas used to present that page as
+   * the result. Watched from here because the frame is same-origin.
+   */
+  const live = useFrameRenderStatus(frameRef, { active: !!src, storyId, reloadToken });
+
+  // A new document — another story, a reload — is not the one the user
+  // asked to see anyway.
+  useEffect(() => { setRevealed(false); }, [src, reloadToken]);
 
   /**
    * Click-to-select, attached directly to the preview document.
@@ -220,6 +254,45 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
     return () => window.removeEventListener('keydown', onKey, true);
   }, [picking]);
 
+  /**
+   * Escape closes the inspector from INSIDE the preview too.
+   *
+   * A pick ends with the click inside the iframe, so that is where keyboard
+   * focus is when the user reaches for Esc — and a key pressed in the
+   * preview document never reaches the workspace's window. Same-origin, so
+   * the listener goes on the document itself, re-attached per navigation.
+   * Clearing the selection is what closes the inspector.
+   */
+  useEffect(() => {
+    if (!hasSelection || !onSelectElement) return;
+    const frame = frameRef.current;
+    if (!frame) return;
+    let detach: (() => void) | null = null;
+    const attach = () => {
+      detach?.();
+      detach = null;
+      try {
+        const doc = frame.contentDocument;
+        if (!doc) return;
+        const onKey = (e: KeyboardEvent) => {
+          if (e.key !== 'Escape' || e.defaultPrevented) return;
+          e.preventDefault();
+          onSelectElement(null);
+        };
+        doc.addEventListener('keydown', onKey);
+        detach = () => doc.removeEventListener('keydown', onKey);
+      } catch {
+        // Cross-origin: the workspace's own listener still covers the rail.
+      }
+    };
+    attach();
+    frame.addEventListener('load', attach);
+    return () => {
+      frame.removeEventListener('load', attach);
+      detach?.();
+    };
+  }, [hasSelection, onSelectElement]);
+
   // A rebuild replaces the document; leaving the picker armed across it would
   // attach to a document that no longer exists.
   useEffect(() => { if (busy) setPicking(false); }, [busy]);
@@ -249,12 +322,27 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
   // file replacing a working composition is the wrong trade. Once the story
   // is indexed `src` appears and the stage returns to the frame by itself;
   // the user can toggle Code to keep reading.
-  const overlay: 'failure' | 'code' | 'changes' | 'writing' | null =
+  //
+  // `render-failed` is the story that is on disk and indexed but does not
+  // render: the frame's own verdict, or the completion's when the frame has
+  // not contradicted it by rendering. Behind Code and Changes, which the
+  // user chose, and cleared by "Show anyway".
+  const renderFailed =
+    !!src && !revealed && (
+      live.status === 'failed' ||
+      (renderFailure != null && live.status !== 'ok')
+    );
+  const renderFailedReason =
+    live.status === 'failed' && live.reason ? live.reason : (renderFailure?.reason || DEFAULT_REASON);
+
+  const overlay: 'failure' | 'deleted' | 'code' | 'changes' | 'render-failed' | 'writing' | null =
     failure ? 'failure'
+      : deleted ? 'deleted'
       : view === 'code' ? 'code'
         : view === 'changes' && diff ? 'changes'
-          : writing && !src ? 'writing'
-            : null;
+          : renderFailed ? 'render-failed'
+            : writing && !src ? 'writing'
+              : null;
   const frameHidden = overlay !== null;
   /** What the Code view shows: the stream while it runs, the file otherwise. */
   const shownCode = writing ? liveCode!.text : code;
@@ -279,7 +367,7 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
           size="1"
           value={segment}
           onValueChange={v => setView(v as CanvasView)}
-          disabled={overlay === 'writing' || overlay === 'failure'}
+          disabled={overlay === 'writing' || overlay === 'failure' || overlay === 'deleted'}
           aria-label="Canvas view"
         >
           <SegmentedControl.Item value="preview">Preview</SegmentedControl.Item>
@@ -378,10 +466,47 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
               </Button>
             </Flex>
           </Callout.Root>
+        ) : overlay === 'deleted' && deleted ? (
+          // Deleted in another tab. The cached list opened it anyway, and
+          // Storybook's "Couldn't find story" page was the only clue.
+          <Flex direction="column" align="center" gap="3" className="suiw-render-failed" role="status">
+            <Flex direction="column" align="center" gap="1">
+              <Text size="3" weight="medium">This story was deleted</Text>
+              <Text as="div" size="1" color="gray" align="center">
+                {deleted.title ? `"${deleted.title}" was removed from this project in another tab.` : 'It was removed from this project in another tab.'}
+              </Text>
+            </Flex>
+            <Button size="1" variant="soft" color="gray" onClick={deleted.onHome}>
+              Back to Home
+            </Button>
+          </Flex>
         ) : overlay === 'code' ? (
           <CodeView code={shownCode} fileName={codeFileName} loading={codeLoading && !writing} streaming={streaming} />
         ) : overlay === 'changes' && diff ? (
           <DiffView diff={diff} code={code} fileName={codeFileName} />
+        ) : overlay === 'render-failed' ? (
+          // The story is on disk and Storybook indexed it, and it does not
+          // render. Storybook's red error page used to be shown here as if
+          // it were the result; the reason is one line, and the page itself
+          // is one click away for whoever wants the stack.
+          <Flex direction="column" align="center" gap="3" className="suiw-render-failed" role="status" aria-live="polite">
+            <Flex direction="column" align="center" gap="1">
+              <Text size="3" weight="medium">This story does not render</Text>
+              <Text as="div" size="1" color="gray" align="center" className="suiw-render-failed-reason">
+                {renderFailedReason}
+              </Text>
+            </Flex>
+            <Flex gap="3" align="center">
+              {onRetryRender && (
+                <Button size="1" variant="soft" onClick={onRetryRender} disabled={busy}>
+                  Retry
+                </Button>
+              )}
+              <Button size="1" variant="ghost" color="gray" onClick={() => setRevealed(true)}>
+                Show anyway
+              </Button>
+            </Flex>
+          </Flex>
         ) : overlay === 'writing' ? (
           // The story, arriving. Replaces the "Building" placeholder from the
           // first code delta; the frame takes over the moment the story is

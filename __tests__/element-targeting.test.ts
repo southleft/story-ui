@@ -74,6 +74,43 @@ const COLLEGE_TOWN_REGISTER: ChainEntry[] = [
 ];
 
 describe('orderSourceCandidates', () => {
+  it('offers the dotted source spelling of a compound before the fiber name', () => {
+    // A click on a portalled Mantine Menu.Item. The fiber is `MenuItem`,
+    // which the file never contains — it writes `<Menu.Item>` — so the
+    // server fell through to the first name that DID appear, the story's
+    // own `<Box>`, and offered hiddenFrom/visibleFrom as a menu item's
+    // props. The ancestor `Menu` is on the same path; `Menu.Item` is
+    // offered first and the file can match it.
+    const ordered = orderSourceCandidates([
+      { name: 'Box', owner: 'UnstyledButton', hostDepth: 1 },
+      { name: 'UnstyledButton', owner: 'MenuItem', hostDepth: 1 },
+      { name: 'MenuItem', owner: 'SettingsPage', hostDepth: 1 },
+      { name: 'MenuDropdown', owner: 'SettingsPage', hostDepth: 3 },
+      { name: 'Menu', owner: 'SettingsPage', hostDepth: 5 },
+      { name: 'SettingsPage', owner: 'unboundStoryFn', hostDepth: 6 },
+    ]);
+    expect(ordered.slice(0, 2)).toEqual(['MenuItem', 'Menu.Item']);
+    expect(ordered.indexOf('Menu.Item')).toBeLessThan(ordered.indexOf('Box'));
+    expect(ordered.indexOf('Menu.Dropdown')).toBe(ordered.indexOf('MenuDropdown') + 1);
+    // The plain names are all still there, in their sorted order.
+    expect(ordered.filter(n => n.indexOf('.') === -1))
+      .toEqual(['MenuItem', 'UnstyledButton', 'Box', 'MenuDropdown', 'Menu', 'SettingsPage']);
+  });
+
+  it('does not invent a compound where no ancestor names the prefix', () => {
+    // `CardFooter` with no `Card` on the path — a local component, not a
+    // namespace member — stays as written.
+    expect(orderSourceCandidates([
+      { name: 'CardFooter', owner: 'Page', hostDepth: 1 },
+      { name: 'Page', owner: 'unboundStoryFn', hostDepth: 2 },
+    ])).toEqual(['CardFooter', 'Page']);
+    // A lowercase remainder is a different word, not a member.
+    expect(orderSourceCandidates([
+      { name: 'Menubar', owner: 'Page', hostDepth: 1 },
+      { name: 'Menu', owner: 'Page', hostDepth: 2 },
+    ])).toEqual(['Menubar', 'Menu']);
+  });
+
   it('sinks each library internal below the component that owns it', () => {
     // The server resolves the FIRST candidate that appears in the file.
     // Innermost-first sent [Box, UnstyledButton, Button], so any story that
@@ -196,9 +233,14 @@ describe('orderSourceCandidates', () => {
     // Button, CardFooter and Card are all authored by the page (their shared
     // owner composes several entries), so nothing reorders and the clicked
     // Button stays first.
-    expect(orderSourceCandidates(COLLEGE_TOWN_REGISTER)).toEqual(
+    // `Card.Footer` rides behind `CardFooter` as a hypothesis the file will
+    // reject (shadcn exports CardFooter on its own); the fiber names keep
+    // their order and the clicked Button stays first.
+    const ordered = orderSourceCandidates(COLLEGE_TOWN_REGISTER);
+    expect(ordered.filter(n => n.indexOf('.') === -1)).toEqual(
       ['Button', 'CardFooter', 'Card', 'CampusEventsPage', 'hookified'],
     );
+    expect(ordered.indexOf('Card.Footer')).toBe(ordered.indexOf('CardFooter') + 1);
   });
 
   it('terminates on an ownership cycle', () => {

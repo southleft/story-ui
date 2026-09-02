@@ -74,10 +74,29 @@
   flex-direction: column;
 }
 
-/* Below this the panes stop being usable side by side. */
+/*
+ * Narrow viewports. The old rule stacked the rail OVER the canvas below
+ * 1100px with the rail capped at 45% — at 1024×700 the thread had ~58px,
+ * at 800×600 ~24px, with a dead band between the two. Two columns hold
+ * down to 900px as long as the rail keeps a readable minimum; below that
+ * it is one pane at a time: the rail is the workspace at full height, and
+ * the canvas takes the body when the preview is asked for (fullscreen —
+ * the header's Preview button, the canvas's own toggle to come back).
+ */
 @media (max-width: 1100px) {
+  .suiw-body { grid-template-columns: minmax(320px, 38%) 1fr; }
+}
+
+@media (max-width: 900px) {
   .suiw-body { grid-template-columns: 1fr; }
-  .suiw-rail { border-right: 0; border-bottom: 1px solid var(--gray-a5); max-height: 45%; }
+  .suiw-rail { border-right: 0; }
+  .suiw-body:not(.suiw-body--fullscreen) > .suiw-canvas { display: none; }
+}
+
+/* The header's way to the preview, only where the canvas is not on screen. */
+.suiw-narrow-only { display: none; }
+@media (max-width: 900px) {
+  .suiw-narrow-only { display: inline-flex; }
 }
 
 .suiw-scroll {
@@ -633,9 +652,24 @@
   padding-top: var(--space-2);
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 900px) {
   .suiw-body--fullscreen { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
   .suiw-rail--collapsed { max-height: none; flex-direction: row; padding: var(--space-1) var(--space-2); }
+}
+
+/* Below 1100px a 300px inspector column left a 1024px canvas ~380px wide.
+   It overlays the stage instead, right-aligned, closable with its × or Esc. */
+@media (max-width: 1100px) {
+  .suiw-canvas-body { position: relative; }
+  .suiw-inspector {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(320px, 100%);
+    z-index: 3;
+    box-shadow: -8px 0 24px -12px var(--black-a8);
+  }
 }
 
 .suiw-inline-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; padding: 0 4px; border-radius: 3px; background: var(--gray-a3); color: var(--gray-12); }
@@ -923,4 +957,39 @@
   clip-path: inset(50%);
   pointer-events: none;
   white-space: nowrap;
+}
+
+/* ---- a story that does not render ---------------------------------------- */
+
+/* The stage's calm replacement for Storybook's error page. Centred by the
+   stage's base rule; the reason is one line of evidence, wrapped rather than
+   clipped so a long module path is still readable. */
+.suiw-render-failed {
+  max-width: min(520px, 100%);
+}
+
+.suiw-render-failed-reason {
+  font-family: var(--code-font-family);
+  overflow-wrap: anywhere;
+}
+
+/* A Home card whose story does not render: a neutral hatch where the
+   thumbnail would be, and a small red label. The frame, when mounted, stays
+   underneath so a repair from elsewhere clears the mark on its own. */
+.suiw-thumb--failed iframe {
+  visibility: hidden;
+}
+
+.suiw-thumb-failed {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background:
+    repeating-linear-gradient(
+      135deg,
+      transparent 0 10px,
+      var(--gray-a3) 10px 11px
+    ),
+    var(--gray-2);
 }

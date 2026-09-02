@@ -25,6 +25,7 @@ import {
   type PendingGeneration,
   type Verification,
 } from './useGeneration';
+import { RENDER_FAILED_ID } from './renderFailure';
 
 export interface ManifestMessage {
   role: 'user' | 'ai';
@@ -47,6 +48,8 @@ export interface CompletionVerification {
   reason?: string;
   /** Number of blocker-severity findings — what the "issues" badge counts. */
   blockers?: number;
+  /** Number of warning-severity findings, named on a "Verified" badge. */
+  warnings?: number;
   /** The census's focusable-element count, shown beside the badge. */
   focusables?: number;
   /** How many of the verification layers actually ran, when the server says. */
@@ -86,6 +89,12 @@ export interface VerificationSummary {
   outcome: Verification['outcome'];
   reason?: string;
   blockers: number;
+  /**
+   * Warning-severity findings. A "Verified · 6/6 checks" badge sitting
+   * directly above "Show 3 issues" read as a contradiction; the warnings
+   * are part of the verdict and the badge names them.
+   */
+  warnings?: number;
   focusables?: number;
   /**
    * Checks that ran, out of the checks the stack has. "Verified" after three
@@ -97,6 +106,14 @@ export interface VerificationSummary {
   checksTotal?: number;
   /** Which layers did not run, so a 5/6 badge can name the sixth. */
   checksNotRun?: string[];
+  /**
+   * The story never put anything on the page: the `render-failed` blocker.
+   * The badge then reads "Does not render", not "1 issue found" — a story
+   * that cannot be loaded is not a story with an issue in it. Live turns
+   * read it off the findings; a restored turn reads it off the client-side
+   * record (the manifest keeps counts, not finding ids).
+   */
+  renderFailed?: boolean;
 }
 
 const asNames = (v: unknown): string[] | undefined =>
@@ -112,10 +129,12 @@ export function summarizeVerification(v: Verification | undefined | null): Verif
     outcome: v.outcome,
     reason: v.reason,
     blockers: (v.findings ?? []).filter(f => f.severity === 'blocker').length,
+    warnings: (v.findings ?? []).filter(f => f.severity === 'warning').length,
     focusables: asCount(v.metrics?.focusables),
     checksRun: asCount(v.metrics?.checksRun),
     checksTotal: asCount(v.metrics?.checksTotal),
     checksNotRun: asNames(v.metrics?.checksNotRun),
+    ...((v.findings ?? []).some(f => f.id === RENDER_FAILED_ID) ? { renderFailed: true } : {}),
   };
 }
 
@@ -148,6 +167,7 @@ export function verificationFromCompletion(
     outcome: v.outcome,
     reason: typeof v.reason === 'string' ? v.reason : undefined,
     blockers: typeof v.blockers === 'number' ? v.blockers : 0,
+    warnings: asCount(v.warnings),
     focusables: asCount(v.focusables),
     checksRun: asCount(v.checksRun),
     checksTotal: asCount(v.checksTotal),
@@ -335,7 +355,17 @@ export async function deleteStory(apiBase: string, fileName: string): Promise<vo
   }
 }
 
-export function useSessions(apiBase: string) {
+/** How often Recent work re-reads the manifest while the tab is visible. */
+export const SESSIONS_POLL_MS = 10_000;
+
+/**
+ * @param paused A ref the caller keeps current: true while a generation is
+ *   in flight here, when the list is about to change anyway and a refresh
+ *   mid-run would reorder the switcher under the user. A ref rather than a
+ *   value because the caller's `busy` is created by a hook called after
+ *   this one.
+ */
+export function useSessions(apiBase: string, paused?: { current: boolean }) {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loaded, setLoaded] = useState(false);
 
@@ -373,6 +403,35 @@ export function useSessions(apiBase: string) {
   }, [apiBase]);
 
   useEffect(() => { reload(); }, [reload]);
+
+  /**
+   * Keep the list current without a reload of the page.
+   *
+   * It refreshed on mount and after this tab's own actions, and never
+   * otherwise: a story generated or deleted in another tab stayed unknown
+   * here until the next generation. Every SESSIONS_POLL_MS while the
+   * document is visible, and again when the window regains focus or the
+   * tab becomes visible — a poll that fires on a background tab is work
+   * nobody sees.
+   */
+  useEffect(() => {
+    if (typeof document === 'undefined' || typeof window === 'undefined') return;
+    const visible = () => document.visibilityState !== 'hidden';
+    const tick = () => {
+      if (!visible() || paused?.current) return;
+      void reload();
+    };
+    const timer = window.setInterval(tick, SESSIONS_POLL_MS);
+    const onFocus = () => { if (!paused?.current) void reload(); };
+    const onVisibility = () => { if (visible() && !paused?.current) void reload(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [reload, paused]);
 
   /** Look a session up by the file the story lives in. */
   const byFileName = useCallback(
