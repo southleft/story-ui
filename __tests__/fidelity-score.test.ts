@@ -268,3 +268,13 @@ describe('scoreStep', () => {
     expect(s.checks.pins.serverLost).toHaveLength(1);
   });
 });
+
+describe('generics are not JSX', () => {
+  it('does not count a type argument as an unknown element', async () => {
+    const { componentAdherence } = await import('../bench/fidelity/score.mjs');
+    const code = `import { Card } from '@mantine/core';\ntype Billing = 'monthly' | 'yearly';\nexport const S = () => { const [b, setB] = useState<Billing>('monthly'); const m: Record<Billing, number> = { monthly: 1, yearly: 2 }; return <Card>{b}</Card>; };`;
+    const r = componentAdherence(code, { importPath: '@mantine/core' });
+    expect(r.unknownTags).toEqual([]);
+    expect(r.designSystemTags).toContain('Card');
+  });
+});

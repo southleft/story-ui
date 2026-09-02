@@ -64,9 +64,11 @@ export function parseImports(code) {
  */
 export function jsxTags(code) {
   const tags = [];
-  const re = /<([A-Z][\w$]*(?:\.[A-Za-z_$][\w$]*)*)(?=[\s/>])/g;
+  // A `<` preceded by an identifier character is a TypeScript generic
+  // (`useState<Billing>`, `Record<Role, string>`), not an element.
+  const re = /(^|[^\w$.])<([A-Z][\w$]*(?:\.[A-Za-z_$][\w$]*)*)(?=[\s/>])/g;
   for (const m of code.matchAll(re)) {
-    tags.push({ full: m[1], root: m[1].split('.')[0] });
+    tags.push({ full: m[2], root: m[2].split('.')[0] });
   }
   return tags;
 }
@@ -74,7 +76,9 @@ export function jsxTags(code) {
 /** Component-shaped names the file declares itself. */
 export function localDeclarations(code) {
   const names = new Set();
-  const re = /\b(?:function|const|let|var|class)\s+([A-Z][\w$]*)/g;
+  // Types count too: `type Billing = …` used as `<Billing>` in a generic is
+  // a declaration this file makes, not a component it forgot to import.
+  const re = /\b(?:function|const|let|var|class|type|interface|enum)\s+([A-Z][\w$]*)/g;
   for (const m of code.matchAll(re)) names.add(m[1]);
   return names;
 }
@@ -157,12 +161,16 @@ export function componentAdherence(code, { importPath }) {
  * `mustUseAnyOf` is a list of groups; each group is satisfied by any one of
  * its names. A flat list of strings is treated as a single group. A name
  * counts as used when it appears as a JSX root — `Tabs` is satisfied by
- * `<Tabs.Panel>` — AND is imported from the design system, so a locally
- * declared `Card` does not satisfy a requirement to use the library's.
+ * `<Tabs.Panel>` — AND is imported from the design system or from a
+ * project-local module, so a `Card` declared inside the story file does not
+ * satisfy a requirement to use the library's.
  */
 export function componentRequirements(code, { importPath, mustUse = [], mustUseAnyOf = [], mustNot = [] }) {
   const adherence = componentAdherence(code, { importPath });
-  const ds = new Set(adherence.designSystemTags);
+  // A project's own components are its design system too: the house Pillbox
+  // satisfies a "badge" requirement as well as Mantine's Badge does. Only a
+  // component declared inside the story file itself does not count.
+  const ds = new Set([...adherence.designSystemTags, ...adherence.localTags]);
   const roots = new Set(jsxTags(code).map(t => t.root));
 
   const missingMustUse = mustUse.filter(n => !ds.has(n));
