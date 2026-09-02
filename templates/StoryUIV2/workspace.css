@@ -392,8 +392,93 @@
   user-select: none;
 }
 
+/* ---- changes (diff) view ------------------------------------------------ */
+
+/* Same footprint as the code view: sits over the stage, frame kept mounted
+   underneath. Red is the workspace's tone for a blocker and green for a pass,
+   so removed and added lines borrow them — and both scales flip with the
+   appearance, which hand-picked hex values would not. */
+.suiw-diff {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-panel-solid);
+  color: var(--gray-12);
+}
+
+.suiw-diff-summary {
+  font-variant-numeric: tabular-nums;
+}
+
+.suiw-diff-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-3) 0;
+  font-family: var(--code-font-family);
+  font-size: var(--font-size-1);
+  line-height: 1.6;
+  tab-size: 2;
+  scrollbar-width: thin;
+  scrollbar-color: var(--gray-a6) transparent;
+}
+
+.suiw-diff-hunk {
+  padding: var(--space-1) var(--space-4);
+  margin-top: var(--space-3);
+  color: var(--accent-11);
+  background: var(--accent-a2);
+  white-space: pre;
+}
+
+.suiw-diff-hunk:first-child {
+  margin-top: 0;
+}
+
+/* Two gutters (old and new line numbers), a sign, then the line. Grid rather
+   than inline spans so long lines scroll inside the body without breaking
+   the gutter alignment. */
+.suiw-diff-line {
+  display: grid;
+  grid-template-columns: 3.5ch 3.5ch 1.5ch minmax(0, max-content);
+  column-gap: var(--space-2);
+  padding: 0 var(--space-4);
+  white-space: pre;
+  min-width: max-content;
+}
+
+.suiw-diff-line--context {
+  color: var(--gray-11);
+}
+
+.suiw-diff-line--add {
+  background: var(--green-a3);
+  color: var(--green-12);
+}
+
+.suiw-diff-line--del {
+  background: var(--red-a3);
+  color: var(--red-12);
+}
+
+.suiw-diff-no {
+  text-align: right;
+  color: var(--gray-a9);
+  user-select: none;
+}
+
+.suiw-diff-sign {
+  user-select: none;
+  text-align: center;
+}
+
+.suiw-diff-line--add .suiw-diff-sign { color: var(--green-11); }
+.suiw-diff-line--del .suiw-diff-sign { color: var(--red-11); }
+
 /* The stage becomes the positioning context for the overlays (code view,
-   failure callout) that replace the frame without unmounting it. */
+   changes view, failure callout) that replace the frame without unmounting
+   it. */
 .suiw-stage {
   position: relative;
 }

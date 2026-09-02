@@ -78,6 +78,7 @@ import {
   previousVersion,
   type StoryVersionSummary,
 } from './VersionHistory';
+import { diffForUpdate, describeDiff, type LineDiff } from './lineDiff';
 
 /**
  * The model writes component names in backticks. Render those as code
@@ -141,6 +142,12 @@ interface Turn {
   failed?: boolean;
   /** How many reference images the request behind this reply carried. */
   imageCount?: number;
+  /**
+   * What this update changed, live turns only: the previous code was in
+   * hand when the run started. A restored turn has no "before", so no diff
+   * — and no line claiming one.
+   */
+  diff?: LineDiff;
   storyId?: string;
   fileName?: string;
   title?: string;
@@ -382,6 +389,18 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
    */
   const [code, setCode] = useState<string | null>(null);
   const [codeLoading, setCodeLoading] = useState(false);
+  /**
+   * The diff the canvas's Changes view shows: the last update's by default,
+   * or whichever turn's "Show changes" was clicked. Null when there is
+   * nothing to compare — the toggle is absent then.
+   */
+  const [changes, setChanges] = useState<LineDiff | null>(null);
+  /**
+   * The file name the server chose for a story being written for the first
+   * time, known from preview_ready — before that, and before `activeFile`
+   * adopts it on success, the code view has no other name to show.
+   */
+  const [writingFileName, setWritingFileName] = useState<string | null>(null);
   /** A generation that ended without a working story, until the next send. */
   const [failure, setFailure] = useState<PreviewFailure | null>(null);
   /** The last request sent, so Retry after a transport error resends it. */
@@ -418,7 +437,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const threadRef = useRef<HTMLDivElement>(null);
-  const { generate, cancel, steps, busy, error, errorInfo, notice, liveText } = useGeneration(apiBase);
+  const { generate, cancel, steps, busy, error, errorInfo, notice, liveText, liveCode } = useGeneration(apiBase);
 
   /**
    * Fullscreen: the preview column fills the workspace and the rail folds to
@@ -608,6 +627,9 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     setResolvedName(null);
     setFindingNotes({});
     setReloadToken(t => t + 1);
+    // No "before" for a restored story, so nothing to show as changes.
+    setChanges(null);
+    setWritingFileName(null);
     // The persisted code is a fine first frame; the file is authoritative.
     setCode(completion?.code ?? null);
     void loadCode(session.fileName);
@@ -837,9 +859,13 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     setFailure(null);
     setFindingNotes({});
     setRetryRequest({ prompt, images: sentImages, selection: sentSelection });
+    // The previous update's diff describes a version this run is about to
+    // replace; the turn that owns it keeps its own copy.
+    setChanges(null);
+    setWritingFileName(null);
     // What the canvas showed before this send, restored if the send fails —
     // a fallback error story must never replace the composition the user
-    // was iterating on.
+    // was iterating on. `code` doubles as the "before" of this update's diff.
     const before = { story: activeStory, code };
     // Shown on the turn so the transcript records what the instruction was
     // pointed at — six months later "make it bigger" means nothing on its own.
@@ -889,6 +915,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       knownUpdatedAt: activeFile ? byFileName(activeFile.fileName)?.entry.updatedAt : undefined,
     }, async (preview) => {
       if (preview.code) setCode(preview.code);
+      if (preview.fileName) setWritingFileName(preview.fileName);
       if (!preview.storybookId) return;
       const resolved = await waitForStory(preview.storybookId, preview.title);
       if (!resolved) return;
@@ -948,6 +975,18 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
 
     if (result.code) setCode(result.code);
 
+    /**
+     * What this update did, when it WAS an update of the story in hand: the
+     * previous code was on screen when the send started, and the server
+     * wrote back to the same file. A run that produced a different file (the
+     * user asked for something new) has nothing to compare against, and a
+     * restored story with no readable source has no "before".
+     */
+    const diff = activeFile && result.fileName === activeFile.fileName && result.code
+      ? diffForUpdate(before.code, result.code, result.edits)
+      : null;
+    if (diff) setChanges(diff);
+
     // The file is written before Storybook has indexed it, so resolve the real
     // story id before pointing the canvas at it.
     let storyId = result.storybookId;
@@ -1005,6 +1044,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
         suggestions: result.suggestions,
         verification: summarizeVerification(result.verification),
         findings: result.verification?.findings?.length ? result.verification.findings : undefined,
+        diff: diff ?? undefined,
         storyId,
         fileName: result.fileName,
         title: result.title,
@@ -1096,6 +1136,8 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
       text: `Restored version ${v.ordinal}: "${v.prompt}".`,
       fileName: activeFile?.fileName, title: activeFile?.title,
     }]);
+    // The last update's diff no longer describes what is on disk.
+    setChanges(null);
     if (activeFile) void loadCode(activeFile.fileName);
     reloadSessions();
   }, [activeFile, loadCode, reloadSessions]);
@@ -1159,6 +1201,8 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
     setInput('');
     committedInputRef.current = '';
     setCode(null);
+    setChanges(null);
+    setWritingFileName(null);
     setFailure(null);
     setFindingNotes({});
     reloadSessions();
@@ -1886,6 +1930,28 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                       <Text as="div" size="1" className="suiw-turn-notice">{turn.notice}</Text>
                     )}
 
+                    {/* What the update did, in lines — and the way to see
+                        them. Opens the canvas's Changes view on THIS turn's
+                        diff, so an older update can still be inspected after
+                        a newer one replaced it in the toolbar. */}
+                    {turn.role === 'assistant' && turn.diff && (
+                      <Flex align="center" gap="2" className="suiw-turn-diff">
+                        <Text size="1" color="gray">{describeDiff(turn.diff)}</Text>
+                        <Text size="1" color="gray" aria-hidden>·</Text>
+                        <Button
+                          size="1"
+                          variant="ghost"
+                          color="gray"
+                          onClick={() => {
+                            setChanges(turn.diff!);
+                            canvasRef.current?.showChanges();
+                          }}
+                        >
+                          Show changes
+                        </Button>
+                      </Flex>
+                    )}
+
                     {turn.verification && (
                       <Flex direction="column" gap="1" className="suiw-verify">
                         <Flex align="center" gap="2">
@@ -2127,8 +2193,10 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
             notIndexed={notIndexed}
             onRecheck={recheckIndex}
             code={code}
-            codeFileName={activeFile?.fileName}
+            codeFileName={activeFile?.fileName ?? writingFileName ?? undefined}
             codeLoading={codeLoading}
+            liveCode={liveCode}
+            diff={changes}
             failure={failure}
             onOpenInStorybook={() => activeStory && openInStorybook(activeStory.id)}
             canHandoff={!!handoffCandidate}

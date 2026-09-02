@@ -134,6 +134,60 @@ export interface LiveText {
 }
 
 /**
+ * The story file as the model writes it.
+ *
+ * `llm_text` events with `phase: 'code'` carry the file in deltas (~every
+ * 150 ms) and an EMPTY `accumulated`, deliberately — the code is the bulk of
+ * every run and resending the whole of it per frame would swamp the stream.
+ * So this buffer is the only copy the client has until `preview_ready` or
+ * `completion` hands over the authoritative text, which replaces it: what
+ * the pipeline wrote to disk can differ from what the model streamed
+ * (import repair, title fixes), and the file is what counts.
+ *
+ * `streaming` is true from the first code delta until the phase ends — the
+ * next non-code prose event, or the file landing. Null before the first
+ * delta of a run, and cleared when the next run starts.
+ */
+export interface LiveCode {
+  text: string;
+  streaming: boolean;
+}
+
+/**
+ * The code-buffer reducer, pure so it can be tested without React. Fed
+ * EVERY stream event; it only reacts to the ones that touch the code.
+ */
+export function applyLiveCode(
+  prev: LiveCode | null,
+  event: { type?: unknown; data?: { phase?: unknown; delta?: unknown; accumulated?: unknown; code?: unknown } | null },
+): LiveCode | null {
+  const data = event.data ?? {};
+  switch (event.type) {
+    case 'llm_text': {
+      if (data.phase !== 'code') {
+        // Prose after code (the summary) means the file is finished.
+        return prev?.streaming ? { ...prev, streaming: false } : prev;
+      }
+      const delta = typeof data.delta === 'string' ? data.delta : '';
+      const accumulated = typeof data.accumulated === 'string' ? data.accumulated : '';
+      let text = (prev?.text ?? '') + delta;
+      // The contract sends none, but a server that does is trusted on the
+      // same terms as the prose phases: at least as long as ours, or stale.
+      if (accumulated && accumulated.length >= text.length) text = accumulated;
+      return { text, streaming: true };
+    }
+    case 'preview_ready':
+    case 'completion': {
+      const code = typeof data.code === 'string' && data.code ? data.code : null;
+      if (code !== null) return { text: code, streaming: false };
+      return prev?.streaming ? { ...prev, streaming: false } : prev;
+    }
+    default:
+      return prev;
+  }
+}
+
+/**
  * The live-text reducer, pure so it can be tested without React.
  *
  * Deltas are appended; a phase change starts a fresh buffer (so the first
@@ -145,11 +199,16 @@ export interface LiveText {
  * is a capped sliding tail (up to ~2000 chars) and REPLACES the text on
  * every event, shorter or not. The two are only ever compared, never both
  * shown.
+ *
+ * `code` events belong to `applyLiveCode` and leave this buffer untouched:
+ * before that phase existed an unknown phase fell through to `plan`, which
+ * would have appended the whole story file to the plan bubble.
  */
 export function applyLiveText(
   prev: LiveText | null,
   data: { delta?: unknown; accumulated?: unknown; phase?: unknown },
 ): LiveText | null {
+  if (data.phase === 'code') return prev;
   const phase: LiveTextPhase =
     data.phase === 'summary' ? 'summary' : data.phase === 'thinking' ? 'thinking' : 'plan';
   const delta = typeof data.delta === 'string' ? data.delta : '';
@@ -226,6 +285,11 @@ export interface GenerationResult {
   pins?: { applied: string[]; kept: string[]; lost: string[] };
   /** What the model said it would build, streamed before the code. */
   planText?: string;
+  /**
+   * For an update answered with edit blocks: exactly what the model searched
+   * for and replaced. The Changes view prefers these to a computed diff.
+   */
+  edits?: Array<{ search: string; replace: string }>;
 }
 
 /** The error the run ended on, with whatever the server said to do about it. */
@@ -412,6 +476,8 @@ export function useGeneration(apiBase: string) {
   const [notice, setNotice] = useState<string | null>(null);
   /** The model's streamed narration for the run in flight; null between runs. */
   const [liveText, setLiveText] = useState<LiveText | null>(null);
+  /** The story file as it streams, for the run in flight; null until the first code delta. */
+  const [liveCode, setLiveCode] = useState<LiveCode | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const startedRef = useRef(0);
   /** Server-side id for the in-flight generation, so Stop can cancel it. */
@@ -423,6 +489,7 @@ export function useGeneration(apiBase: string) {
     setErrorInfo(null);
     setNotice(null);
     setLiveText(null);
+    setLiveCode(null);
   }, []);
 
   const pushStep = useCallback((id: string, label: string, detail?: string, state?: StepState) => {
@@ -503,6 +570,7 @@ export function useGeneration(apiBase: string) {
        * it back through a closure would see whatever render last committed.
        */
       let live: LiveText | null = null;
+      let code: LiveCode | null = null;
       let planText = '';
       let failureInfo: Omit<ErrorInfo, 'message'> = { network: false };
       /** True only for a rejection that means the server never started work. */
@@ -549,6 +617,14 @@ export function useGeneration(apiBase: string) {
             }
             const data = event.data ?? {};
 
+            // The code buffer watches every event: code deltas fill it, the
+            // next prose event closes it, and the file's arrival replaces it.
+            const nextCode = applyLiveCode(code, event);
+            if (nextCode !== code) {
+              code = nextCode;
+              setLiveCode(code);
+            }
+
             switch (event.type) {
               case 'progress': {
                 const label = PHASE_LABEL[data.phase] || data.message || 'Working';
@@ -572,6 +648,7 @@ export function useGeneration(apiBase: string) {
                 completion = data;
                 break;
               case 'llm_text':
+                if (data.phase === 'code') break; // handled by applyLiveCode above
                 live = applyLiveText(live, data);
                 // Only the plan is kept for the turn; thinking is never shown
                 // again once the plan replaces it.
@@ -607,6 +684,8 @@ export function useGeneration(apiBase: string) {
           finishSteps(false);
           setNotice('Stopped. The server was asked to stand down — if it had already finished, the story will appear in Recent work.');
           setBusy(false);
+          setLiveText(null);
+          setLiveCode(null);
           try { sessionStorage.removeItem(PENDING_KEY); } catch { /* ignore */ }
           abortRef.current = null;
           return null;
@@ -635,8 +714,10 @@ export function useGeneration(apiBase: string) {
 
       finishSteps(!!completion);
       setBusy(false);
-      // The bubble's job is done; the plan lives on at the top of the turn.
+      // The bubble's job is done; the plan lives on at the top of the turn,
+      // and the code in the completion.
       setLiveText(null);
+      setLiveCode(null);
 
       if (failure && !completion) {
         setError(failure);
@@ -663,12 +744,18 @@ export function useGeneration(apiBase: string) {
         verification: completion.verification,
         elapsedMs: Date.now() - startedRef.current,
         planText: planText.trim() || undefined,
+        edits: Array.isArray(completion.edits) && completion.edits.length ? completion.edits : undefined,
       };
     },
     [apiBase, pushStep, finishSteps, reset],
   );
 
-  return { generate, cancel, steps, busy, error, errorInfo, notice, liveText, reset };
+  return {
+    generate, cancel, steps, busy, error, errorInfo, notice, liveText, reset,
+    liveCode,
+    /** True from the first code delta until the file is finished or on disk. */
+    codeStreaming: liveCode?.streaming ?? false,
+  };
 }
 
 /**

@@ -14,8 +14,14 @@ import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo
 import { Badge, Button, Callout, DropdownMenu, Flex, Text } from '@radix-ui/themes';
 import { attachElementPicker, describeElement, type ElementTarget } from './elementTargeting';
 import { CodeView } from './CodeView';
+import { DiffView } from './DiffView';
+import type { LiveCode } from './useGeneration';
+import type { LineDiff } from './lineDiff';
 
 export type Viewport = 'fit' | 'desktop' | 'tablet' | 'mobile';
+
+/** What the stage shows in place of the frame, when anything. */
+export type CanvasView = 'preview' | 'code' | 'changes';
 
 /**
  * `fit` uses the whole stage; the rest are real device widths.
@@ -70,6 +76,19 @@ interface PreviewCanvasProps {
   code?: string | null;
   codeFileName?: string;
   codeLoading?: boolean;
+  /**
+   * The story file as the model writes it, live-run only (null between runs
+   * and before the first code delta). With no preview on screen it IS the
+   * stage until the story is indexed; over a previous preview it is offered,
+   * not imposed — a toolbar count, and the Code toggle to watch.
+   */
+  liveCode?: LiveCode | null;
+  /**
+   * What the last update changed. Null when there is nothing to compare —
+   * a fresh story, or a session restored from the manifest — and then the
+   * Changes toggle is simply absent.
+   */
+  diff?: LineDiff | null;
   /** When set, the canvas shows this instead of any story. */
   failure?: PreviewFailure | null;
   /**
@@ -91,6 +110,8 @@ interface PreviewCanvasProps {
 export interface PreviewCanvasHandle {
   /** Null when nothing matches — the element is not on the page any more. */
   targetBySelector(selector: string): ElementTarget | null;
+  /** Open the Changes view — the "Show changes" line under an assistant turn. */
+  showChanges(): void;
 }
 
 export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>(function PreviewCanvas({
@@ -109,6 +130,8 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
   code = null,
   codeFileName,
   codeLoading = false,
+  liveCode = null,
+  diff = null,
   failure = null,
   fullscreen = false,
   onToggleFullscreen,
@@ -116,7 +139,7 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
   const [picking, setPicking] = useState(false);
   const [viewport, setViewport] = useState<Viewport>('fit');
   const [zoom, setZoom] = useState(1);
-  const [showCode, setShowCode] = useState(false);
+  const [view, setView] = useState<CanvasView>('preview');
   const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
   const stageRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -134,6 +157,9 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
         // An invalid selector, or a cross-origin preview. Neither is "found".
         return null;
       }
+    },
+    showChanges() {
+      setView('changes');
     },
   }), []);
 
@@ -255,17 +281,45 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
   useEffect(() => { if (busy) setPicking(false); }, [busy]);
 
   // Picking needs the frame on screen.
-  useEffect(() => { if (showCode) setPicking(false); }, [showCode]);
+  useEffect(() => { if (view !== 'preview') setPicking(false); }, [view]);
+
+  // The diff went away under the Changes view (New, another story opened,
+  // a version restored): back to the preview rather than an empty pane.
+  useEffect(() => { if (view === 'changes' && !diff) setView('preview'); }, [view, diff]);
 
   const cycleZoom = useCallback(() => {
     setZoom(z => (z >= 1 ? 0.5 : z >= 0.75 ? 1 : z + 0.25));
   }, []);
 
+  /**
+   * Code arriving from the model, for this run. `busy` gates it: the hook
+   * clears the buffer between runs, but the completion's code and the
+   * buffer's text are the same bytes by then anyway (see applyLiveCode).
+   */
+  const writing = busy && liveCode != null;
+  const streaming = writing && !!liveCode?.streaming;
+
   // The frame stays mounted under the code view so switching back is
   // instant — unmounting it would cold-boot Storybook and lose the iframe's
   // navigation state, which the reload effect above does not repeat.
-  const overlay: 'failure' | 'code' | null = failure ? 'failure' : showCode ? 'code' : null;
+  //
+  // `writing` is the stage only while there is NO preview to show: a story
+  // being written for the first time. When a previous version is on screen
+  // during an update, it stays — the user is iterating on it, and half a
+  // file replacing a working composition is the wrong trade. Once the story
+  // is indexed `src` appears and the stage returns to the frame by itself;
+  // the user can toggle Code to keep reading.
+  const overlay: 'failure' | 'code' | 'changes' | 'writing' | null =
+    failure ? 'failure'
+      : view === 'code' ? 'code'
+        : view === 'changes' && diff ? 'changes'
+          : writing && !src ? 'writing'
+            : null;
   const frameHidden = overlay !== null;
+  /** The viewport and zoom controls only mean something with a frame showing. */
+  const frameControlsHeld = overlay === 'code' || overlay === 'changes' || overlay === 'writing';
+  /** What the Code view shows: the stream while it runs, the file otherwise. */
+  const shownCode = writing ? liveCode!.text : code;
 
   return (
     <div className="suiw-canvas">
@@ -277,7 +331,7 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
             compact pickers (soft gray, size 1). */}
         <DropdownMenu.Root>
           <DropdownMenu.Trigger>
-            <Button size="1" variant="soft" color="gray" aria-label="Viewport" style={{ flexShrink: 0 }} disabled={showCode}>
+            <Button size="1" variant="soft" color="gray" aria-label="Viewport" style={{ flexShrink: 0 }} disabled={frameControlsHeld}>
               {VIEWPORTS[viewport].label}
               <DropdownMenu.TriggerIcon />
             </Button>
@@ -298,28 +352,63 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
           </DropdownMenu.Content>
         </DropdownMenu.Root>
 
-        <Button size="1" variant="ghost" color="gray" onClick={cycleZoom} title="Zoom" style={{ flexShrink: 0 }} disabled={showCode}>
+        <Button size="1" variant="ghost" color="gray" onClick={cycleZoom} title="Zoom" style={{ flexShrink: 0 }} disabled={frameControlsHeld}>
           {Math.round(scale * 100)}%
         </Button>
 
         {/* Preview / Code. Code is available whenever the source is known,
             which includes a story Storybook has not indexed — reading the
-            file is sometimes the only way to see what was built. */}
+            file is sometimes the only way to see what was built — and while
+            it is still being written. While the stream IS the stage (a first
+            story, nothing else to show) the toggle reads as pressed and
+            held: there is no preview to go back to yet. */}
         <Button
           size="1"
-          variant={showCode ? 'soft' : 'ghost'}
-          color={showCode ? undefined : 'gray'}
-          onClick={() => setShowCode(v => !v)}
-          disabled={code == null && !codeLoading}
-          aria-pressed={showCode}
-          title={showCode ? 'Back to the preview' : 'Show the story source'}
+          variant={overlay === 'code' || overlay === 'writing' ? 'soft' : 'ghost'}
+          color={overlay === 'code' || overlay === 'writing' ? undefined : 'gray'}
+          onClick={() => setView(v => (v === 'code' ? 'preview' : 'code'))}
+          disabled={overlay === 'writing' || (shownCode == null && !codeLoading)}
+          aria-pressed={overlay === 'code' || overlay === 'writing'}
+          title={
+            overlay === 'code' ? 'Back to the preview'
+              : streaming ? 'Watch the story being written'
+                : 'Show the story source'
+          }
           style={{ flexShrink: 0 }}
         >
-          {showCode ? 'Preview' : 'Code'}
+          {overlay === 'code' ? 'Preview' : 'Code'}
         </Button>
 
+        {/* Only when there is something to compare against: a story just
+            updated in this session. Absent, not disabled, for a fresh story
+            or one restored from the manifest — there the button would never
+            do anything. */}
+        {diff && (
+          <Button
+            size="1"
+            variant={overlay === 'changes' ? 'soft' : 'ghost'}
+            color={overlay === 'changes' ? undefined : 'gray'}
+            onClick={() => setView(v => (v === 'changes' ? 'preview' : 'changes'))}
+            aria-pressed={overlay === 'changes'}
+            title={overlay === 'changes' ? 'Back to the preview' : 'Show what the last update changed'}
+            style={{ flexShrink: 0 }}
+          >
+            Changes
+          </Button>
+        )}
+
         <Flex flexGrow="1" minWidth="0" justify="center">
-          {title && <Text size="1" color="gray" className="suiw-ellipsis">{title}</Text>}
+          {/* An update writing over a preview that stays put: the count is
+              the only sign the file is moving. The code view's own bar
+              carries the same figure, so it is not repeated there. */}
+          {streaming && src && overlay !== 'code' ? (
+            <Text size="1" color="gray" className="suiw-ellipsis suiw-writing" aria-live="polite">
+              <span className="suiw-pulse">Writing changes…</span>
+              {' '}{liveCode!.text.length.toLocaleString()} characters
+            </Text>
+          ) : title ? (
+            <Text size="1" color="gray" className="suiw-ellipsis">{title}</Text>
+          ) : null}
         </Flex>
 
         {onSelectElement && (
@@ -435,7 +524,14 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
             </Flex>
           </Callout.Root>
         ) : overlay === 'code' ? (
-          <CodeView code={code} fileName={codeFileName} loading={codeLoading} />
+          <CodeView code={shownCode} fileName={codeFileName} loading={codeLoading && !writing} streaming={streaming} />
+        ) : overlay === 'changes' && diff ? (
+          <DiffView diff={diff} code={code} fileName={codeFileName} />
+        ) : overlay === 'writing' ? (
+          // The story, arriving. Replaces the "Building" placeholder from the
+          // first code delta; the frame takes over the moment the story is
+          // indexed, and the Code toggle brings this back.
+          <CodeView code={liveCode!.text} fileName={codeFileName} streaming={streaming} />
         ) : src ? null : busy ? (
           <Flex direction="column" align="center" gap="2">
             <Badge color="orange" variant="soft">
