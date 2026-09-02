@@ -241,3 +241,27 @@ describe('chatCompletionStreamDetailed — the service surfaces the result', () 
     expect(result.truncated).toBe(false);
   });
 });
+
+describe('reasoning parameters by model', () => {
+  it('sends adaptive thinking and an effort level on current models, nothing on Haiku', async () => {
+    const { ClaudeProvider } = await import('../story-generator/llm-providers/claude-provider.js');
+    const bodies: any[] = [];
+    const fetchSpy = vi.fn(async (_url: any, init: any) => {
+      bodies.push(JSON.parse(init.body));
+      return new Response(JSON.stringify({ id: 'm', type: 'message', role: 'assistant', model: 'x', content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    try {
+      const p = new ClaudeProvider({ apiKey: 'k', model: 'claude-opus-5' } as any);
+      await p.chat([{ role: 'user', content: 'hi' }], { effort: 'xhigh' });
+      await p.chat([{ role: 'user', content: 'hi' }], { model: 'claude-haiku-4-5' });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(bodies[0].thinking).toEqual({ type: 'adaptive' });
+    expect(bodies[0].output_config).toEqual({ effort: 'xhigh' });
+    expect(bodies[0].temperature).toBeUndefined();
+    expect(bodies[1].thinking).toBeUndefined();
+    expect(bodies[1].output_config).toBeUndefined();
+  });
+});

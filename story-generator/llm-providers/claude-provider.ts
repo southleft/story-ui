@@ -20,14 +20,16 @@ import { BaseLLMProvider } from './base-provider.js';
 import { fetchWithRetry } from './http-utils.js';
 import { logger } from '../logger.js';
 
-// Claude model definitions - Updated July 2026
+// Claude model definitions - Updated 1 Sept 2026 from the Claude API reference
+// (models table cached 2026-06-24). Pricing is per 1k tokens. Output ceilings are
+// what the pipeline streams to; the models allow up to 128k with streaming.
 export const CLAUDE_MODELS: ModelInfo[] = [
   {
-    id: 'claude-opus-4-8',
-    name: 'Claude Opus 4.8',
+    id: 'claude-opus-5',
+    name: 'Claude Opus 5',
     provider: 'claude',
     contextWindow: 1000000,
-    maxOutputTokens: 16000,
+    maxOutputTokens: 32000,
     supportsVision: true,
     supportsDocuments: true,
     supportsFunctionCalling: true,
@@ -36,17 +38,43 @@ export const CLAUDE_MODELS: ModelInfo[] = [
     outputPricePer1kTokens: 0.025,
   },
   {
-    id: 'claude-sonnet-5',
-    name: 'Claude Sonnet 5',
+    id: 'claude-fable-5-1',
+    name: 'Claude Fable 5.1',
     provider: 'claude',
     contextWindow: 1000000,
-    maxOutputTokens: 16000,
+    maxOutputTokens: 32000,
     supportsVision: true,
     supportsDocuments: true,
     supportsFunctionCalling: true,
     supportsStreaming: true,
-    inputPricePer1kTokens: 0.003,
-    outputPricePer1kTokens: 0.015,
+    inputPricePer1kTokens: 0.01,
+    outputPricePer1kTokens: 0.05,
+  },
+  {
+    id: 'claude-sonnet-5',
+    name: 'Claude Sonnet 5',
+    provider: 'claude',
+    contextWindow: 1000000,
+    maxOutputTokens: 32000,
+    supportsVision: true,
+    supportsDocuments: true,
+    supportsFunctionCalling: true,
+    supportsStreaming: true,
+    inputPricePer1kTokens: 0.002,
+    outputPricePer1kTokens: 0.01,
+  },
+  {
+    id: 'claude-opus-4-8',
+    name: 'Claude Opus 4.8',
+    provider: 'claude',
+    contextWindow: 1000000,
+    maxOutputTokens: 32000,
+    supportsVision: true,
+    supportsDocuments: true,
+    supportsFunctionCalling: true,
+    supportsStreaming: true,
+    inputPricePer1kTokens: 0.005,
+    outputPricePer1kTokens: 0.025,
   },
   {
     id: 'claude-haiku-4-5',
@@ -63,17 +91,29 @@ export const CLAUDE_MODELS: ModelInfo[] = [
   },
 ];
 
+/** The cheap model for trivial calls (titles, chat summaries). */
+export const CLAUDE_SMALL_MODEL = 'claude-haiku-4-5';
+
 // Older model IDs consumers may still have in .env / saved settings.
 // They remain active upstream, so requests pass through unchanged; this map
 // only keeps display/selection working after an update.
 export const CLAUDE_LEGACY_MODEL_ALIASES: Record<string, string> = {
   'claude-opus-4-6': 'claude-opus-4-8',
+  'claude-opus-4-7': 'claude-opus-4-8',
+  'claude-opus-4-5-20251101': 'claude-opus-5',
+  'claude-opus-4-5': 'claude-opus-5',
   'claude-sonnet-4-6': 'claude-sonnet-5',
+  'claude-sonnet-4-5-20250514': 'claude-sonnet-5',
+  'claude-sonnet-4-5': 'claude-sonnet-5',
+  'claude-sonnet-4-20250514': 'claude-sonnet-5',
+  'claude-3-7-sonnet-20250219': 'claude-sonnet-5',
+  'claude-3-5-haiku-20241022': 'claude-haiku-4-5',
   'claude-haiku-4-5-20251001': 'claude-haiku-4-5',
 };
 
-// Default model - Claude Sonnet 5 (best balance for code generation)
-const DEFAULT_MODEL = 'claude-sonnet-5';
+// Default model. Accuracy over cost: the user's stated priority is that the
+// composition uses the right components, variants and states.
+const DEFAULT_MODEL = 'claude-opus-5';
 
 // API configuration
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
@@ -82,7 +122,34 @@ const ANTHROPIC_VERSION = '2023-06-01';
 // Sonnet 5, Opus 4.7/4.8, and Fable/Mythos reject temperature/top_p/top_k with a 400.
 function supportsSamplingParams(model?: string): boolean {
   if (!model) return true;
-  return !/^claude-(sonnet-5|opus-4-[78]|fable|mythos)/.test(model);
+  return !/^claude-(sonnet-5|opus-5|opus-4-[78]|fable|mythos)/.test(model);
+}
+
+/**
+ * Adaptive thinking and effort levels: every current model (4.6 and later).
+ * `budget_tokens` is rejected on these; `{ type: 'adaptive' }` is the only
+ * on-mode, and Fable/Opus 5 run it whether or not it is sent.
+ */
+function supportsAdaptiveThinking(model?: string): boolean {
+  if (!model) return false;
+  return /^claude-(sonnet-5|sonnet-4-6|opus-5|opus-4-[678]|fable|mythos)/.test(model);
+}
+
+/** Effort levels the current models accept. */
+const EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+
+/**
+ * Thinking + effort for a request. Effort comes from the call, then
+ * CLAUDE_EFFORT, then 'high'. Haiku 4.5 and older take neither.
+ */
+function reasoningParams(model: string, options?: ChatOptions): Record<string, unknown> {
+  if (!supportsAdaptiveThinking(model)) return {};
+  const requested = (options?.effort || process.env.CLAUDE_EFFORT || 'high').toLowerCase();
+  const effort = EFFORT_LEVELS.has(requested) ? requested : 'high';
+  return {
+    thinking: { type: 'adaptive' },
+    output_config: { effort },
+  };
 }
 
 interface AnthropicMessage {
@@ -158,6 +225,7 @@ export class ClaudeProvider extends BaseLLMProvider {
       model,
       max_tokens: options?.maxTokens || this.getSelectedModel()?.maxOutputTokens || 4096,
       messages: anthropicMessages,
+      ...reasoningParams(model, options),
     };
 
     // Add optional parameters
@@ -244,6 +312,7 @@ export class ClaudeProvider extends BaseLLMProvider {
       max_tokens: options?.maxTokens || this.getSelectedModel()?.maxOutputTokens || 4096,
       messages: anthropicMessages,
       stream: true,
+      ...reasoningParams(model, options),
     };
 
     if (systemPrompt) {

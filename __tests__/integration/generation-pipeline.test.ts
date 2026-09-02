@@ -415,6 +415,63 @@ describe('generation pipeline (integration)', () => {
     expect(call[0].content).not.toContain('Make the button say Subscribe');
   });
 
+  it('applies an update answered with edit blocks and leaves the rest of the file byte-identical', async () => {
+    llm.queue.push({ content: validStoryResponse() });
+    const first = await runStoryGeneration({
+      prompt: 'Create a pricing card',
+      conversation: [{ role: 'user', content: 'Create a pricing card' }],
+    });
+    const before = fs.readFileSync(first.outPath, 'utf-8');
+    // Pick a real line of the file to edit, so the SEARCH is verbatim.
+    const target = before.split('\n').find(l => l.includes('<Button')) ?? '';
+    expect(target).not.toBe('');
+    const replacement = target.replace('<Button', '<Button variant="outline"');
+    llm.queue.push({ content: `I'll make the button an outline.\n\n\`\`\`edit\n<<<<<<< SEARCH\n${target}\n=======\n${replacement}\n>>>>>>> REPLACE\n\`\`\`\n` });
+    const second = await runStoryGeneration({
+      prompt: 'Make the button outline',
+      fileName: first.fileName,
+      isUpdate: true,
+      originalTitle: first.title,
+      conversation: [
+        { role: 'user', content: 'Create a pricing card' },
+        { role: 'ai', content: 'Done' },
+        { role: 'user', content: 'Make the button outline' },
+      ],
+    });
+    expect(second.success).toBe(true);
+    const after = fs.readFileSync(first.outPath, 'utf-8');
+    expect(after).toContain('variant="outline"');
+    // Everything but that one line is untouched.
+    const diff = before.split('\n').filter((l, i) => l !== after.split('\n')[i]);
+    expect(diff).toEqual([target]);
+    // The update prompt taught the edit-block format.
+    expect(llm.calls.at(-1)!.map(m => m.content).join('\n')).toContain('<<<<<<< SEARCH');
+  });
+
+  it('sends a failed edit block back with the reason instead of guessing', async () => {
+    llm.queue.push({ content: validStoryResponse() });
+    const first = await runStoryGeneration({
+      prompt: 'Create a pricing card',
+      conversation: [{ role: 'user', content: 'Create a pricing card' }],
+    });
+    const before = fs.readFileSync(first.outPath, 'utf-8');
+    const target = before.split('\n').find(l => l.includes('<Button')) ?? '';
+    // First reply: a SEARCH that is not in the file. Second: a correct one.
+    llm.queue.push({ content: `\`\`\`edit\n<<<<<<< SEARCH\n<Button size="xxl">\n=======\n<Button size="lg">\n>>>>>>> REPLACE\n\`\`\`` });
+    llm.queue.push({ content: `\`\`\`edit\n<<<<<<< SEARCH\n${target}\n=======\n${target.replace('<Button', '<Button size="lg"')}\n>>>>>>> REPLACE\n\`\`\`` });
+    const second = await runStoryGeneration({
+      prompt: 'Make the button large',
+      fileName: first.fileName,
+      isUpdate: true,
+      originalTitle: first.title,
+    });
+    expect(second.success).toBe(true);
+    expect(fs.readFileSync(first.outPath, 'utf-8')).toContain('size="lg"');
+    const retry = llm.calls.at(-1)!.map(m => m.content).join('\n');
+    expect(retry).toContain('could not be applied');
+    expect(retry).toContain('was not found');
+  });
+
   it('builds the next update on the file a prop edit wrote, not the pre-edit history', async () => {
     llm.queue.push({ content: validStoryResponse() });
     const first = await runStoryGeneration({ prompt: 'Create a card to edit' });

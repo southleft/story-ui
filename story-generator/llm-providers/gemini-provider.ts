@@ -38,8 +38,8 @@ export const GEMINI_MODELS: ModelInfo[] = [
     outputPricePer1kTokens: 0.012,
   },
   {
-    id: 'gemini-3.5-flash',
-    name: 'Gemini 3.5 Flash',
+    id: 'gemini-3.7-flash',
+    name: 'Gemini 3.7 Flash',
     provider: 'gemini',
     contextWindow: 1048576,
     maxOutputTokens: 65536,
@@ -71,12 +71,15 @@ export const GEMINI_MODELS: ModelInfo[] = [
 // upstream (July 2026), so these are remapped rather than passed through.
 export const GEMINI_LEGACY_MODEL_ALIASES: Record<string, string> = {
   'gemini-3.1-pro-preview': 'gemini-3.1-pro',
-  'gemini-3-flash-preview': 'gemini-3.5-flash',
-  'gemini-2.5-flash': 'gemini-3.5-flash',
+  'gemini-3-flash-preview': 'gemini-3.7-flash',
+  'gemini-3.5-flash': 'gemini-3.7-flash',
+  'gemini-2.5-flash': 'gemini-3.7-flash',
 };
 
 // Default model - Gemini 3.1 Pro (flagship, July 2026)
 const DEFAULT_MODEL = 'gemini-3.1-pro';
+/** The cheap model for trivial calls (titles, chat summaries). */
+export const GEMINI_SMALL_MODEL = 'gemini-3.1-flash-lite';
 
 // API configuration
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -346,7 +349,7 @@ export class GeminiProvider extends BaseLLMProvider {
   async validateApiKey(apiKey: string): Promise<ValidationResult> {
     try {
       // Make a minimal API call to validate the key
-      const url = this.getApiUrl('gemini-3.5-flash');
+      const url = this.getApiUrl('gemini-3.7-flash');
       const response = await fetch(url, {
         method: 'POST',
         headers: {

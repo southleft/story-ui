@@ -87,6 +87,8 @@ export interface ChatOptions {
    * today; other providers ignore it.
    */
   cacheSystemPrompt?: boolean;
+  /** Reasoning effort for models that take one: low | medium | high | xhigh | max. */
+  effort?: string;
   stream?: boolean;
   tools?: ToolDefinition[];
   /**

@@ -7,6 +7,7 @@
  */
 
 import {
+  smallModelFor,
   getProviderRegistry,
   initializeFromEnv,
   resolveModelAlias,
@@ -510,7 +511,7 @@ export function buildMessageWithImages(
 /**
  * Generate a title for a story using the configured provider
  */
-export async function generateTitle(description: string): Promise<string> {
+export async function generateTitle(description: string, provider?: ProviderType): Promise<string> {
   const titlePrompt = [
     'Given the following UI description, generate a short, clear, human-friendly title suitable for a Storybook navigation item.',
     'Requirements:',
@@ -525,7 +526,10 @@ export async function generateTitle(description: string): Promise<string> {
     'Title:',
   ].join('\n');
 
+  // A title is not worth the generation model's price.
   const response = await chatCompletion([{ role: 'user', content: titlePrompt }], {
+    provider,
+    model: smallModelFor(provider),
     maxTokens: 100,
     temperature: 0.7,
   });

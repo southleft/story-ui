@@ -55,7 +55,7 @@ export interface SettingsResponse {
 export function loadSettingsConfig(): SettingsConfig {
   const defaultProvider = (process.env.DEFAULT_PROVIDER as ProviderType) || 'claude';
   // Resolve legacy model IDs so configs written against older releases keep working.
-  const defaultModel = resolveModelAlias(process.env.DEFAULT_MODEL || 'claude-sonnet-5');
+  const defaultModel = resolveModelAlias(process.env.DEFAULT_MODEL || 'claude-opus-5');
 
   // Parse allowed providers
   const allowedProvidersEnv = process.env.ALLOWED_PROVIDERS;

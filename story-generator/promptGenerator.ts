@@ -474,7 +474,8 @@ export async function buildFrameworkAwarePrompt(
 
   promptParts.push(
     '',
-    `Output a complete Storybook story file in TypeScript. Import components as shown in the sample template below. Use the following sample as a template. Respond ONLY with a single code block containing the full file, and nothing else.`,
+    `Output a complete Storybook story file in TypeScript. Import components as shown in the sample template below. Use the following sample as a template.`,
+    `Begin your reply with two to four plain sentences, addressed to the user, saying what you are about to build and which components from the list you will use and why — no headings, no lists, no code in them. This text is shown to the user while the code streams. Then output ONE code block containing the full file, and nothing after the block.`,
     '',
     '<rules>',
     'CRITICAL REMINDERS:',

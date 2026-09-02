@@ -21,6 +21,7 @@ import {
   CompletionFeedback,
   ErrorFeedback,
   PreviewReady,
+  LlmText,
   formatSSE,
   createStreamEvent,
   StreamGenerateRequest,
@@ -50,6 +51,10 @@ class StreamWriter {
   /** The file is on disk: the client should show it now and treat the rest as background. */
   sendPreviewReady(preview: PreviewReady): void {
     this.send(createStreamEvent('preview_ready', preview));
+  }
+
+  sendLlmText(text: LlmText): void {
+    this.send(createStreamEvent('llm_text', text));
   }
 
   /**
@@ -185,6 +190,7 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
           stream.sendRetry(attempt, maxAttempts, reason, errors),
         onStarted: (generationId) => stream.sendStarted(generationId),
         onPreviewReady: (preview) => stream.sendPreviewReady(preview),
+        onLlmText: (text) => stream.sendLlmText(text),
         onLLMCall: () => stream.trackLLMCall(),
       }
     );

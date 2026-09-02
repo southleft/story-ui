@@ -9,6 +9,7 @@
 export type StreamEventType =
   | 'started'          // Names the run, so the client can cancel this one
   | 'preview_ready'    // The file is on disk and indexed-or-indexing: show it now
+  | 'llm_text'         // Model prose streaming in: the plan before the code, the summary after
   | 'intent'           // Initial plan/intent before execution
   | 'progress'         // Step-by-step progress updates
   | 'validation'       // Validation results (errors, warnings)
@@ -193,6 +194,13 @@ export interface GenerationStarted {
  * verification, repair, the chat summary — is background work that updates
  * the badge; none of it should stand between the user and the preview.
  */
+/** A slice of the model's prose as it streams. */
+export interface LlmText {
+  phase: 'plan' | 'summary';
+  delta: string;
+  accumulated: string;
+}
+
 export interface PreviewReady {
   fileName: string;
   title: string;
@@ -205,7 +213,7 @@ export interface PreviewReady {
 export interface StreamEvent {
   type: StreamEventType;
   timestamp: number;
-  data: GenerationStarted | PreviewReady | IntentPreview | ProgressUpdate | ValidationFeedback | RetryInfo | CompletionFeedback | ErrorFeedback;
+  data: GenerationStarted | PreviewReady | LlmText | IntentPreview | ProgressUpdate | ValidationFeedback | RetryInfo | CompletionFeedback | ErrorFeedback;
 }
 
 // Request body for streaming endpoint

@@ -29,8 +29,10 @@ import { isBlacklistedComponent, isBlacklistedIcon, getBlacklistErrorMessage, IC
 import { StoryTracker, StoryMapping } from '../../story-generator/storyTracker.js';
 import { getManifestManager } from '../../story-generator/manifestManager.js';
 import { reapplyPins, pinsForPrompt, describePin, type PropPin } from '../../story-generator/editing/pins.js';
+import { hasPatchBlocks, parsePatchBlocks, applyPatches, describePatchFailures, PATCH_INSTRUCTIONS } from '../../story-generator/editing/patchEdit.js';
 import { closeBrowserSession } from '../../story-generator/verify/browserSession.js';
-import type { PreviewReady } from './streamTypes.js';
+import { smallModelFor } from '../../story-generator/llm-providers/index.js';
+import type { PreviewReady, LlmText } from './streamTypes.js';
 import { getDocumentation } from '../../story-generator/documentation-sources.js';
 import { postProcessStory, fixBarrelImports, splitScopeImports, editDivergence } from '../../story-generator/postProcessStory.js';
 import { validateStory } from '../../story-generator/storyValidator.js';
@@ -156,6 +158,8 @@ export interface GenerationEvents {
   onStarted?(generationId: string): void;
   /** The file is written. Show it; the rest is background. */
   onPreviewReady?(preview: PreviewReady): void;
+  /** Model prose as it streams: the plan before the code, the summary after. */
+  onLlmText?(text: LlmText): void;
 }
 
 /**
@@ -913,7 +917,7 @@ async function runStoryGenerationPipeline(
   const titlePromise: Promise<string> = titleNeedsModel
     ? getLLMTitle(isActualUpdate && conversation
         ? (conversation.find((msg) => msg.role === 'user')?.content || prompt)
-        : prompt)
+        : prompt, provider)
     : Promise.resolve(originalTitle as string);
 
   let aiText = '';
@@ -954,9 +958,22 @@ async function runStoryGenerationPipeline(
     // only). The one-per-second progress event is the only evidence of life
     // the user gets during the longest phase of the run.
     let lastStreamEmit = 0;
+    let planSent = '';
     const llmResult = processedImages.length > 0
       ? await callLLM(messages, processedImages, { provider, model })
-      : await callLLMStreaming(messages, { provider, model }, (chars) => {
+      : await callLLMStreaming(messages, { provider, model }, (chars, accumulated) => {
+          /**
+           * The model is asked to say, in a few sentences, what it is about to
+           * build before it writes the code. That prose is the narration the
+           * user reads while the code streams — everything before the first
+           * fence, sent as it arrives. Nothing inside the fence is sent as text.
+           */
+          const fence = accumulated.indexOf('```');
+          const plan = fence >= 0 ? accumulated.slice(0, fence) : accumulated;
+          if (plan.length > planSent.length && plan.startsWith(planSent)) {
+            events.onLlmText?.({ phase: 'plan', delta: plan.slice(planSent.length), accumulated: plan });
+            planSent = plan;
+          }
           const now = Date.now();
           if (now - lastStreamEmit < 1000) return;
           lastStreamEmit = now;
@@ -992,7 +1009,44 @@ async function runStoryGenerationPipeline(
       continue;
     }
 
-    const extractedCode = extractCodeBlock(claudeResponse, detectedFramework);
+    /**
+     * An update answered with edit blocks is applied to the previous code
+     * here, deterministically. A block whose SEARCH is not in the file (or is
+     * in it twice) is sent back to the model with the reason, once; the file
+     * is never guessed at. A complete file in a tsx block still works.
+     */
+    let replyForExtraction = claudeResponse;
+    if (previousCode && !previousCodeIsFallback && hasPatchBlocks(claudeResponse)) {
+      const blocks = parsePatchBlocks(claudeResponse);
+      const patched = applyPatches(previousCode, blocks);
+      if (patched.failures.length > 0 && attempts < selfHealingOptions.maxAttempts) {
+        logger.warn(`✂️ ${patched.failures.length} of ${blocks.length} edit block(s) did not apply — asking for corrected blocks`);
+        events.onRetry?.(attempts + 1, selfHealingOptions.maxAttempts,
+          `${patched.failures.length} edit block(s) did not match the file`, patched.failures.map(f => f.reason));
+        messages.push({ role: 'assistant', content: claudeResponse });
+        messages.push({
+          role: 'user',
+          content: [
+            'These edit blocks could not be applied:',
+            '',
+            describePatchFailures(patched.failures),
+            '',
+            'Copy each SEARCH exactly from PREVIOUS GENERATED CODE — same lines, same indentation —',
+            'and make it match one place. Resend ALL the edit blocks (the applied ones too) in one ```edit fence.',
+          ].join('\n'),
+        });
+        continue;
+      }
+      if (patched.failures.length === 0) {
+        logger.log(`✂️ Applied ${patched.applied.length} edit block(s) to the previous code`);
+        replyForExtraction = '```tsx\n' + patched.code + '\n```';
+      } else {
+        logger.warn(`✂️ ${patched.failures.length} edit block(s) still did not apply on the last attempt — applying the ${patched.applied.length} that did`);
+        replyForExtraction = '```tsx\n' + patched.code + '\n```';
+      }
+    }
+
+    const extractedCode = extractCodeBlock(replyForExtraction, detectedFramework);
     if (extractedCode) {
       // Only kept when the story actually imports it — an unreferenced
       // stylesheet is just litter in the user's repository.
@@ -2502,7 +2556,7 @@ async function buildClaudePromptWithContext(
     ? `CONVERSATION CONTEXT (for modifications/updates):\n${conversationContext}`
     : 'MODIFICATION OF AN EXISTING STORY:';
   if (previousCode) {
-    contextSection += `\n\nPREVIOUS GENERATED CODE (this is what you're modifying):\n\`\`\`tsx\n${previousCode}\n\`\`\`\n\nCRITICAL INSTRUCTIONS FOR MODIFICATIONS:\n1. DO NOT regenerate the entire story from scratch\n2. PRESERVE all existing styling, components, and structure\n3. ONLY change what the user specifically requests`;
+    contextSection += `\n\nPREVIOUS GENERATED CODE (this is what you're modifying):\n\`\`\`tsx\n${previousCode}\n\`\`\`\n\n${PATCH_INSTRUCTIONS}`;
   }
 
   const marker = 'User request:';
@@ -2547,7 +2601,7 @@ function providerMaxTokens(provider?: string, model?: string): number {
 async function callLLMStreaming(
   messages: { role: 'user' | 'assistant' | 'system'; content: string }[],
   options: { provider?: string; model?: string; maxTokens?: number; signal?: AbortSignal },
-  onDelta: (charsWritten: number) => void,
+  onDelta: (charsWritten: number, accumulated: string) => void,
 ): Promise<{ content: string; truncated: boolean }> {
   if (!isProviderConfigured()) {
     throw new Error('No LLM provider configured');
@@ -2561,8 +2615,8 @@ async function callLLMStreaming(
     model: options.model,
     maxTokens: options.maxTokens ?? providerInfo.maxOutputTokens ?? 8192,
     ...(options.signal ? { signal: options.signal } : {}),
-  }, (_delta, accumulated) => onDelta(accumulated.length));
-  onDelta(result.content.length);
+  }, (_delta, accumulated) => onDelta(accumulated.length, accumulated));
+  onDelta(result.content.length, result.content);
   if (result.usage) {
     const u = result.usage as Record<string, number | undefined>;
     logger.log(
@@ -2733,7 +2787,8 @@ async function generateChatSummary(args: {
           'Then on a new line write exactly "SUGGESTIONS:" followed by 3 short follow-up refinement prompts the user might click next, one per line, each under 10 words, phrased as instructions (e.g. "Make the header sticky").',
         ].filter(Boolean).join('\n'),
       },
-    ], { provider: provider as any, model, maxTokens: 400 });
+    // The summary is two sentences; the cheap model writes it.
+    ], { provider: provider as any, model: smallModelFor(provider) ?? model, maxTokens: 400 });
 
     const text = result.content.trim();
     const suggestionIdx = text.indexOf('SUGGESTIONS:');
@@ -2891,9 +2946,9 @@ export function cleanPromptForTitle(prompt: string): string {
     .slice(0, 60);
 }
 
-async function getLLMTitle(userPrompt: string): Promise<string> {
+async function getLLMTitle(userPrompt: string, provider?: string): Promise<string> {
   try {
-    return await llmGenerateTitle(userPrompt);
+    return await llmGenerateTitle(userPrompt, provider as any);
   } catch {
     return '';
   }
