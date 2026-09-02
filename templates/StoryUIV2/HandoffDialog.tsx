@@ -29,6 +29,8 @@ import {
 
 interface HandoffStatus {
   available: boolean;
+  /** Files with uncommitted changes in the working tree, story included. */
+  uncommittedChanges?: number;
   reason?: string;
   branch?: string;
   remote?: string | null;
@@ -129,7 +131,7 @@ export const HandoffDialog: React.FC<HandoffDialogProps> = ({ apiBase, target, o
         <Dialog.Title>Hand off this story</Dialog.Title>
         <Dialog.Description size="2" color="gray" mb="4">
           {target
-            ? `Commits ${target.fileName} to a new branch so an engineer can pick it up.`
+            ? <>Commits <strong>{target.title}</strong> to a new branch so an engineer can pick it up. <Text size="1" color="gray">({target.fileName})</Text></>
             : ''}
         </Dialog.Description>
 
@@ -154,8 +156,18 @@ export const HandoffDialog: React.FC<HandoffDialogProps> = ({ apiBase, target, o
               />
               <Text as="div" size="1" color="gray" mt="1">
                 Cut from <Badge color="gray" variant="soft">{status.branch}</Badge>, which is left untouched.
+                Only this story's file is committed on the new branch.
               </Text>
             </label>
+
+            {(status.uncommittedChanges ?? 0) > 1 && (
+              <Callout.Root color="gray" size="1">
+                <Callout.Text>
+                  Your working tree has {status.uncommittedChanges} uncommitted change{status.uncommittedChanges === 1 ? '' : 's'}.
+                  They stay uncommitted and come along when the new branch is checked out; nothing else is committed.
+                </Callout.Text>
+              </Callout.Root>
+            )}
 
             <label>
               <Flex gap="2" align="center">

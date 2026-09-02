@@ -102,8 +102,17 @@ export function makeHandoffStatus(deps: HandoffDeps) {
       } catch {
         ghReady = false;
       }
+      // Uncommitted edits elsewhere in the tree are not committed by handoff,
+      // but they do come along on the checkout. Say how many, so the dialog
+      // can explain that instead of looking like it never noticed.
+      let uncommittedChanges = 0;
+      try {
+        const { stdout } = await git(['status', '--porcelain'], cwd);
+        uncommittedChanges = stdout.split('\n').filter(l => l.trim()).length;
+      } catch { /* status is informational */ }
       res.json({
         available: true,
+        uncommittedChanges,
         branch: await currentBranch(cwd),
         remote,
         canPush: !!remote,
