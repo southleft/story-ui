@@ -27,10 +27,18 @@ for (const f of fs.readdirSync(dir).filter(f => f.endsWith('.json')).sort()) {
   const sc = scenarios.find(s => s.id === r.scenario);
   if (!sc || !Array.isArray(r.steps)) continue;
   r.pass = true;
+  let followUpIndex = 0;
   r.steps.forEach((st, i) => {
-    const expect = withDefaults(i === 0 ? sc.expect : sc.followUps?.[i - 1]?.expect);
+    // A prop-edit step is scored by the harness's own edit checks; the generation
+    // scorer would read its lack of a stream as a failure.
+    if (st.kind === 'prop-edit') { if (st.score?.pass === false) r.pass = false; return; }
+    const isBase = i === 0 && st.kind !== 'update';
+    const expect = withDefaults(isBase ? sc.expect : sc.followUps?.[followUpIndex++]?.expect);
+    const storedPins = st.score?.checks?.pins;
     const errorEvent = st.events?.find(e => e.type === 'error') || (st.transportError ? { data: { code: 'TRANSPORT', message: st.transportError } } : undefined);
     st.score = scoreStep({ code: st.code, expect, events: st.events || [], completion: st.completion, errorEvent, importPath, previousCode: st.previousCode, divergence: st.divergence ?? undefined, pins: st.pins });
+    // The pins the harness used are not stored on the step; keep its verdict.
+    if (st.score.checks.pins?.pass == null && storedPins && storedPins.pass != null) st.score.checks.pins = storedPins;
     st.issues = issuesFrom(st.label, { events: st.events || [], completion: st.completion, score: st.score });
     if (st.score.pass === false) r.pass = false;
     const c = st.score.checks; const v = c.verification || {};

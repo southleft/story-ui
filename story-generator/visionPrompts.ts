@@ -88,8 +88,8 @@ export function getVisionSystemPrompt(
 - DRY: Extract common patterns into reusable configurations
 
 ### Visual Fidelity
-- Match spacing and layout precisely (use exact px/rem values when clear)
-- Preserve color schemes (use hex/rgb values or design token references)
+- Match layout, proportions and density from the image
+- Express colour and spacing through the design system: theme colors, size scales and component props. NEVER copy raw hex/rgb or pixel values out of the image — a screenshot of a dark app is a reference for structure and tone, not a palette, and verification rejects hard-coded values
 - Replicate typography hierarchy (font sizes, weights, line heights)
 - Maintain responsive behavior patterns
 - Capture interactive states (hover, focus, active, disabled)`;

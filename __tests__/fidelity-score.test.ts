@@ -278,3 +278,11 @@ describe('generics are not JSX', () => {
     expect(r.designSystemTags).toContain('Card');
   });
 });
+
+describe('generic parameter lists are not JSX', () => {
+  it('skips <K extends …> and <T,> on arrow functions', async () => {
+    const { componentAdherence } = await import('../bench/fidelity/score.mjs');
+    const code = `import { Card } from '@mantine/core';\nconst pick = <K extends string>(k: K) => k;\nconst id = <T,>(t: T) => t;\nexport const S = () => <Card>{pick('a')}</Card>;`;
+    expect(componentAdherence(code, { importPath: '@mantine/core' }).unknownTags).toEqual([]);
+  });
+});

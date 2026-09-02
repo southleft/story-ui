@@ -68,6 +68,9 @@ export function jsxTags(code) {
   // (`useState<Billing>`, `Record<Role, string>`), not an element.
   const re = /(^|[^\w$.])<([A-Z][\w$]*(?:\.[A-Za-z_$][\w$]*)*)(?=[\s/>])/g;
   for (const m of code.matchAll(re)) {
+    // `<K extends …>` / `<T,>` is a generic parameter list on an arrow function.
+    const after = code.slice(m.index + m[0].length, m.index + m[0].length + 12);
+    if (/^\s*(extends\b|,)/.test(after)) continue;
     tags.push({ full: m[2], root: m[2].split('.')[0] });
   }
   return tags;

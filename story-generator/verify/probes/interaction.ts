@@ -227,6 +227,15 @@ export async function runInteractionProbe(
             return (node as HTMLElement).offsetParent !== null || box.width > 0 || box.height > 0;
           };
           if (!isRendered(el)) return false;
+          /**
+           * A radio that is already selected does not change when clicked —
+           * that is what radios do. Probing it reported Mantine's
+           * SegmentedControl as "does not respond to a click" on every page
+           * that used one, and spent a repair on correct code. Only an
+           * unselected radio can prove the group works.
+           */
+          const isRadio = el.getAttribute('role') === 'radio' || (el as HTMLInputElement).type === 'radio';
+          if (isRadio && (el.getAttribute('aria-checked') === 'true' || (el as HTMLInputElement).checked)) return false;
           return !DESTRUCTIVE.test(nameOf(el));
         });
       const toggles = allToggles.slice(0, opts.maxControls);
