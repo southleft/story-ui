@@ -50,13 +50,26 @@ preview the moment the file is written, and under `Generated/` in Storybook's
 sidebar.
 
 `init` creates `story-ui.config.js`, `.env` (provider, key, port),
+`.storybook/manager-head.html` (a `<meta name="story-ui-port">` so the
+workspace page knows the port — the manager cannot read `.env`),
 `story-ui-considerations.md`, a `story-ui-docs/` directory, the generated
 stories directory, `src/stories/StoryUIV2/StoryUIV2.mdx` (the workspace as a
-docs page), `src/stories/StoryUI/` (the classic panel and the manager addon),
-and wires `.storybook/manager.ts`. It adds `story-ui` and `storybook-with-ui`
-scripts to `package.json`. It keeps an existing config unless you pass
-`--force`, and only removes Storybook's own scaffold stories after checking the
-file content is the scaffold.
+docs page), `src/stories/StoryUI/` (the classic panel, its Voice Canvas and
+the manager addon), and wires `.storybook/manager.ts`. It adds `story-ui` and
+`storybook-with-ui` scripts to `package.json`, with `concurrently` as a
+devDependency for the second, and `react-live` as a devDependency on React
+projects for the Voice Canvas (remove both with `src/stories/StoryUI/voice/` if
+you do not use it). It keeps an existing config unless you pass `--force`, and
+only removes Storybook's own scaffold stories after checking the file content
+is the scaffold. After editing `.storybook/main.*` it parses the file and
+exits non-zero if the result would not load.
+
+A component library that is its own package (the stories import
+`@your-scope/ui`, the source is `src/components`) is configured as local
+source: `importPath` becomes a path relative to the generated stories
+directory (`../../components`) and `componentsPath` the directory. The
+project's own package name is never written as the import path — nothing can
+install it.
 
 The long-form walkthrough is in [docs/quick-start.md](docs/quick-start.md).
 
@@ -230,18 +243,29 @@ What `init --yes` decides on its own: the design system from `package.json`
 (Mantine, MUI, Chakra, Carbon and the others in `--design-system`), or a local
 component library from the project's own stories and component directories
 (`src/components`, `src/ui`, `components`, …) when no npm design system is
-present; the Storybook framework; a free port from 4001. Override any of it
-with `--import-path`, `--components-path`, `--component-prefix`,
-`--stories-path`, `--port`. `--json` prints a `STORY_UI_INIT {…}` line with
-what was written. Re-running `init` keeps an existing config unless `--force`.
+present — a bare specifier the stories import counts only when it is
+installed, and the project's own package name never counts; the Storybook
+framework; a free port from 4001. Override any of it with `--import-path`,
+`--components-path`, `--component-prefix`, `--stories-path`, `--port`.
+`--json` prints a `STORY_UI_INIT {…}` line with what was written: `ok` is
+false and the exit code non-zero when `problems` is not empty (a
+`.storybook/main.*` that no longer parses), and `installSkipped` says when
+init did not run its own install — `"npm-link"` when
+`node_modules/@tpitre/story-ui` is a symlink that `npm install` would replace
+(run `npm install && npm link @tpitre/story-ui` yourself), `"skip-install"`
+under `--skip-install`. Re-running `init` keeps an existing config unless
+`--force`.
 
 `story-ui check` verifies the result with facts: the config loads, the import
-path resolves (an installed package or a local directory), discovery finds
-components and how many have props, Playwright and its browser can actually
-launch, the generated directory exists, Storybook's globs cover the Story UI
-entries, the manager addon is wired, a provider key is set, and whether the
-server answers. Each failed item carries the command that fixes it.
-`update --yes` refreshes the managed files without a confirmation.
+path resolves (an installed package, a local directory, or the project's own
+package name treated as local source), discovery finds components and how
+many have props, Playwright and its browser can actually launch, the generated
+directory exists, `.storybook/main.*` parses, Storybook's globs cover the
+Story UI entries (quoted or bare `stories` key), the manager addon is wired,
+`.storybook/manager-head.html` names the same port as `.env`, a provider key
+is set, and whether the server answers. Each failed item carries the command
+that fixes it. `update --yes` refreshes the managed files, and the
+manager-head port, without a confirmation.
 
 ## Configuration
 
@@ -300,7 +324,7 @@ From `.env.sample`. The server reads `.env` in the directory it is started from.
 | `CLAUDE_STREAM_MAX_MS` | Hard cap on one streamed model call. Default 15 minutes; streams are otherwise bounded by silence, not wall clock. |
 | `PORT` | Server port. Default 4001. |
 | `VITE_STORY_UI_PORT` | Tells the docs-page workspace which port to call. Written by `init`. |
-| `STORYBOOK_STORY_UI_PORT` | The same, for the manager page (`?path=/workspace/`), inlined at Storybook start. |
+| `STORYBOOK_STORY_UI_PORT` | The same, for the manager page (`?path=/workspace/`), inlined at Storybook start. Normally unnecessary: `init` writes the port as `<meta name="story-ui-port">` in `.storybook/manager-head.html`, which the manager page reads (a `window.STORY_UI_MCP_PORT` set before it loads wins over both). |
 | `VITE_STORY_UI_EDGE_URL` / `window.__STORY_UI_EDGE_URL__` | Full server URL when it is not on localhost. |
 | `VITE_STORY_UI_TOKEN` / `window.__STORY_UI_TOKEN__` | Token the workspace sends as a bearer header. |
 | `STORY_UI_TOKEN`, `STORY_UI_HOST`, `STORY_UI_ALLOW_UNAUTHENTICATED` | Access control; see below. |
@@ -392,6 +416,27 @@ the port the workspace resolved. Run `npx story-ui check`; it names the port
 the config expects and whether anything answers there. Restart Storybook after
 changing `.env` (Vite reads it at start). If the server chose a different port
 because 4001 was busy, its first log line says so.
+
+**"Connected", but the stories are another project's.** The workspace page
+(`?path=/workspace/`) is bound to a different server than the one you
+started. Hover the Connected dot: its tooltip is the URL it is talking to.
+The manager page cannot read `.env`; it takes the port from
+`<meta name="story-ui-port">` in `.storybook/manager-head.html`, which
+`init` writes and `update` refreshes. `npx story-ui check` fails the
+`manager-head` item when that file is missing or names a different port than
+`.env`. Restart Storybook after changing it.
+
+**Storybook fails to start after `init` with "Expected } but found
+viteFinal".** An older `init` inserted `viteFinal` into `.storybook/main.*`
+without the comma the property above it needed. Add the comma, or re-run
+`init --force` with the current version; `story-ui check` now parses the file
+and reports the line.
+
+**`check` says "install it: npm install @your-scope/ui" for your own
+package.** An older `init` wrote the project's own package name as
+`importPath`. Re-run `npx story-ui init --force`; the import path becomes a
+relative path to the component directory. Current versions of `check` treat
+the project's own name as local source.
 
 **No provider available.** No key was found for any provider. Put
 `ANTHROPIC_API_KEY` (or `CLAUDE_API_KEY`), `OPENAI_API_KEY` or

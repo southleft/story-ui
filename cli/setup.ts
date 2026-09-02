@@ -3,6 +3,7 @@ import path from 'path';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import { autoDetectDesignSystem } from '../story-generator/configLoader.js';
+import * as ts from 'typescript';
 import { deriveHostContract, type HostContract } from '../story-generator/knowledge/hostContract.js';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
@@ -241,7 +242,10 @@ export function ensureStoriesGlobCoversMdx(storiesDir: string, cwd: string = pro
   // stopped at the FIRST `]` corrupted any glob with a character class
   // ('*.stories.[tj]sx' was severed mid-string) and turned an empty
   // `stories: []` into a sparse array by always inserting a leading comma.
-  const arrayStart = /stories\s*:\s*\[/.exec(mainContent);
+  // Storybook's own scaffold writes the key QUOTED (`"stories": [`); a
+  // pattern that required a bare identifier reported "no stories array" on
+  // every project Storybook itself had initialised.
+  const arrayStart = /["']?stories["']?\s*:\s*\[/.exec(mainContent);
   if (!arrayStart) {
     return { checked: true, covered: false, added: null };
   }
@@ -271,12 +275,296 @@ export function ensureStoriesGlobCoversMdx(storiesDir: string, cwd: string = pro
     return { checked: true, covered: false, added: null };
   }
 
-  const inner = mainContent.slice(openIdx + 1, closeIdx).trim();
+  const innerRaw = mainContent.slice(openIdx + 1, closeIdx);
+  const inner = innerRaw.trim();
+
+  // Does an existing glob already reach the workspace MDX? Storybook's own
+  // scaffold writes "../src/**/*.mdx", which covers src/stories without
+  // naming it; appending a second, overlapping glob indexes every Story UI
+  // file twice.
+  if (storiesArrayCovers(inner, `${relStoriesDir}/StoryUIV2/StoryUIV2.mdx`)) {
+    return { checked: true, covered: true, added: null };
+  }
+
   const needsComma = inner.length > 0 && !inner.endsWith(',');
+  // Splice directly after the last element, not after the whitespace before
+  // `]` — otherwise a multi-line array gets its comma on a line of its own.
+  const lastCharIdx = openIdx + 1 + innerRaw.replace(/\s+$/, '').length;
   const insertion = `${needsComma ? ',' : ''}\n    ${storyUIStoriesPath}\n  `;
-  mainContent = mainContent.slice(0, closeIdx) + insertion + mainContent.slice(closeIdx);
+  mainContent = mainContent.slice(0, lastCharIdx) + insertion + mainContent.slice(closeIdx);
   fs.writeFileSync(mainPath, mainContent);
   return { checked: true, covered: true, added: storyUIStoriesPath };
+}
+
+/** Split the inside of an array literal on its top-level commas, skipping strings and nested brackets. */
+function splitTopLevel(inner: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let start = 0;
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (quote) { if (ch === '\\') i++; else if (ch === quote) quote = null; continue; }
+    if (ch === "'" || ch === '"' || ch === '`') { quote = ch; continue; }
+    if (ch === '[' || ch === '{' || ch === '(') depth++;
+    else if (ch === ']' || ch === '}' || ch === ')') depth--;
+    else if (ch === ',' && depth === 0) { out.push(inner.slice(start, i)); start = i + 1; }
+  }
+  out.push(inner.slice(start));
+  return out.map(e => e.trim()).filter(Boolean);
+}
+
+/**
+ * A Storybook stories glob as a RegExp over a POSIX path: `**` spans
+ * directories, `*` and `?` stay within one, `@(a|b)` / `+(a|b)` / `{a,b}`
+ * are alternations, `[..]` classes pass through.
+ */
+export function storiesGlobToRegExp(glob: string): RegExp {
+  let re = '';
+  let braces = 0;
+  for (let i = 0; i < glob.length; i++) {
+    const ch = glob[i];
+    const next = glob[i + 1];
+    if (ch === '*') {
+      if (next === '*') {
+        if (glob[i + 2] === '/') { re += '(?:.*/)?'; i += 2; } else { re += '.*'; i += 1; }
+      } else re += '[^/]*';
+    } else if ((ch === '@' || ch === '+' || ch === '?' || ch === '!') && next === '(') {
+      re += '(?:'; i += 1;
+    } else if (ch === '?') re += '[^/]';
+    else if (ch === '(') re += '(?:';
+    else if (ch === ')') re += ')';
+    else if (ch === '|') re += '|';
+    else if (ch === '{') { braces++; re += '(?:'; }
+    else if (ch === '}') { braces--; re += ')'; }
+    else if (ch === ',' && braces > 0) re += '|';
+    else if (ch === '[') {
+      const end = glob.indexOf(']', i);
+      if (end === -1) { re += '\\['; } else { re += glob.slice(i, end + 1); i = end; }
+    } else re += ch.replace(/[.\\+^$]/g, '\\$&');
+  }
+  return new RegExp(`^${re}$`);
+}
+
+/**
+ * Whether the contents of a `stories` array reach `relPath` (a POSIX path
+ * relative to .storybook, the same form the globs use). String entries are
+ * globs; `{ directory, files }` entries are joined, with Storybook's default
+ * `files` when omitted. Anything else (a variable, a spread) is not judged.
+ */
+export function storiesArrayCovers(inner: string, relPath: string): boolean {
+  for (const entry of splitTopLevel(inner)) {
+    let glob: string | null = null;
+    if (/^['"`]/.test(entry) && entry.length >= 2 && entry[0] === entry[entry.length - 1]) {
+      glob = entry.slice(1, -1);
+    } else if (entry.startsWith('{')) {
+      const dir = /\bdirectory\s*:\s*['"`]([^'"`]+)['"`]/.exec(entry)?.[1];
+      const files = /\bfiles\s*:\s*['"`]([^'"`]+)['"`]/.exec(entry)?.[1] ?? '**/*.@(mdx|stories.@(js|jsx|mjs|ts|tsx))';
+      if (dir) glob = `${dir.replace(/\/+$/, '')}/${files}`;
+    }
+    if (glob && storiesGlobToRegExp(glob).test(relPath)) return true;
+  }
+  return false;
+}
+
+/**
+ * Insert a property into the config object literal that `.storybook/main.*`
+ * exports (`const config = { ... };\nexport default config`).
+ *
+ * The previous code inserted the snippet before the closing `};` and assumed
+ * the property above it ended with a comma. Storybook's own scaffold writes
+ * quoted keys with NO trailing comma on the last one (`"staticDirs":
+ * ["./assets"]`), so the result was `["./assets"]\n  viteFinal: …` — esbuild
+ * refused it ("Expected } but found viteFinal"), Storybook could not start,
+ * and init had already printed ok:true. The comma is now added when the last
+ * meaningful line (comments and blank lines skipped) does not end in `,` or
+ * `{`. Returns null when the file has no recognisable closing `};` before
+ * `export default`, in which case the caller must say so.
+ */
+export function insertConfigProperty(mainContent: string, snippet: string): string | null {
+  const close = /};\s*\n+\s*export\s+default/.exec(mainContent);
+  if (!close) return null;
+  const before = mainContent.slice(0, close.index);
+
+  // Walk back over trailing whitespace, `// line` comments and `/* block */`
+  // comments to the last character that is part of the object's contents.
+  let tail = before;
+  for (;;) {
+    const trimmed = tail.replace(/\s+$/, '');
+    if (trimmed.endsWith('*/')) {
+      const open = trimmed.lastIndexOf('/*');
+      if (open >= 0) { tail = trimmed.slice(0, open); continue; }
+    }
+    // A `//` comment ending the last line — whole-line or after code
+    // (`"staticDirs": ["./assets"] // brand mark`). Found by scanning the
+    // line outside string literals, so a URL inside quotes is not a comment.
+    const lineStart = trimmed.lastIndexOf('\n') + 1;
+    const line = trimmed.slice(lineStart);
+    let quote: string | null = null;
+    let cut = -1;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (quote) { if (ch === '\\') i++; else if (ch === quote) quote = null; continue; }
+      if (ch === "'" || ch === '"' || ch === '`') { quote = ch; continue; }
+      if (ch === '/' && line[i + 1] === '/') { cut = i; break; }
+    }
+    if (cut >= 0) { tail = trimmed.slice(0, lineStart + cut); continue; }
+    tail = trimmed;
+    break;
+  }
+  const needsComma = tail.length > 0 && !/[,{]$/.test(tail);
+  const head = needsComma ? before.slice(0, tail.length) + ',' + before.slice(tail.length) : before;
+  return head.replace(/\s+$/, '') + `\n  ${snippet}\n` + mainContent.slice(close.index);
+}
+
+export interface SyntaxProblem { line: number; column: number; message: string }
+
+/**
+ * Does `.storybook/main.*` still parse?
+ *
+ * Every edit init makes to that file is a text splice, and a splice that
+ * produces a file Storybook cannot load looks exactly like success until
+ * `storybook dev` is run. TypeScript's transpiler reports syntax errors with
+ * a position and needs no type information, so this is a parse, not a type
+ * check — the file's imports are not resolved.
+ */
+export function storybookMainSyntaxError(content: string, fileName: string): SyntaxProblem | null {
+  const result = ts.transpileModule(content, {
+    fileName,
+    reportDiagnostics: true,
+    compilerOptions: {
+      module: ts.ModuleKind.ESNext,
+      target: ts.ScriptTarget.ES2022,
+      jsx: ts.JsxEmit.Preserve,
+      allowJs: true,
+    },
+  });
+  const first = (result.diagnostics || []).find(d => d.category === ts.DiagnosticCategory.Error);
+  if (!first) return null;
+  const message = ts.flattenDiagnosticMessageText(first.messageText, '\n');
+  if (first.file && typeof first.start === 'number') {
+    const pos = first.file.getLineAndCharacterOfPosition(first.start);
+    return { line: pos.line + 1, column: pos.character + 1, message };
+  }
+  return { line: 0, column: 0, message };
+}
+
+/** The `<meta>` the manager page reads its server port from (see templates/StoryUIV2/apiBase.ts). */
+export const PORT_META_NAME = 'story-ui-port';
+const PORT_META_RE = /<meta\b[^>]*\bname\s*=\s*["']story-ui-port["'][^>]*>/i;
+
+/** The port a manager-head.html declares, or null when it has no story-ui-port meta. */
+export function managerHeadPort(content: string): string | null {
+  const tag = PORT_META_RE.exec(content)?.[0];
+  if (!tag) return null;
+  const value = /\bcontent\s*=\s*["']([^"']*)["']/i.exec(tag)?.[1]?.trim();
+  return value || null;
+}
+
+/** manager-head.html content with the story-ui-port meta set to `port` (replaced when present, appended when not). */
+export function withManagerHeadPort(existing: string | null, port: string | number): string {
+  const tag = `<meta name="${PORT_META_NAME}" content="${port}">`;
+  if (existing !== null && PORT_META_RE.test(existing)) {
+    return existing.replace(PORT_META_RE, tag);
+  }
+  const block =
+    `<!-- Story UI: the manager page (?path=/workspace/) reads the server port from this tag.\n` +
+    `     Written by \`story-ui init\`; \`story-ui update\` refreshes it. -->\n${tag}\n`;
+  if (existing === null || existing.trim() === '') return block;
+  return existing.replace(/\s*$/, '\n') + block;
+}
+
+/**
+ * Make `.storybook/manager-head.html` declare the Story UI port.
+ *
+ * The docs-page workspace runs in the preview iframe and reads
+ * `VITE_STORY_UI_PORT` from .env through Vite. The manager page
+ * (`?path=/workspace/`) is bundled by Storybook's own esbuild, where Vite's
+ * env does not exist — so an init that wrote only .env left the manager on
+ * the default port 4001, talking to whatever server happened to be there and
+ * showing another project's stories under a green "Connected". Storybook
+ * injects this file into the manager's <head>; the meta is the one channel
+ * that reaches the manager without an environment variable at start.
+ */
+export function ensureManagerHeadPort(
+  cwd: string,
+  port: string | number,
+): { path: string; action: 'created' | 'updated' | 'unchanged' } {
+  const file = path.join(cwd, '.storybook', 'manager-head.html');
+  const existing = fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : null;
+  if (existing !== null && managerHeadPort(existing) === String(port)) {
+    return { path: file, action: 'unchanged' };
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, withManagerHeadPort(existing, port));
+  return { path: file, action: existing === null ? 'created' : 'updated' };
+}
+
+/**
+ * The port init configured, read back from what init wrote: `.env`'s
+ * VITE_STORY_UI_PORT first, then the `--port` in the package.json `story-ui`
+ * script. Null when neither exists — the caller decides what that means.
+ */
+export function readConfiguredPort(cwd: string): { port: number; source: string } | null {
+  const envPath = path.join(cwd, '.env');
+  if (fs.existsSync(envPath)) {
+    for (const line of fs.readFileSync(envPath, 'utf-8').split('\n')) {
+      const m = line.match(/^\s*VITE_STORY_UI_PORT\s*=\s*["']?(\d+)["']?\s*$/);
+      if (m) return { port: Number(m[1]), source: '.env VITE_STORY_UI_PORT' };
+    }
+  }
+  const pkgPath = path.join(cwd, 'package.json');
+  if (fs.existsSync(pkgPath)) {
+    try {
+      const script = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'))?.scripts?.['story-ui'];
+      const m = typeof script === 'string' ? script.match(/--port[ =](\d+)/) : null;
+      if (m) return { port: Number(m[1]), source: 'package.json "story-ui" script' };
+    } catch { /* unreadable package.json — no port from it */ }
+  }
+  return null;
+}
+
+/**
+ * Is @tpitre/story-ui an `npm link` in this project? A plain `npm install`
+ * reconciles node_modules against package.json and removes the symlink, so
+ * a linked development install passed init and then nothing loaded.
+ */
+export function storyUiIsLinked(cwd: string): boolean {
+  try {
+    return fs.lstatSync(path.join(cwd, 'node_modules', '@tpitre', 'story-ui')).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * What the Voice Canvas registry should `import()`.
+ *
+ * A bare specifier is used verbatim. A relative importPath is relative to the
+ * generated stories directory (that is what generated stories use), so from
+ * the registry file it must be re-rooted; and a component directory that has
+ * no index of its own (Sail Shelf: src/components/<Name>/index.ts each, the
+ * barrel at src/index.ts) is imported through the nearest barrel above it.
+ * Null when nothing importable is found — the placeholder registry is used.
+ */
+export function registryImportSpecifier(
+  config: { importPath?: string; componentsPath?: string; generatedStoriesPath?: string },
+  registryDir: string,
+): string | null {
+  const p = config.importPath;
+  if (!p) return null;
+  if (!p.startsWith('.') && !p.startsWith('/')) return p;
+  const target = config.componentsPath
+    ? path.resolve(config.componentsPath)
+    : path.resolve(config.generatedStoriesPath || 'src/stories/generated', p);
+  if (!fs.existsSync(target)) return null;
+  const exts = ['ts', 'tsx', 'js', 'jsx', 'mjs'];
+  const indexIn = (dir: string) => exts.map(e => path.join(dir, `index.${e}`)).find(f => fs.existsSync(f));
+  const barrel = indexIn(target) || indexIn(path.dirname(target));
+  if (!barrel) return null;
+  let rel = path.relative(registryDir, barrel).split(path.sep).join('/').replace(/\.(tsx?|jsx?|mjs)$/, '');
+  if (!rel.startsWith('.')) rel = './' + rel;
+  return rel;
 }
 
 /**
@@ -995,6 +1283,17 @@ export function detectLocalComponentLibrary(
 
 export async function setupCommand(options: SetupOptions = {}) {
   console.log(chalk.blue.bold('\n🎨 Story UI Setup\n'));
+  /**
+   * What went wrong that a human or a script must act on. Printed at the
+   * end, carried in the --json line as `problems`, and the process exits
+   * non-zero when the list is not empty — init used to print ok:true over a
+   * .storybook/main.ts that no longer parsed.
+   */
+  const problems: string[] = [];
+  /** Why init's own `npm install` did not run, when it did not. */
+  let installSkipped: 'npm-link' | 'skip-install' | null = null;
+  /** The Voice Canvas files were copied — the only reason react-live is added. */
+  let voiceCanvasInstalled = false;
 
   // Non-interactive mode indicator
   if (options.yes || options.designSystem) {
@@ -1665,6 +1964,7 @@ Material UI (MUI) is a React component library implementing Material Design.
       if (fs.existsSync(sourcePath)) {
         fs.copyFileSync(sourcePath, targetPath);
         console.log(chalk.green(`✅ Copied voice/${file}`));
+        voiceCanvasInstalled = true;
       }
     }
   }
@@ -1694,11 +1994,17 @@ Material UI (MUI) is a React component library implementing Material Design.
   // Uses a literal string in import() so Vite resolves it at build time,
   // but execution is deferred until loadRegistry() is called — avoiding
   // module-level side effects that can crash the docs page.
-  if (config.importPath && config.importStyle !== 'individual') {
+  //
+  // A relative importPath is relative to the GENERATED STORIES directory,
+  // not to this file, so it is re-rooted here; a component directory with no
+  // index of its own gets the barrel above it (src/index.ts over
+  // src/components) when one exists.
+  const registryImport = registryImportSpecifier(config, canvasTargetDir);
+  if (registryImport && config.importStyle !== 'individual') {
     const registryContent = `/**
  * Component registry for Voice Canvas — lazy-loaded from design system.
  *
- * Uses dynamic import('${config.importPath}') with a literal string so Vite
+ * Uses dynamic import('${registryImport}') with a literal string so Vite
  * resolves it at build time, but the import only executes when loadRegistry()
  * is called (not at module evaluation time). This prevents crashes from
  * module-level side effects.
@@ -1714,7 +2020,7 @@ export async function loadRegistry(): Promise<Record<string, any>> {
   if (_loaded) return registry;
 
   try {
-    const mod = await import('${config.importPath}');
+    const mod = await import('${registryImport}');
 
     for (const [key, value] of Object.entries(mod)) {
       if (/^[A-Z]/.test(key) && (typeof value === 'function' || typeof value === 'object')) {
@@ -1723,7 +2029,7 @@ export async function loadRegistry(): Promise<Record<string, any>> {
     }
 
     _loaded = true;
-    console.log(\\\`[componentRegistry] Loaded \\\${Object.keys(registry).length} components from ${config.importPath}\\\`);
+    console.log(\\\`[componentRegistry] Loaded \\\${Object.keys(registry).length} components from ${registryImport}\\\`);
   } catch (err) {
     console.error('[componentRegistry] Failed to load design system:', err);
   }
@@ -1734,7 +2040,7 @@ export async function loadRegistry(): Promise<Record<string, any>> {
 export default registry;
 `;
     fs.writeFileSync(path.join(canvasTargetDir, 'componentRegistry.ts'), registryContent);
-    console.log(chalk.green(`✅ Generated voice/canvas/componentRegistry.ts with ${config.importPath} imports`));
+    console.log(chalk.green(`✅ Generated voice/canvas/componentRegistry.ts importing from ${registryImport}`));
   } else {
     // For individual import style or unknown, copy the placeholder
     const placeholderSrc = path.join(canvasSourceDir, 'componentRegistry.ts');
@@ -1777,11 +2083,9 @@ export default registry;
     return config;
   },`;
         // Insert webpackFinal inside the config object, before the closing };
-        if (mainContent.match(/};\s*\n+\s*export\s+default/)) {
-          mainContent = mainContent.replace(
-            /(\n)(};\s*\n+\s*export\s+default)/,
-            `\n  ${webpackConfig}\n$2`
-          );
+        const inserted = insertConfigProperty(mainContent, webpackConfig);
+        if (inserted) {
+          mainContent = inserted;
           configUpdated = true;
         }
       }
@@ -1831,11 +2135,9 @@ export default registry;
     return config;
   },`;
           // Insert webpackFinal inside the config object, before the closing };
-          if (mainContent.match(/};\s*\n+\s*export\s+default/)) {
-            mainContent = mainContent.replace(
-              /(\n)(};\s*\n+\s*export\s+default)/,
-              `\n  ${webpackConfig}\n$2`
-            );
+          const inserted = insertConfigProperty(mainContent, webpackConfig);
+          if (inserted) {
+            mainContent = inserted;
             configUpdated = true;
           }
         }
@@ -1854,14 +2156,14 @@ export default registry;
       if (!mainContent.includes('viteFinal')) {
         const viteConfig = viteFinalConfigSnippet();
         // Insert viteFinal inside the config object, before the closing };
-        // Find the last property line and add viteFinal after it
-        // Pattern: match the closing }; that ends the config object (before export default)
-        if (mainContent.match(/};\s*\n+\s*export\s+default/)) {
-          mainContent = mainContent.replace(
-            /(\n)(};\s*\n+\s*export\s+default)/,
-            `\n  ${viteConfig}\n$2`
-          );
+        // — with the comma the property above it may be missing (Storybook's
+        // scaffold ends `"staticDirs": ["./assets"]` without one).
+        const inserted = insertConfigProperty(mainContent, viteConfig);
+        if (inserted) {
+          mainContent = inserted;
           configUpdated = true;
+        } else {
+          console.warn(chalk.yellow(`⚠️  Could not find the config object's closing \`};\` in ${path.basename(actualMainPath)} — add the viteFinal block from the Story UI README by hand`));
         }
       } else {
         // A user-authored viteFinal is never rewritten. But if it excludes
@@ -1908,6 +2210,15 @@ export default registry;
     if (configUpdated) {
       fs.writeFileSync(actualMainPath, mainContent);
       console.log(chalk.green('✅ Updated Storybook configuration for Story UI'));
+    }
+    // Every edit above is a text splice. Prove the result still parses —
+    // a file Storybook cannot load looks like success until `storybook dev`.
+    const syntax = storybookMainSyntaxError(fs.readFileSync(actualMainPath, 'utf-8'), path.basename(actualMainPath));
+    if (syntax) {
+      const where = `.storybook/${path.basename(actualMainPath)}:${syntax.line}:${syntax.column}`;
+      problems.push(`${where} does not parse: ${syntax.message}`);
+      console.error(chalk.red(`❌ ${where} does not parse after the edit: ${syntax.message}`));
+      console.error(chalk.red('   Storybook will not start until this is fixed.'));
     }
   } else {
     console.warn(chalk.yellow('⚠️  Could not find .storybook/main.ts or main.js'));
@@ -1987,6 +2298,17 @@ VITE_STORY_UI_PORT=${answers.mcpPort || '4001'}
     console.log(chalk.yellow('⚠️  .env file already exists, skipping'));
   }
 
+  // The manager page (?path=/workspace/) cannot read .env: Storybook's own
+  // esbuild bundles it, not Vite. The port reaches it through a <meta> in
+  // .storybook/manager-head.html (see ensureManagerHeadPort).
+  if (fs.existsSync(path.join(process.cwd(), '.storybook'))) {
+    const chosenPort = answers.mcpPort || '4001';
+    const head = ensureManagerHeadPort(process.cwd(), chosenPort);
+    if (head.action !== 'unchanged') {
+      console.log(chalk.green(`✅ ${head.action === 'created' ? 'Created' : 'Updated'} .storybook/manager-head.html — the workspace page will talk to port ${chosenPort}`));
+    }
+  }
+
   // Add .env to .gitignore if not already there
   const gitignorePath = path.join(process.cwd(), '.gitignore');
   if (fs.existsSync(gitignorePath)) {
@@ -2041,19 +2363,23 @@ VITE_STORY_UI_PORT=${answers.mcpPort || '4001'}
     const dependencies = packageJson.dependencies || {};
     const devDependencies = packageJson.devDependencies || {};
     let needsInstall = false;
-    
-    
-    // Check for concurrently (needed for storybook-with-ui script)
-    if (!dependencies['concurrently'] && !devDependencies['concurrently']) {
-      console.log(chalk.blue('📦 Adding concurrently dependency...'));
+
+    // concurrently — only because the storybook-with-ui script uses it. A
+    // project with no `storybook` script gets no such script and no dependency.
+    const withUiScript: string = scripts['storybook-with-ui'] || '';
+    if (withUiScript.includes('concurrently') && !dependencies['concurrently'] && !devDependencies['concurrently']) {
+      console.log(chalk.blue('📦 Adding concurrently (devDependency) — the storybook-with-ui script runs Storybook and the server together with it'));
       devDependencies['concurrently'] = '^8.2.0';
       needsInstall = true;
     }
 
-    // Check for react-live (imported directly by voice canvas templates;
-    // cannot be resolved transitively when @tpitre/story-ui is symlinked)
-    if (!dependencies['react-live'] && !devDependencies['react-live']) {
-      console.log(chalk.blue('📦 Adding react-live dependency (required by voice canvas)...'));
+    // react-live — imported directly by the Voice Canvas, the classic panel's
+    // live-code surface under src/stories/StoryUI/voice/ (it cannot resolve
+    // through a symlinked @tpitre/story-ui). Added only when that canvas was
+    // installed for a React project: a Vue or Svelte Storybook cannot compile
+    // its story and would carry a dead dependency.
+    if (componentFramework === 'react' && voiceCanvasInstalled && !dependencies['react-live'] && !devDependencies['react-live']) {
+      console.log(chalk.blue('📦 Adding react-live (devDependency) — it powers the Voice Canvas in the classic panel (src/stories/StoryUI/voice/); remove both if you do not use the canvas'));
       devDependencies['react-live'] = '^4.1.8';
       needsInstall = true;
     }
@@ -2093,13 +2419,27 @@ VITE_STORY_UI_PORT=${answers.mcpPort || '4001'}
       needsInstall = true;
     }
 
-    packageJson.dependencies = dependencies;
-    packageJson.devDependencies = devDependencies;
+    // Nothing above adds a RUNTIME dependency, so `dependencies` is only
+    // written back when the project already had the field — init used to
+    // leave an empty `"dependencies": {}` in every package.json it touched.
+    if (packageJson.dependencies) packageJson.dependencies = dependencies;
+    if (packageJson.devDependencies || Object.keys(devDependencies).length > 0) packageJson.devDependencies = devDependencies;
     
     fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + '\n');
     console.log(chalk.green('✅ Added convenience scripts to package.json'));
     
-    if (needsInstall) {
+    if (needsInstall && options.skipInstall) {
+      installSkipped = 'skip-install';
+      console.log(chalk.yellow('\n⏭️  --skip-install: new devDependencies were added to package.json but not installed. Run your package manager\'s install.'));
+    } else if (needsInstall && storyUiIsLinked(process.cwd())) {
+      // A plain install reconciles node_modules against package.json and
+      // removes the symlink — a linked development install passed init and
+      // then nothing loaded. Say what to run instead of doing the damage.
+      installSkipped = 'npm-link';
+      console.log(chalk.yellow('\n⚠️  node_modules/@tpitre/story-ui is an npm link, and `npm install` would replace it with the registry package.'));
+      console.log(chalk.yellow('   Skipped the install. To add the new devDependencies and keep the link:'));
+      console.log(chalk.cyan('   npm install && npm link @tpitre/story-ui'));
+    } else if (needsInstall) {
       console.log(chalk.blue('\n📦 Installing required dependencies...'));
       console.log(chalk.gray('This may take a moment...\n'));
       
@@ -2126,11 +2466,19 @@ VITE_STORY_UI_PORT=${answers.mcpPort || '4001'}
   }
 
 
-  console.log(chalk.green.bold('\n🎉 Setup complete!\n'));
+  if (problems.length === 0) {
+    console.log(chalk.green.bold('\n🎉 Setup complete!\n'));
+  } else {
+    console.log(chalk.red.bold(`\n⚠️  Setup finished with ${problems.length} problem(s) that must be fixed before Storybook will start:`));
+    for (const problem of problems) console.log(chalk.red(`   • ${problem}`));
+    console.log('');
+    process.exitCode = 1;
+  }
   if (options.json) {
     // One line a script or an agent can parse, after the human output.
     console.log('STORY_UI_INIT ' + JSON.stringify({
-      ok: true,
+      ok: problems.length === 0,
+      problems,
       configPath: path.join(process.cwd(), 'story-ui.config.js'),
       importPath: config.importPath,
       componentsPath: config.componentsPath ?? null,
@@ -2138,6 +2486,8 @@ VITE_STORY_UI_PORT=${answers.mcpPort || '4001'}
       provider: answers.llmProvider,
       apiKeyWritten: Boolean(answers.apiKey),
       port: Number(answers.mcpPort),
+      managerHead: fs.existsSync(path.join(process.cwd(), '.storybook', 'manager-head.html')) ? '.storybook/manager-head.html' : null,
+      installSkipped,
       workspaceUrl: '?path=/workspace/',
       next: ['npm run story-ui', 'npm run storybook', 'npx story-ui check'],
     }));

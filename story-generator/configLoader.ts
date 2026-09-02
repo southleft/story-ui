@@ -522,23 +522,56 @@ export function autoDetectDesignSystem(): Partial<StoryUIConfig> | null {
     const analysis = analyzeExistingStories(cwd);
     console.log(`📊 Analysis found: ${analysis.storyFiles.length} story files, ${analysis.componentDirs.length} component directories`);
 
+    const generatedStoriesPath = path.join(cwd, 'src/stories/generated/');
+
     // Determine the most likely import path: a known system from package.json
     // first, then what the project's own stories import.
-    const importPath = knownSystems?.importPath || findMostLikelyImportPath(analysis.importPaths, packageJson.name);
+    let importPath: string | null = knownSystems?.importPath
+      || findMostLikelyImportPath(analysis.importPaths, packageJson.name);
 
     /**
      * External means the RESOLVED import path is a bare specifier, whether
      * it came from the known list or from the stories. Judging it from the
      * known list alone gave an MUI project — found through its stories, not
      * the list — a componentsPath pointing at its own stories folder.
+     *
+     * A stories-derived specifier must also be INSTALLABLE: declared in
+     * package.json or present in node_modules. One that is neither — the
+     * project's own name, or a package that was removed — is not a design
+     * system anyone can import from, and the project's component directory
+     * is the truth instead.
      */
-    const isExternalPackage = Boolean(importPath) && !importPath.startsWith('.') && !importPath.startsWith('/')
-      && Boolean(dependencies[importPath.split('/').slice(0, importPath.startsWith('@') ? 2 : 1).join('/')]);
+    const isPackageSpecifier = (p: string) => !/^(\.|\/|@\/|~|#)/.test(p);
+    const packageRoot = (p: string) => p.split('/').slice(0, p.startsWith('@') ? 2 : 1).join('/');
+    let isExternalPackage = false;
+    if (importPath && isPackageSpecifier(importPath)) {
+      const root = packageRoot(importPath);
+      const declared = Boolean(dependencies[root]);
+      const installed = declared || fs.existsSync(path.join(cwd, 'node_modules', root));
+      const isSelf = root === packageJson.name;
+      if (knownSystems?.importPath === importPath) {
+        isExternalPackage = declared;
+      } else if (isSelf || !installed) {
+        console.log(`ℹ️  Stories import from ${importPath}, which is ${isSelf ? "this project's own package name" : 'not installed'} — using the local component directory instead`);
+        importPath = null;
+      } else {
+        isExternalPackage = true;
+      }
+    }
 
     // Only determine component path if we're not using an external package
     const componentPath = !isExternalPackage ?
       findMostLikelyComponentDirectory(analysis.componentDirs, cwd) :
       undefined;
+
+    // A local library is imported by a path RELATIVE to the generated stories
+    // directory (the form init writes for local libraries everywhere else);
+    // the project's own package name is never emitted.
+    if (!importPath) {
+      importPath = componentPath && fs.existsSync(componentPath)
+        ? relativeImportPath(generatedStoriesPath, componentPath)
+        : 'your-component-library';
+    }
 
     // Determine component prefix
     const componentPrefix = findMostLikelyPrefix(analysis.componentPrefixes);
@@ -551,7 +584,7 @@ export function autoDetectDesignSystem(): Partial<StoryUIConfig> | null {
 
     // Build configuration
     const config: Partial<StoryUIConfig> = {
-      generatedStoriesPath: path.join(cwd, 'src/stories/generated/'),
+      generatedStoriesPath,
       importPath: importPath,
       componentPrefix: componentPrefix,
       layoutRules: layoutRules,
@@ -727,15 +760,32 @@ function findMostLikelyComponentDirectory(componentDirs: string[], projectRoot: 
   return bestDir;
 }
 
+/** The specifier a file in `fromDir` uses to import `toDir` — always relative, POSIX separators. */
+export function relativeImportPath(fromDir: string, toDir: string): string {
+  let rel = path.relative(path.resolve(fromDir), path.resolve(toDir)).split(path.sep).join('/');
+  if (!rel.startsWith('.')) rel = './' + rel;
+  return rel;
+}
+
 /**
  * Finds the most likely import path based on import analysis
  */
 /** Runtime and tooling packages a story imports that are never the design system. */
 const NOT_A_DESIGN_SYSTEM = /^(react|react-dom|react\/.*|react-dom\/.*|storybook|storybook\/.*|@storybook\/.*|@testing-library\/.*|jest|vitest|@vitest\/.*|vite|next|next\/.*)$/;
 
-export function findMostLikelyImportPath(importPaths: string[], packageName?: string): string {
+/**
+ * The bare specifier the project's own stories import components from, or
+ * null when they import none. `ownPackageName` is the project's package.json
+ * name and is never a candidate: a design system's stories may import the
+ * library by its own name through a workspace alias, but that name is not
+ * installable, `story-ui check` would ask for `npm install <itself>`
+ * forever, and every component would carry an import path no consumer can
+ * resolve. The caller turns null into a relative path to the component
+ * directory.
+ */
+export function findMostLikelyImportPath(importPaths: string[], ownPackageName?: string): string | null {
   if (importPaths.length === 0) {
-    return packageName || 'your-component-library';
+    return null;
   }
 
   // Count frequency of import paths
@@ -750,13 +800,14 @@ export function findMostLikelyImportPath(importPaths: string[], packageName?: st
      * import path.
      */
     if (NOT_A_DESIGN_SYSTEM.test(importPath)) continue;
+    if (ownPackageName && (importPath === ownPackageName || importPath.startsWith(ownPackageName + '/'))) continue;
 
     pathCounts[importPath] = (pathCounts[importPath] || 0) + 1;
   }
 
   // Find the most common import path
   let maxCount = 0;
-  let bestPath = packageName || 'your-component-library';
+  let bestPath: string | null = null;
 
   for (const [importPath, count] of Object.entries(pathCounts)) {
     if (count > maxCount) {

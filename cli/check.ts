@@ -13,7 +13,7 @@ import chalk from 'chalk';
 import { loadUserConfig } from '../story-generator/configLoader.js';
 import { EnhancedComponentDiscovery } from '../story-generator/enhancedComponentDiscovery.js';
 import { extractProps } from '../story-generator/knowledge/propExtractor.js';
-import { storiesGlobCoversMdx } from './setup.js';
+import { storiesGlobCoversMdx, storybookMainSyntaxError, managerHeadPort } from './setup.js';
 import { resolveHostTooling, canLaunchBrowser } from '../story-generator/verify/hostTooling.js';
 import { closeBrowserSession } from '../story-generator/verify/browserSession.js';
 import { describeLaunchFailure } from '../story-generator/verify/verifyStory.js';
@@ -71,10 +71,24 @@ export async function runChecks(opts: { server?: string; cwd?: string } = {}): P
 
   // 2. Import path resolves: an npm package present, or a local directory.
   const importPath: string = config.importPath || '';
-  if (importPath.startsWith('.') || importPath.startsWith('/')) {
+  let ownPackageName = '';
+  try { ownPackageName = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf-8')).name || ''; } catch { /* no package.json */ }
+  const isOwnName = Boolean(importPath) && Boolean(ownPackageName) && (importPath === ownPackageName || importPath.startsWith(ownPackageName + '/'));
+  if (importPath.startsWith('.') || importPath.startsWith('/') || isOwnName) {
+    // The project's own package name is local source, not an npm package:
+    // nothing can install it, so the directory is what must exist.
     const dir = config.componentsPath || path.resolve(cwd, config.generatedStoriesPath || './src/stories/generated/', importPath);
     const exists = fs.existsSync(dir);
-    items.push({ id: 'import-path', ok: exists, detail: exists ? `local components at ${path.relative(cwd, dir) || '.'}` : `local import path ${importPath} does not resolve to a directory`, fix: exists ? undefined : 'set componentsPath and importPath in story-ui.config.js to the component directory' });
+    const where = `local components at ${path.relative(cwd, dir) || '.'}`;
+    items.push({
+      id: 'import-path', ok: exists,
+      detail: exists
+        ? (isOwnName ? `${where} (importPath ${importPath} is this project's own package name — local source)` : where)
+        : (isOwnName ? `importPath ${importPath} is this project's own package name and componentsPath does not resolve to a directory` : `local import path ${importPath} does not resolve to a directory`),
+      fix: exists ? undefined : 'set componentsPath and importPath in story-ui.config.js to the component directory (importPath relative to the generated stories directory), or re-run init --force',
+    });
+  } else if (importPath === 'your-component-library') {
+    items.push({ id: 'import-path', ok: false, detail: 'importPath is the placeholder "your-component-library" — init found neither an npm design system nor a component directory', fix: 'npx story-ui init --force --components-path ./path/to/components (or set importPath/componentsPath in story-ui.config.js)' });
   } else if (importPath) {
     const pkgDir = path.join(cwd, 'node_modules', ...importPath.split('/').slice(0, importPath.startsWith('@') ? 2 : 1));
     const exists = fs.existsSync(pkgDir);
@@ -132,27 +146,56 @@ export async function runChecks(opts: { server?: string; cwd?: string } = {}): P
   }
 
   items.push({ id: 'generated-dir', ok: fs.existsSync(generatedDir), detail: fs.existsSync(generatedDir) ? `generated stories go to ${path.relative(cwd, generatedDir)}` : `${path.relative(cwd, generatedDir)} does not exist yet`, fix: fs.existsSync(generatedDir) ? undefined : `mkdir -p ${path.relative(cwd, generatedDir)}` });
+  // Read what init wrote, before anything that depends on the port.
+  const env = { ...readEnv(cwd), ...process.env } as Record<string, string | undefined>;
+  const port = Number(env.VITE_STORY_UI_PORT || env.PORT || config.mcpPort || 4001);
+  summary.port = port;
+
   const mainPath = ['main.ts', 'main.tsx', 'main.js', 'main.mjs'].map(f => path.join(cwd, '.storybook', f)).find(f => fs.existsSync(f));
   if (mainPath) {
     const main = fs.readFileSync(mainPath, 'utf-8');
+    // Does the file still parse? init splices text into it, and a splice
+    // that broke it ("Expected } but found viteFinal") is invisible to every
+    // other item here — they read the file as a string.
+    const syntax = storybookMainSyntaxError(main, path.basename(mainPath));
+    items.push({
+      id: 'storybook-main-syntax', ok: !syntax,
+      detail: syntax
+        ? `.storybook/${path.basename(mainPath)}:${syntax.line}:${syntax.column} does not parse: ${syntax.message} — Storybook cannot start`
+        : `.storybook/${path.basename(mainPath)} parses`,
+      fix: syntax ? `open .storybook/${path.basename(mainPath)} at line ${syntax.line} and fix the syntax (a missing comma before a property init inserted is the usual cause)` : undefined,
+    });
     const covered = storiesGlobCoversMdx(main);
-    const hasStories = /stories\s*:/.test(main);
+    // Storybook's own scaffold quotes the key (`"stories": [`).
+    const hasStories = /["']?stories["']?\s*:/.test(main);
     items.push({ id: 'storybook-globs', ok: hasStories ? covered : null, detail: !hasStories ? '.storybook/main has no stories array to inspect' : covered ? 'Storybook\'s stories globs include the Story UI MDX entries' : 'Storybook\'s stories globs do not cover the Story UI MDX entries', fix: covered ? undefined : 'add "../src/**/*.mdx" (or the StoryUI/StoryUIV2 paths) to stories in .storybook/main' });
     const managerFile = ['manager.ts', 'manager.tsx', 'manager.js'].map(f => path.join(cwd, '.storybook', f)).find(f => fs.existsSync(f));
     const wired = managerFile ? /StoryUI\/manager/.test(fs.readFileSync(managerFile, 'utf-8')) : false;
     items.push({ id: 'manager-addon', ok: wired ? true : null, detail: wired ? 'manager addon wired: the workspace opens at ?path=/workspace/' : 'manager addon not wired (Storybook 9+): the workspace is only available as the docs entry', fix: wired ? undefined : 'npx story-ui update, or add "import \'../src/stories/StoryUI/manager\';" to .storybook/manager.ts' });
+    // The manager page cannot read .env; it reads the port from a <meta> in
+    // manager-head.html. Without it, or with a stale one, the page talks to
+    // port 4001 and shows whatever project's server is there as "Connected".
+    const headPath = path.join(cwd, '.storybook', 'manager-head.html');
+    const headPort = fs.existsSync(headPath) ? managerHeadPort(fs.readFileSync(headPath, 'utf-8')) : null;
+    const headFix = `npx story-ui update (writes <meta name="story-ui-port" content="${port}"> into .storybook/manager-head.html)`;
+    if (!wired) {
+      items.push({ id: 'manager-head', ok: null, detail: headPort ? `manager-head.html names port ${headPort} (unused until the manager addon is wired)` : 'no manager-head.html port (not needed while the manager addon is not wired)' });
+    } else if (!headPort) {
+      items.push({ id: 'manager-head', ok: false, detail: `.storybook/manager-head.html has no story-ui-port meta — the workspace page would talk to port 4001, not ${port}`, fix: headFix });
+    } else if (Number(headPort) !== port) {
+      items.push({ id: 'manager-head', ok: false, detail: `.storybook/manager-head.html names port ${headPort} but the config/.env port is ${port} — the workspace page would talk to the wrong server`, fix: headFix });
+    } else {
+      items.push({ id: 'manager-head', ok: true, detail: `manager-head.html points the workspace page at port ${port}` });
+    }
   } else {
     items.push({ id: 'storybook-globs', ok: false, detail: 'no .storybook/main.* found', fix: 'run this from the project that hosts Storybook' });
   }
 
   // 5. A provider key.
-  const env = { ...readEnv(cwd), ...process.env } as Record<string, string | undefined>;
   const keyName = PROVIDER_KEYS.find(k => env[k] && !/your-.*-key|api-key-here/.test(env[k] as string));
   items.push({ id: 'provider-key', ok: Boolean(keyName), detail: keyName ? `${keyName} is set` : 'no provider API key in .env or the environment', fix: keyName ? undefined : 'put ANTHROPIC_API_KEY=… (or OPENAI_API_KEY / GEMINI_API_KEY) in .env' });
 
   // 6. The server, if asked or if the config names a port.
-  const port = Number(env.VITE_STORY_UI_PORT || env.PORT || config.mcpPort || 4001);
-  summary.port = port;
   const server = opts.server || `http://localhost:${port}`;
   summary.server = server;
   try {

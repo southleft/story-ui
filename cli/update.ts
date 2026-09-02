@@ -5,7 +5,7 @@ import chalk from 'chalk';
 import { fileURLToPath } from 'url';
 import inquirer from 'inquirer';
 import { createRequire } from 'module';
-import { ensureManagerAddonWiring, ensureStoriesGlobCoversMdx, missingReactStorybookDep } from './setup.js';
+import { ensureManagerAddonWiring, ensureStoriesGlobCoversMdx, missingReactStorybookDep, ensureManagerHeadPort, readConfiguredPort } from './setup.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -435,7 +435,10 @@ function ensureConsumerDependencies(options: UpdateOptions, componentFramework?:
   }
 
   const allDeps = { ...packageJson.dependencies, ...packageJson.devDependencies };
-  const missing = REQUIRED_CONSUMER_DEPS.filter((pkg) => !allDeps[pkg]);
+  // react-live is the Voice Canvas's dependency, and the canvas story only
+  // compiles in a React Storybook; a Vue or Svelte host would carry it dead.
+  const required = (componentFramework && componentFramework !== 'react') ? [] : REQUIRED_CONSUMER_DEPS;
+  const missing = required.filter((pkg) => !allDeps[pkg]);
 
   // The panel and the V2 workspace are React, rendered through addon-docs even
   // in a non-React Storybook. react/@storybook/react are OPTIONAL peers of
@@ -566,9 +569,29 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
     }
   }
 
+  // The manager page reads its port from .storybook/manager-head.html, not
+  // from .env. Refreshed from the port init recorded BEFORE the early return
+  // below: an install whose managed files are current can still predate the
+  // meta, and `check` sends people here to get it.
+  if (!options.dryRun && fs.existsSync(path.join(process.cwd(), '.storybook'))) {
+    const configured = readConfiguredPort(process.cwd());
+    if (configured) {
+      try {
+        const head = ensureManagerHeadPort(process.cwd(), configured.port);
+        if (head.action !== 'unchanged') {
+          console.log(chalk.green(`   ✅ ${head.action === 'created' ? 'Created' : 'Updated'} .storybook/manager-head.html — the workspace page talks to port ${configured.port} (from ${configured.source})`));
+        }
+      } catch (headError: any) {
+        result.errors.push(`manager-head.html: ${headError.message}`);
+      }
+    } else {
+      console.log(chalk.yellow('   ⚠️  No port in .env (VITE_STORY_UI_PORT) or the story-ui script — .storybook/manager-head.html was not written'));
+    }
+  }
+
   if (filesToUpdate.length === 0) {
     console.log(chalk.green('\n✅ All files are already up to date!'));
-    result.success = true;
+    result.success = result.errors.length === 0;
     return result;
   }
 

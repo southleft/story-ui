@@ -36,7 +36,7 @@ import { getProviders, getModels } from './routes/providers.js';
 import mcpRemoteRouter from './routes/mcpRemote.js';
 // Voice Canvas endpoints
 import { canvasSaveHandler } from './routes/canvasSave.js';
-import { canvasGenerateHandler, ensureVoiceCanvasStory } from './routes/canvasGenerate.js';
+import { canvasGenerateHandler } from './routes/canvasGenerate.js';
 import { getAdapterRegistry } from '../story-generator/framework-adapters/index.js';
 // Manifest — story ↔ chat source of truth
 import {
@@ -1009,16 +1009,10 @@ app.listen(PORT, accessPolicy.host, () => {
     console.error('🔒 Loopback only. Set STORY_UI_TOKEN to expose it to other machines.');
   }
   console.error(`Stories will be generated to: ${config.generatedStoriesPath}`);
-  // Ensure voice-canvas scratchpad story file exists before client polling starts.
-  // Only for React projects — voice-canvas.stories.tsx imports react-live which
-  // breaks non-React Storybook builds (Vue, Angular, Svelte, Web Components).
-  if (!config.componentFramework || config.componentFramework === 'react') {
-    try {
-      ensureVoiceCanvasStory(config.generatedStoriesPath || './src/stories/generated/');
-    } catch (err) {
-      console.error('[voice-canvas] Could not pre-create story template:', err);
-    }
-  }
+  // The voice-canvas scratch story is NOT written here. Writing it at start
+  // put "Generated/Voice Canvas" into every user's sidebar before they had
+  // asked for anything; the canvas route (POST /mcp/canvas-generate) writes
+  // it on first use, which is the first time the iframe can need it.
   // Initialize manifest manager (loads file, migrates from StoryTracker, reconciles)
   setTimeout(() => {
     try {
