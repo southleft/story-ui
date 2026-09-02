@@ -109,7 +109,8 @@ export interface VerifyReport {
   reason?: string;
   findings: Finding[];
   /** Raw probe measurements, kept for the bench and for regression tracking. */
-  metrics: Record<string, number | string | boolean>;
+  /** Counts and flags per layer; `checksNotRun` names the layers that did not run (absent ≠ zero). */
+  metrics: Record<string, number | string | boolean | string[]>;
   durationMs: number;
   storyId?: string;
   /** Repair disposition, when verification found issues and enforce mode ran. */

@@ -948,6 +948,8 @@ async function runStoryGenerationPipeline(
     : Promise.resolve(stripStoryPrefix(originalTitle as string, config.storyPrefix));
 
   let aiText = '';
+  /** The model's last raw reply, for the prose it wrote around the code. */
+  let lastModelReply = '';
   /** Edit blocks the update was answered with, for the client's diff view. */
   let appliedEdits: Array<{ search: string; replace: string }> | undefined;
   /** Stylesheet emitted alongside the story, when the model needed real states. */
@@ -1036,6 +1038,7 @@ async function runStoryGenerationPipeline(
           events.onLlmText?.({ phase: 'thinking', delta, accumulated: thinkingText });
         });
     const claudeResponse = llmResult.content;
+    lastModelReply = llmResult.content;
 
     // Truncated responses can't validate — ask the model to complete the block.
     //
@@ -2239,7 +2242,16 @@ async function runStoryGenerationPipeline(
         });
       } else {
         const replyHeader = `[SUCCESS] **${isActualUpdate ? 'Updated' : 'Created'}: "${cleanTitle}"**`;
-        const replyBody = chatSummary
+        /**
+         * The reply a returning user reads is what the model SAID, not a
+         * second model's guess from the component names. The summary is
+         * built from prompt, title and names only, and described "two
+         * Buttons side-by-side, Save and Cancel" on a story that had neither.
+         * The narration streamed live is the prose before the first fence.
+         */
+        const narration = proseBeforeFence(lastModelReply);
+        const replyBody = (narration.length >= 120 ? narration : '')
+          || chatSummary
           || `${isActualUpdate ? 'Updated' : 'Created'} this story based on your request.`;
         manifestConversation.push({ role: 'ai', content: `${replyHeader}\n\n${replyBody}` });
       }
@@ -2277,6 +2289,14 @@ async function runStoryGenerationPipeline(
               warnings: verification.findings.filter(f => f.severity === 'warning').length,
               ...(typeof verification.metrics?.focusables === 'number'
                 ? { focusables: verification.metrics.focusables }
+                : {}),
+              // A restored conversation used to show a green "Verified" for a
+              // run that skipped a layer: the counts never reached the manifest.
+              ...(typeof verification.metrics?.checksRun === 'number'
+                ? { checksRun: verification.metrics.checksRun, checksTotal: verification.metrics.checksTotal }
+                : {}),
+              ...(Array.isArray(verification.metrics?.checksNotRun) && (verification.metrics.checksNotRun as string[]).length
+                ? { checksNotRun: (verification.metrics.checksNotRun as string[]).slice(0, 8) }
                 : {}),
               // Repair disposition survives the iframe reload with the rest of
               // the badge data. `not-attempted`, `aborted-budget` and `failed`
@@ -3899,4 +3919,13 @@ export function analyzeGeneratedCode(
   }
 
   return { componentsUsed, layoutChoices, styleChoices };
+}
+
+/** The prose a model wrote before its first code fence, trimmed of edit-block noise. */
+export function proseBeforeFence(reply: string): string {
+  if (!reply) return '';
+  const cut = reply.indexOf('```');
+  const head = (cut === -1 ? reply : reply.slice(0, cut)).trim();
+  // Edit-block replies carry their prose after the fence too; keep the head only.
+  return head.replace(/^<{7} SEARCH[\s\S]*$/m, '').trim().slice(0, 2000);
 }

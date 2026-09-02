@@ -61,6 +61,12 @@ export interface InteractionResult {
    */
   controlsSkippedByCap: number;
   overlaysSkippedByCap: number;
+  /**
+   * Plain buttons and links on the page. The probe does not click them (a
+   * submit or a navigation is not a safe experiment), so their presence is
+   * reported rather than silently folded into "nothing interactive".
+   */
+  buttonsPresent: number;
   deadControls: DeadControl[];
   flowBreakingOverlays: FlowBreakingOverlay[];
   /** True when the probe declined to run; findings are then meaningless. */
@@ -116,6 +122,10 @@ export async function runInteractionProbe(
       const result: InteractionResult = {
         controlsTested: 0, overlaysTested: 0,
         controlsSkippedByCap: 0, overlaysSkippedByCap: 0,
+        buttonsPresent: queryAll('button, [role="button"], a[href]').filter(el => {
+          if (el.matches('[aria-pressed], [aria-haspopup], [aria-expanded]')) return false;
+          const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0;
+        }).length,
         deadControls: [], flowBreakingOverlays: [],
         skipped: false,
       };

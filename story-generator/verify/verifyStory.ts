@@ -357,7 +357,10 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
         `🖱️ Interaction: ${interaction.controlsTested} control(s) and ${interaction.overlaysTested} overlay(s) exercised` +
         ` — ${interaction.deadControls.length} inert, ${interaction.flowBreakingOverlays.length} in-flow` +
         (interaction.controlsTested === 0 && interaction.overlaysTested === 0
-          ? ' (nothing interactive found — not a pass)' : '') +
+          ? (interaction.buttonsPresent
+              ? ` (${interaction.buttonsPresent} button(s)/link(s) present, not exercised — only toggles and overlays are clicked; not a pass)`
+              : ' (nothing interactive found — not a pass)')
+          : '') +
         // A cap reached is not an all-clear, and must not read like one.
         (interaction.controlsSkippedByCap || interaction.overlaysSkippedByCap
           ? ` · CAPPED: ${interaction.controlsSkippedByCap} control(s) and ${interaction.overlaysSkippedByCap} overlay(s) left untested`
@@ -547,6 +550,9 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
         navMs: render.navMs,
         checksRun: ratio.ran,
         checksTotal: ratio.total,
+        // The NAMES of the layers that did not run travel with the count, so a
+        // "5/6" badge can say which one instead of leaving it in the log.
+        checksNotRun: gaps,
         axeRan: a11y.ran,
         axeViolations: a11y.violations.length,
         axePasses: a11y.passCount,

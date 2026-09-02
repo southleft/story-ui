@@ -2170,7 +2170,9 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                               turn.verification.outcome === 'verified' && turn.verification.reason
                                 ? turn.verification.reason
                                 : isPartialVerification(turn.verification)
-                                  ? 'Not every verification layer ran'
+                                  ? (turn.verification.checksNotRun?.length
+                                      ? `Did not run: ${turn.verification.checksNotRun.join('; ')}`
+                                      : 'Not every verification layer ran')
                                   : undefined
                             }
                           >

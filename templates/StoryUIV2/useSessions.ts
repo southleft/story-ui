@@ -52,6 +52,7 @@ export interface CompletionVerification {
   /** How many of the verification layers actually ran, when the server says. */
   checksRun?: number;
   checksTotal?: number;
+  checksNotRun?: string[];
 }
 
 export interface LastCompletion {
@@ -94,7 +95,12 @@ export interface VerificationSummary {
    */
   checksRun?: number;
   checksTotal?: number;
+  /** Which layers did not run, so a 5/6 badge can name the sixth. */
+  checksNotRun?: string[];
 }
+
+const asNames = (v: unknown): string[] | undefined =>
+  Array.isArray(v) && v.every(x => typeof x === 'string') && v.length ? (v as string[]) : undefined;
 
 const asCount = (v: unknown): number | undefined =>
   typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined;
@@ -109,6 +115,7 @@ export function summarizeVerification(v: Verification | undefined | null): Verif
     focusables: asCount(v.metrics?.focusables),
     checksRun: asCount(v.metrics?.checksRun),
     checksTotal: asCount(v.metrics?.checksTotal),
+    checksNotRun: asNames(v.metrics?.checksNotRun),
   };
 }
 
@@ -144,6 +151,7 @@ export function verificationFromCompletion(
     focusables: asCount(v.focusables),
     checksRun: asCount(v.checksRun),
     checksTotal: asCount(v.checksTotal),
+    checksNotRun: asNames(v.checksNotRun),
   };
 }
 

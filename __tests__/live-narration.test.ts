@@ -116,3 +116,13 @@ describe('composeAssistantText', () => {
     expect(composeAssistantText(plan, undefined, 'Created X.')).toBe(plan);
   });
 });
+
+describe('proseBeforeFence', () => {
+  it('keeps what the model said before its code, and nothing of the code', async () => {
+    const { proseBeforeFence } = await import('../mcp-server/routes/generationCore');
+    expect(proseBeforeFence('Below is a settings card built from Card, Badge and Button.\n\n```tsx\nexport const A = 1;\n```\nDone.'))
+      .toBe('Below is a settings card built from Card, Badge and Button.');
+    expect(proseBeforeFence('```tsx\nexport const A = 1;\n```')).toBe('');
+    expect(proseBeforeFence('')).toBe('');
+  });
+});

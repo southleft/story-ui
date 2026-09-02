@@ -272,7 +272,7 @@ export interface Verification {
   outcome: 'verified' | 'issues' | 'not_verified';
   reason?: string;
   findings: VerificationFinding[];
-  metrics?: Record<string, number | string | boolean>;
+  metrics?: Record<string, number | string | boolean | string[]>;
 }
 
 export interface GenerationResult {

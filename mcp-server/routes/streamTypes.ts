@@ -161,7 +161,7 @@ export interface CompletionFeedback {
       evidence?: string;
       selector?: string;
     }>;
-    metrics?: Record<string, number | string | boolean>;
+    metrics?: Record<string, number | string | boolean | string[]>;
   };
 
   // Validation status

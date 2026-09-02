@@ -1017,6 +1017,17 @@ export class EnhancedComponentDiscovery {
       if (this.isNonComponentFile(file)) {
         continue;
       }
+      // Vite's App.tsx / main.tsx at the root of `src` are the application,
+      // not the design system — a fresh project offered `App · 0 props` in
+      // the drawer and an import of it would have failed. Only entries
+      // DIRECTLY in the source root are skipped; a components directory of
+      // the same name deeper down is still read.
+      if (path.dirname(file) === path.resolve(source.path)
+          && /^(App|main|index|vite-env\.d)\.[jt]sx?$/.test(path.basename(file))
+          && /(^|\/)src$/.test(path.resolve(source.path))) {
+        logger.log(`   ↷ skipping application entry ${path.basename(file)} at the source root`);
+        continue;
+      }
 
       const content = fs.readFileSync(file, 'utf-8');
 
