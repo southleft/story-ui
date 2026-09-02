@@ -37,12 +37,14 @@ npm packages and local source. Other frameworks get the classic panel; see
 ## Quick start
 
 ```bash
-npm install -D @tpitre/story-ui
-npx story-ui init          # detects your framework and design system, writes config and the workspace entry
-npx story-ui check         # says what works and what to fix, with the command for each
-npm run story-ui           # Story UI server on http://127.0.0.1:4001 (loopback only)
-npm run storybook          # your Storybook, in another terminal
+npx @tpitre/story-ui@latest init   # asks a few questions, installs itself, writes config and the workspace entry
+npx story-ui check                 # says what works and what to fix, with the command for each
+npm run storybook-with-ui          # your Storybook and the Story UI server together
 ```
+
+No prior install is needed: `init` adds `@tpitre/story-ui` to your devDependencies
+and installs it. If you prefer two steps, `npm install -D @tpitre/story-ui` then
+`npx story-ui init` does the same.
 
 Open Storybook and click **Story UI** in the toolbar, or go to
 `?path=/workspace/`. Type a request and press Enter. The story appears in the

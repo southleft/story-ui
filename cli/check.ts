@@ -167,6 +167,19 @@ export async function runChecks(opts: { server?: string; cwd?: string } = {}): P
     items.push({ id: 'verification', ok, detail, fix });
   }
 
+  // The package itself: init run from npx used to leave it uninstalled.
+  {
+    const pkg = path.join(cwd, 'node_modules', '@tpitre', 'story-ui', 'package.json');
+    const installed = fs.existsSync(pkg);
+    let ver = '';
+    try { ver = installed ? JSON.parse(fs.readFileSync(pkg, 'utf8')).version : ''; } catch { /* unreadable */ }
+    items.push({
+      id: 'package', ok: installed,
+      detail: installed ? `@tpitre/story-ui ${ver} is installed in this project` : '@tpitre/story-ui is not installed in this project',
+      fix: installed ? undefined : 'npm install --save-dev @tpitre/story-ui',
+    });
+  }
+
   items.push({ id: 'generated-dir', ok: fs.existsSync(generatedDir), detail: fs.existsSync(generatedDir) ? `generated stories go to ${path.relative(cwd, generatedDir)}` : `${path.relative(cwd, generatedDir)} does not exist yet`, fix: fs.existsSync(generatedDir) ? undefined : `mkdir -p ${path.relative(cwd, generatedDir)}` });
   // Read what init wrote, before anything that depends on the port.
   const env = { ...readEnv(cwd), ...process.env } as Record<string, string | undefined>;

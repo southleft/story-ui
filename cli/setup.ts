@@ -629,6 +629,15 @@ export function toProjectRelative(p: string, cwd: string = process.cwd()): strin
  * reconciles node_modules against package.json and removes the symlink, so
  * a linked development install passed init and then nothing loaded.
  */
+/** This package's own version, from the package.json two levels above dist/cli. */
+export function ownVersion(): string {
+  try {
+    return JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8')).version || 'latest';
+  } catch {
+    return 'latest';
+  }
+}
+
 export function storyUiIsLinked(cwd: string): boolean {
   try {
     return fs.lstatSync(path.join(cwd, 'node_modules', '@tpitre', 'story-ui')).isSymbolicLink();
@@ -2526,6 +2535,19 @@ export default registry;
     // story starts with. It is an OPTIONAL peer (so non-React hosts skip it)
     // and pnpm's auto-install-peers skips optional peers, so on a React + pnpm
     // host it must be installed explicitly, pinned to the host's Storybook major.
+    /**
+     * The package itself. `npx @tpitre/story-ui init` runs from npx's cache
+     * without installing anything into the project; init then reported ok
+     * while `npm run story-ui`, `npx story-ui check` and the workspace's
+     * import of `@tpitre/story-ui/workspace` all had nothing to resolve. A
+     * linked development install is left alone.
+     */
+    if (!dependencies['@tpitre/story-ui'] && !devDependencies['@tpitre/story-ui'] && !storyUiIsLinked(process.cwd())) {
+      const selfSpec = process.env.STORY_UI_SELF_SPEC || `^${ownVersion()}`;
+      devDependencies['@tpitre/story-ui'] = selfSpec;
+      needsInstall = true;
+      console.log(chalk.blue(`📦 Adding @tpitre/story-ui@${selfSpec} as a devDependency (init ran from npx, nothing was installed yet)...`));
+    }
     const storybookReactDep = missingReactStorybookDep(
       process.cwd(), { ...dependencies, ...devDependencies }, componentFramework,
     );
