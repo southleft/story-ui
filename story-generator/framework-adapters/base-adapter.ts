@@ -310,6 +310,13 @@ export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
       entry += `\n  ${component.description}`;
     }
 
+    // `extends HTMLAttributes<HTMLElement>`: every standard attribute passes
+    // through. One line states it; enumerating them would spend the catalog
+    // on what the model already knows.
+    if (component.passthroughAttributes) {
+      entry += `\n  Also accepts standard attributes (${component.passthroughAttributes})`;
+    }
+
     // Where a compound part belongs, derived from the parent's own example.
     //
     // A design system documents `Alert`, not `AlertTitle`, so 187 of

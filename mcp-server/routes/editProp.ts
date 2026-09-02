@@ -249,15 +249,25 @@ async function resolveComponentKnowledge(
   let props: PropFact[] = facts?.props ? [...facts.props] : [];
   if (props.length > 0) sources.push(`declarations(${props.length})`);
 
-  // Channel 2: the component's own source — cva()/tv() variant maps and story
-  // argTypes docs, the only statement of legal values a local component makes.
+  // Channel 2: the component's own source — its exported interface or type
+  // alias (read with the AST, the only statement of a LOCAL component's API),
+  // cva()/tv() variant maps, and story argTypes docs.
+  //
+  // Without the interface channel a local design system answered `props: []`
+  // for every component that declares its API the ordinary way — `export
+  // interface ArticleCardProps extends …` — and the panel presented a dead
+  // end to exactly the audience this route exists for.
   const sourceFile = entry?.filePath && !entry.filePath.includes('node_modules') ? entry.filePath : null;
   if (sourceFile) {
-    const sourceFacts = readSourceFacts(sourceFile);
-    if (sourceFacts.variants || sourceFacts.propDocs) {
+    const sourceFacts = readSourceFacts(sourceFile, componentName);
+    if (sourceFacts.variants || sourceFacts.propDocs || sourceFacts.declaredProps) {
       props = mergePropFactsFromSource(props, sourceFacts);
       const variantProps = Object.keys(sourceFacts.variants?.options ?? {});
-      sources.push(`source:${path.basename(sourceFile)}${variantProps.length ? `(${variantProps.join(',')})` : ''}`);
+      const parts = [
+        sourceFacts.declaredProps?.length ? `interface(${sourceFacts.declaredProps.length})` : '',
+        variantProps.length ? `variants(${variantProps.join(',')})` : '',
+      ].filter(Boolean);
+      sources.push(`source:${path.basename(sourceFile)}${parts.length ? `[${parts.join(' ')}]` : ''}`);
     }
   }
 
@@ -473,6 +483,10 @@ export async function editPropHandler(req: Request, res: Response): Promise<void
     /**
      * Which of the file's `<resolved>` elements the edit lands on.
      *
+     * `occurrence` is 0-BASED everywhere on this route and on the GET above:
+     * 0 is the first `<X>` in source order. Every refusal below says so, so
+     * a caller reading "appears 2 times" never sends 2.
+     *
      * The request's `occurrence` is scoped: when `owner` accompanies it, it
      * counts positions INSIDE that component's declaration — the only region
      * where the browser's DOM order and the file's JSX order are known to
@@ -517,7 +531,7 @@ export async function editPropHandler(req: Request, res: Response): Promise<void
       if (requested === undefined) {
         if (scoped.length !== 1) {
           res.status(409).json({
-            error: `<${resolved}> appears ${scoped.length} times inside ${ownerName} (${total} in the file) and no occurrence was given — refusing to guess.`,
+            error: `<${resolved}> appears ${scoped.length} times inside ${ownerName} (${total} in the file) and no occurrence was given — refusing to guess. Pass occurrence, 0-based: 0 is the first <${resolved}> inside ${ownerName}, ${scoped.length - 1} the last.`,
             occurrencesInSource: total,
           });
           return;
@@ -527,16 +541,23 @@ export async function editPropHandler(req: Request, res: Response): Promise<void
         targetOccurrence = scoped[requested];
       } else {
         res.status(409).json({
-          error: `No <${resolved}> at position ${requested} inside ${ownerName} — it contains ${scoped.length}.`,
+          error: `No <${resolved}> at occurrence ${requested} inside ${ownerName} — it contains ${scoped.length}, so occurrence must be 0..${scoped.length - 1} (0-based).`,
           occurrencesInSource: total,
         });
         return;
       }
     } else if (requested !== undefined) {
+      if (requested < 0 || requested >= total) {
+        res.status(409).json({
+          error: `No <${resolved}> at occurrence ${requested} in ${fileName} — it contains ${total}, so occurrence must be 0..${total - 1} (0-based).`,
+          occurrencesInSource: total,
+        });
+        return;
+      }
       targetOccurrence = requested;
     } else {
       res.status(409).json({
-        error: `<${resolved}> appears ${total} times in ${fileName} and no occurrence was given — refusing to guess which one.`,
+        error: `<${resolved}> appears ${total} times in ${fileName} and no occurrence was given — refusing to guess which one. Pass occurrence, 0-based: 0 is the first <${resolved}> in the file, ${total - 1} the last.`,
         occurrencesInSource: total,
       });
       return;

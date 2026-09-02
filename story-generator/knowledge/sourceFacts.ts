@@ -33,7 +33,9 @@ import fs from 'fs';
 import path from 'path';
 import ts from 'typescript';
 import { logger } from '../logger.js';
-import type { PropFact } from './propExtractor.js';
+import { formatPropForCatalog, mergeProps, rankProps, type PropFact } from './propExtractor.js';
+import { readLocalComponent, readLocalComponents } from './localComponentFacts.js';
+import { saysMoreThanName } from './descriptionQuality.js';
 
 export interface VariantFacts {
   /** Prop name to its allowed values, e.g. `variant` -> [default, destructive]. */
@@ -43,11 +45,19 @@ export interface VariantFacts {
 }
 
 export interface SourceFacts {
-  /** Prose describing what the component is for, from its story. */
+  /** Prose describing what the component is for: its story's docs block, else the JSDoc above its export. */
   description?: string;
-  /** Per-prop documentation, from the story's argTypes. */
+  /** Per-prop documentation: the story's argTypes, filled in by the declaration's own JSDoc. */
   propDocs?: Record<string, string>;
   variants?: VariantFacts;
+  /**
+   * Props the component's own declaration states — its interface or type
+   * alias, read with the AST (see localComponentFacts). For a LOCAL component
+   * this is the primary statement of its API; npm declarations do not exist.
+   */
+  declaredProps?: PropFact[];
+  /** Standard attributes the props type extends and forwards, e.g. `React.HTMLAttributes<HTMLElement>`. */
+  passthrough?: string;
 }
 
 function parse(file: string): ts.SourceFile | null {
@@ -218,7 +228,7 @@ export function findStoryFor(componentFile: string): string | null {
  * Never throws: this raises fidelity, and a generation must still work when a
  * file is unparseable or absent.
  */
-export function readSourceFacts(componentFile: string): SourceFacts {
+export function readSourceFacts(componentFile: string, componentName?: string): SourceFacts {
   const facts: SourceFacts = {};
   if (!componentFile || !fs.existsSync(componentFile)) return facts;
 
@@ -235,6 +245,30 @@ export function readSourceFacts(componentFile: string): SourceFacts {
       if (Object.keys(propDocs).length) facts.propDocs = propDocs;
     }
   } catch { /* unparseable story */ }
+
+  /**
+   * The component's own declaration and the JSDoc above its export.
+   *
+   * Nothing read the paragraph a team writes above `export const Button`;
+   * the only prose this module knew came from a story's docs block, which
+   * most hand-written design systems do not carry. Measured on 46 components
+   * with a JSDoc apiece: 0 descriptions. The story's block still wins when
+   * both exist; the JSDoc fills the gap, and the interface's per-prop JSDoc
+   * fills whatever the story's argTypes did not describe.
+   */
+  try {
+    const local = componentName
+      ? readLocalComponent(componentFile, componentName)
+      : readLocalComponents(componentFile).find(c => c.exported && (c.props.length > 0 || !!c.doc)) ?? null;
+    if (local) {
+      if (local.props.length) facts.declaredProps = local.props;
+      if (local.passthrough) facts.passthrough = local.passthrough;
+      if (local.doc && !facts.description) facts.description = local.doc;
+      const docs: Record<string, string> = { ...(facts.propDocs ?? {}) };
+      for (const p of local.props) if (p.doc && !docs[p.name]) docs[p.name] = p.doc;
+      if (Object.keys(docs).length) facts.propDocs = docs;
+    }
+  } catch { /* unparseable component */ }
 
   return facts;
 }
@@ -257,7 +291,10 @@ export function readSourceFacts(componentFile: string): SourceFacts {
  */
 export function mergePropFactsFromSource(declared: PropFact[], facts: SourceFacts): PropFact[] {
   const byName = new Map<string, PropFact>();
-  for (const p of declared) byName.set(p.name, { ...p });
+  // Package declarations first, the component's own interface filling every
+  // field they left empty — for a local component that is all of them.
+  const base = facts.declaredProps?.length ? mergeProps(declared, facts.declaredProps) : declared;
+  for (const p of base) byName.set(p.name, { ...p });
 
   const variantOptions = facts.variants?.options ?? {};
   const variantDefaults = facts.variants?.defaults ?? {};
@@ -311,22 +348,58 @@ export function enrichWithSourceFacts(components: any[]): number {
     const file = component.filePath;
     if (!file || file.includes('node_modules')) continue;
 
-    const facts = readSourceFacts(file);
-    if (!facts.description && !facts.variants && !facts.propDocs) continue;
+    const facts = readSourceFacts(file, component.name);
+    if (!facts.description && !facts.variants && !facts.propDocs && !facts.declaredProps) continue;
 
     // The team's own words beat anything we generated, but never overwrite a
-    // description a project explicitly declared in its config.
-    if (facts.description && /^\w+ component$/.test(component.description || '')) {
+    // description that already says something — one a project declared in
+    // its config, or one read earlier. Judged by the shared predicate, so a
+    // `<Name> component` placeholder counts as absent here exactly as it does
+    // in the catalog and the bench.
+    if (facts.description && !saysMoreThanName(component.name, component.description)) {
       component.description = facts.description;
+    }
+    /**
+     * The catalog line per prop, from the component's own declaration.
+     *
+     * Discovery records prop NAMES; generationCore renders the full form —
+     * type, legal values, default, REQUIRED — only for props it read from an
+     * installed package's declarations. A local component's interface is the
+     * same fact in the same file we already opened, so it gets the same line.
+     * Names discovery found elsewhere (a story's args) are kept after it:
+     * `disabled` on a Button is real, it arrives through the attributes the
+     * interface extends.
+     */
+    if (facts.declaredProps?.length) {
+      const merged = mergePropFactsFromSource(facts.declaredProps, { variants: facts.variants });
+      const declaredNames = new Set(merged.map(p => p.name));
+      const live = merged.filter(p => !p.deprecated);
+      const extra = (Array.isArray(component.props) ? component.props as string[] : [])
+        .map(p => String(p).replace(/[?:( ].*$/, ''))
+        .filter(n => n && !declaredNames.has(n));
+      component.props = [...rankProps(live).map(formatPropForCatalog), ...extra];
+      const deprecated = merged.filter(p => p.deprecated);
+      if (deprecated.length) {
+        const avoid = deprecated.slice(0, 8).map(p =>
+          p.deprecated && p.deprecated !== 'deprecated' ? `${p.name} (${p.deprecated.replace(/\s+/g, ' ').slice(0, 60)})` : p.name);
+        const note = `DO NOT USE these deprecated props: ${avoid.join('; ')}`;
+        component.description = saysMoreThanName(component.name, component.description)
+          ? `${component.description} — ${note}` : note;
+      }
     }
     if (facts.variants) {
       const line = formatVariants(facts.variants);
-      component.description = component.description
+      component.description = saysMoreThanName(component.name, component.description)
         ? `${component.description} — ${line}`
         : line;
     }
     if (facts.propDocs) {
       component.propDocs = facts.propDocs;
+      // The field the catalog renders when a request asks for prop docs.
+      if (!component.__propDocs) component.__propDocs = facts.propDocs;
+    }
+    if (facts.passthrough && !component.passthroughAttributes) {
+      component.passthroughAttributes = facts.passthrough;
     }
     enriched++;
   }

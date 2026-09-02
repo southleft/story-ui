@@ -5,6 +5,7 @@ import { loadUserConfig } from '../../story-generator/configLoader.js';
 import { EnhancedComponentDiscovery } from '../../story-generator/enhancedComponentDiscovery.js';
 import { PropInfo } from '../../story-generator/componentDiscovery.js';
 import { saysMoreThanName } from '../../story-generator/knowledge/descriptionQuality.js';
+import { enrichWithSourceFacts } from '../../story-generator/knowledge/sourceFacts.js';
 
 // Cache discovered components for performance (includes propTypes for rich type info)
 interface CachedComponent {
@@ -114,12 +115,25 @@ async function loadDiscovered(): Promise<{ raw: InventorySource[]; api: CachedCo
   }
   const discovery = new EnhancedComponentDiscovery(config);
   const components = await discovery.discoverAll();
+  // The same source facts the generation path applies right after discovery
+  // (generationCore → enrichWithSourceFacts): a local component's own JSDoc,
+  // interface and variant map. Without this the inventory reported every
+  // local component as undescribed while the model was being told otherwise —
+  // two views of one catalog that disagreed.
+  try {
+    enrichWithSourceFacts(components as any[]);
+  } catch (error) {
+    console.warn('Could not read local source facts for the inventory:', error);
+  }
   cachedRaw = components as unknown as InventorySource[];
   cachedComponents = components.map(comp => ({
     name: comp.name,
     description: comp.description,
     category: comp.category,
-    props: comp.props,
+    // Bare names: enrichment renders a local component's props as catalog
+    // lines (`variant? [a|b] ='a'`) for the model; this route's contract to
+    // the panel is the name, with the rich form in `propTypes`.
+    props: (comp.props || []).map(p => String(p).replace(/[?:( ].*$/, '')),
     propTypes: comp.propTypes,
     slots: comp.slots
   }));

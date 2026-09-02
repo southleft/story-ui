@@ -8,6 +8,8 @@ import { packageComponentVerdict, declaredComponentExports, typesEntryFor } from
 import { nearestNames } from './nameSimilarity.js';
 import { logger } from './logger.js';
 import { componentDirsFromStorybookConfig } from './knowledge/storybookConfig.js';
+import { readLocalComponent } from './knowledge/localComponentFacts.js';
+import { rankProps, type PropFact } from './knowledge/propExtractor.js';
 import { BaseFrameworkAdapter } from './framework-adapters/base-adapter.js';
 import { ReactAdapter } from './framework-adapters/react-adapter.js';
 import { VueAdapter } from './framework-adapters/vue-adapter.js';
@@ -28,6 +30,49 @@ export interface EnhancedComponent extends DiscoveredComponent {
   examples?: string[];
   dependencies?: string[];
   isComposite?: boolean; // Component that contains other components
+}
+
+/**
+ * A declaration-derived prop in the panel's `PropInfo` shape.
+ *
+ * `select` when the type enumerates its values, the primitive kinds when the
+ * type is one, `function` for handlers, and `unknown` — not `string` — for
+ * everything else: a control that guesses `string` for a ReactNode invites a
+ * value the component cannot render.
+ */
+export function propInfoFromFact(p: PropFact): PropInfo {
+  const t = (p.type || '').trim();
+  const kind: PropInfo['type'] = p.options && p.options.length > 1 ? 'select'
+    : t === 'boolean' ? 'boolean'
+    : t === 'number' ? 'number'
+    : t === 'string' ? 'string'
+    : /=>/.test(t) || t === 'function' || /^on[A-Z]/.test(p.name) ? 'function'
+    : /\[\]$|^(Readonly)?Array</.test(t) ? 'array'
+    : /ReactNode|ReactElement|JSX\.Element|^\{/.test(t) ? 'object'
+    : 'unknown';
+  return {
+    name: p.name,
+    type: kind,
+    ...(kind === 'select' && p.options ? { options: p.options } : {}),
+    ...(p.doc ? { description: p.doc } : {}),
+    required: p.required,
+    ...(p.defaultValue !== undefined ? { defaultValue: p.defaultValue } : {}),
+  };
+}
+
+/** Declaration facts first; a story's argTypes fill only what they did not say. */
+export function mergePropInfo(declared: PropInfo[], fromStory: PropInfo[]): PropInfo[] {
+  const byName = new Map<string, PropInfo>();
+  for (const p of declared) byName.set(p.name, { ...p });
+  for (const s of fromStory) {
+    const d = byName.get(s.name);
+    if (!d) { byName.set(s.name, { ...s }); continue; }
+    if (!d.description && s.description) d.description = s.description;
+    if (!d.control && s.control) d.control = s.control;
+    if ((!d.options || d.options.length === 0) && s.options?.length) { d.options = s.options; if (d.type === 'unknown') d.type = s.type; }
+    if (d.defaultValue === undefined && s.defaultValue !== undefined) d.defaultValue = s.defaultValue;
+  }
+  return [...byName.values()];
 }
 
 export class EnhancedComponentDiscovery {
@@ -996,7 +1041,26 @@ export class EnhancedComponentDiscovery {
           continue;
         }
 
-        let props = this.extractPropsFromFile(content);
+        /**
+         * The component's own declaration, read with the TypeScript AST.
+         *
+         * The regex it replaces required `{` to follow the word `Props`, so
+         * `interface XProps extends Omit<React.HTMLAttributes<…>, …>` — the
+         * shape every hand-written React design system uses — yielded nothing,
+         * and its destructuring reader wanted `}: Type` where forwardRef writes
+         * `}, ref)`. Measured on a 46-component system: 13 components with
+         * zero props, and the model bypassed the purpose-built organisms for
+         * the exact prompts they exist for. The AST path resolves the props
+         * type the DECLARATION names, follows `extends`/intersections into
+         * local files, and keeps the regex only as a fallback for files it
+         * cannot read (Vue, Svelte, untyped JS).
+         */
+        const declared = /\.(tsx|ts|jsx|js|mts|mjs)$/.test(file)
+          ? readLocalComponent(file, componentName)
+          : null;
+        let props = declared && declared.props.length > 0
+          ? rankProps(declared.props).map(p => p.name)
+          : this.extractPropsFromFile(content);
 
         // Always check co-located story file for additional props (argTypes, args)
         // Story files often define props that aren't in the component source (e.g., disabled, children)
@@ -1007,14 +1071,21 @@ export class EnhancedComponentDiscovery {
           }
         }
 
-        // Extract rich prop type information from story file argTypes
-        const propTypes = this.extractRichPropsFromStoryFile(file);
+        // Rich prop information: the declaration first, the story's argTypes
+        // filling what it did not say (a description, a control hint).
+        const storyPropTypes = this.extractRichPropsFromStoryFile(file);
+        const propTypes = declared && declared.props.length > 0
+          ? mergePropInfo(declared.props.map(propInfoFromFact), storyPropTypes)
+          : storyPropTypes;
 
         this.discoveredComponents.set(componentName, {
           name: componentName,
           filePath: file,
           props,
           propTypes: propTypes.length > 0 ? propTypes : undefined,
+          // Standard attributes the props type extends and forwards — a fact
+          // worth one line in the catalog, never an enumeration.
+          ...(declared?.passthrough ? { passthroughAttributes: declared.passthrough } : {}),
           source,
           description: `${componentName} component`,
           category: this.categorizeComponent(componentName, content),
@@ -1208,7 +1279,9 @@ export class EnhancedComponentDiscovery {
     const props: string[] = [];
 
     // Extract from TypeScript interfaces
-    const interfaceMatch = content.match(/interface\s+\w*Props\s*{([^}]+)}/);
+    // `extends …` may sit between the name and the brace; the AST path above
+    // is the real reader, this is the fallback for files it cannot parse.
+    const interfaceMatch = content.match(/interface\s+\w*Props\b[^{]*{([^}]+)}/);
     if (interfaceMatch) {
       const propsContent = interfaceMatch[1];
       const propMatches = propsContent.matchAll(/^\s*(\w+)(\?)?:/gm);

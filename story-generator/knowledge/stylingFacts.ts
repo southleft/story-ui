@@ -103,7 +103,99 @@ const STYLE_ATTRS = new Set([
  * showed none of them. Deriving the prefix would be guesswork; not depending
  * on its absence is free.
  */
-export function categorise(name: string): string {
+/** CSS named colours — a value in this set is a colour whatever its token is called. */
+const NAMED_COLOURS = new Set(('aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown burlywood cadetblue chartreuse chocolate coral cornflowerblue cornsilk crimson cyan darkblue darkcyan darkgoldenrod darkgray darkgreen darkgrey darkkhaki darkmagenta darkolivegreen darkorange darkorchid darkred darksalmon darkseagreen darkslateblue darkslategray darkslategrey darkturquoise darkviolet deeppink deepskyblue dimgray dimgrey dodgerblue firebrick floralwhite forestgreen fuchsia gainsboro ghostwhite gold goldenrod gray green greenyellow grey honeydew hotpink indianred indigo ivory khaki lavender lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan lightgoldenrodyellow lightgray lightgreen lightgrey lightpink lightsalmon lightseagreen lightskyblue lightslategray lightslategrey lightsteelblue lightyellow lime limegreen linen magenta maroon mediumaquamarine mediumblue mediumorchid mediumpurple mediumseagreen mediumslateblue mediumspringgreen mediumturquoise mediumvioletred midnightblue mintcream mistyrose moccasin navajowhite navy oldlace olive olivedrab orange orangered orchid palegoldenrod palegreen paleturquoise palevioletred papayawhip peachpuff peru pink plum powderblue purple rebeccapurple red rosybrown royalblue saddlebrown salmon sandybrown seagreen seashell sienna silver skyblue slateblue slategray slategrey snow springgreen steelblue tan teal thistle tomato turquoise violet wheat white whitesmoke yellow yellowgreen transparent currentcolor').split(' '));
+
+const LENGTH = /^-?(?:\d+\.?\d*|\.\d+)(?:px|rem|em|%|vw|vh|vmin|vmax|dvw|dvh|svw|svh|lvw|lvh|ch|ex|cap|ic|lh|rlh|pt|pc|cm|mm|in|q|fr)$/i;
+const NUMBER = /^-?(?:\d+\.?\d*|\.\d+)$/;
+const COLOUR_FN = /^(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color|color-mix|light-dark)\(/i;
+const HEX = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+const GENERIC_FAMILY = /\b(?:serif|sans-serif|monospace|cursive|fantasy|system-ui|ui-serif|ui-sans-serif|ui-monospace|ui-rounded|emoji|math|fangsong)\b/i;
+
+export type ValueKind = 'color' | 'length' | 'number' | 'shadow' | 'font' | 'other';
+
+/** What a CSS value IS, judged from the value alone. */
+export function valueKind(value: string): ValueKind {
+  const v = value.trim();
+  if (!v) return 'other';
+  const lower = v.toLowerCase();
+  if (HEX.test(v) || COLOUR_FN.test(v) || NAMED_COLOURS.has(lower)) return 'color';
+  const parts = v.split(/\s+(?![^(]*\))/);
+  if (parts.length === 1) {
+    if (LENGTH.test(v)) return 'length';
+    if (NUMBER.test(v)) return 'number';
+  } else {
+    const hasColour = parts.some(p => HEX.test(p) || COLOUR_FN.test(p) || NAMED_COLOURS.has(p.toLowerCase()));
+    const lengths = parts.filter(p => LENGTH.test(p) || NUMBER.test(p)).length;
+    if (hasColour && lengths >= 2) return 'shadow';
+    if (parts.includes('inset') && lengths >= 2) return 'shadow';
+    if (lengths === parts.length) return 'length';
+  }
+  // A font stack: quoted names, or a comma list naming a generic family.
+  if (/^["']/.test(v) || (v.includes(',') && GENERIC_FAMILY.test(v)) || GENERIC_FAMILY.test(v)) {
+    if (!/\d/.test(v) || /^["']/.test(v)) return 'font';
+  }
+  return 'other';
+}
+
+/**
+ * The literal a token's value resolves to, following `var(--x)` references
+ * through the sheet's own declarations. A reference that goes nowhere yields
+ * its fallback, else nothing.
+ */
+export function resolveTokenValue(value: string | undefined, lookup?: (name: string) => string | undefined, depth = 0): string | undefined {
+  if (!value) return undefined;
+  const v = value.trim();
+  const ref = v.match(/^var\(\s*--([a-zA-Z][\w-]*)\s*(?:,\s*([^)]*))?\)$/);
+  if (!ref) return v;
+  if (depth > 4) return undefined;
+  const target = lookup?.(ref[1]);
+  const resolved = resolveTokenValue(target, lookup, depth + 1);
+  if (resolved !== undefined) return resolved;
+  return ref[2] ? resolveTokenValue(ref[2], lookup, depth + 1) : undefined;
+}
+
+/**
+ * Group a token by what it controls — its VALUE first, its name second.
+ *
+ * Name alone filed `--ss-icon-md: 16px`, `--ss-layer-modal: 400` and
+ * `--ss-border-width-thin: 1px` under `color`, because `icon`, `layer` and
+ * `border` are colour vocabulary in every system that also uses them for
+ * sizes. The value settles it: a length or a bare number is not a colour, so
+ * the colour rules are withdrawn and the name is asked only which measure it
+ * is (radius, typography, layout, else spacing/size). A colour literal is a
+ * colour whatever its name says, and a font stack is typography. When the
+ * value is absent, or says nothing (`inherit`, a keyword), the name decides
+ * exactly as before.
+ */
+export function categorise(name: string, value?: string, lookup?: (name: string) => string | undefined): string {
+  const literal = resolveTokenValue(value, lookup);
+  const kind = literal ? valueKind(literal) : 'other';
+  if (kind === 'color') return 'color';
+  if (kind === 'font') return 'typography';
+  if (kind === 'shadow') return 'shadow';
+  if (kind === 'length' || kind === 'number') {
+    const role = categoriseByName(name, { colour: false });
+    if (role !== 'other') return role;
+    const segments = segmentsOf(name);
+    if (kind === 'number') {
+      if (segments.some(s => /^(layer|z|zindex|index|stack|order)$/.test(s))) return 'layout';
+      if (segments.some(s => /^(opacity|alpha|scale|ratio|columns|cols)$/.test(s))) return 'other';
+    }
+    return 'spacing';
+  }
+  return categoriseByName(name, { colour: true });
+}
+
+function segmentsOf(name: string): string[] {
+  return name
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .toLowerCase()
+    .split(/[-_.]/);
+}
+
+/** The name-only rules, with the colour vocabulary optionally withdrawn. */
+function categoriseByName(name: string, opts: { colour: boolean }): string {
   /**
    * camelCase is a segment boundary too.
    *
@@ -114,10 +206,7 @@ export function categorise(name: string): string {
    * system's 467 tokens even once they were collected. Same failure as the
    * anchored test below it, one naming convention later.
    */
-  const segments = name
-    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
-    .toLowerCase()
-    .split(/[-_.]/);
+  const segments = segmentsOf(name);
   const has = (re: RegExp) => segments.some(s => re.test(s));
   // Order matters: `text` reads as typography on its own but as a colour role
   // in `text-primary`, which is how every token system in this list uses it.
@@ -130,13 +219,13 @@ export function categorise(name: string): string {
    * reachable at all.
    */
   if (has(/^(radius|rounded|corner)$/)) return 'radius';
-  if (has(/^(color|colour|bg|fg|background|fill|stroke|border|ring|accent|primary|secondary|muted|destructive|success|warning|info|danger|error|foreground|layer|support|interactive)$/)) return 'color';
+  if (opts.colour && has(/^(color|colour|bg|fg|background|fill|stroke|border|ring|accent|primary|secondary|muted|destructive|success|warning|info|danger|error|foreground|layer|support|interactive)$/)) return 'color';
   if (has(/^(space|spacing|gap|inset|margin|padding)$/)) return 'spacing';
   if (has(/^(shadow|elevation)$/)) return 'shadow';
   if (has(/^(font|leading|tracking|weight|type|typography|heading|body|label)$/)) return 'typography';
   if (has(/^(breakpoint|screen|container|grid)$/)) return 'layout';
-  if (has(/^(text|icon|link)$/)) return 'color';
-  if (has(/^(size|width|height)$/)) return 'spacing';
+  if (opts.colour && has(/^(text|icon|link)$/)) return 'color';
+  if (has(/^(size|width|height|thickness|stroke)$/)) return 'spacing';
   return 'other';
 }
 
@@ -296,6 +385,8 @@ function packageStyleFiles(projectRoot: string, importPath?: string, limit = 6):
 export function readDesignTokens(projectRoot: string, importPath?: string): TokenGroup[] {
   const byCategory = new Map<string, Set<string>>();
   const values = new Map<string, string>();
+  /** Every name seen, in first-seen order; categorised once all values are known. */
+  const names = new Set<string>();
 
   for (const file of [...styleFiles(projectRoot), ...packageStyleFiles(projectRoot, importPath)]) {
     let css: string;
@@ -311,13 +402,19 @@ export function readDesignTokens(projectRoot: string, importPath?: string): Toke
      */
     for (const m of css.matchAll(/--([a-zA-Z][\w-]*)\s*:\s*([^;{}]*)/g)) {
       const name = m[1];
-      const category = categorise(name);
-      if (!byCategory.has(category)) byCategory.set(category, new Set());
-      byCategory.get(category)!.add(name);
+      names.add(name);
       // First declaration wins: the base sheet is found before theme overrides.
       const value = (m[2] || '').trim();
       if (value && !values.has(name)) values.set(name, value);
     }
+  }
+
+  // Categorised after the scan, so an alias token (`var(--ss-color-brand)`)
+  // can be judged by the value it points at rather than by its name.
+  for (const name of names) {
+    const category = categorise(name, values.get(name), n => values.get(n));
+    if (!byCategory.has(category)) byCategory.set(category, new Set());
+    byCategory.get(category)!.add(name);
   }
 
   /**

@@ -31,6 +31,8 @@ import path from 'path';
 import { contentFingerprint, knowledgeCacheFile, pruneStaleKnowledge } from './cacheKey.js';
 import { createRequire } from 'module';
 import { logger } from '../logger.js';
+import { findLocalSourceFiles, readLocalSourceTree } from './localComponentFacts.js';
+import { loadUserConfig } from '../configLoader.js';
 
 export interface PropFact {
   name: string;
@@ -102,19 +104,27 @@ export interface ExtractedProps {
    * The merged union of their props deliberately does not.
    */
   reexportedFrom?: string[];
+  /**
+   * Where the facts came from: an installed package's declarations, or the
+   * project's own source read with the AST. Present so a caller can tell the
+   * two apart in a log; absent on records written before it existed.
+   */
+  source?: 'package' | 'local';
+  /** The directory read, for a `local` record. */
+  root?: string;
 }
 
 /** Long unions and generics hurt more than they help inside a prompt. */
 const MAX_TYPE_TEXT = 80;
 
-function shortType(node: ts.TypeNode | undefined, source: ts.SourceFile): string | undefined {
+export function shortType(node: ts.TypeNode | undefined, source: ts.SourceFile): string | undefined {
   if (!node) return undefined;
   const text = node.getText(source).replace(/\s+/g, ' ').trim();
   return text.length <= MAX_TYPE_TEXT ? text : undefined;
 }
 
 /** The JSDoc block immediately preceding a node, comment syntax stripped. */
-function rawDocBlock(node: ts.Node, source: ts.SourceFile): string | undefined {
+export function rawDocBlock(node: ts.Node, source: ts.SourceFile): string | undefined {
   const full = source.getFullText();
   const ranges = ts.getLeadingCommentRanges(full, node.getFullStart());
   if (!ranges?.length) return undefined;
@@ -156,7 +166,7 @@ const clip = (s: string, max: number) => (s.length > max ? `${s.slice(0, max - 1
  * sentence arrived with `Demos: - [Chip](https://mui.com…` glued to the end.
  * Those headings terminate the prose as surely as a tag does.
  */
-function prosePart(cleaned: string): string {
+export function prosePart(cleaned: string): string {
   return cleaned
     .split(/(?:^|\s)@\w+/)[0]
     .split(/\b(?:Demos?|API)\s*:/)[0]
@@ -181,7 +191,7 @@ function prosePart(cleaned: string): string {
  * recoverable from a model prior because both are specific to the installed
  * version.
  */
-function readDoc(node: ts.Node, source: ts.SourceFile): Pick<PropFact, 'doc' | 'defaultValue' | 'deprecated'> {
+export function readDoc(node: ts.Node, source: ts.SourceFile): Pick<PropFact, 'doc' | 'defaultValue' | 'deprecated'> {
   const cleaned = rawDocBlock(node, source);
   if (!cleaned) return {};
 
@@ -726,7 +736,7 @@ function collectFromFile(
  * Neither source is authoritative for everything, so take each field from
  * whichever reading has it, and let a present value beat an absent one.
  */
-function mergeProps(a: PropFact[], b: PropFact[]): PropFact[] {
+export function mergeProps(a: PropFact[], b: PropFact[]): PropFact[] {
   const byName = new Map<string, PropFact>();
   for (const p of [...a, ...b]) {
     const prior = byName.get(p.name);
@@ -927,17 +937,122 @@ function resolveOptionsFromTypeText(
   return { options: unique, open: acc.open };
 }
 
-function packageRoot(projectRoot: string, importPath: string): string | null {
+const isUnderNodeModules = (p: string) => /(^|[\\/])node_modules([\\/]|$)/.test(p);
+const dirExists = (p: string) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
+
+/**
+ * The directory a relative importPath is written against.
+ *
+ * A relative specifier in `story-ui.config.js` (`importPath: '../../components'`)
+ * is relative to the GENERATED STORIES directory — that is where the import
+ * line ends up — and the config states where that directory is. Resolving it
+ * against the project root would be a guess at a different question.
+ */
+function projectConfig(projectRoot: string): { generatedStoriesPath?: string; componentsPath?: string } | null {
+  for (const name of ['story-ui.config.js', 'story-ui.config.cjs']) {
+    const file = path.join(projectRoot, name);
+    if (!fs.existsSync(file)) continue;
+    try {
+      const loaded = createRequire(file)(file);
+      const cfg = loaded?.default ?? loaded;
+      if (cfg && typeof cfg === 'object') return { generatedStoriesPath: cfg.generatedStoriesPath, componentsPath: cfg.componentsPath };
+    } catch { /* an ESM project's CommonJS config cannot be require()d */ }
+  }
+  // The loader knows how to read that shape, for the directory it runs in.
+  if (path.resolve(projectRoot) === process.cwd()) {
+    try {
+      const cfg = loadUserConfig();
+      return { generatedStoriesPath: cfg.generatedStoriesPath, componentsPath: cfg.componentsPath };
+    } catch { /* no config */ }
+  }
+  return null;
+}
+
+function generatedStoriesDir(projectRoot: string): string | null {
+  const declared = projectConfig(projectRoot)?.generatedStoriesPath;
+  return typeof declared === 'string' && declared ? path.resolve(projectRoot, declared) : null;
+}
+
+/**
+ * Where the config says the components are, when the importPath names
+ * nothing readable — the `your-component-library` placeholder init writes
+ * for a project it could not classify, or a package that is not installed.
+ * `componentsPath` is the project's own statement, and the same directory
+ * discovery already scans.
+ */
+function configuredComponentsRoot(projectRoot: string): string | null {
+  const declared = projectConfig(projectRoot)?.componentsPath;
+  if (typeof declared !== 'string' || !declared) return null;
+  const dir = path.resolve(projectRoot, declared);
+  return dirExists(dir) && !isUnderNodeModules(dir) ? dir : null;
+}
+
+/**
+ * A specifier that names LOCAL SOURCE rather than a package.
+ *
+ * An absolute directory, or a relative one, given as the "package" used to
+ * fall into the name-splitting below: `'/Users/…/src/components'.split('/')[0]`
+ * is the empty string, `path.join(node_modules, '')` is node_modules itself,
+ * and the walk read all of it — 609 "components" including Storybook's own
+ * template Button, and a 175KB cache written for the privilege. A path is
+ * never a package name; it is either a directory we can open or nothing.
+ */
+function localRoot(projectRoot: string, importPath: string): string | null {
+  if (!path.isAbsolute(importPath) && !importPath.startsWith('.')) return null;
+  const candidates: string[] = [];
+  if (path.isAbsolute(importPath)) {
+    candidates.push(importPath);
+  } else {
+    const generated = generatedStoriesDir(projectRoot);
+    if (generated) candidates.push(path.resolve(generated, importPath));
+    candidates.push(path.resolve(projectRoot, importPath));
+  }
+  for (const c of candidates) {
+    if (dirExists(c) && !isUnderNodeModules(c)) return c;
+  }
+  return null;
+}
+
+/**
+ * The project IS the package: `package.json` names itself what the config
+ * imports from. A design system repository configures `importPath:
+ * '@sail-shelf/ui'` — its own published name — and nothing of that name is in
+ * node_modules because it is the thing being built. The source is in `src`.
+ */
+function selfPackageRoot(projectRoot: string, pkgName: string): string | null {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf-8'));
+    if (pkg?.name !== pkgName) return null;
+  } catch {
+    return null;
+  }
+  const src = path.join(projectRoot, 'src');
+  return dirExists(src) ? src : projectRoot;
+}
+
+interface ResolvedRoot {
+  dir: string;
+  /** Source we read with the AST, as opposed to an installed package's declarations. */
+  local: boolean;
+}
+
+function packageRoot(projectRoot: string, importPath: string): ResolvedRoot | null {
+  const local = localRoot(projectRoot, importPath);
+  if (local) return { dir: local, local: true };
+  // A path that is not on disk is nothing — never a reason to read node_modules.
+  if (path.isAbsolute(importPath) || importPath.startsWith('.')) return null;
+
   const pkgName = importPath.startsWith('@')
     ? importPath.split('/').slice(0, 2).join('/')
     : importPath.split('/')[0];
+  if (!pkgName) return null;
   try {
     const req = createRequire(path.join(projectRoot, 'package.json'));
     let dir = path.dirname(req.resolve(pkgName));
     for (let i = 0; i < 8; i++) {
       if (fs.existsSync(path.join(dir, 'package.json'))) {
         const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf-8'));
-        if (pkg?.name === pkgName) return dir;
+        if (pkg?.name === pkgName) return { dir, local: false };
       }
       const parent = path.dirname(dir);
       if (parent === dir) break;
@@ -945,7 +1060,11 @@ function packageRoot(projectRoot: string, importPath: string): string | null {
     }
   } catch { /* fall through */ }
   const guess = path.join(projectRoot, 'node_modules', ...pkgName.split('/'));
-  return fs.existsSync(guess) ? guess : null;
+  if (fs.existsSync(guess)) return { dir: guess, local: false };
+  const self = selfPackageRoot(projectRoot, pkgName);
+  if (self) return { dir: self, local: true };
+  const configured = configuredComponentsRoot(projectRoot);
+  return configured ? { dir: configured, local: true } : null;
 }
 
 /**
@@ -1186,8 +1305,11 @@ function collectPropTypes(source: ts.SourceFile, out: Record<string, ComponentFa
  *
  * 4: cross-file option resolution (`options` filled from aliases declared in
  *    other files, `optionsOpen` for sets the type leaves open).
+ * 5: local source roots read with the AST (`source: 'local'`), keyed by the
+ *    exported component rather than a `<Name>Props` convention; a path given
+ *    as the package no longer reads node_modules.
  */
-const EXTRACTOR_SCHEMA = 4;
+const EXTRACTOR_SCHEMA = 5;
 
 /**
  * Keyed on version AND a content fingerprint (`knowledge/cacheKey`).
@@ -1202,14 +1324,68 @@ function cachePath(projectRoot: string, importPath: string, version: string | un
   return knowledgeCacheFile(projectRoot, importPath, version, fingerprint, '.props.json');
 }
 
+/**
+ * Read a LOCAL source root the way a package is read, from the same reader
+ * discovery and the editor use (`localComponentFacts`), so the four never
+ * disagree about a component. Cached under the tree's content fingerprint.
+ */
+async function readLocalRoot(
+  importPath: string,
+  projectRoot: string,
+  root: string,
+  options: { force?: boolean },
+): Promise<ExtractedProps> {
+  let sourceFiles: string[] | undefined;
+  const filesToRead = () => (sourceFiles ??= findLocalSourceFiles(root));
+  const fingerprint = contentFingerprint({ root, entryFile: null, files: filesToRead });
+  const cacheFile = cachePath(projectRoot, importPath, undefined, fingerprint);
+  if (!options.force && fs.existsSync(cacheFile)) {
+    try {
+      const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf-8')) as ExtractedProps;
+      if (cached.schema === EXTRACTOR_SCHEMA && cached.source === 'local') return cached;
+    } catch { /* rebuild */ }
+  }
+
+  const started = Date.now();
+  const tree = readLocalSourceTree(root);
+  const components: Record<string, ComponentFacts> = {};
+  for (const c of Object.values(tree.components)) {
+    components[c.name] = { name: c.name, props: c.props, ...(c.doc ? { doc: c.doc } : {}) };
+  }
+  const extracted: ExtractedProps = {
+    schema: EXTRACTOR_SCHEMA,
+    importPath,
+    components,
+    inheritedOnly: [],
+    extractedAt: new Date().toISOString(),
+    source: 'local',
+    root,
+  };
+  try {
+    fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+    fs.writeFileSync(cacheFile, JSON.stringify(extracted), 'utf-8');
+    pruneStaleKnowledge(projectRoot, importPath, cacheFile, '.props.json');
+  } catch { /* cache is an optimisation */ }
+
+  const count = Object.keys(components).length;
+  logger.log(
+    `🧠 Read ${count} local component(s) for ${importPath} from ${path.relative(projectRoot, root) || '.'} ` +
+    `(${tree.files.length} source file(s), AST) in ${Date.now() - started}ms` +
+    (count === 0 ? ' — no exported component declares props or prose there' : ''),
+  );
+  return extracted;
+}
+
 /** Read ONE package's own declarations. No federation; cached under its own key. */
 async function readOnePackage(
   importPath: string,
   projectRoot: string = process.cwd(),
   options: { version?: string; force?: boolean } = {},
 ): Promise<ExtractedProps | null> {
-  const root = packageRoot(projectRoot, importPath);
-  if (!root) return null;
+  const resolved = packageRoot(projectRoot, importPath);
+  if (!resolved) return null;
+  if (resolved.local) return readLocalRoot(importPath, projectRoot, resolved.dir, options);
+  const root = resolved.dir;
 
   let version = options.version;
   if (!version) {
@@ -1470,6 +1646,25 @@ export async function extractPropsForPackages(
  * Props most worth spending prompt space on: the ones that decide behaviour.
  * Handlers and state first, then content slots, then styling.
  */
+/**
+ * One prop as a catalog line: `variant? [primary|secondary] ='primary'`,
+ * `headline (string) REQUIRED`.
+ *
+ * REQUIRED is said, not implied by a missing `?`: a model weighing a strong
+ * prior from another library does not read punctuation. A literal union that
+ * `options` already lists is not repeated as the type.
+ */
+export function formatPropForCatalog(p: PropFact): string {
+  const type = p.type && p.options?.length && /^'[^']*'(\s*\|\s*'[^']*')*$/.test(p.type) ? '' : p.type;
+  let entry = `${p.name}${p.required ? '' : '?'}${type ? ` (${type})` : ''}${p.required ? ' REQUIRED' : ''}`;
+  if (p.options?.length) {
+    const shown = p.options.slice(0, 8).join('|');
+    entry += ` [${shown}${p.options.length > 8 ? `|…${p.options.length - 8}` : ''}]`;
+  }
+  if (p.defaultValue) entry += ` =${p.defaultValue}`;
+  return entry;
+}
+
 export function rankProps(props: PropFact[]): PropFact[] {
   const tier = (p: PropFact): number => {
     if (p.required) return 0;
