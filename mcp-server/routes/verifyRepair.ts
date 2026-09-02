@@ -26,6 +26,12 @@ export interface RepairAttemptArgs {
   /** Re-run the full LLM call with a self-contained prompt. */
   /** Given the prompt and the code it is about, returns the corrected code or null. */
   callModel: (prompt: string, currentCode: string) => Promise<string | null>;
+  /**
+   * Extra instruction placed above the findings — on a targeted turn, that
+   * the request is already applied and the repair must stay on the selected
+   * element (see editing/repairScope.ts).
+   */
+  context?: string;
   /** Write the candidate and re-verify it in the browser. */
   writeAndVerify: (code: string) => Promise<VerifyReport>;
   /** Static gate; a repair that fails static validation is discarded. */
@@ -113,6 +119,7 @@ export async function attemptVerificationRepair(args: RepairAttemptArgs): Promis
     const prompt = [
       REPAIR_PREAMBLE,
       '',
+      ...(args.context ? [args.context, ''] : []),
       formatFindingsForRepair(bestReport.findings),
       '',
       '--- CURRENT STORY ---',

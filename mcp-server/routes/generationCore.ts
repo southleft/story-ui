@@ -77,6 +77,7 @@ import {
 import { processImageInputs, ImageInput } from '../../story-generator/imageProcessor.js';
 import { processFileInputs, fileFraming, FileInput } from '../../story-generator/fileAttachments.js';
 import { checkTokenUsage, formatTokenErrors } from '../../story-generator/knowledge/tokenConformance.js';
+import { targetComponentFromSelection, repairWithinTarget, scopedCritiqueRequest, repairScopeNote } from '../../story-generator/editing/repairScope.js';
 import { VisionPromptType, buildVisionAwarePrompt } from '../../story-generator/visionPrompts.js';
 import { ImageContent, MessageContent, TextContent } from '../../story-generator/llm-providers/types.js';
 import {
@@ -1866,7 +1867,10 @@ async function runStoryGenerationPipeline(
           libraryComponents,
           generatedDir,
           visualCritic,
-          request: prompt,
+          // A targeted turn is judged as a targeted turn. Told only the raw
+          // request, the critic filed "background not orange" against a page
+          // whose one selected tile was, correctly, the only orange thing.
+          request: selection ? scopedCritiqueRequest(prompt, selection) : prompt,
           componentsUsed: libraryComponents,
           framework: detectedFramework,
         });
@@ -1916,9 +1920,11 @@ async function runStoryGenerationPipeline(
           events.onProgress?.(11, totalSteps, 'verify_repairing',
             `Verification found ${blockerCount} issue${blockerCount === 1 ? '' : 's'} — repairing`);
           try {
+          const repairTarget = selection ? targetComponentFromSelection(selection) : null;
           const repair = await attemptVerificationRepair({
             code: fixedFileContents,
             report: verification,
+            context: selection ? repairScopeNote(selection) : undefined,
             signal: verifyBudget.signal,
             deadline: verifyDeadline,
             staticallyValid: (candidate) => {
@@ -1963,6 +1969,17 @@ async function runStoryGenerationPipeline(
                 if (patched.failures.length > 0) {
                   logger.warn(`✂️ Repair: ${patched.failures.length} edit block(s) did not match the story — keeping the original`);
                   return null;
+                }
+                // The prompt asks the repair to stay on the selected element;
+                // this is what makes it true. The repair that painted a whole
+                // page orange was two tidy edit blocks on a <Box> nowhere near
+                // the selected <Statlet>.
+                if (repairTarget) {
+                  const scope = repairWithinTarget(currentCode, patched.applied, repairTarget);
+                  if (!scope.ok) {
+                    logger.warn(`✂️ Repair rejected: ${scope.outside.length} of ${patched.applied.length} edit block(s) fall outside the selected <${repairTarget}> (${scope.outside.map(l => `"${l}"`).join(', ')}) — keeping the targeted edit as made`);
+                    return null;
+                  }
                 }
                 logger.log(`✂️ Repair applied ${patched.applied.length} edit block(s)`);
                 return patched.code;
