@@ -1266,6 +1266,10 @@ async function runStoryGenerationPipeline(
     if (tokenErrors.length) {
       logger.log(`🎨 Token check: ${tokenErrors.length} invented token(s): ${tokenErrors.map(e => e.split('var(')[1]?.split(')')[0]).filter(Boolean).join(', ')}`);
       conformanceErrors.push(...tokenErrors);
+    } else if (knownTokens.size) {
+      // Say it ran: a silent pass is indistinguishable from a check that never
+      // looked (the first CBDS re-run went to a stale server and looked the same).
+      logger.log(`🎨 Token check: ${(aiText.match(/var\(\s*--/g) || []).length} var() use(s), all declared by the project (${knownTokens.size} tokens)`);
     }
 
     const importErrors = [
