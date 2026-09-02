@@ -1332,12 +1332,23 @@ async function runStoryGenerationPipeline(
           .slice(0, 12).map(l => `     ${l.trim()}`).join('\n') || '     (none)'
       }`,
     );
-    throw new GenerationError('INVALID_IMPORTS', 'Generated code contains invalid imports', {
-      httpStatus: 422,
-      details: finalErrors.importErrors.join('; '),
-      recoverable: true,
-      suggestion: buildComponentSuggestion(components),
-    });
+    // Conformance violations ride in importErrors (same repair budget); they
+    // are not import problems and must not be reported as such.
+    const allConformance = finalErrors.importErrors.every(e => /^Line \d+: </.test(e) || /^</.test(e));
+    throw new GenerationError(
+      allConformance ? 'CATALOG_CONFORMANCE' : 'INVALID_IMPORTS',
+      allConformance
+        ? 'The generated code used prop values the design system does not accept'
+        : 'Generated code contains invalid imports',
+      {
+        httpStatus: 422,
+        details: finalErrors.importErrors.join('; '),
+        recoverable: true,
+        suggestion: allConformance
+          ? 'Try again — the value sets are shown to the model; if this repeats, the prop may accept more than the catalog lists.'
+          : buildComponentSuggestion(components),
+      },
+    );
   }
 
   const validationResult = extractAndValidateCodeBlock(aiText, config);
@@ -2755,11 +2766,28 @@ async function callLLM(
     if (targetIndex === -1) {
       throw new Error('Cannot attach images: no user message in the request');
     }
+    /**
+     * Say what the images are FOR, right next to them.
+     *
+     * A screenshot beside a bare request read to the model as "recreate this
+     * app": the bench's image scenario came back as a plain React component
+     * with lucide-react icons and Tailwind classes and no story export — the
+     * model's favourite stack, not the project's, and not a story. The
+     * catalog and the rules were all in the system block; the images were the
+     * last thing it saw. The framing goes with them.
+     */
+    const IMAGE_FRAMING =
+      `The ${images.length === 1 ? 'attached image is a reference' : `${images.length} attached images are references`} ` +
+      'for layout, density and tone — not a source to copy. Build what the request asks for as a ' +
+      'Storybook story in exactly the format and with exactly the components and import paths the ' +
+      'rules above require. Do not reproduce colours, class names or a component library from the ' +
+      'image; express everything through this design system.';
     const messagesWithImages = messages.map((msg, index) => {
       if (index === targetIndex) {
+        const text = typeof msg.content === 'string' ? `${IMAGE_FRAMING}\n\n${msg.content}` : msg.content;
         return {
           role: msg.role,
-          content: buildMessageWithImages(msg.content, images),
+          content: buildMessageWithImages(text as string, images),
         };
       }
       return msg;
