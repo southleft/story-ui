@@ -1026,42 +1026,6 @@ export function extractAndValidateCodeBlock(aiResponse: string, config?: any, fi
 }
 
 /**
- * Creates a fallback story template when generation fails
- */
-export function createFallbackStory(prompt: string, config: any): string {
-  const title = prompt.length > 50 ? prompt.substring(0, 50) + '...' : prompt;
-  const escapedTitle = title.replace(/"/g, '\\"');
-  const storybookFramework = config.storybookFramework || '@storybook/react';
-
-  return `import React from 'react';
-import type { StoryObj } from '${storybookFramework}';
-
-// Fallback story generated due to AI generation error
-export default {
-  title: '${config.storyPrefix || 'Generated/'}${escapedTitle}',
-  component: () => (
-    <div style={{ padding: '2rem', textAlign: 'center', border: '2px dashed #ccc', borderRadius: '8px' }}>
-      <h2>Story Generation Error</h2>
-      <p>The AI-generated story contained syntax errors and could not be created.</p>
-      <p><strong>Original prompt:</strong> ${escapedTitle}</p>
-      <p>Please try rephrasing your request or contact support.</p>
-    </div>
-  ),
-  parameters: {
-    docs: {
-      description: {
-        story: 'This is a fallback story created when the AI generation failed due to syntax errors.'
-      }
-    }
-  }
-};
-
-export const Default: StoryObj = {
-  args: {}
-};`;
-}
-
-/**
  * Validates Svelte story files (.stories.svelte)
  * These use addon-svelte-csf format with <Story> components, not TypeScript CSF
  */

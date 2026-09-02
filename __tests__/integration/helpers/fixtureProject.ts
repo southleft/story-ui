@@ -32,7 +32,6 @@ export function createFixtureProject(): FixtureProject {
   componentFramework: 'react',
   generatedStoriesPath: './stories/generated/',
   storyPrefix: 'Generated/',
-  defaultAuthor: 'Story UI AI',
   llmProvider: 'claude',
 };
 `);

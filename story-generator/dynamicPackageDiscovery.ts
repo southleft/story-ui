@@ -955,11 +955,3 @@ export class DynamicPackageDiscovery {
 export function createDynamicDiscovery(packageName: string, projectRoot?: string): DynamicPackageDiscovery {
   return new DynamicPackageDiscovery(packageName, projectRoot);
 }
-
-/**
- * Quick function to get available components for a package
- */
-export async function getPackageComponents(packageName: string, projectRoot?: string): Promise<string[]> {
-  const discovery = createDynamicDiscovery(packageName, projectRoot);
-  return await discovery.getAvailableComponentNames();
-}

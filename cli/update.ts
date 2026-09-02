@@ -19,7 +19,7 @@ const REQUIRED_CONSUMER_DEPS = ['react-live'];
 /**
  * Story UI Update Command
  *
- * Refreshes managed Story UI files (StoryUIPanel.tsx, StoryUIPanel.mdx, index.tsx)
+ * Refreshes managed Story UI files (StoryUIPanel.tsx, StoryUIPanel.mdx, manager.tsx, ...)
  * while preserving user configuration files (story-ui.config.js, .env, etc.)
  */
 
@@ -55,11 +55,6 @@ const MANAGED_FILES = [
     source: 'templates/StoryUI/StoryUIPanel.mdx',
     target: 'src/stories/StoryUI/StoryUIPanel.mdx',
     description: 'Cross-framework MDX wrapper'
-  },
-  {
-    source: 'templates/StoryUI/index.tsx',
-    target: 'src/stories/StoryUI/index.tsx',
-    description: 'Panel registration'
   },
   {
     source: 'templates/StoryUI/manager.tsx',

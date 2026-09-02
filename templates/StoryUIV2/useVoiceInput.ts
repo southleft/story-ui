@@ -39,9 +39,6 @@ export interface UseVoiceInputOptions {
 export interface UseVoiceInputReturn {
   isListening: boolean;
   isSupported: boolean;
-  interimTranscript: string;
-  finalTranscript: string;
-  confidence: number;
   error: VoiceError | null;
   start: () => void;
   stop: () => void;
@@ -109,9 +106,6 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
   } = options;
 
   const [isListening, setIsListening] = useState(false);
-  const [interimTranscript, setInterimTranscript] = useState('');
-  const [finalTranscript, setFinalTranscript] = useState('');
-  const [confidence, setConfidence] = useState(0);
   const [error, setError] = useState<VoiceError | null>(null);
 
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
@@ -161,22 +155,13 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
 
         if (result.isFinal) {
           final += transcript;
-          setConfidence(result[0].confidence);
         } else {
           interim += transcript;
         }
       }
 
-      if (interim) {
-        setInterimTranscript(interim);
-        onInterimRef.current?.(interim);
-      }
-
-      if (final) {
-        setFinalTranscript(final);
-        setInterimTranscript('');
-        onFinalRef.current?.(final);
-      }
+      if (interim) onInterimRef.current?.(interim);
+      if (final) onFinalRef.current?.(final);
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
@@ -233,7 +218,6 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
     }
 
     setError(null);
-    setInterimTranscript('');
 
     const recognition = createRecognition();
     if (!recognition) return;
@@ -252,7 +236,6 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
   const stop = useCallback(() => {
     isListeningRef.current = false;
     setIsListening(false);
-    setInterimTranscript('');
 
     if (restartTimeoutRef.current) {
       clearTimeout(restartTimeoutRef.current);
@@ -276,9 +259,6 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
   return {
     isListening,
     isSupported,
-    interimTranscript,
-    finalTranscript,
-    confidence,
     error,
     start,
     stop,

@@ -39,7 +39,6 @@ vi.mock('../../story-generator/llm-providers/story-llm-service.js', () => ({
   }),
   chatCompletion: vi.fn(async () => ''),
   chatCompletionStream: vi.fn(),
-  chatCompletionWithImages: vi.fn(async () => { throw new Error('vision not used in these tests'); }),
   chatCompletionWithImagesDetailed: vi.fn(async () => { throw new Error('vision not used in these tests'); }),
   buildMessageWithImages: vi.fn((content: string) => content),
   generateTitle: vi.fn(async () => 'Active Fixture Story'),

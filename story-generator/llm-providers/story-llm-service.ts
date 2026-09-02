@@ -370,31 +370,9 @@ export async function chatCompletionDetailed(
 }
 
 /**
- * Chat completion with image support for vision-based story generation
- * Supports sending images alongside text prompts
- * Now supports explicit provider selection from UI
- */
-export async function chatCompletionWithImages(
-  messages: Array<{
-    role: 'user' | 'assistant';
-    content: string | MessageContent[];
-  }>,
-  options?: {
-    provider?: ProviderType;  // Explicit provider selection from UI
-    model?: string;
-    maxTokens?: number;
-    temperature?: number;
-  }
-): Promise<string> {
-  const result = await chatCompletionWithImagesDetailed(messages, options);
-  return result.content;
-}
-
-/**
  * Vision chat completion that also returns finish reason and token usage so
  * callers can detect truncation — image-referenced compositions are exactly
- * the ones large enough to hit the output limit. Prefer this over
- * chatCompletionWithImages for generation pipelines.
+ * the ones large enough to hit the output limit.
  */
 export async function chatCompletionWithImagesDetailed(
   messages: Array<{
@@ -602,49 +580,4 @@ export function getProviderInfo(requested?: {
       supportsStreaming: false,
     };
   }
-}
-
-/**
- * Configure a specific provider with API key
- */
-export function configureProvider(
-  type: ProviderType,
-  apiKey: string,
-  model?: string
-): boolean {
-  ensureInitialized();
-  const registry = getProviderRegistry();
-  const provider = registry.get(type);
-
-  if (!provider) {
-    logger.error(`Unknown provider type: ${type}`);
-    return false;
-  }
-
-  registry.configureProvider(type, {
-    apiKey,
-    model: model || provider.supportedModels[0]?.id,
-  });
-
-  logger.info(`Configured ${type} provider`, { model: model || 'default' });
-  return true;
-}
-
-/**
- * Validate an API key for a provider
- */
-export async function validateProviderKey(
-  type: ProviderType,
-  apiKey: string
-): Promise<{ valid: boolean; error?: string }> {
-  ensureInitialized();
-  const registry = getProviderRegistry();
-  const provider = registry.get(type);
-
-  if (!provider) {
-    return { valid: false, error: `Unknown provider type: ${type}` };
-  }
-
-  const result = await provider.validateApiKey(apiKey);
-  return { valid: result.valid, error: result.error };
 }

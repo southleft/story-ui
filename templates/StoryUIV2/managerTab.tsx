@@ -30,24 +30,6 @@ import { useStorybookApi, useStorybookState } from 'storybook/manager-api';
 import { Workspace } from './Workspace';
 import { resolveApiBase } from './apiBase';
 
-/**
- * The page's route: `?path=/workspace/`. Storybook parses the first segment
- * as the view mode. NOT `/story-ui/`: the manager decides whether to show the
- * canvas with `/(^\/story|docs|onboarding\/|^\/$)/`, and `/story-ui/`
- * matches `^\/story` — the (hidden-story) preview then paints over the page.
- */
-export const STORY_UI_ROUTE = '/workspace/';
-export const STORY_UI_VIEW_MODE = 'workspace';
-export const STORY_UI_PAGE_ID = 'story-ui/workspace';
-/**
- * sessionStorage flag the manager sets when it registers the page. The
- * preview iframe shares sessionStorage with the manager (same origin, same
- * tab), so the MDX fallback page can tell that a better surface exists and
- * point at it. Session-scoped on purpose: an un-wired addon must not leave a
- * stale promise behind.
- */
-export const TAB_FLAG_KEY = 'story-ui-tab';
-
 /** localStorage key shared with the workspace and the docs-page focus flow; "false" is the only opt-out. */
 const FOCUS_KEY = 'story-ui-focus';
 const FOCUS_MESSAGE = 'story-ui:focus';
@@ -59,30 +41,6 @@ const readFocusPreference = (): boolean => {
 const writeFocusPreference = (on: boolean) => {
   try { localStorage.setItem(FOCUS_KEY, on ? 'true' : 'false'); } catch { /* private mode */ }
 };
-
-/** Record that the page exists, for the docs fallback to read. */
-export function announceStoryUiTab(): void {
-  try { sessionStorage.setItem(TAB_FLAG_KEY, STORY_UI_ROUTE); } catch { /* private mode */ }
-}
-
-/** True when the manager is showing the Story UI page. */
-export function isStoryUiRoute(viewMode: string | undefined): boolean {
-  return viewMode === STORY_UI_VIEW_MODE;
-}
-
-/**
- * Navigate the manager to the page. `navigateUrl` takes the URL as written
- * (`plain`), which is what a `?path=` for a non-story route needs; the
- * `selectStory`-style helpers all assume a story id.
- */
-export function openStoryUiTab(api: { navigateUrl?: (url: string, options?: any) => void }): void {
-  const url = `?path=${STORY_UI_ROUTE}`;
-  if (typeof api?.navigateUrl === 'function') {
-    api.navigateUrl(url);
-    return;
-  }
-  window.location.search = url;
-}
 
 /**
  * What the sidebar was before we folded it, in sessionStorage rather than a

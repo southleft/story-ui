@@ -184,7 +184,6 @@ function generateSampleConfig(filename: string, type: 'json' | 'js') {
     generatedStoriesPath: './src/stories/generated',
     componentsPath: './src/components',
     storyPrefix: 'Generated/',
-    defaultAuthor: 'Story UI AI',
     importPath: 'your-component-library',
     componentPrefix: 'UI',
     layoutRules: {

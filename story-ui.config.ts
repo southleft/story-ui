@@ -85,7 +85,6 @@ export interface StoryUIConfig {
   componentsPath?: string;
   componentsMetadataPath?: string;
   storyPrefix: string;
-  defaultAuthor: string;
   importPath: string;
   componentPrefix: string;
   /** Framework type for story generation (e.g., 'react', 'web-components', 'angular', 'vue', 'svelte') */
@@ -158,7 +157,6 @@ export const DEFAULT_CONFIG: StoryUIConfig = {
   componentsPath: undefined, // No default path - should be set only for local component libraries
   componentsMetadataPath: undefined,
   storyPrefix: 'Generated/',
-  defaultAuthor: 'Story UI AI',
   importPath: 'your-component-library',
   componentPrefix: '',
   components: [], // Will be populated dynamically
@@ -234,7 +232,6 @@ export const Default: Story = {
 // Generic configuration template for other design systems
 export const GENERIC_CONFIG_TEMPLATE: Partial<StoryUIConfig> = {
   storyPrefix: 'Generated/',
-  defaultAuthor: 'Story UI AI',
   componentPrefix: '',
   layoutRules: {
     multiColumnWrapper: 'div',

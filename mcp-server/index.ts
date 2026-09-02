@@ -24,7 +24,6 @@ import {
   deleteDesignContextFile,
   scaffoldDesignContext,
 } from './routes/designContext.js';
-import { claudeProxy } from './routes/claude.js';
 import { generateStoryFromPrompt } from './routes/generateStory.js';
 import { generateStoryFromPromptStream } from './routes/generateStoryStream.js';
 import { activeGenerationsHandler, cancelGenerationHandler } from './routes/activeGenerations.js';
@@ -33,24 +32,7 @@ import { loadConsiderations, considerationsToPrompt } from '../story-generator/c
 import { DocumentationLoader } from '../story-generator/documentationLoader.js';
 import fs from 'fs';
 import { UrlRedirectService } from '../story-generator/urlRedirectService.js';
-import {
-  getProviders,
-  getModels,
-  configureProviderRoute,
-  validateApiKey,
-  setDefaultProvider,
-  setModel,
-  getUISettings,
-  applyUISettings,
-  getSettingsConfig
-} from './routes/providers.js';
-import {
-  listFrameworks,
-  detectCurrentFramework,
-  getFrameworkDetails,
-  validateStoryForFramework,
-  postProcessStoryForFramework,
-} from './routes/frameworks.js';
+import { getProviders, getModels } from './routes/providers.js';
 import mcpRemoteRouter from './routes/mcpRemote.js';
 // Voice Canvas endpoints
 import { canvasSaveHandler } from './routes/canvasSave.js';
@@ -189,23 +171,11 @@ app.post('/mcp/edit-prop', editPropHandler);
 app.get('/mcp/props', getProps);
 
 // AI generation routes
-app.post('/mcp/claude', claudeProxy);
 app.post('/mcp/generate-story', generateStoryFromPrompt);
 app.post('/mcp/generate-story-stream', generateStoryFromPromptStream);
 // Voice Canvas endpoints
 app.post('/mcp/canvas-generate', canvasGenerateHandler); // generate + write voice-canvas.stories.tsx
 app.post('/mcp/canvas-save', canvasSaveHandler);         // save canvas to named .stories.tsx
-// Ensure voice-canvas story template exists (lightweight, no LLM call)
-app.post('/mcp/canvas-ensure', (_req, res) => {
-  try {
-    const storiesDir = config.generatedStoriesPath || './src/stories/generated/';
-    ensureVoiceCanvasStory(storiesDir);
-    return res.json({ ok: true });
-  } catch (err) {
-    return res.json({ ok: false });
-  }
-});
-
 // In-flight generations — lets a reconnecting poller distinguish "the server
 // is still working on my prompt" from "the generation was lost". Registered in
 // generationCore at pipeline start, removed in a finally on every outcome.
@@ -236,25 +206,9 @@ app.get('/mcp/canvas-config', (_req, res) => {
   });
 });
 
-// LLM Provider management routes
+// LLM Provider routes (read-only: the panel and workspace list providers and models)
 app.get('/mcp/providers', getProviders);
 app.get('/mcp/providers/models', getModels);
-app.post('/mcp/providers/configure', configureProviderRoute);
-app.post('/mcp/providers/validate', validateApiKey);
-app.post('/mcp/providers/default', setDefaultProvider);
-app.post('/mcp/providers/model', setModel);
-
-// UI Settings routes (hybrid model selection for non-technical users)
-app.get('/mcp/providers/settings', getUISettings);
-app.post('/mcp/providers/settings', applyUISettings);
-app.get('/mcp/providers/config', getSettingsConfig);
-
-// Framework detection and adapter routes
-app.get('/mcp/frameworks', listFrameworks);
-app.get('/mcp/frameworks/detect', detectCurrentFramework);
-app.get('/mcp/frameworks/:type', getFrameworkDetails);
-app.post('/mcp/frameworks/validate', validateStoryForFramework);
-app.post('/mcp/frameworks/post-process', postProcessStoryForFramework);
 
 // MCP story management routes - for Claude Desktop and other MCP clients
 // List all stories
@@ -449,7 +403,6 @@ app.delete('/mcp/stories/:storyId', async (req, res) => {
 app.post('/story-ui/generate', generateStoryFromPrompt);
 app.post('/story-ui/generate-stream', generateStoryFromPromptStream);
 // voice-render and convert-to-story aliases removed
-app.post('/story-ui/claude', claudeProxy);
 app.get('/story-ui/components', getComponents);
 app.get('/story-ui/props', getProps);
 
@@ -509,25 +462,9 @@ app.get('/story-ui/considerations', async (req, res) => {
   }
 });
 
-// Provider management proxy routes
+// Provider proxy routes
 app.get('/story-ui/providers', getProviders);
 app.get('/story-ui/providers/models', getModels);
-app.post('/story-ui/providers/configure', configureProviderRoute);
-app.post('/story-ui/providers/validate', validateApiKey);
-app.post('/story-ui/providers/default', setDefaultProvider);
-app.post('/story-ui/providers/model', setModel);
-
-// UI Settings proxy routes (for non-technical users)
-app.get('/story-ui/providers/settings', getUISettings);
-app.post('/story-ui/providers/settings', applyUISettings);
-app.get('/story-ui/providers/config', getSettingsConfig);
-
-// Framework management proxy routes
-app.get('/story-ui/frameworks', listFrameworks);
-app.get('/story-ui/frameworks/detect', detectCurrentFramework);
-app.get('/story-ui/frameworks/:type', getFrameworkDetails);
-app.post('/story-ui/frameworks/validate', validateStoryForFramework);
-app.post('/story-ui/frameworks/post-process', postProcessStoryForFramework);
 
 // List generated stories from file system
 app.get('/story-ui/stories', async (req, res) => {
@@ -694,49 +631,6 @@ app.delete('/story-ui/stories/:id', async (req, res) => {
   } catch (error) {
     console.error('Error deleting story:', error);
     return res.status(500).json({ error: 'Failed to delete story' });
-  }
-});
-
-// Delete story from file system (legacy POST endpoint)
-app.post('/story-ui/delete', async (req, res) => {
-  try {
-    const { chatId, storyId } = req.body;
-    const id = chatId || storyId;
-
-    if (!id) {
-      return res.status(400).json({ error: 'chatId or storyId is required' });
-    }
-
-    console.log(`🗑️ Attempting to delete story: ${id}`);
-
-    const storiesPath = config.generatedStoriesPath;
-    console.log(`🔍 Searching for story in: ${storiesPath}`);
-
-    if (fs.existsSync(storiesPath)) {
-      const files = fs.readdirSync(storiesPath);
-      const matchingFile = files.find(file =>
-        file.includes(id) || removeStoryExtension(file) === id
-      );
-
-      if (matchingFile) {
-        const filePath = path.join(storiesPath, matchingFile);
-        fs.unlinkSync(filePath);
-        console.log(`✅ Deleted story file: ${filePath}`);
-        return res.json({
-          success: true,
-          message: 'Story deleted successfully'
-        });
-      }
-    }
-
-    console.log(`❌ Story not found: ${id}`);
-    return res.status(404).json({
-      success: false,
-      error: 'Story not found'
-    });
-  } catch (error) {
-    console.error('Error deleting story:', error);
-    res.status(500).json({ error: 'Failed to delete story' });
   }
 });
 

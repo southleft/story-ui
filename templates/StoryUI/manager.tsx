@@ -41,11 +41,20 @@ import '@tpitre/story-ui/manager.css';
 
 const EDIT_REQUEST_KEY = 'story-ui-edit-request';
 /**
- * Must match STORY_UI_ROUTE / TAB_FLAG_KEY in the package's manager module.
- * Not `/story-ui/`: Storybook shows the canvas for any path matching
- * `^\/story`, which would paint the (empty) preview over the page.
+ * The page's route. Not `/story-ui/`: Storybook shows the canvas for any path
+ * matching `^\/story`, which would paint the (empty) preview over the page.
+ * Defined here, where the page is registered; the package's manager module
+ * does not import it (a static import there would evaluate the whole
+ * workspace bundle at manager startup — see LazyStoryUIPage below).
  */
 const STORY_UI_ROUTE = '/workspace/';
+/**
+ * sessionStorage flag set when the page is registered. The preview iframe
+ * shares sessionStorage with the manager (same origin, same tab), so the MDX
+ * fallback page (StoryUIV2.mdx reads the same key) can tell that a better
+ * surface exists and point at it. Session-scoped on purpose: an un-wired
+ * addon must not leave a stale promise behind.
+ */
 const TAB_FLAG_KEY = 'story-ui-tab';
 /**
  * The `<Meta title>` in StoryUIV2.mdx — the docs fallback. Its id is looked

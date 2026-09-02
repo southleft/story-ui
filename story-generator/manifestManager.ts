@@ -434,9 +434,3 @@ export function getManifestManager(): ManifestManager {
   }
   return _instance;
 }
-
-/** Reset the singleton (for testing / config reload). */
-export function resetManifestManager(): void {
-  if (_instance) _instance.flushSync();
-  _instance = null;
-}

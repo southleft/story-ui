@@ -60,21 +60,6 @@ export interface SelfHealingResult {
 }
 
 /**
- * Metrics for generation response
- */
-export interface GenerationMetrics {
-  attempts: number;
-  selfHealingUsed: boolean;
-  validationHistory: Array<{
-    attempt: number;
-    syntaxErrors: number;
-    patternErrors: number;
-    importErrors: number;
-    autoFixApplied: boolean;
-  }>;
-}
-
-/**
  * Check if validation errors object is empty (no errors)
  */
 export function hasNoErrors(errors: ValidationErrors): boolean {
@@ -470,27 +455,6 @@ export function formatErrorsForLog(errors: ValidationErrors): string {
   }
 
   return parts.length > 0 ? parts.join(', ') : 'None';
-}
-
-/**
- * Create generation metrics from error history
- */
-export function createGenerationMetrics(
-  attempts: number,
-  errorHistory: ValidationErrors[],
-  autoFixApplied: boolean[]
-): GenerationMetrics {
-  return {
-    attempts,
-    selfHealingUsed: attempts > 1,
-    validationHistory: errorHistory.map((errors, index) => ({
-      attempt: index + 1,
-      syntaxErrors: errors.syntaxErrors.length,
-      patternErrors: errors.patternErrors.length,
-      importErrors: errors.importErrors.length,
-      autoFixApplied: autoFixApplied[index] || false,
-    })),
-  };
 }
 
 /**
