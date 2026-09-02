@@ -237,6 +237,8 @@ export interface GenerationOutcome {
   notice?: string;
   /** Hand-set props re-applied after the model's rewrite. */
   pins?: { applied: string[]; kept: string[]; lost: string[] };
+  /** Edit blocks an update was answered with. */
+  edits?: Array<{ search: string; replace: string }>;
   /**
    * Storybook component ID (the `--<story>` prefix) for the generated story,
    * so clients can navigate to it without guessing.
@@ -921,6 +923,8 @@ async function runStoryGenerationPipeline(
     : Promise.resolve(originalTitle as string);
 
   let aiText = '';
+  /** Edit blocks the update was answered with, for the client's diff view. */
+  let appliedEdits: Array<{ search: string; replace: string }> | undefined;
   /** Stylesheet emitted alongside the story, when the model needed real states. */
   let generatedStylesheet: string | null = null;
   let finalErrors: ValidationErrors = createEmptyErrors();
@@ -961,6 +965,8 @@ async function runStoryGenerationPipeline(
     let lastThinkEmit = 0;
     let thinkingText = '';
     let planSent = '';
+    let codeSent = '';
+    let lastCodeEmit = 0;
     const llmResult = processedImages.length > 0
       ? await callLLM(messages, processedImages, { provider, model })
       : await callLLMStreaming(messages, { provider, model }, (chars, accumulated) => {
@@ -975,6 +981,21 @@ async function runStoryGenerationPipeline(
           if (plan.length > planSent.length && plan.startsWith(planSent)) {
             events.onLlmText?.({ phase: 'plan', delta: plan.slice(planSent.length), accumulated: plan });
             planSent = plan;
+          }
+          /**
+           * The code itself, as it is written, so the canvas can show the file
+           * growing instead of a placeholder. Everything after the opening
+           * fence line; throttled; delta only.
+           */
+          if (fence >= 0) {
+            const nl = accumulated.indexOf('\n', fence);
+            const codeSoFar = nl >= 0 ? accumulated.slice(nl + 1) : '';
+            const now = Date.now();
+            if (codeSoFar.length > codeSent.length && now - lastCodeEmit >= 150) {
+              events.onLlmText?.({ phase: 'code', delta: codeSoFar.slice(codeSent.length), accumulated: '' });
+              codeSent = codeSoFar;
+              lastCodeEmit = now;
+            }
           }
           const now = Date.now();
           if (now - lastStreamEmit < 1000) return;
@@ -1050,6 +1071,7 @@ async function runStoryGenerationPipeline(
       if (patched.failures.length === 0) {
         logger.log(`✂️ Applied ${patched.applied.length} edit block(s) to the previous code`);
         replyForExtraction = '```tsx\n' + patched.code + '\n```';
+        appliedEdits = patched.applied.map(b => ({ search: b.search, replace: b.replace }));
       } else {
         logger.warn(`✂️ ${patched.failures.length} edit block(s) still did not apply on the last attempt — applying the ${patched.applied.length} that did`);
         replyForExtraction = '```tsx\n' + patched.code + '\n```';
@@ -2089,6 +2111,25 @@ async function runStoryGenerationPipeline(
    * prompt — so "Story generation failed. Please try rephrasing your request."
    * could be sent to the model as a request.
    */
+  /**
+   * Follow-ups grounded in what verification actually found, ahead of the
+   * model's generic ideas. "Fix the contrast on the muted labels" is a
+   * suggestion the user can act on; "Add a dark mode toggle" is filler.
+   */
+  const grounded: string[] = [];
+  if (verification && verification.outcome !== 'not_verified') {
+    const unresolved = verification.findings
+      .filter(f => f.class !== 'infrastructure' && (f.severity === 'blocker' || f.severity === 'warning'))
+      .filter(f => f.repairable || f.severity === 'blocker');
+    for (const f of unresolved.slice(0, 2)) {
+      const target = f.selector ? ` (${f.selector})` : '';
+      grounded.push(`Fix: ${f.message.replace(/\s+—.*$/, '').slice(0, 90)}${target}`);
+    }
+  }
+  if (grounded.length) {
+    suggestions = [...grounded, ...(suggestions ?? []).filter(s => !grounded.includes(s))].slice(0, 5);
+  }
+
   const noticeParts: string[] = [];
   if (isFallbackStory) noticeParts.push('The generation did not produce a working story. Try rephrasing the request, or make it narrower.');
   else if (hasValidationWarnings) noticeParts.push('Some automatic fixes were applied; check the code view.');
@@ -2249,6 +2290,7 @@ async function runStoryGenerationPipeline(
     suggestions,
     notice,
     pins: pins.length ? { applied: [...pinReport.applied], kept: [...pinReport.kept], lost: [...pinReport.lost] } : undefined,
+    edits: appliedEdits,
     storybookId,
     verification,
   };

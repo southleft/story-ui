@@ -127,6 +127,9 @@ export interface CompletionFeedback {
   /** Hand-set props re-applied after the model's rewrite, and any it could not keep. */
   pins?: { applied: string[]; kept: string[]; lost: string[] };
 
+  /** For an update answered with edit blocks: exactly what was searched for and replaced. */
+  edits?: Array<{ search: string; replace: string }>;
+
   // Conversational, model-authored reply describing what was built.
   // Rendered as the assistant's chat message in the panel.
   chatSummary?: string;
@@ -196,8 +199,13 @@ export interface GenerationStarted {
  */
 /** A slice of the model's prose as it streams. */
 export interface LlmText {
-  /** thinking: the model's summarised reasoning before its first token; plan: the sentences before the code; summary: after. */
-  phase: 'thinking' | 'plan' | 'summary';
+  /**
+   * thinking: the model's summarised reasoning before its first token;
+   * plan: the sentences before the code; code: the file as it is written
+   * (`accumulated` is deliberately empty for code events — the client
+   * accumulates the deltas — to keep frames small); summary: after.
+   */
+  phase: 'thinking' | 'plan' | 'code' | 'summary';
   delta: string;
   accumulated: string;
 }

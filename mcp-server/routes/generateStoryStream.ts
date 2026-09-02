@@ -214,6 +214,7 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
       suggestions: outcome.suggestions,
       notice: outcome.notice,
       pins: outcome.pins,
+      edits: outcome.edits,
       chatSummary: outcome.chatSummary,
       storybookId: outcome.storybookId,
       // Browser verification — forwarded verbatim so the panel can show what was
