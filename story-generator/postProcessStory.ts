@@ -42,6 +42,16 @@ function buildComponentToImportMap(
   const normalizedComponentsPath = normalizePath(componentsPath);
 
   for (const component of discoveredComponents) {
+    // An explicitly declared import specifier is authoritative — the project
+    // wrote down where this component lives, and no path arithmetic can beat
+    // being told. Covers components that have no filePath at all, such as ones
+    // declared in config but never found on disk.
+    const declaredPath = (component as any).__componentPath;
+    if (declaredPath) {
+      componentMap.set(component.name, declaredPath);
+      continue;
+    }
+
     const normalizedFilePath = normalizePath(component.filePath);
 
     // Check if this component is from our configured components path
@@ -133,6 +143,8 @@ export function fixBarrelImports(
 
     // Group components by their import path
     const groupedByImportPath = new Map<string, string[]>();
+    // Components discovery cannot place. They stay on the original import.
+    const unmapped: string[] = [];
 
     for (const component of components) {
       let componentImportPath: string;
@@ -142,11 +154,29 @@ export function fixBarrelImports(
         componentImportPath = componentToImport.get(component)!;
         logger.log(`[DISCOVERY] ${component} -> ${componentImportPath}`);
       } else {
-        // Fallback: Use simple PascalCase to kebab-case conversion
-        // This handles components not found in discovery
-        const fileName = toKebabCase(component);
-        componentImportPath = `${importPath}/${fileName}`;
-        logger.log(`[FALLBACK] ${component} -> ${componentImportPath} (not in discovery)`);
+        /**
+         * Do not invent a path. Leave the import exactly as written.
+         *
+         * This branch used to kebab-case the component name onto the import
+         * path — `Box` became `@atlaskit/box` — which is the same guess the
+         * engine has had to stop making in discovery, in the catalog and in
+         * import validation, here wearing a helper labelled "design-system
+         * agnostic". For a scope like `@atlaskit` there is no such package:
+         * Box, Flex, MetricText, Text and Anchor all live in
+         * `@atlaskit/primitives`.
+         *
+         * Measured consequence: the model imported correctly from the path the
+         * catalog gave it, validation PASSED, and one second later this step
+         * rewrote five correct imports into five packages that do not exist.
+         * The story then rendered nothing, and every downstream signal blamed
+         * the generation.
+         *
+         * Unconverted is not a failure mode — the original import came from
+         * the catalog and is the best information available.
+         */
+        unmapped.push(component);
+        logger.log(`[KEPT] ${component} — not in discovery, leaving its import untouched`);
+        continue;
       }
 
       if (!groupedByImportPath.has(componentImportPath)) {
@@ -155,12 +185,14 @@ export function fixBarrelImports(
       groupedByImportPath.get(componentImportPath)!.push(component);
     }
 
-    // Build individual imports
-    const individualImports = Array.from(groupedByImportPath.entries())
-      .map(([path, comps]) => {
-        return `import { ${comps.join(', ')} } from '${path}';`;
-      })
-      .join('\n');
+    // Build individual imports, re-emitting anything we could not place on
+    // its ORIGINAL specifier rather than dropping or inventing it.
+    const rewritten = Array.from(groupedByImportPath.entries())
+      .map(([path, comps]) => `import { ${comps.join(', ')} } from '${path}';`);
+    if (unmapped.length > 0) {
+      rewritten.unshift(`import { ${unmapped.join(', ')} } from '${importPath}';`);
+    }
+    const individualImports = rewritten.join('\n');
 
     logger.log(`[DEBUG] Replacement: "${individualImports}"`);
 
@@ -272,4 +304,147 @@ function convertToastChildrenToExports(code: string): string {
   // For now, return the code as-is
   logger.log('Toast conversion not yet implemented');
   return code;
+}
+
+/**
+ * Split an import from an npm SCOPE into the real packages its components live in.
+ *
+ * Measured against Atlassian: the model gets most imports exactly right —
+ * `Avatar from '@atlaskit/avatar'`, `Lozenge from '@atlaskit/lozenge'` — and
+ * then collapses the layout primitives onto the scope root:
+ *
+ *   import { Box, Stack, Flex } from '@atlaskit';
+ *
+ * It does this with a correct, complete, 4KB catalog in front of it that
+ * states `**Box** (import from '@atlaskit/primitives')`, and it repeats the
+ * mistake through every self-healing attempt until the loop gives up. Three
+ * prompt revisions did not move it.
+ *
+ * So stop asking. The right package for each component is a fact discovery
+ * already holds, so the repair is deterministic and costs no LLM call. This is
+ * the exact inverse of the fallback that used to live in fixBarrelImports:
+ * that one INVENTED a path from a component's name; this one only ever applies
+ * a path the project stated.
+ *
+ * Bindings we cannot place are left on the original specifier, where import
+ * validation will report them honestly rather than have a guess smuggled in.
+ */
+export function splitScopeImports(
+  code: string,
+  importPath: string,
+  componentHomes: Map<string, string>,
+): string {
+  // Only meaningful for a scope root — `@scope` with no package after it.
+  if (!importPath.startsWith('@') || importPath.includes('/')) return code;
+  if (componentHomes.size === 0) return code;
+
+  const scopeImport = new RegExp(
+    `import\\s*\\{([^}]+)\\}\\s*from\\s*['"]${escapeRegExp(importPath)}['"];?`,
+    'g',
+  );
+
+  return code.replace(scopeImport, (whole, bindingList: string) => {
+    const byPackage = new Map<string, string[]>();
+    const unplaced: string[] = [];
+
+    for (const raw of String(bindingList).split(',')) {
+      const binding = raw.trim();
+      if (!binding) continue;
+      // `Foo as Bar` — resolve on the ORIGINAL name, emit the whole clause.
+      const source = binding.split(/\s+as\s+/)[0].trim();
+      const home = componentHomes.get(source);
+      if (!home) {
+        unplaced.push(binding);
+        continue;
+      }
+      if (!byPackage.has(home)) byPackage.set(home, []);
+      byPackage.get(home)!.push(binding);
+    }
+
+    if (byPackage.size === 0) return whole;
+
+    const lines = [...byPackage.entries()].map(
+      ([pkg, names]) => `import { ${names.join(', ')} } from '${pkg}';`,
+    );
+    if (unplaced.length > 0) {
+      lines.push(`import { ${unplaced.join(', ')} } from '${importPath}';`);
+    }
+    logger.log(`🔧 Split ${byPackage.size + (unplaced.length ? 1 : 0)} import(s) out of scope '${importPath}'`);
+    return lines.join('\n');
+  });
+}
+
+/**
+ * Did a targeted edit quietly replace the whole composition?
+ *
+ * Reported from manual testing: with one button selected and the request "Red
+ * background.", the tool returned an entirely different page — and the reply
+ * asserted that "the Grid, Row, and Column layout structure remains
+ * unchanged", because the model was describing the composition it had just
+ * invented rather than the one it was asked to modify. Every existing gate
+ * passed it: the code compiled, rendered, and verified.
+ *
+ * Structural similarity is the check that catches this. A request that names
+ * one element and one property cannot legitimately change most of the file, so
+ * a large divergence is evidence the model restarted instead of editing.
+ *
+ * Two signals, both multisets so reordering a section is never mistaken for a
+ * rewrite:
+ *
+ *   - the JSX ELEMENT NAMES — is it still the same set of components?
+ *   - the CONTENT — attribute name=value pairs and rendered text. Tags alone
+ *     scored a rewrite that kept the same six Cards but replaced every word
+ *     and prop on them as ~0, because the shape of the tree survived while the
+ *     page did not.
+ *
+ * Overlap is measured relative to the PREVIOUS code: how much of what existed
+ * is still there. A pure addition keeps everything and scores 0, however large
+ * it is — the failure being guarded against is prior work destroyed, not new
+ * work added — while a replacement loses the old material and scores high.
+ */
+const TAG_WEIGHT = 0.35;
+const CONTENT_WEIGHT = 0.65;
+
+export function editDivergence(previousCode: string, nextCode: string): {
+  /** 0 = identical structure and content, 1 = nothing in common. */
+  divergence: number;
+  before: number;
+  after: number;
+} {
+  const tags = (code: string): string[] =>
+    [...code.matchAll(/<\/?([A-Za-z][A-Za-z0-9.]*)/g)].map(m => m[1]);
+
+  // What the elements SAY. Attribute values with nested braces are skipped by
+  // the regex — consistently on both sides, so they cancel — and text with no
+  // letters or digits is punctuation the JSX syntax itself produced.
+  const content = (code: string): string[] => [
+    ...[...code.matchAll(/([A-Za-z_][\w-]*)=("[^"]*"|'[^']*'|\{[^{}]*\})/g)].map(m => `${m[1]}=${m[2]}`),
+    ...[...code.matchAll(/>([^<>{}]+)</g)]
+      .map(m => m[1].trim())
+      .filter(t => /[A-Za-z0-9]/.test(t)),
+  ];
+
+  // How much of `before` survives into `after`. 1 when there was nothing to
+  // preserve — an empty signal is not evidence of a rewrite.
+  const survivingFraction = (before: string[], after: string[]): number => {
+    if (before.length === 0) return 1;
+    const counts = new Map<string, number>();
+    for (const item of before) counts.set(item, (counts.get(item) || 0) + 1);
+    let shared = 0;
+    for (const item of after) {
+      const left = counts.get(item) || 0;
+      if (left > 0) { shared++; counts.set(item, left - 1); }
+    }
+    return shared / before.length;
+  };
+
+  const beforeTags = tags(previousCode);
+  const afterTags = tags(nextCode);
+  if (beforeTags.length === 0) return { divergence: 0, before: 0, after: afterTags.length };
+
+  const tagOverlap = survivingFraction(beforeTags, afterTags);
+  const contentOverlap = survivingFraction(content(previousCode), content(nextCode));
+
+  const divergence = 1 - (TAG_WEIGHT * tagOverlap + CONTENT_WEIGHT * contentOverlap);
+  return { divergence, before: beforeTags.length, after: afterTags.length };
 }

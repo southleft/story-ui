@@ -38,8 +38,8 @@ export const GEMINI_MODELS: ModelInfo[] = [
     outputPricePer1kTokens: 0.012,
   },
   {
-    id: 'gemini-3.5-flash',
-    name: 'Gemini 3.5 Flash',
+    id: 'gemini-3.7-flash',
+    name: 'Gemini 3.7 Flash',
     provider: 'gemini',
     contextWindow: 1048576,
     maxOutputTokens: 65536,
@@ -71,12 +71,15 @@ export const GEMINI_MODELS: ModelInfo[] = [
 // upstream (July 2026), so these are remapped rather than passed through.
 export const GEMINI_LEGACY_MODEL_ALIASES: Record<string, string> = {
   'gemini-3.1-pro-preview': 'gemini-3.1-pro',
-  'gemini-3-flash-preview': 'gemini-3.5-flash',
-  'gemini-2.5-flash': 'gemini-3.5-flash',
+  'gemini-3-flash-preview': 'gemini-3.7-flash',
+  'gemini-3.5-flash': 'gemini-3.7-flash',
+  'gemini-2.5-flash': 'gemini-3.7-flash',
 };
 
 // Default model - Gemini 3.1 Pro (flagship, July 2026)
 const DEFAULT_MODEL = 'gemini-3.1-pro';
+/** The cheap model for trivial calls (titles, chat summaries). */
+export const GEMINI_SMALL_MODEL = 'gemini-3.1-flash-lite';
 
 // API configuration
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -181,6 +184,10 @@ export class GeminiProvider extends BaseLLMProvider {
 
     const url = this.getApiUrl(model);
 
+    // One wall-clock budget for the whole call, retries included; on timeout
+    // the error reports MEASURED elapsed, never just the configured number.
+    const timeoutMs = this.config.timeout || 120000;
+    const requestStartedAt = Date.now();
     try {
       const response = await fetchWithRetry(url, {
         method: 'POST',
@@ -189,8 +196,7 @@ export class GeminiProvider extends BaseLLMProvider {
           'x-goog-api-key': apiKey,
         },
         body: JSON.stringify(requestBody),
-        signal: AbortSignal.timeout(this.config.timeout || 120000),
-      });
+      }, { timeoutMs, signal: options?.signal });
 
       if (!response.ok) {
         const errorBody = await response.text();
@@ -204,7 +210,10 @@ export class GeminiProvider extends BaseLLMProvider {
       return chatResponse;
     } catch (error) {
       if (error instanceof Error && error.name === 'TimeoutError') {
-        throw new Error(`Gemini API request timed out after ${this.config.timeout}ms`);
+        const elapsedMs = Date.now() - requestStartedAt;
+        throw new Error(
+          `Gemini API request timed out after ${elapsedMs}ms of wall time (configured timeout ${timeoutMs}ms)`,
+        );
       }
       throw error;
     }
@@ -255,8 +264,7 @@ export class GeminiProvider extends BaseLLMProvider {
           'x-goog-api-key': apiKey,
         },
         body: JSON.stringify(requestBody),
-        signal: AbortSignal.timeout(this.config.timeout || 120000),
-      });
+      }, { timeoutMs: this.config.timeout || 120000, signal: options?.signal });
 
       if (!response.ok) {
         const errorBody = await response.text();
@@ -274,6 +282,10 @@ export class GeminiProvider extends BaseLLMProvider {
       let buffer = '';
       let promptTokens = 0;
       let completionTokens = 0;
+      // Gemini's SSE puts finishReason on the candidate of its final chunk
+      // (STOP, MAX_TOKENS, SAFETY, ...); earlier chunks omit it. If no chunk
+      // ever carries one this stays undefined and is reported as unknown.
+      let finishReason: string | undefined;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -301,6 +313,9 @@ export class GeminiProvider extends BaseLLMProvider {
                 yield { type: 'text', content: text };
               }
 
+              const candidateFinish = event.candidates?.[0]?.finishReason;
+              if (candidateFinish) finishReason = candidateFinish;
+
               // Extract usage metadata
               if (event.usageMetadata) {
                 promptTokens = event.usageMetadata.promptTokenCount || 0;
@@ -315,6 +330,8 @@ export class GeminiProvider extends BaseLLMProvider {
 
       yield {
         type: 'done',
+        finishReason: finishReason ? this.mapFinishReason(finishReason) : undefined,
+        model,
         usage: {
           promptTokens,
           completionTokens,
@@ -332,7 +349,7 @@ export class GeminiProvider extends BaseLLMProvider {
   async validateApiKey(apiKey: string): Promise<ValidationResult> {
     try {
       // Make a minimal API call to validate the key
-      const url = this.getApiUrl('gemini-3.5-flash');
+      const url = this.getApiUrl('gemini-3.7-flash');
       const response = await fetch(url, {
         method: 'POST',
         headers: {

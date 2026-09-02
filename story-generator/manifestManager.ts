@@ -14,6 +14,7 @@
  * - Reconciliation on server startup fixes any drift (manual file deletions, etc.)
  */
 
+import type { PropPin } from './editing/pins.js';
 import fs from 'fs';
 import path from 'path';
 import { loadUserConfig } from './configLoader.js';
@@ -26,6 +27,12 @@ export type ManifestSource = 'panel' | 'voice-canvas' | 'voice-save' | 'mcp-exte
 export interface ManifestMessage {
   role: 'user' | 'ai';
   content: string;
+  /**
+   * Small data-URL previews of images attached to this message. Bounded on
+   * purpose — full-size base64 must never land in the manifest, but without
+   * something here a reopened chat loses the reference image entirely.
+   */
+  thumbnails?: string[];
 }
 
 export interface ManifestEntry {
@@ -51,6 +58,48 @@ export interface ManifestEntry {
     model?: string;
     /** The original generation prompt */
     prompt?: string;
+    /**
+     * The conversation was reconstructed after the fact — seeded from the
+     * prompt, or restored from a browser's localStorage — rather than held
+     * with the user. Set by the writer of such a conversation so the write
+     * is not mistaken for activity; see touchesUpdatedAt.
+     */
+    backfilled?: boolean;
+    /**
+     * Props the user set by hand in the property panel. Re-applied after every
+     * model rewrite so a chat edit cannot undo a direct one. See editing/pins.ts.
+     */
+    pins?: PropPin[];
+    /**
+     * Completion payload of the most recent generation. The panel lives in
+     * Storybook's preview iframe, which reloads when the new story file lands
+     * — killing the in-flight stream. Persisting this lets a recovered (or
+     * reopened) conversation restore the full reply: code viewer, timing,
+     * and suggestion chips, not just the text.
+     */
+    lastCompletion?: {
+      code?: string;
+      suggestions?: string[];
+      generationTimeMs?: number;
+      storybookId?: string;
+      /**
+       * Compact browser-verification summary, so a recovered or reopened
+       * conversation can rebuild the verification badge. Without it a reload
+       * silently dropped "verified — 2 warnings", and absent looked exactly
+       * like never-ran — the failure shape this codebase keeps paying for.
+       * Counts only, never findings: the full report is a working artifact,
+       * not something to persist per story.
+       */
+      verification?: {
+        outcome: 'verified' | 'issues' | 'not_verified';
+        /** Why verification could not run, when outcome is `not_verified`. */
+        reason?: string;
+        blockers?: number;
+        warnings?: number;
+        /** The badge's headline metric ("Verified in browser · 6 focusable"). */
+        focusables?: number;
+      };
+    };
   };
 }
 
@@ -88,7 +137,85 @@ function truncateConversation(conv: ManifestMessage[]): ManifestMessage[] {
   return conv.slice(-MAX_CONVERSATION);
 }
 
+/** Hard ceilings so persisted previews can't grow into full-size payloads. */
+const MAX_THUMBNAILS_PER_MESSAGE = 5;
+const MAX_THUMBNAIL_CHARS = 96 * 1024;
+
+/**
+ * Keep only small, well-formed image data URLs. Anything oversized is dropped
+ * rather than truncated — a half-written data URL renders as a broken image.
+ */
+export function sanitizeThumbnails(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const safe = value
+    .filter((t): t is string => typeof t === 'string')
+    .filter(t => t.startsWith('data:image/'))
+    .filter(t => t.length <= MAX_THUMBNAIL_CHARS)
+    .slice(0, MAX_THUMBNAILS_PER_MESSAGE);
+  if (safe.length < value.length) {
+    // Dropped and never-sent must not look alike in the log, or a missing
+    // thumbnail gets diagnosed as a client that never attached one.
+    logger.log(
+      `[manifest] dropped ${value.length - safe.length} thumbnail(s): malformed, over ` +
+      `${Math.round(MAX_THUMBNAIL_CHARS / 1024)}KB, or past the per-message cap of ${MAX_THUMBNAILS_PER_MESSAGE}`,
+    );
+  }
+  return safe.length > 0 ? safe : undefined;
+}
+
 // ── ManifestManager ────────────────────────────────────────────────────────
+
+/** Message-by-message equality: role, content and thumbnails. */
+export function sameConversation(a: ManifestMessage[] | undefined, b: ManifestMessage[] | undefined): boolean {
+  const x = a ?? [];
+  const y = b ?? [];
+  if (x.length !== y.length) return false;
+  return x.every((m, i) => {
+    const n = y[i];
+    if (m.role !== n.role || m.content !== n.content) return false;
+    const mt = m.thumbnails ?? [];
+    const nt = n.thumbnails ?? [];
+    return mt.length === nt.length && mt.every((t, j) => t === nt[j]);
+  });
+}
+
+/**
+ * Whether a write to an existing entry counts as activity.
+ *
+ * `updatedAt` orders the workspace's Recent work, so it must move only when
+ * the story or its conversation genuinely changed: a message was added, the
+ * title was edited, the generation metadata was replaced. Two writes that
+ * look like changes are not:
+ *
+ *  - a no-op upsert — the same fields sent again (the classic panel re-syncs
+ *    its chats on open);
+ *  - a backfill — a conversation reconstructed from the prompt, or restored
+ *    from a browser's localStorage, to make an older story openable. The
+ *    writer marks it `metadata.backfilled`; the manifest gains a history it
+ *    was missing (and, from the classic panel, a `source` of `panel` in
+ *    place of `mcp-external`), but nothing happened to the story.
+ *
+ * A NEW entry is always stamped; this only judges writes onto an existing one.
+ */
+export function touchesUpdatedAt(
+  existing: Pick<ManifestEntry, 'id' | 'title' | 'source' | 'permanent' | 'conversation' | 'metadata'>,
+  next: Pick<ManifestEntry, 'id' | 'title' | 'source' | 'permanent' | 'conversation' | 'metadata'>,
+  backfill = false,
+): boolean {
+  // A backfill is bookkeeping in every field, not only the conversation:
+  // the classic panel adopts a reconciled `mcp-external` entry as `panel`
+  // in the same write, and that reclassification is not activity either.
+  if (backfill) return false;
+  if (existing.id !== next.id) return true;
+  if (existing.title !== next.title) return true;
+  if (existing.source !== next.source) return true;
+  if ((existing.permanent ?? false) !== (next.permanent ?? false)) return true;
+  // The marker itself is bookkeeping, not a change to the story.
+  const { backfilled: _a, ...em } = existing.metadata ?? {};
+  const { backfilled: _b, ...nm } = next.metadata ?? {};
+  if (JSON.stringify(em) !== JSON.stringify(nm)) return true;
+  return !sameConversation(existing.conversation, next.conversation);
+}
 
 export class ManifestManager {
   private readonly manifestPath: string;
@@ -167,10 +294,18 @@ export class ManifestManager {
     const existing = this.manifest.stories[fileName];
     const now = new Date().toISOString();
 
-    // Strip base64 images from any message content that accidentally got through
+    // Strip base64 images from any message content that accidentally got through,
+    // but keep bounded thumbnails so reopened chats still show their reference image.
     const safeConversation = (data.conversation ?? existing?.conversation ?? [])
-      .map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : '' }))
-      .filter(m => m.content.length > 0);
+      .map(m => {
+        const thumbnails = sanitizeThumbnails((m as ManifestMessage).thumbnails);
+        return {
+          role: m.role,
+          content: typeof m.content === 'string' ? m.content : '',
+          ...(thumbnails ? { thumbnails } : {}),
+        };
+      })
+      .filter(m => m.content.length > 0 || (m as ManifestMessage).thumbnails);
 
     const entry: ManifestEntry = {
       id: data.id ?? existing?.id ?? fileName.replace(/\.stories\.[a-z]+$/, ''),
@@ -186,6 +321,13 @@ export class ManifestManager {
         ...(data.metadata ?? {}),
       },
     };
+    // updatedAt is what "Recent work" sorts by, so it has to mean activity.
+    // Stamping it on every write meant opening the classic panel — which
+    // seeds a synthetic conversation into every entry that lacks one — moved
+    // every older story to "just now".
+    if (existing && !touchesUpdatedAt(existing, entry, data.metadata?.backfilled === true)) {
+      entry.updatedAt = existing.updatedAt;
+    }
 
     this.manifest.stories[fileName] = entry;
     this.scheduleFlush();
@@ -199,10 +341,17 @@ export class ManifestManager {
   updateConversation(fileName: string, conversation: ManifestMessage[]): void {
     const existing = this.manifest.stories[fileName];
     if (!existing) return;
-    existing.conversation = truncateConversation(
-      conversation.map(m => ({ role: m.role, content: m.content })),
+    const next = truncateConversation(
+      conversation.map(m => {
+        const thumbnails = sanitizeThumbnails(m.thumbnails);
+        return { role: m.role, content: m.content, ...(thumbnails ? { thumbnails } : {}) };
+      }),
     );
-    existing.updatedAt = new Date().toISOString();
+    // Re-sending the conversation the entry already holds is not activity.
+    if (!sameConversation(existing.conversation, next)) {
+      existing.updatedAt = new Date().toISOString();
+    }
+    existing.conversation = next;
     this.scheduleFlush();
   }
 
@@ -354,10 +503,4 @@ export function getManifestManager(): ManifestManager {
     _instance.reconcile();
   }
   return _instance;
-}
-
-/** Reset the singleton (for testing / config reload). */
-export function resetManifestManager(): void {
-  if (_instance) _instance.flushSync();
-  _instance = null;
 }

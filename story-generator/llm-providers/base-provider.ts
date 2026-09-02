@@ -122,6 +122,8 @@ export abstract class BaseLLMProvider implements LLMProvider {
       yield {
         type: 'done',
         usage: response.usage,
+        finishReason: response.finishReason,
+        model: response.model,
       };
     } catch (error) {
       yield {

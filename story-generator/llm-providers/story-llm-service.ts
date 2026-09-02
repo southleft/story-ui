@@ -7,6 +7,7 @@
  */
 
 import {
+  smallModelFor,
   getProviderRegistry,
   initializeFromEnv,
   resolveModelAlias,
@@ -16,6 +17,7 @@ import {
   ProviderType,
   ImageContent,
   MessageContent,
+  StreamFinishReason,
 } from './index.js';
 import { logger } from '../logger.js';
 
@@ -124,19 +126,51 @@ export async function chatCompletion(
 }
 
 /**
- * Streaming chat completion — yields text deltas as the model generates them.
- * Used by the Voice Canvas to render code in real time. Throws on stream
- * errors; callers should surface them to the user.
+ * What a completed stream reports beyond the text the caller already saw.
+ * Same field names as the buffered path's ChatCompletionResult so a call site
+ * can swap between them; `finishReason` is optional because a stream can end
+ * without the provider ever saying why.
+ */
+export interface ChatStreamResult {
+  /** The whole reply — the concatenation of every delta. */
+  content: string;
+  /**
+   * Undefined when the provider never reported a stop reason (a stream cut
+   * mid-flight), so "unknown" and "stopped cleanly" are distinguishable.
+   */
+  finishReason?: StreamFinishReason;
+  usage?: ChatResponse['usage'];
+  provider: string;
+  model: string;
+  /** True only when the provider REPORTED hitting its output ceiling. */
+  truncated: boolean;
+}
+
+export interface ChatStreamOptions {
+  provider?: ProviderType;
+  model?: string;
+  maxTokens?: number;
+  temperature?: number;
+  /** Caller-side abort (e.g. a phase budget) — cancels the in-flight HTTP call. */
+  signal?: AbortSignal;
+  /** Send the system prompt as a cacheable block (default true; Claude only). */
+  cacheSystemPrompt?: boolean;
+  /** Summarised reasoning as it streams (Claude, streaming only). Narration, not content. */
+  onThinking?: (delta: string) => void;
+}
+
+/**
+ * Streaming chat completion — yields text deltas as the model generates them,
+ * and RETURNS the stop reason and usage when the stream ends. A plain
+ * `for await` sees only the deltas (the Voice Canvas path); call `.next()`
+ * yourself, or use chatCompletionStreamDetailed, to read the result.
+ *
+ * Throws on stream errors; callers should surface them to the user.
  */
 export async function* chatCompletionStream(
   messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
-  options?: {
-    provider?: ProviderType;
-    model?: string;
-    maxTokens?: number;
-    temperature?: number;
-  }
-): AsyncGenerator<string> {
+  options?: ChatStreamOptions
+): AsyncGenerator<string, ChatStreamResult> {
   ensureInitialized();
 
   let provider: LLMProvider;
@@ -161,30 +195,85 @@ export async function* chatCompletionStream(
   }));
 
   const model = options?.model ? resolveModelAlias(options.model) : undefined;
-
-  if (!provider.chatStream) {
-    // Provider without streaming support — degrade to a single final chunk.
-    const result = await provider.chat(chatMessages, {
-      model,
-      maxTokens: options?.maxTokens,
-      temperature: options?.temperature,
-      systemPrompt,
-    });
-    yield result.content;
-    return;
-  }
-
-  for await (const chunk of provider.chatStream(chatMessages, {
+  const chatOptions = {
     model,
     maxTokens: options?.maxTokens,
     temperature: options?.temperature,
     systemPrompt,
-  })) {
+    signal: options?.signal,
+    cacheSystemPrompt: options?.cacheSystemPrompt,
+  };
+
+  if (!provider.chatStream) {
+    // Provider without streaming support — degrade to a single final chunk.
+    const result = await provider.chat(chatMessages, chatOptions);
+    yield result.content;
+    return {
+      content: result.content,
+      finishReason: result.finishReason,
+      usage: result.usage,
+      provider: provider.name,
+      model: result.model,
+      truncated: result.finishReason === 'length',
+    };
+  }
+
+  let content = '';
+  let finishReason: StreamFinishReason | undefined;
+  let usage: ChatResponse['usage'] | undefined;
+  let servedModel: string | undefined;
+
+  for await (const chunk of provider.chatStream(chatMessages, chatOptions)) {
     if (chunk.type === 'text' && chunk.content) {
+      content += chunk.content;
       yield chunk.content;
+    } else if (chunk.type === 'thinking' && chunk.content) {
+      options?.onThinking?.(chunk.content);
+    } else if (chunk.type === 'done') {
+      finishReason = chunk.finishReason;
+      usage = chunk.usage;
+      servedModel = chunk.model;
     } else if (chunk.type === 'error') {
       throw new Error(chunk.error || 'LLM stream error');
     }
+  }
+
+  if (finishReason === 'length') {
+    logger.warn('LLM stream was truncated at the output token limit', {
+      provider: provider.name,
+      model: servedModel || model || provider.getConfig().model,
+      maxTokens: options?.maxTokens,
+    });
+  }
+
+  return {
+    content,
+    finishReason,
+    usage,
+    provider: provider.name,
+    model: servedModel || model || provider.getConfig().model,
+    truncated: finishReason === 'length',
+  };
+}
+
+/**
+ * The streaming path with the result handed back as a value: every delta goes
+ * to `onDelta` as it arrives, and the promise resolves with the full text,
+ * the provider's stop reason and usage. This is the shape a generation loop
+ * wants — the buffered path's answer, plus evidence of life along the way.
+ */
+export async function chatCompletionStreamDetailed(
+  messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
+  options?: ChatStreamOptions,
+  onDelta?: (delta: string, accumulated: string) => void,
+): Promise<ChatStreamResult> {
+  const stream = chatCompletionStream(messages, options);
+  let accumulated = '';
+  while (true) {
+    const next = await stream.next();
+    if (next.done) return next.value;
+    accumulated += next.value;
+    onDelta?.(next.value, accumulated);
   }
 }
 
@@ -200,6 +289,8 @@ export async function chatCompletionDetailed(
     model?: string;
     maxTokens?: number;
     temperature?: number;
+    /** Caller-side abort (e.g. a phase budget) — cancels the in-flight HTTP call. */
+    signal?: AbortSignal;
   }
 ): Promise<ChatCompletionResult> {
   ensureInitialized();
@@ -250,6 +341,7 @@ export async function chatCompletionDetailed(
       maxTokens: options?.maxTokens,
       temperature: options?.temperature,
       systemPrompt,
+      signal: options?.signal,
     });
 
     if (response.finishReason === 'length') {
@@ -278,22 +370,26 @@ export async function chatCompletionDetailed(
 }
 
 /**
- * Chat completion with image support for vision-based story generation
- * Supports sending images alongside text prompts
- * Now supports explicit provider selection from UI
+ * Vision chat completion that also returns finish reason and token usage so
+ * callers can detect truncation — image-referenced compositions are exactly
+ * the ones large enough to hit the output limit.
  */
-export async function chatCompletionWithImages(
+export async function chatCompletionWithImagesDetailed(
   messages: Array<{
     role: 'user' | 'assistant';
     content: string | MessageContent[];
   }>,
   options?: {
-    provider?: ProviderType;  // Explicit provider selection from UI
+    provider?: ProviderType;
     model?: string;
     maxTokens?: number;
     temperature?: number;
+    /** Caller-side abort (e.g. a phase budget) — cancels the in-flight HTTP call. */
+    signal?: AbortSignal;
+    /** Wall-clock budget for this buffered call; the provider default applies when absent. */
+    timeoutMs?: number;
   }
-): Promise<string> {
+): Promise<ChatCompletionResult> {
   ensureInitialized();
 
   // Use explicitly requested provider, or fall back to first configured
@@ -342,11 +438,28 @@ export async function chatCompletionWithImages(
   try {
     const response = await provider.chat(chatMessages, {
       model,
+      timeoutMs: options?.timeoutMs,
       maxTokens: options?.maxTokens,
       temperature: options?.temperature,
+      signal: options?.signal,
     });
 
-    return response.content;
+    if (response.finishReason === 'length') {
+      logger.warn('LLM vision response was truncated at the output token limit', {
+        provider: provider.name,
+        model: model || provider.getConfig().model,
+        maxTokens: options?.maxTokens,
+      });
+    }
+
+    return {
+      content: response.content,
+      finishReason: response.finishReason,
+      usage: response.usage,
+      provider: provider.name,
+      model: response.model,
+      truncated: response.finishReason === 'length',
+    };
   } catch (error) {
     logger.error('LLM chat completion with images failed', {
       provider: provider.name,
@@ -362,7 +475,7 @@ export async function chatCompletionWithImages(
  */
 export function buildMessageWithImages(
   text: string,
-  images: ImageContent[]
+  images: MessageContent[]
 ): MessageContent[] {
   const content: MessageContent[] = [];
 
@@ -383,7 +496,7 @@ export function buildMessageWithImages(
 /**
  * Generate a title for a story using the configured provider
  */
-export async function generateTitle(description: string): Promise<string> {
+export async function generateTitle(description: string, provider?: ProviderType): Promise<string> {
   const titlePrompt = [
     'Given the following UI description, generate a short, clear, human-friendly title suitable for a Storybook navigation item.',
     'Requirements:',
@@ -398,7 +511,10 @@ export async function generateTitle(description: string): Promise<string> {
     'Title:',
   ].join('\n');
 
+  // A title is not worth the generation model's price.
   const response = await chatCompletion([{ role: 'user', content: titlePrompt }], {
+    provider,
+    model: smallModelFor(provider),
     maxTokens: 100,
     temperature: 0.7,
   });
@@ -420,21 +536,44 @@ export async function generateTitle(description: string): Promise<string> {
 }
 
 /**
- * Get provider information for UI display
+ * Get provider information for UI display.
+ *
+ * Pass the provider/model the request actually asked for — otherwise the
+ * answer describes the *default* provider, which is a different question.
+ * Vision capability is per-model, so a capability check against the default
+ * model can both wrongly reject a vision request and wrongly allow one.
  */
-export function getProviderInfo(): {
+export function getProviderInfo(requested?: {
+  provider?: ProviderType;
+  model?: string;
+}): {
   currentProvider: string;
   currentModel: string;
   supportsVision: boolean;
   supportsStreaming: boolean;
+  /** The model's real output ceiling, so callers stop hardcoding one. */
+  maxOutputTokens?: number;
 } {
   try {
-    const provider = getStoryProvider();
+    let provider: LLMProvider | undefined;
+
+    if (requested?.provider) {
+      const candidate = getProviderRegistry().get(requested.provider);
+      if (candidate?.isConfigured()) provider = candidate;
+    }
+    if (!provider) provider = getStoryProvider();
+
+    // Resolve capabilities against the requested model when one was named,
+    // falling back to whatever the provider is configured with.
+    const modelId = requested?.model || provider.getConfig().model;
+    const modelInfo = provider.supportedModels.find(m => m.id === modelId);
+
     return {
       currentProvider: provider.name,
-      currentModel: provider.getConfig().model,
-      supportsVision: provider.supportsVision(),
-      supportsStreaming: provider.supportsStreaming(),
+      currentModel: modelId,
+      supportsVision: modelInfo ? modelInfo.supportsVision : provider.supportsVision(),
+      supportsStreaming: modelInfo ? modelInfo.supportsStreaming : provider.supportsStreaming(),
+      maxOutputTokens: modelInfo?.maxOutputTokens,
     };
   } catch {
     return {
@@ -444,49 +583,4 @@ export function getProviderInfo(): {
       supportsStreaming: false,
     };
   }
-}
-
-/**
- * Configure a specific provider with API key
- */
-export function configureProvider(
-  type: ProviderType,
-  apiKey: string,
-  model?: string
-): boolean {
-  ensureInitialized();
-  const registry = getProviderRegistry();
-  const provider = registry.get(type);
-
-  if (!provider) {
-    logger.error(`Unknown provider type: ${type}`);
-    return false;
-  }
-
-  registry.configureProvider(type, {
-    apiKey,
-    model: model || provider.supportedModels[0]?.id,
-  });
-
-  logger.info(`Configured ${type} provider`, { model: model || 'default' });
-  return true;
-}
-
-/**
- * Validate an API key for a provider
- */
-export async function validateProviderKey(
-  type: ProviderType,
-  apiKey: string
-): Promise<{ valid: boolean; error?: string }> {
-  ensureInitialized();
-  const registry = getProviderRegistry();
-  const provider = registry.get(type);
-
-  if (!provider) {
-    return { valid: false, error: `Unknown provider type: ${type}` };
-  }
-
-  const result = await provider.validateApiKey(apiKey);
-  return { valid: result.valid, error: result.error };
 }

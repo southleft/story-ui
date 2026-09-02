@@ -14,6 +14,8 @@ export interface ComponentConfig {
   description?: string;
   category?: 'layout' | 'content' | 'form' | 'navigation' | 'feedback' | 'other';
   slots?: string[];
+  /** Drop this component from the catalog even though discovery found it. */
+  exclude?: boolean;
 }
 
 // Layout rules configuration
@@ -83,7 +85,6 @@ export interface StoryUIConfig {
   componentsPath?: string;
   componentsMetadataPath?: string;
   storyPrefix: string;
-  defaultAuthor: string;
   importPath: string;
   componentPrefix: string;
   /** Framework type for story generation (e.g., 'react', 'web-components', 'angular', 'vue', 'svelte') */
@@ -141,6 +142,21 @@ export interface StoryUIConfig {
    * Default: 5000 (5 seconds)
    */
   storybookMcpTimeout?: number;
+  /**
+   * Components discovery found that must never be offered — a provider that
+   * belongs in preview.tsx, an internal context, a deprecated widget. Names
+   * as they appear in the catalog. `components[].exclude` does the same per
+   * entry.
+   */
+  excludeComponents?: string[];
+
+  /**
+   * Extra packages a generated story may import, beyond the design system,
+   * the framework runtime, Storybook and the icon package. Read by import
+   * isolation; the considerations file's "Allowed additional imports" line
+   * does the same in prose.
+   */
+  allowedImports?: string[];
 }
 
 // Default generic configuration
@@ -149,7 +165,6 @@ export const DEFAULT_CONFIG: StoryUIConfig = {
   componentsPath: undefined, // No default path - should be set only for local component libraries
   componentsMetadataPath: undefined,
   storyPrefix: 'Generated/',
-  defaultAuthor: 'Story UI AI',
   importPath: 'your-component-library',
   componentPrefix: '',
   components: [], // Will be populated dynamically
@@ -225,7 +240,6 @@ export const Default: Story = {
 // Generic configuration template for other design systems
 export const GENERIC_CONFIG_TEMPLATE: Partial<StoryUIConfig> = {
   storyPrefix: 'Generated/',
-  defaultAuthor: 'Story UI AI',
   componentPrefix: '',
   layoutRules: {
     multiColumnWrapper: 'div',

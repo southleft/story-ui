@@ -1,164 +1,99 @@
-# Custom Documentation Integration for Story UI
+# Teaching the model your design system
 
-## Overview
+Story UI reads two things you write before every generation. They answer
+different questions and are loaded by different code, so keep them separate.
 
-Allow teams to provide their own documentation (PDFs, Markdown, URLs) that Story UI can use to generate better, more accurate stories that follow their specific design guidelines.
+| File | Answers | Loaded by |
+|---|---|---|
+| `story-ui-docs/` | What the design system *is*: tokens, component usage, patterns, brand rules. | `story-generator/documentationLoader.ts` |
+| `story-ui-considerations.md` | How the model must *use* it: do's, don'ts, and permissions. | `story-generator/considerationsLoader.ts` |
 
-## Implementation Options
+Most of what the model knows does not come from either file. Component names,
+import paths, props, legal prop values, defaults and descriptions are read from
+the installed package's type declarations, from `propTypes` in the package's
+JavaScript, from local component source (`cva()` and `tv()` variant maps,
+JSDoc, story prose and `argTypes`), and from Storybook's own index. The files
+below add what the code cannot state: intent, conventions and taste.
 
-### Option 1: Documentation Directory (Recommended)
+## `story-ui-docs/`
+
+`init` creates the directory with a README. Put files in it; sub-directories
+are fine. These extensions are read:
 
 ```
-my-project/
-├── .storybook/
-├── src/
-└── story-ui-docs/              # Custom documentation directory
-    ├── guidelines.md           # Design guidelines
-    ├── tokens.md              # Design tokens documentation
-    ├── patterns/              # Pattern examples
-    │   ├── forms.md
-    │   ├── cards.md
-    │   └── layouts.md
-    └── manifest.json          # Documentation index
-
+.md  .mdx  .json  .yaml  .yml  .xml  .html  .txt
 ```
 
-### Option 2: Enhanced Considerations File
+Markdown and text are passed through. JSON, YAML and XML are passed verbatim,
+since the model reads them natively, so exported design tokens can go in
+unchanged.
 
-Extend the current `story-ui-considerations.md` to support:
-- External documentation links
-- Embedded documentation sections
-- Reference to local files
+Budgets: each file is truncated to 8,000 characters and the whole set to
+24,000 characters, with a note in the server log when either happens. Keep
+files focused; a 400-line component reference will be cut off. The loader
+caches the set and invalidates when any file inside the directory changes.
 
-```markdown
-# Story UI AI Considerations
-
-## External Documentation
-- Design System Guide: https://our-design-system.com/guide
-- Component Library: ./docs/components.pdf
-- Token Reference: ./docs/design-tokens.md
-
-## Embedded Guidelines
-...
-```
-
-### Option 3: Story UI Config Extension
-
-```javascript
-// story-ui.config.js
-module.exports = {
-  importPath: '@our/design-system',
-  
-  // New documentation section
-  documentation: {
-    sources: [
-      {
-        type: 'markdown',
-        path: './docs/design-guidelines.md'
-      },
-      {
-        type: 'url',
-        url: 'https://our-design-system.com/api',
-        sections: ['components', 'tokens', 'patterns']
-      },
-      {
-        type: 'pdf',
-        path: './docs/component-library.pdf',
-        // PDF would be converted to text for AI consumption
-      }
-    ],
-    
-    // Specific guidelines that override general rules
-    guidelines: {
-      spacing: 'Use 8px grid system with tokens: space-1 through space-12',
-      colors: 'Only use semantic color tokens, never hex values',
-      typography: 'Use Text component with predefined variants only'
-    }
-  }
-};
-```
-
-## Implementation Details
-
-### 1. Documentation Loader
-
-```typescript
-export class DocumentationLoader {
-  async loadDocumentation(config: StoryUIConfig): Promise<Documentation> {
-    const docs: Documentation = {
-      guidelines: [],
-      components: {},
-      patterns: {},
-      tokens: {}
-    };
-
-    for (const source of config.documentation.sources) {
-      switch (source.type) {
-        case 'markdown':
-          docs.guidelines.push(await this.loadMarkdown(source.path));
-          break;
-        case 'url':
-          docs.guidelines.push(await this.fetchUrl(source.url));
-          break;
-        case 'pdf':
-          docs.guidelines.push(await this.parsePdf(source.path));
-          break;
-      }
-    }
-
-    return docs;
-  }
-}
-```
-
-### 2. Enhanced Prompt Generation
-
-```typescript
-async function buildPromptWithCustomDocs(userPrompt: string, config: any) {
-  const customDocs = await documentationLoader.loadDocumentation(config);
-  
-  let enhancedPrompt = basePrompt;
-  
-  if (customDocs.guidelines.length > 0) {
-    enhancedPrompt += '\n\n📚 DESIGN SYSTEM DOCUMENTATION:\n';
-    enhancedPrompt += customDocs.guidelines.join('\n\n');
-  }
-  
-  if (customDocs.patterns) {
-    enhancedPrompt += '\n\n🎨 DESIGN PATTERNS:\n';
-    enhancedPrompt += formatPatterns(customDocs.patterns);
-  }
-  
-  return enhancedPrompt;
-}
-```
-
-### 3. Benefits
-
-1. **Team-Specific Guidelines** - Each team can provide their exact requirements
-2. **Always Up-to-Date** - Documentation lives with the codebase
-3. **Non-Developer Friendly** - Just drop files in a folder
-4. **Flexible Formats** - Support multiple documentation formats
-5. **Hosted Friendly** - Works well with Vercel/Netlify deployments
-
-## Migration Path
-
-1. Start with enhanced considerations file (minimal change)
-2. Add documentation directory support
-3. Eventually support full config-based documentation
-
-## Example Use Case
-
-A team using Material-UI with custom design tokens:
+A layout that has worked:
 
 ```
 story-ui-docs/
-├── design-tokens.md         # Our spacing, color, typography tokens
-├── component-overrides.md   # How we customize MUI components  
-├── patterns/
-│   ├── forms.md            # Our form patterns
-│   └── data-tables.md      # Our table patterns
-└── guidelines.pdf          # Company design guidelines
+├── README.md
+├── guidelines/
+│   ├── accessibility.md
+│   └── responsive-design.md
+├── tokens/
+│   ├── colors.yaml
+│   └── spacing.json
+├── components/
+│   ├── button.md
+│   └── forms.mdx
+└── patterns/
+    ├── cards.md
+    └── data-tables.md
 ```
 
-Story UI would read all these files and use them to generate stories that perfectly match the team's design system implementation.
+The classic panel (`Story UI > Story Generator`) has a design-context editor
+that reads and writes these files through `/story-ui/design-context`; editing
+them on disk works the same.
+
+## `story-ui-considerations.md`
+
+`init` writes this from `templates/story-ui-considerations.md` with your import
+path filled in. It is rules, not reference: "use `size="sm"` for buttons inside
+forms", "never use raw hex colours", "prefer `Stack` over nested `Group`s".
+
+It is also the only way to allow an import from outside your design system.
+Static validation rejects any import that is not your configured library (and
+its scoped siblings and subpaths), the framework runtime, Storybook, or the
+icon package detected in `package.json`. To permit another package, name its
+import path in this file:
+
+```
+Allowed additional imports: `@tabler/icons-react`, `recharts`
+```
+
+A package not named here is rejected before the file is written and the model
+is asked to correct it.
+
+If the file lives somewhere else, set `considerationsPath` in
+`story-ui.config.js`.
+
+## Config-level guidance
+
+`story-ui.config.js` also carries prompt material that `init` fills for the
+libraries it knows: `designSystemGuidelines.additionalNotes`,
+`layoutRules.layoutExamples`, `importExamples`, and the `systemPrompt`,
+`layoutInstructions` and `examples` overrides. For a library `init` did not
+recognise, these are the place for short, structural facts (which component is
+the grid, how columns are declared) that the model would otherwise guess.
+
+## Checking what the model knows
+
+```bash
+node bench/resolution.mjs --project /path/to/your-project --import '@your/design-system'
+```
+
+This is free and takes seconds. It reports how many components were found,
+whether each import specifier resolves to a real file, and what fraction have
+props and descriptions. If a component you expect is missing here, no amount
+of documentation will make the model use it correctly.

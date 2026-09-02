@@ -453,8 +453,12 @@ export async function buildFrameworkAwarePrompt(
   if (config.importStyle === 'individual') {
     importStyleRulesFramework.push(
       `- 🚫 INDIVIDUAL IMPORTS REQUIRED: Import each component from its own file (e.g., '${config.importPath}/button', NOT '${config.importPath}')`,
-      `- Sub-components share files: CardHeader, CardContent → '${config.importPath}/card'`,
-      '- File names use kebab-case: AlertDialog → alert-dialog, NavigationMenu → navigation-menu'
+      // No path FORMULA here. The catalog lists each component's exact import
+      // path, read from the project; a rule like "AlertDialog → alert-dialog"
+      // invented paths that do not exist for every library that does not
+      // kebab-case its files.
+      '- The Available components catalog states the exact import path for each component — use it verbatim',
+      '- A component with no import path listed in the catalog must not be imported at all'
     );
   }
 
@@ -470,7 +474,8 @@ export async function buildFrameworkAwarePrompt(
 
   promptParts.push(
     '',
-    `Output a complete Storybook story file in TypeScript. Import components as shown in the sample template below. Use the following sample as a template. Respond ONLY with a single code block containing the full file, and nothing else.`,
+    `Output a complete Storybook story file in TypeScript. Import components as shown in the sample template below. Use the following sample as a template.`,
+    `Begin your reply with two to four plain sentences, addressed to the user, saying what you are about to build and which components from the list you will use and why — no headings, no lists, no code in them. This text is shown to the user while the code streams. Then output ONE code block containing the full file, and nothing after the block.`,
     '',
     '<rules>',
     'CRITICAL REMINDERS:',
@@ -486,7 +491,28 @@ export async function buildFrameworkAwarePrompt(
     '- All images MUST have a src attribute with placeholder URLs (use https://picsum.photos/)',
     '- MUST use ES modules syntax: "export default meta;" NOT "module.exports = meta;"',
     '- The file MUST have a default export for the meta object',
-    '- Keep the story concise and focused - avoid overly complex layouts',
+    // Previously: "Keep the story concise and focused - avoid overly complex
+    // layouts". That rule sat in the highest-adherence position in the prompt and
+    // rewarded stopping at the visual shape — a real nav bar with state, menus and
+    // a search field IS the "complex layout" it forbade. Measured result: stories
+    // with zero inputs, zero links and no interactive states.
+    '- The story MUST be operable, not a mockup: anything a user would click, type into, toggle or select MUST be the real interactive component from the design system, with real state and real handlers',
+    '- NEVER render a visual stand-in for an interactive element (no text styled to look like an input, no bare icon standing in for a button, no static row standing in for tabs or a menu)',
+    '- Prefer completeness of behavior over brevity — these stories are lifted directly into product code',
+    // Verification blocks on this and the prompt never mentioned it, so the
+    // model was being failed for a rule it was never given. Measured on one
+    // loan-calculator generation: 7 blockers, 5 of them icon-only controls
+    // with no accessible name. A reviewer rejects that PR outright, which is
+    // the difference between a story that renders and one that ships.
+    '- EVERY control whose visible content is only an icon MUST carry an accessible name — `aria-label` on the control, or the design system\'s equivalent prop. This applies to icon buttons, close buttons, sort toggles, overflow menus and icon-only tabs',
+    '- Every input, select, slider, switch and checkbox MUST have a programmatically associated label — a real <label>/`htmlFor` pair, the design system\'s `label` prop, or `aria-label` when the design genuinely has no visible label',
+    '- Decorative icons that sit beside their own text label are the exception: mark those `aria-hidden="true"` so they are not announced twice',
+    // Observed: a Timeline whose `active` prop painted every bullet solid blue,
+    // with a "light"-variant icon wrapper inside. The wrapper's 10%-alpha
+    // background never covered the blue, and its foreground colour was tuned for
+    // a plain surface — so teal and indigo icons sat on blue and vanished. The
+    // code read as correct in isolation; only the composition was wrong.
+    '- When a parent component paints its own background (a timeline bullet, a selected tab, a filled avatar, a status chip), any icon or text placed inside it MUST be given an explicitly contrasting colour. Do NOT nest a "light"/"subtle"/"outline" variant inside a filled parent: its translucent background will not cover the parent fill, and its foreground colour is chosen for a plain surface, so the content becomes invisible',
     '- Ensure all tags are properly closed and syntax is valid',
     '- Story must be complete and syntactically valid',
     '</rules>',

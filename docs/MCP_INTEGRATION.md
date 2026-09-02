@@ -1,38 +1,36 @@
-# Story UI MCP Server Integration
+# MCP integration
 
-Story UI can now be used as a Model Context Protocol (MCP) server, allowing you to generate Storybook stories directly from Claude Desktop or any other MCP-compatible client.
+Story UI's server can be driven from an MCP client such as Claude Desktop or
+Claude Code. Two transports exist; both are thin clients of the HTTP server,
+which must be running from your project directory with your `.env` and
+`story-ui.config.js`.
 
-## Overview
+## Tools
 
-The MCP integration allows you to:
-- Generate Storybook stories using natural language prompts
-- List available components in your design system
-- View and manage generated stories
-- Get detailed component prop information
-- All from within your AI assistant interface
+The same eight tools on both transports (`mcp-server/mcp-stdio-server.ts`,
+`mcp-server/routes/mcpRemote.ts`):
 
-## Prerequisites
+| Tool | Arguments | Does |
+|---|---|---|
+| `test-connection` | none | Confirms the HTTP server answers. |
+| `generate-story` | `prompt`, optional `chatId` | Generates and writes a story. |
+| `update-story` | `prompt`, optional `storyId` | Edits an existing story; without an id it uses the most recent one or infers from context. |
+| `list-components` | optional `category` | The discovered component inventory. |
+| `list-stories` | none | Generated stories. |
+| `get-story` | `storyId` | A story's content. |
+| `delete-story` | `storyId` | Removes the file. |
+| `get-component-props` | `componentName` | Props for one component. |
 
-1. Story UI must be installed and configured in your project
-2. The Story UI HTTP server must be running (`story-ui start`)
-3. Claude Desktop or another MCP-compatible client
+Direct prop editing, version history, verification details and handoff are
+workspace features and are not exposed as MCP tools.
 
-## Setup for Claude Desktop
+## stdio (local)
 
-### 1. Install Story UI (if not already installed)
+The stdio server is started with `story-ui mcp` (or `story-ui start --mcp`,
+which runs both processes). It speaks JSON-RPC on stdin/stdout and forwards
+every call to the HTTP server.
 
-```bash
-npm install -g @tpitre/story-ui
-# or in your project
-npm install --save-dev @tpitre/story-ui
-```
-
-### 2. Configure Claude Desktop
-
-Add the following to your Claude Desktop configuration file:
-
-**On macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-**On Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+Claude Desktop, `claude_desktop_config.json`:
 
 ```json
 {
@@ -41,194 +39,59 @@ Add the following to your Claude Desktop configuration file:
       "command": "npx",
       "args": ["@tpitre/story-ui", "mcp"],
       "env": {
-        "ANTHROPIC_API_KEY": "your-anthropic-api-key-here"
+        "STORY_UI_CWD": "/path/to/your/storybook-project"
       }
     }
   }
 }
 ```
 
-Or if you have Story UI installed globally:
+`STORY_UI_CWD` (or a `--cwd=<dir>` argument) makes the process change into
+your project before loading `.env` and the config; without it the process runs
+wherever Claude Desktop started it. The API key is read from that `.env`, so it
+does not need to be repeated in the client config.
 
-```json
-{
-  "mcpServers": {
-    "story-ui": {
-      "command": "story-ui",
-      "args": ["mcp"],
-      "env": {
-        "ANTHROPIC_API_KEY": "your-anthropic-api-key-here"
-      }
-    }
-  }
-}
-```
+The stdio process finds the HTTP server through, in order:
+`STORY_UI_HTTP_BASE_URL` (a full URL), or `http://localhost:<port>` where the
+port is `VITE_STORY_UI_PORT`, `STORY_UI_HTTP_PORT`, `PORT`, then 4001.
+`story-ui mcp --http-port 4002` sets `STORY_UI_HTTP_PORT`.
 
-### 3. Start the Story UI HTTP Server
+Because the HTTP server is loopback-only by default and the stdio process runs
+on the same machine, no token is needed for this setup.
 
-In your project directory, start the HTTP server:
+## Streamable HTTP (remote)
+
+The HTTP server mounts an MCP endpoint at `/mcp-remote/mcp` (and the same under
+`/story-ui/mcp-remote/mcp`). `POST` carries the Streamable HTTP transport;
+`GET /mcp-remote/sse` and `POST /mcp-remote/messages` are the legacy SSE
+transport and are still served.
+
+Claude Code:
 
 ```bash
-story-ui start
+# local server, no token needed
+claude mcp add --transport http story-ui http://localhost:4001/mcp-remote/mcp
+
+# a server that is reachable from other machines runs in token mode
+claude mcp add --transport http story-ui https://your-host/mcp-remote/mcp \
+  --header "Authorization: Bearer <STORY_UI_TOKEN>"
 ```
 
-This will start the HTTP server on port 4001 (or another available port).
-
-### 4. Restart Claude Desktop
-
-After updating the configuration, restart Claude Desktop to load the new MCP server.
-
-## Available MCP Tools
-
-Once connected, you can use the following tools in Claude Desktop:
-
-### 1. **generate-story**
-Generate a new Storybook story from a natural language prompt.
-
-Example prompts:
-- "Generate a hero section with a title, subtitle, and two buttons"
-- "Create a card component with an image, title, and description"
-- "Build a navigation bar with logo and menu items"
-
-### 2. **list-components**
-List all available components in your design system.
-
-Options:
-- `category` (optional): Filter by component category
-
-### 3. **list-stories**
-View all previously generated stories.
-
-### 4. **get-story**
-Retrieve the content of a specific story by ID.
-
-Parameters:
-- `storyId`: The ID of the story to retrieve
-
-### 5. **delete-story**
-Delete a generated story.
-
-Parameters:
-- `storyId`: The ID of the story to delete
-
-### 6. **get-component-props**
-Get detailed prop information for a specific component.
-
-Parameters:
-- `componentName`: The name of the component
-
-## Usage Examples
-
-In Claude Desktop, you can now interact with Story UI:
-
-1. **Generate a story:**
-   ```
-   "Use the Story UI tools to create a hero section with a dark background,
-   white text, a main heading saying 'Welcome to Our Platform', and a
-   'Get Started' button"
-   ```
-
-2. **Explore components:**
-   ```
-   "List all available components in the Button category"
-   ```
-
-3. **Manage stories:**
-   ```
-   "Show me all the stories I've generated today"
-   ```
+Access control applies to this endpoint exactly as to every other route: a
+server exposed beyond loopback refuses to start without `STORY_UI_TOKEN`, and
+then every request must carry the token as a bearer header, an
+`x-story-ui-token` header, or the cookie set by visiting once with `?token=`.
+A client that cannot attach a header cannot use a remote Story UI server;
+that is deliberate, because the tools write files and spend API keys.
 
 ## Troubleshooting
 
-### MCP Server Not Connecting
-
-1. Ensure the HTTP server is running: `story-ui start`
-2. Check that your LLM API key (ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY) is set
-3. Verify the configuration file path is correct
-4. Restart Claude Desktop after configuration changes
-
-### Stories Not Appearing in Storybook
-
-1. Ensure your Storybook is running and configured to watch the generated stories path
-2. Check the `story-ui.config.js` file for the correct `generatedStoriesPath`
-3. Verify file permissions in the generated stories directory
-
-### Port Conflicts
-
-If port 4001 is in use, you can specify a different port:
-
-1. Start the HTTP server with a custom port:
-   ```bash
-   story-ui start --port 4002
-   ```
-
-2. Update the MCP command to use the same port:
-   ```json
-   {
-     "mcpServers": {
-       "story-ui": {
-         "command": "npx",
-         "args": ["@tpitre/story-ui", "mcp", "--http-port", "4002"],
-         "env": {
-           "ANTHROPIC_API_KEY": "your-anthropic-api-key-here"
-         }
-       }
-     }
-   }
-   ```
-
-## Advanced Configuration
-
-### Running from Source
-
-If you're developing Story UI or want to run from source:
-
-```json
-{
-  "mcpServers": {
-    "story-ui": {
-      "command": "node",
-      "args": ["/path/to/story-ui-repo/dist/cli/index.js", "mcp"],
-      "env": {
-        "ANTHROPIC_API_KEY": "your-anthropic-api-key-here"
-      }
-    }
-  }
-}
-```
-
-### Environment Variables
-
-You can pass additional environment variables:
-
-```json
-{
-  "mcpServers": {
-    "story-ui": {
-      "command": "story-ui",
-      "args": ["mcp"],
-      "env": {
-        "ANTHROPIC_API_KEY": "your-anthropic-api-key-here",
-        "STORY_UI_CONFIG_PATH": "./custom-config.js",
-        "NODE_ENV": "production"
-      }
-    }
-  }
-}
-```
-
-## Security Considerations
-
-1. **API Keys**: Keep your API keys secure and never commit them to version control
-2. **Network Access**: The MCP server communicates with the local HTTP server only
-3. **File System**: Generated stories are written to the configured directory only
-
-## Contributing
-
-To contribute to the MCP integration:
-
-1. The MCP server code is in `mcp-server/mcp-stdio-server.ts`
-2. Test changes by running `story-ui mcp` locally
-3. Update this documentation for any new features
-
-For more information about the Model Context Protocol, visit the [MCP documentation](https://modelcontextprotocol.io/).
+- **Tools listed but every call fails.** The HTTP server is not running, or is
+  on a different port than the stdio process expects. Start it with
+  `npm run story-ui` in the project and check the port it logs.
+- **Wrong project.** The stdio process loaded config from its own working
+  directory. Set `STORY_UI_CWD`.
+- **401 Unauthorized.** The server is in token mode. Send the bearer header.
+- **Generated story does not appear in Storybook.** Confirm
+  `generatedStoriesPath` in `story-ui.config.js` is inside the `stories` globs
+  in `.storybook/main.*`.

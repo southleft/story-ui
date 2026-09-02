@@ -17,7 +17,7 @@ export interface RuntimeValidationResult {
   success: boolean;
   storyExists: boolean;
   renderError?: string;
-  errorType?: 'module_error' | 'render_error' | 'not_found' | 'timeout' | 'connection_error';
+  errorType?: 'module_error' | 'render_error' | 'not_found' | 'timeout' | 'connection_error' | 'not_run';
   details?: string;
 }
 
@@ -27,6 +27,15 @@ export interface RuntimeValidatorConfig {
   fetchTimeoutMs?: number;  // HTTP request timeout (default: 5000)
   retryAttempts?: number;   // Number of retries for index check (default: 3)
   retryDelayMs?: number;    // Delay between retries (default: 1000)
+  /**
+   * The Storybook component ID, when the caller already knows it
+   * authoritatively. Overrides anything derivable from the story content.
+   */
+  storyId?: string;
+  /** Where to resolve Playwright from. Defaults to process.cwd(). */
+  projectRoot?: string;
+  /** Budget for the browser render check (default: 15000). */
+  renderTimeoutMs?: number;
 }
 
 // Known Storybook runtime error patterns
@@ -62,26 +71,47 @@ export function getStorybookUrl(): string | null {
     return `http://localhost:${process.env.STORYBOOK_PORT}`;
   }
 
-  // Priority 4: Default local Storybook
+  /**
+   * Priority 4: the conventional default — a GUESS, and labelled as one.
+   *
+   * 6006 is right for a default Storybook and wrong for every project that
+   * chose another port without exporting STORYBOOK_PORT. Verifying against the
+   * wrong Storybook is worse than not verifying: the story is not there, so the
+   * report is about somebody else's page.
+   *
+   * Callers that care can ask `isGuessedStorybookUrl()` and say so.
+   */
   return 'http://localhost:6006';
 }
 
 /**
- * Check if runtime validation is enabled
+ * True when getStorybookUrl() had nothing to go on and fell back to convention.
+ *
+ * Lets a caller distinguish "verified against the Storybook this project
+ * declares" from "verified against whatever is on 6006", which are very
+ * different claims.
+ */
+export function isGuessedStorybookUrl(): boolean {
+  return !process.env.STORYBOOK_URL
+    && process.env.STORYBOOK_PROXY_ENABLED !== 'true'
+    && !process.env.STORYBOOK_PORT;
+}
+
+/**
+ * Whether the legacy runtime check runs. Off unless asked for.
+ *
+ * Browser verification (verify/verifyStory.ts) renders the story, waits for
+ * Storybook's index to catch up with the write, and reports a story that does
+ * not mount as a repairable blocker — everything this check does, done
+ * against the right story. This check looks the story up by an id computed
+ * from the file, and after an update that renames the story export the index
+ * still carries the OLD id for a few seconds: it navigated to a story that no
+ * longer existed, waited 30s on an empty root, called that a crash, and spent
+ * an LLM call healing nothing (observed live, 1 Sept 2026: 92s added to a
+ * generation verification then passed 6/6). It stays available for projects
+ * that cannot run verification and want the older behaviour.
  */
 export function isRuntimeValidationEnabled(): boolean {
-  // Enabled by default if we can determine a Storybook URL
-  // Can be explicitly disabled with STORYBOOK_RUNTIME_VALIDATION=false
-  if (process.env.STORYBOOK_RUNTIME_VALIDATION === 'false') {
-    return false;
-  }
-
-  // In proxy mode, always enable since we know Storybook is accessible
-  if (process.env.STORYBOOK_PROXY_ENABLED === 'true') {
-    return true;
-  }
-
-  // Otherwise, enable if explicitly set to true
   return process.env.STORYBOOK_RUNTIME_VALIDATION === 'true';
 }
 
@@ -111,6 +141,34 @@ export function extractTitleFromStory(storyContent: string): string | null {
     return titleMatch[1];
   }
   return null;
+}
+
+/**
+ * Read the explicit meta `id:` the generator injected, which Storybook uses
+ * VERBATIM as the component ID.
+ *
+ * This is the fact the file states, and it must win over any slug we could
+ * derive from the title. Since generated stories gained an explicit `id`
+ * (hashed, so two failed generations can no longer collide on a truncated
+ * prompt), a title-derived prefix has been unable to match anything in the
+ * index: we searched for `generated-user-settings-notifications` while the
+ * story sat there as `user-settings-notifications-d6677a22--default`. Every
+ * lookup returned `not_found`, which routes to "skipping healing" — so the
+ * runtime healing loop never ran once, and the failure was invisible because
+ * `not_found` reads as an infrastructure hiccup rather than a defect.
+ *
+ * Anchored to the title line, exactly as `applyTitleAndId` writes it, so an
+ * `id:` prop anywhere in the user's JSX cannot be mistaken for the meta ID.
+ *
+ * Returns null for Svelte `defineMeta`, which deliberately carries no explicit
+ * id because addon-svelte-csf derives the ID from the title — there, the
+ * title-derived slug is the correct answer.
+ */
+export function extractMetaIdFromStory(storyContent: string): string | null {
+  const idMatch = storyContent.match(
+    /title:\s*["'][^"']+["']\s*,\s*\n\s*id:\s*['"]([^'"]+)['"]/
+  );
+  return idMatch ? idMatch[1] : null;
 }
 
 /**
@@ -199,7 +257,7 @@ async function checkStoryIframe(
   storyId: string,
   storybookUrl: string,
   config: RuntimeValidatorConfig
-): Promise<{ success: boolean; error?: string; errorType?: RuntimeValidationResult['errorType'] }> {
+): Promise<{ success: boolean; error?: string; errorType?: RuntimeValidationResult['errorType']; htmlOnly?: boolean }> {
   const iframeUrl = `${storybookUrl}/iframe.html?id=${storyId}&viewMode=story`;
   const timeout = config.fetchTimeoutMs || 5000;
 
@@ -257,12 +315,92 @@ async function checkStoryIframe(
       };
     }
 
-    return { success: true };
+    // Reaching here means the SERVED HTML is clean, which is not the same as
+    // the story rendering. `iframe.html` is a shell that mounts the story
+    // client-side: fetched over HTTP it is byte-for-byte identical whether the
+    // story renders perfectly or throws on its first line. Measured, not
+    // assumed — a crashing story and a healthy one both returned 18,706 bytes.
+    //
+    // So every pattern above can only catch an error Storybook managed to
+    // write into the document server-side, and a React render error never is
+    // one. Returning `success: true` here would be the same false pass this
+    // module was just fixed to stop emitting, one layer down.
+    return { success: true, htmlOnly: true };
   } catch (error: any) {
     if (error.message.includes('timed out')) {
       return { success: false, error: error.message, errorType: 'timeout' };
     }
     return { success: false, error: error.message, errorType: 'connection_error' };
+  }
+}
+
+/**
+ * Ask a real browser whether the story mounted.
+ *
+ * The HTTP check above cannot answer this, and the project already owns the
+ * thing that can: `renderStory` drives Playwright, waits for the story to
+ * actually mount rather than sleeping, and collects uncaught page errors —
+ * its own type calls them "invisible to the old text-fetch approach". The
+ * runtime validator simply never called it.
+ *
+ * Returns null when no browser is available, which the caller must report as
+ * `not_run`. A project without Playwright genuinely cannot answer the
+ * question, and saying so is the whole point.
+ */
+async function checkStoryInBrowser(
+  storyId: string,
+  storybookUrl: string,
+  config: RuntimeValidatorConfig
+): Promise<{ success: boolean; error?: string; errorType?: RuntimeValidationResult['errorType'] } | null> {
+  let tooling: any;
+  try {
+    const { resolveHostTooling } = await import('./verify/hostTooling.js');
+    tooling = resolveHostTooling(config.projectRoot || process.cwd());
+  } catch {
+    return null;
+  }
+  if (!tooling) return null;
+
+  let render: any;
+  try {
+    const { renderStory } = await import('./verify/renderHarness.js');
+    render = await renderStory({
+      storybookUrl,
+      storyId,
+      tooling,
+      timeoutMs: config.renderTimeoutMs ?? 15000,
+    });
+  } catch (error: any) {
+    // Chromium missing or refusing to launch is an infrastructure fact about
+    // this machine, never a defect in the user's story.
+    logger.debug(`Runtime render check unavailable: ${error?.message || error}`);
+    return null;
+  }
+
+  try {
+    // Only an UNCAUGHT exception or a story that never mounted counts as a
+    // runtime failure. `console.error` deliberately does not: React key
+    // warnings, deprecation notices and dev-mode advisories are all emitted by
+    // stories that render perfectly, and condemning those would spend a
+    // regeneration rewriting correct code — the failure mode this project
+    // rates as worse than having no check at all.
+    const faults = [...(render.pageErrors || [])];
+    const detail = (render.reason || faults[0] || '').toString().slice(0, 300);
+
+    if (!render.ok || faults.length > 0) {
+      // Distinguish a module that never loaded from a component that threw,
+      // because the healing prompt asks the model for different things.
+      const isModule = /cannot find module|failed to resolve|failed to fetch dynamically imported|is not a function|importers\[/i
+        .test(detail);
+      return {
+        success: false,
+        error: detail || 'Story did not mount',
+        errorType: isModule ? 'module_error' : 'render_error',
+      };
+    }
+    return { success: true };
+  } finally {
+    try { await render.dispose?.(); } catch { /* page already gone */ }
   }
 }
 
@@ -281,16 +419,28 @@ export async function validateStoryRuntime(
   storyPrefix: string = 'Generated/',
   customConfig?: Partial<RuntimeValidatorConfig>
 ): Promise<RuntimeValidationResult> {
-  // Check if runtime validation is enabled
+  // A check that did not run must never report a pass. Both of these used to
+  // return `success: true`, which the JSON route forwards verbatim — so
+  // "Storybook wasn't configured" and "the story rendered correctly" were the
+  // same answer to any caller.
   if (!isRuntimeValidationEnabled()) {
     logger.debug('Runtime validation disabled, skipping');
-    return { success: true, storyExists: true };
+    return {
+      success: false, storyExists: false, errorType: 'not_run',
+      details: 'Runtime validation disabled via STORYBOOK_RUNTIME_VALIDATION=false',
+    };
   }
 
-  const storybookUrl = getStorybookUrl();
+  // The panel tells the server which Storybook it lives in. Env is the
+  // fallback, not the source: a fresh install has no STORYBOOK_PORT and would
+  // otherwise check 6006 for a story living on 6101.
+  const storybookUrl = customConfig?.storybookUrl || getStorybookUrl();
   if (!storybookUrl) {
     logger.warn('Could not determine Storybook URL for runtime validation');
-    return { success: true, storyExists: true, details: 'Storybook URL not configured' };
+    return {
+      success: false, storyExists: false, errorType: 'not_run',
+      details: 'Storybook URL not configured',
+    };
   }
 
   const config: RuntimeValidatorConfig = {
@@ -302,12 +452,21 @@ export async function validateStoryRuntime(
     ...customConfig
   };
 
-  // Extract the actual title from the story content, or use fallback
-  const extractedTitle = extractTitleFromStory(storyContent);
+  // Resolve the story ID, most authoritative source first: the ID the caller
+  // already computed, then the one the FILE declares, and only then a slug
+  // derived from the title.
   let storyIdPrefix: string;
+  const metaId = extractMetaIdFromStory(storyContent);
+  const extractedTitle = extractTitleFromStory(storyContent);
 
-  if (extractedTitle) {
-    // Use the exact title from the generated code
+  if (config.storyId) {
+    storyIdPrefix = config.storyId;
+    logger.debug(`Using story ID supplied by the caller: "${storyIdPrefix}"`);
+  } else if (metaId) {
+    storyIdPrefix = metaId;
+    logger.debug(`Using explicit meta id from the story: "${storyIdPrefix}"`);
+  } else if (extractedTitle) {
+    // No explicit id (Svelte defineMeta) — Storybook derives it from the title.
     storyIdPrefix = fullTitleToStoryIdPrefix(extractedTitle);
     logger.debug(`Extracted title from story: "${extractedTitle}" -> prefix: "${storyIdPrefix}"`);
   } else {
@@ -318,28 +477,54 @@ export async function validateStoryRuntime(
 
   logger.info(`Runtime validation: checking stories with prefix "${storyIdPrefix}" at ${storybookUrl}`);
 
-  // Wait for HMR to process the new file
-  logger.debug(`Waiting ${config.hmrWaitMs}ms for HMR to process...`);
-  await sleep(config.hmrWaitMs!);
-
   // Step 1: Check if story appears in the index (with retries for HMR timing)
   let matchingStoryId: string | undefined;
   let lastIndexError: string | undefined;
 
-  for (let attempt = 1; attempt <= config.retryAttempts!; attempt++) {
-    const indexResult = await checkStoryInIndex(storyIdPrefix, storybookUrl, config);
+  // Probe once BEFORE paying the HMR wait. Two reasons, and the first is the
+  // one that matters:
+  //
+  //  - When Storybook is not running at all, there is no index to poll and no
+  //    amount of waiting produces one. Sleeping 3s and then retrying twice
+  //    charges every generation five dead seconds to learn something the first
+  //    request already knew, and reports it as `not_found` — a story-shaped
+  //    failure — rather than "Storybook is not there".
+  //  - When the story already exists (an update to a story Storybook indexed
+  //    long ago) the wait buys nothing either.
+  const probe = await checkStoryInIndex(storyIdPrefix, storybookUrl, config);
+  if (probe.error) {
+    logger.warn(`Runtime validation skipped: Storybook unreachable at ${storybookUrl} (${probe.error})`);
+    return {
+      success: false,
+      storyExists: false,
+      errorType: 'not_run',
+      details: `Storybook unreachable at ${storybookUrl}: ${probe.error}`,
+    };
+  }
 
-    if (indexResult.exists && indexResult.matchingStoryId) {
-      matchingStoryId = indexResult.matchingStoryId;
-      logger.debug(`Found matching story: "${matchingStoryId}"`);
-      break;
-    }
+  if (probe.exists && probe.matchingStoryId) {
+    matchingStoryId = probe.matchingStoryId;
+    logger.debug(`Found matching story without waiting: "${matchingStoryId}"`);
+  } else {
+    // A new file. Now the HMR wait is worth paying.
+    logger.debug(`Waiting ${config.hmrWaitMs}ms for HMR to process...`);
+    await sleep(config.hmrWaitMs!);
 
-    lastIndexError = indexResult.error;
+    for (let attempt = 1; attempt <= config.retryAttempts!; attempt++) {
+      const indexResult = await checkStoryInIndex(storyIdPrefix, storybookUrl, config);
 
-    if (attempt < config.retryAttempts!) {
-      logger.debug(`Story not found in index (attempt ${attempt}/${config.retryAttempts}), waiting...`);
-      await sleep(config.retryDelayMs!);
+      if (indexResult.exists && indexResult.matchingStoryId) {
+        matchingStoryId = indexResult.matchingStoryId;
+        logger.debug(`Found matching story: "${matchingStoryId}"`);
+        break;
+      }
+
+      lastIndexError = indexResult.error;
+
+      if (attempt < config.retryAttempts!) {
+        logger.debug(`Story not found in index (attempt ${attempt}/${config.retryAttempts}), waiting...`);
+        await sleep(config.retryDelayMs!);
+      }
     }
   }
 
@@ -366,6 +551,36 @@ export async function validateStoryRuntime(
       errorType: iframeResult.errorType,
       details: `Story ID: ${matchingStoryId}, URL: ${storybookUrl}/iframe.html?id=${matchingStoryId}`
     };
+  }
+
+  // Step 3: The HTTP check found nothing, which for a client-rendered story is
+  // not evidence of anything. Put it in a browser before claiming it renders.
+  if (iframeResult.htmlOnly) {
+    const browserResult = await checkStoryInBrowser(matchingStoryId, storybookUrl, config);
+
+    if (!browserResult) {
+      logger.warn(
+        `Runtime validation could not run for "${matchingStoryId}": no browser available ` +
+        `(install Playwright in this project to catch stories that crash on render)`
+      );
+      return {
+        success: false,
+        storyExists: true,
+        errorType: 'not_run',
+        details: 'No browser available; a served HTML response cannot reveal a client-side render error',
+      };
+    }
+
+    if (!browserResult.success) {
+      logger.error(`Runtime error detected in story "${matchingStoryId}": ${browserResult.error}`);
+      return {
+        success: false,
+        storyExists: true,
+        renderError: browserResult.error,
+        errorType: browserResult.errorType,
+        details: `Story ID: ${matchingStoryId}, URL: ${storybookUrl}/iframe.html?id=${matchingStoryId}`,
+      };
+    }
   }
 
   logger.info(`Runtime validation passed for story "${matchingStoryId}"`);

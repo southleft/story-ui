@@ -72,6 +72,9 @@ build
 # Story UI history directory
 .story-ui-history/
 
+# Story UI knowledge caches (props, runtime reflection), fingerprint-keyed
+.story-ui/
+
 # Test scripts
 test-*.js
 
@@ -107,3 +110,6 @@ V3_RELEASE_TASKS.md
 # Local development scripts
 start-live.sh*.png
 ENTERPRISE_READINESS_REPORT.md
+
+# fidelity bench output
+bench/results/

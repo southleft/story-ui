@@ -24,8 +24,8 @@ import { logger } from '../logger.js';
 // Reference: https://developers.openai.com/api/docs/models
 export const OPENAI_MODELS: ModelInfo[] = [
   {
-    id: 'gpt-5.5',
-    name: 'GPT-5.5',
+    id: 'gpt-5.6-sol',
+    name: 'GPT-5.6 Sol',
     provider: 'openai',
     contextWindow: 1047576,
     maxOutputTokens: 32768,
@@ -33,12 +33,12 @@ export const OPENAI_MODELS: ModelInfo[] = [
     supportsDocuments: true,
     supportsFunctionCalling: true,
     supportsStreaming: true,
-    inputPricePer1kTokens: 0.005,
-    outputPricePer1kTokens: 0.03,
+    inputPricePer1kTokens: 0.004,
+    outputPricePer1kTokens: 0.02,
   },
   {
-    id: 'gpt-5.4-mini',
-    name: 'GPT-5.4 Mini',
+    id: 'gpt-5.6-terra',
+    name: 'GPT-5.6 Terra',
     provider: 'openai',
     contextWindow: 1047576,
     maxOutputTokens: 32768,
@@ -46,12 +46,12 @@ export const OPENAI_MODELS: ModelInfo[] = [
     supportsDocuments: true,
     supportsFunctionCalling: true,
     supportsStreaming: true,
-    inputPricePer1kTokens: 0.0004,
-    outputPricePer1kTokens: 0.0016,
+    inputPricePer1kTokens: 0.002,
+    outputPricePer1kTokens: 0.012,
   },
   {
-    id: 'gpt-5.4-nano',
-    name: 'GPT-5.4 Nano',
+    id: 'gpt-5.6-luna',
+    name: 'GPT-5.6 Luna',
     provider: 'openai',
     contextWindow: 1047576,
     maxOutputTokens: 32768,
@@ -66,12 +66,17 @@ export const OPENAI_MODELS: ModelInfo[] = [
 
 // Older model IDs consumers may still have configured; kept working via passthrough.
 export const OPENAI_LEGACY_MODEL_ALIASES: Record<string, string> = {
-  'gpt-5.4': 'gpt-5.5',
+  'gpt-5.4': 'gpt-5.6-sol',
+  'gpt-5.5': 'gpt-5.6-sol',
+  'gpt-5.4-mini': 'gpt-5.6-terra',
+  'gpt-5.4-nano': 'gpt-5.6-luna',
   'o4-mini': 'gpt-5.4-mini',
 };
 
 // Default model - GPT-5.5 (flagship, 1M context window, July 2026)
-const DEFAULT_MODEL = 'gpt-5.5';
+const DEFAULT_MODEL = 'gpt-5.6-sol';
+/** The cheap model for trivial calls (titles, chat summaries). */
+export const OPENAI_SMALL_MODEL = 'gpt-5.6-luna';
 
 // API configuration
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
@@ -172,6 +177,10 @@ export class OpenAIProvider extends BaseLLMProvider {
       requestBody.stop = options.stopSequences;
     }
 
+    // One wall-clock budget for the whole call, retries included; on timeout
+    // the error reports MEASURED elapsed, never just the configured number.
+    const timeoutMs = this.config.timeout || 120000;
+    const requestStartedAt = Date.now();
     try {
       const response = await fetchWithRetry(this.config.baseUrl || OPENAI_API_URL, {
         method: 'POST',
@@ -181,8 +190,7 @@ export class OpenAIProvider extends BaseLLMProvider {
           ...(this.config.organizationId && { 'OpenAI-Organization': this.config.organizationId }),
         },
         body: JSON.stringify(requestBody),
-        signal: AbortSignal.timeout(this.config.timeout || 120000),
-      });
+      }, { timeoutMs, signal: options?.signal });
 
       if (!response.ok) {
         const errorBody = await response.text();
@@ -196,7 +204,10 @@ export class OpenAIProvider extends BaseLLMProvider {
       return chatResponse;
     } catch (error) {
       if (error instanceof Error && error.name === 'TimeoutError') {
-        throw new Error(`OpenAI API request timed out after ${this.config.timeout}ms`);
+        const elapsedMs = Date.now() - requestStartedAt;
+        throw new Error(
+          `OpenAI API request timed out after ${elapsedMs}ms of wall time (configured timeout ${timeoutMs}ms)`,
+        );
       }
       throw error;
     }
@@ -247,8 +258,7 @@ export class OpenAIProvider extends BaseLLMProvider {
           ...(this.config.organizationId && { 'OpenAI-Organization': this.config.organizationId }),
         },
         body: JSON.stringify(requestBody),
-        signal: AbortSignal.timeout(this.config.timeout || 120000),
-      });
+      }, { timeoutMs: this.config.timeout || 120000, signal: options?.signal });
 
       if (!response.ok) {
         const errorBody = await response.text();
@@ -266,6 +276,9 @@ export class OpenAIProvider extends BaseLLMProvider {
       let buffer = '';
       let promptTokens = 0;
       let completionTokens = 0;
+      // null until the API sends one, so a cut stream reports "unknown".
+      let finishReason: string | null = null;
+      let servedModel: string | undefined;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -287,6 +300,13 @@ export class OpenAIProvider extends BaseLLMProvider {
                 yield { type: 'text', content: event.choices[0].delta.content };
               }
 
+              // finish_reason is null on every chunk but the last content one;
+              // the usage-only chunk after it has an empty choices array.
+              if (event.choices?.[0]?.finish_reason) {
+                finishReason = event.choices[0].finish_reason;
+              }
+              if (typeof event.model === 'string') servedModel = event.model;
+
               // Usage may be included in the final message
               if (event.usage) {
                 promptTokens = event.usage.prompt_tokens || 0;
@@ -301,6 +321,8 @@ export class OpenAIProvider extends BaseLLMProvider {
 
       yield {
         type: 'done',
+        finishReason: finishReason === null ? undefined : this.mapFinishReason(finishReason),
+        model: servedModel,
         usage: {
           promptTokens,
           completionTokens,

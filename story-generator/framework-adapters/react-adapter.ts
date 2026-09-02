@@ -46,16 +46,19 @@ export class ReactAdapter extends BaseFrameworkAdapter {
       names.add(match[3]);
     }
 
-    // 2. Check for grouped exports: export { Name1, Name2 }
+    // 2. Grouped exports: `export { Name }`, `export { X as Y }`.
+    //    The EXPORTED name is the alias — `export { default as Box }` exposes
+    //    `Box`, and taking the name before `as` yielded the word `default`.
     const groupedExportRegex = /export\s*\{\s*([^}]+)\s*\}/g;
     while ((match = groupedExportRegex.exec(content)) !== null) {
       const exports = match[1].split(',');
       for (const exp of exports) {
-        // Handle "Name" or "Name as Alias" - we want the original name
-        const namePart = exp.trim().split(/\s+as\s+/)[0].trim();
-        // Only include PascalCase names (components start with uppercase)
-        if (/^[A-Z][A-Za-z0-9]*$/.test(namePart)) {
-          names.add(namePart);
+        const parts = exp.trim().split(/\s+as\s+/).map(p => p.trim()).filter(Boolean);
+        const exported = parts[parts.length - 1];
+        if (!exported || exported === 'default') continue;
+        // Only PascalCase names (components start with uppercase)
+        if (/^[A-Z][A-Za-z0-9]*$/.test(exported)) {
+          names.add(exported);
         }
       }
     }
@@ -142,27 +145,49 @@ IMPORTANT: Without ChakraProvider, you will see "useContext returned undefined" 
     let additionalImportRules: string;
 
     if (useIndividualImports) {
+      /**
+       * Do not teach a path FORMULA. Point at the catalog.
+       *
+       * This block used to spell out `import { ComponentName } from
+       * '${importPath}/component-name'` and give kebab-casing as the file
+       * naming convention. On a scope like `@atlaskit` that instructs the
+       * model to invent a package per component — `Box` becomes
+       * `@atlaskit/box` — when Box, Flex, Text, Inline and MetricText all live
+       * in `@atlaskit/primitives`.
+       *
+       * The engine then spent three separate mechanisms fighting its own
+       * prompt: discovery recording real paths, isolation rejecting invented
+       * packages, and post-processing (which had the same formula, and
+       * rewrote correct imports into broken ones). The prompt was the source.
+       *
+       * The component reference already states each component's exact import
+       * path, derived from the installed package. That is the only authority,
+       * and no formula can beat being told.
+       */
       importInstructions = `MANDATORY IMPORTS - First lines of every story file:
 1. import React from 'react';
 2. import type { Meta, StoryObj } from '@storybook/react';
-3. import { ComponentName } from '${importPath}/component-name';  // INDIVIDUAL FILE IMPORTS REQUIRED
+3. Each component imported from the EXACT path shown beside it in the component reference below.
 
-🚫 INDIVIDUAL FILE IMPORTS REQUIRED 🚫
-This library does NOT have a barrel export. Each component MUST be imported from its own file:
-- import { Button } from '${importPath}/button';
-- import { Card, CardHeader, CardContent } from '${importPath}/card';
-- import { Dialog, DialogTrigger, DialogContent } from '${importPath}/dialog';
+🚫 THIS LIBRARY HAS NO BARREL EXPORT 🚫
+Components do NOT all come from one module. Every entry in the component
+reference is written as **ComponentName** (import from 'exact/path') — copy
+that path character for character.
 
-WRONG - DO NOT USE (will cause "Failed to fetch dynamically imported module" error):
-- import { Button, Card, Dialog } from '${importPath}';  // ❌ NO BARREL EXPORT EXISTS
+WRONG - DO NOT DO EITHER OF THESE:
+- Collecting several components into one import from a shared module. There is
+  no such module in this design system. (This instruction deliberately does not
+  spell that path out: writing it here, even as a counter-example, is the only
+  place the model could copy it from, and it was reproduced verbatim in every
+  generation until it was removed.)
+- Deriving a path from a component's NAME. Two components with unrelated names
+  routinely live in the same module, and a name-shaped path that happens to
+  resolve for one component will not for the next.
 
-File naming convention:
-- Components are PascalCase: Button, AlertDialog, NavigationMenu
-- Files are kebab-case: button, alert-dialog, navigation-menu
-- Sub-components share files: CardHeader → card, DialogTrigger → dialog`;
-      additionalImportRules = `- 🚫 INDIVIDUAL IMPORTS REQUIRED: Each component from its own file
-- Sub-components share the same file (CardHeader, CardContent → '${importPath}/card')
-- File names use kebab-case (AlertDialog → alert-dialog)`;
+If a component you want is not in the reference, it is not available — choose
+one that is, rather than guessing where it might live.`;
+      additionalImportRules = `- 🚫 Import each component from the exact path given in the component reference
+- Never derive an import path from a component's name`;
     } else {
       importInstructions = `MANDATORY IMPORTS - First lines of every story file:
 1. import React from 'react';
@@ -172,8 +197,11 @@ File naming convention:
     }
 
     // Build the example import based on importStyle
+    // For individual-import libraries there is no safe generic example: any
+    // path written here is a formula, and a formula is what taught the model
+    // to invent packages. The component reference carries the real paths.
     const exampleImport = useIndividualImports
-      ? `import { Button } from '${importPath}/button';`
+      ? `import { Button } from '<the exact path shown beside Button in the component reference>';`
       : `import { Button } from '${importPath}';`;
 
     return `You are an expert React developer creating Storybook stories using CSF 3.0 format.
@@ -252,9 +280,10 @@ ${this.getCommonRules()}`;
     let multiComponentImport: string;
 
     if (useIndividualImports) {
-      singleComponentImport = `import { Button } from '${lib}/button';`;
-      multiComponentImport = `import { Card } from '${lib}/card';
-import { Button } from '${lib}/button';`;
+      // Same reason as above: no fabricated `${lib}/name` paths in examples.
+      singleComponentImport = `import { Button } from '<Button's exact path from the component reference>';`;
+      multiComponentImport = `import { Card } from '<Card's exact path>';
+import { Button } from '<Button's exact path>';`;
     } else {
       singleComponentImport = `import { Button } from '${lib}';`;
       multiComponentImport = `import { Card, Button, Text } from '${lib}';`;

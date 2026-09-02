@@ -1,0 +1,205 @@
+/**
+ * Story UI as a Storybook MANAGER page.
+ *
+ * Why the manager and not the preview: the workspace used to be mounted from
+ * an MDX docs page inside the preview iframe, and Storybook re-renders that
+ * page from scratch whenever a story enters its index — which every
+ * generation does. The live narration, step list and in-flight stream were
+ * torn down mid-run and rebuilt from the manifest afterwards. The manager
+ * never remounts on index changes, so a workspace hosted here keeps its
+ * state for the whole run.
+ *
+ * Which API: `types.experimental_PAGE`, registered from the project's
+ * `.storybook/manager.ts` via templates/StoryUI/manager.tsx. In Storybook
+ * 10.1 a page is rendered by the manager's App in `slotPages` whenever the
+ * view mode is neither `story` nor `docs`, over the canvas and beside the
+ * sidebar — exactly how Storybook's own Settings page works. `types.TAB`
+ * still exists but is deprecated (the Preview logs "Addon tabs are
+ * deprecated and will be removed in Storybook 11" as soon as a second tab
+ * is registered), needs a story to be selected, and lives inside the
+ * canvas toolbar; a page has its own route (`?path=/workspace/`) and no such
+ * dependency.
+ *
+ * This module is bundled for the manager by scripts/bundle-workspace-manager.mjs
+ * (React externalised to the manager's globals, `react/jsx-runtime` shimmed
+ * onto `React.createElement`, CSS emitted beside it) and exported as
+ * `@tpitre/story-ui/manager` + `@tpitre/story-ui/manager.css`.
+ */
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { pickWorkspaceBounds, findContentCell } from './managerBounds';
+import { useStorybookApi, useStorybookState } from 'storybook/manager-api';
+import { Workspace } from './Workspace';
+import { resolveApiBase } from './apiBase';
+
+/** localStorage key shared with the workspace and the docs-page focus flow; "false" is the only opt-out. */
+const FOCUS_KEY = 'story-ui-focus';
+const FOCUS_MESSAGE = 'story-ui:focus';
+const FOCUS_STATE_MESSAGE = 'story-ui:focus-state';
+
+const readFocusPreference = (): boolean => {
+  try { return localStorage.getItem(FOCUS_KEY) !== 'false'; } catch { return true; }
+};
+const writeFocusPreference = (on: boolean) => {
+  try { localStorage.setItem(FOCUS_KEY, on ? 'true' : 'false'); } catch { /* private mode */ }
+};
+
+/**
+ * What the sidebar was before we folded it, in sessionStorage rather than a
+ * ref: a full reload while the page is open (Vite HMR of the manager, a
+ * hard refresh) loses every ref, and the folded sidebar then looked like the
+ * user's own choice — the next story view had no sidebar and nothing to put
+ * it back. The toolbar tool in manager.tsx reads the same key and restores
+ * on its own mount, so the manager heals itself wherever it comes back.
+ */
+export const CHROME_BEFORE_FOCUS_KEY = 'story-ui-chrome-before-focus';
+interface SavedChrome { nav: boolean; panel?: boolean }
+export const readSavedChrome = (): SavedChrome | null => {
+  try {
+    const raw = sessionStorage.getItem(CHROME_BEFORE_FOCUS_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed.nav === 'boolean' ? parsed : null;
+  } catch { return null; }
+};
+export const writeSavedChrome = (value: SavedChrome | null) => {
+  try {
+    if (value) sessionStorage.setItem(CHROME_BEFORE_FOCUS_KEY, JSON.stringify(value));
+    else sessionStorage.removeItem(CHROME_BEFORE_FOCUS_KEY);
+  } catch { /* private mode */ }
+};
+
+/**
+ * Focus in the page context.
+ *
+ * The panel is not shown for pages at all (Storybook only shows it in story
+ * view), so "focus" here means one thing: fold the sidebar away while the
+ * page is open, and put it back exactly as it was on the way out. The
+ * preference is the same `story-ui-focus` the docs-page flow uses.
+ *
+ * Messages are accepted from both places the workspace can post from: the
+ * preview iframe (docs page, `window.parent` is the manager) and this very
+ * document (page, `window.parent === window`, so the message arrives with
+ * `e.source === window`). The answer goes back the same way.
+ */
+function useTabFocus(api: ReturnType<typeof useStorybookApi>) {
+  const [focus, setFocusState] = useState<boolean>(readFocusPreference);
+
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      if (e.origin !== window.location.origin) return;
+      const msg = e.data;
+      if (!msg || msg.type !== FOCUS_MESSAGE || typeof msg.on !== 'boolean') return;
+      writeFocusPreference(msg.on);
+      setFocusState(msg.on);
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, []);
+
+  useEffect(() => {
+    const canToggle = typeof api?.toggleNav === 'function';
+    if (!canToggle) return;
+    if (focus) {
+      if (!readSavedChrome()) {
+        writeSavedChrome({ nav: typeof api.getIsNavShown === 'function' ? api.getIsNavShown() : true });
+      }
+      api.toggleNav(false);
+    } else if (readSavedChrome()) {
+      // Focus turned off while the page is open is a request to SEE the
+      // sidebar, whatever it was before; the exact restore belongs to
+      // leaving the page (the unmount below).
+      api.toggleNav(true);
+      writeSavedChrome(null);
+    }
+    try { window.postMessage({ type: FOCUS_STATE_MESSAGE, on: focus }, window.location.origin); } catch { /* ignore */ }
+  }, [api, focus]);
+
+  // The page unmounts whenever the user selects a story; the sidebar must
+  // come back with it.
+  useEffect(() => () => {
+    const saved = readSavedChrome();
+    if (saved && typeof api?.toggleNav === 'function') {
+      api.toggleNav(saved.nav);
+      writeSavedChrome(null);
+    }
+  }, [api]);
+
+  const setFocus = useCallback((on: boolean) => {
+    writeFocusPreference(on);
+    setFocusState(on);
+  }, []);
+
+  return { focus, setFocus };
+}
+
+/**
+ * The page. The workspace's own `.suiw-root` is `position: fixed`, which
+ * inside the preview iframe meant "the whole frame" and here would mean "the
+ * whole manager, sidebar included". It used to be contained by a `transform`
+ * on this host, which worked until Storybook 10.5 collapsed the page wrapper
+ * to 0×0 whenever the sidebar is hidden (see managerBounds.ts). Now the host
+ * measures the manager's `content` cell and hands the workspace its exact
+ * rectangle as CSS variables; popovers and dialogs portal to `document.body`
+ * and are unaffected either way.
+ */
+export const StoryUIPage: React.FC = () => {
+  const api = useStorybookApi();
+  // Storybook's own theme is the host here; the workspace's "auto" would
+  // otherwise read the OS preference and ignore a dark manager.
+  const base = (useStorybookState() as any)?.theme?.base;
+  const appearance = base === 'dark' || base === 'light' ? base : 'auto';
+  const [apiBase] = useState<string>(() => resolveApiBase());
+  // The sidebar toggle lives in the workspace's header; it posts
+  // `story-ui:focus` to this window and this hook answers with the state.
+  useTabFocus(api);
+
+  const hostRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const wrapper = host.closest('#main-content-wrapper') ?? host.parentElement;
+    let frame = 0;
+    const apply = () => {
+      frame = 0;
+      const cell = findContentCell(wrapper);
+      const rectOf = (el: Element | null) => {
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { left: r.left, top: r.top, width: r.width, height: r.height };
+      };
+      const b = pickWorkspaceBounds(rectOf(cell), rectOf(wrapper), { width: window.innerWidth, height: window.innerHeight });
+      host.style.setProperty('--suiw-left', `${b.left}px`);
+      host.style.setProperty('--suiw-top', `${b.top}px`);
+      host.style.setProperty('--suiw-width', `${b.width}px`);
+      host.style.setProperty('--suiw-height', `${b.height}px`);
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(apply); };
+    apply();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(schedule) : null;
+    const grid = wrapper?.parentElement;
+    if (ro && grid) { ro.observe(grid); for (const child of Array.from(grid.children)) ro.observe(child); }
+    // The grid's children change when the sidebar is shown or hidden.
+    const mo = typeof MutationObserver !== 'undefined' && grid
+      ? new MutationObserver(() => { schedule(); if (ro) for (const child of Array.from(grid.children)) ro.observe(child); })
+      : null;
+    mo?.observe(grid as Node, { childList: true, attributes: true, attributeFilter: ['style', 'class'] });
+    window.addEventListener('resize', schedule);
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      ro?.disconnect(); mo?.disconnect();
+      window.removeEventListener('resize', schedule);
+    };
+  }, []);
+
+  return (
+    <div
+      ref={hostRef}
+      className="suiw-manager-host"
+      data-story-ui-page=""
+      style={{ position: 'relative', flex: '1 1 auto', minHeight: 0, height: '100%' }}
+    >
+      <Workspace apiBase={apiBase} appearance={appearance} />
+    </div>
+  );
+};
+
+export default StoryUIPage;

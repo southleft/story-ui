@@ -169,43 +169,42 @@ export const Default: StoryObj = {
  * Detects pnpm / yarn / npm automatically.
  */
 let reactLiveChecked = false;
-let reactLiveInstalling: Promise<void> | null = null;
+
+/**
+ * Is react-live present right now?
+ *
+ * Distinct from ensureReactLive, which INSTALLS it. Startup must not install
+ * anything into a user's project uninvited, and must not write a file that
+ * needs a dependency the project does not have — so it asks instead.
+ */
+export function reactLiveIsInstalled(): boolean {
+  try {
+    return fs.existsSync(path.join(process.cwd(), 'node_modules', 'react-live'));
+  } catch {
+    return false;
+  }
+}
 
 export async function ensureReactLive(): Promise<void> {
-  if (reactLiveChecked) return;
-  // If another request is already installing, wait for it
-  if (reactLiveInstalling) return reactLiveInstalling;
-
-  const cwd = process.cwd();
-  const reactLiveDir = path.join(cwd, 'node_modules', 'react-live');
-  if (fs.existsSync(reactLiveDir)) {
+  /**
+   * This used to shell out to `npm install react-live --save` from inside an
+   * HTTP request handler, mutating package.json and the lockfile as a side
+   * effect of a POST any local page could send. A server must not install
+   * packages into a user's project. `story-ui init` adds react-live for React
+   * projects; if it is missing, say so and stop.
+   */
+  if (reactLiveChecked || reactLiveIsInstalled()) {
     reactLiveChecked = true;
     return;
   }
+  throw new ReactLiveMissingError();
+}
 
-  logger.log('[canvas-generate] react-live not found — installing...');
-
-  reactLiveInstalling = (async () => {
-    try {
-      let cmd = 'npm install react-live --save';
-      if (fs.existsSync(path.join(cwd, 'pnpm-lock.yaml'))) {
-        cmd = 'pnpm add react-live';
-      } else if (fs.existsSync(path.join(cwd, 'yarn.lock'))) {
-        cmd = 'yarn add react-live';
-      }
-      await execAsync(cmd, { cwd });
-      reactLiveChecked = true;
-      logger.log('[canvas-generate] react-live installed successfully');
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.error('[canvas-generate] Could not auto-install react-live', { error: msg });
-      logger.log('[canvas-generate] Run manually: npm install react-live');
-    } finally {
-      reactLiveInstalling = null;
-    }
-  })();
-
-  return reactLiveInstalling;
+export class ReactLiveMissingError extends Error {
+  constructor() {
+    super('The voice canvas needs the react-live package, which is not installed in this project. Run: npm install react-live');
+    this.name = 'ReactLiveMissingError';
+  }
 }
 
 // ── Write story to disk (once) ────────────────────────────────
@@ -215,6 +214,25 @@ export async function ensureReactLive(): Promise<void> {
  * Subsequent calls are no-ops — the file never changes after initial creation.
  */
 export function ensureVoiceCanvasStory(storiesDir: string): void {
+  /**
+   * Only when the project can actually compile it.
+   *
+   * This template imports `react-live`. Writing it into a project that does
+   * not have that dependency breaks the whole Storybook with a Vite overlay —
+   * not just this story — because the dev server fails to resolve the import
+   * and stops rendering anything. Observed on a Carbon project: every
+   * generated story was fine, and the workspace was unusable.
+   *
+   * The existing guard checked the FRAMEWORK, which answers a different
+   * question. React projects that have never installed react-live are the
+   * common case, not the exception, so the guard passed exactly where it
+   * needed to fail. Ask for the dependency itself.
+   */
+  if (!reactLiveIsInstalled()) {
+    logger.log('[canvas-generate] Skipping voice-canvas template — react-live is not installed in this project');
+    return;
+  }
+
   const resolvedDir = path.resolve(process.cwd(), storiesDir);
   if (!fs.existsSync(resolvedDir)) {
     fs.mkdirSync(resolvedDir, { recursive: true });
@@ -437,8 +455,16 @@ export async function canvasGenerateHandler(req: Request, res: Response) {
       { role: 'user', content: userMessage },
     ];
 
-    // Ensure react-live is installed and story template exists (no-ops after first run)
-    await ensureReactLive();
+    // react-live must already be present; the server never installs it.
+    try {
+      await ensureReactLive();
+    } catch (err) {
+      if (err instanceof ReactLiveMissingError) {
+        res.status(424).json({ success: false, error: err.message, code: 'REACT_LIVE_MISSING' });
+        return;
+      }
+      throw err;
+    }
     const storiesDir = config.generatedStoriesPath || './src/stories/generated/';
     ensureVoiceCanvasStory(storiesDir);
 

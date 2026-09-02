@@ -5,7 +5,7 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { setupCommand, cleanupDefaultStorybookComponents } from './setup.js';
+import { setupCommand, cleanupDefaultStorybookComponents, readConfiguredPort } from './setup.js';
 import { deployCommand } from './deploy.js';
 import { updateCommand, statusCommand } from './update.js';
 import net from 'net';
@@ -38,12 +38,21 @@ program
 program
   .command('init')
   .description('Initialize Story UI configuration with interactive setup')
-  .option('-d, --design-system <system>', 'Design system to configure (mantine, vuetify, angular-material, skeleton-ui, shoelace)')
+  .option('-d, --design-system <system>', 'Design system to configure (auto, custom, mantine, mui, chakra, carbon, vuetify, angular-material, skeleton-ui, shoelace, …)')
   .option('-l, --llm-provider <provider>', 'LLM provider to use (claude, openai, gemini)')
-  .option('-y, --yes', 'Skip interactive prompts and use defaults')
+  .option('--provider <provider>', 'Alias of --llm-provider')
+  .option('--api-key <key>', 'API key for the provider, written to .env')
+  .option('--port <port>', 'Port for the Story UI server (default: first free port from 4001)')
+  .option('--stories-path <path>', 'Where generated stories are written (default ./src/stories/generated/)')
+  .option('--import-path <specifier>', 'Import specifier of the design system, e.g. @mantine/core or ../../components')
+  .option('--components-path <path>', 'Directory of a local component library, e.g. ./src/components')
+  .option('--component-prefix <prefix>', 'Component name prefix, e.g. Al for AlButton')
+  .option('-y, --yes', 'Skip interactive prompts and use defaults (automatic when there is no TTY or CI=true)')
   .option('--skip-install', 'Skip package installation')
+  .option('--force', 'Overwrite an existing story-ui.config.js and panel files')
+  .option('--json', 'Print a machine-readable summary at the end')
   .action(async (options) => {
-    await setupCommand(options);
+    await setupCommand({ ...options, llmProvider: options.llmProvider || options.provider });
   });
 
 program
@@ -175,7 +184,6 @@ function generateSampleConfig(filename: string, type: 'json' | 'js') {
     generatedStoriesPath: './src/stories/generated',
     componentsPath: './src/components',
     storyPrefix: 'Generated/',
-    defaultAuthor: 'Story UI AI',
     importPath: 'your-component-library',
     componentPrefix: 'UI',
     layoutRules: {
@@ -235,14 +243,18 @@ program
 program
   .command('mcp')
   .description('Start Story UI as an MCP server (for use with Claude Desktop and other MCP clients)')
-  .option('--http-port <port>', 'Port for the HTTP server', '4001')
+  .option('--http-port <port>', 'Port of the running Story UI HTTP server (default: the port init configured in .env or the story-ui script, else 4001)')
   .action(async (options) => {
     // For MCP mode, DO NOT output anything to stdout - it's reserved for JSON-RPC
     // Use stderr for all logging
     console.error('🚀 Starting Story UI as MCP server...');
     console.error('📡 This server uses stdio transport for MCP communication');
-    console.error('⚠️  Note: The HTTP server must be running on port ' + options.httpPort);
-    console.error('    Run "story-ui start" in another terminal if not already running.\n');
+
+    // One resolution, printed once — by the stdio server, which announces
+    // the port it will actually call. This command used to say 4001 while
+    // the child resolved .env's port and said something else.
+    const configured = options.httpPort ? null : readConfiguredPort(process.cwd());
+    const httpPort = String(options.httpPort || configured?.port || process.env.VITE_STORY_UI_PORT || process.env.STORY_UI_HTTP_PORT || process.env.PORT || 4001);
 
     // Use absolute path to MCP stdio server
     const pkgRoot = path.resolve(__dirname, '..');
@@ -250,7 +262,7 @@ program
 
     const env: NodeJS.ProcessEnv = {
       ...process.env,
-      STORY_UI_HTTP_PORT: options.httpPort
+      STORY_UI_HTTP_PORT: httpPort
     };
 
     const mcpServer = spawn('node', [mcpServerPath], {
@@ -271,16 +283,28 @@ program
   .command('update')
   .description('Update Story UI managed files to the latest version')
   .option('-f, --force', 'Skip confirmation prompts')
+  .option('-y, --yes', 'Alias of --force (automatic when there is no TTY or CI=true)')
   .option('--no-backup', 'Skip creating backups of existing files')
   .option('-n, --dry-run', 'Show what would be updated without making changes')
   .option('-v, --verbose', 'Show detailed output')
   .action(async (options) => {
     await updateCommand({
-      force: options.force,
+      force: options.force || options.yes,
       backup: options.backup,
       dryRun: options.dryRun,
       verbose: options.verbose
     });
+  });
+
+program
+  .command('check')
+  .description('Verify the installation: config, discovery, Storybook globs, addon wiring, provider key, server')
+  .option('--server <url>', 'Story UI server to probe (default: from config port)')
+  .option('--json', 'Print the report as JSON')
+  .action(async (options) => {
+    const { checkCommand } = await import('./check.js');
+    const ok = await checkCommand(options);
+    process.exit(ok ? 0 : 1);
   });
 
 program

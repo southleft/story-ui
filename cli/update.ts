@@ -4,7 +4,8 @@ import { execSync } from 'child_process';
 import chalk from 'chalk';
 import { fileURLToPath } from 'url';
 import inquirer from 'inquirer';
-import { ensureManagerAddonWiring } from './setup.js';
+import { createRequire } from 'module';
+import { ensureManagerAddonWiring, ensureStoriesGlobCoversMdx, missingReactStorybookDep, ensureManagerHeadPort, readConfiguredPort, ensureScriptPort, viteFinalConfigSnippet, insertConfigProperty, missingViteCjsIncludes } from './setup.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,7 +19,7 @@ const REQUIRED_CONSUMER_DEPS = ['react-live'];
 /**
  * Story UI Update Command
  *
- * Refreshes managed Story UI files (StoryUIPanel.tsx, StoryUIPanel.mdx, index.tsx)
+ * Refreshes managed Story UI files (StoryUIPanel.tsx, StoryUIPanel.mdx, manager.tsx, ...)
  * while preserving user configuration files (story-ui.config.js, .env, etc.)
  */
 
@@ -56,14 +57,30 @@ const MANAGED_FILES = [
     description: 'Cross-framework MDX wrapper'
   },
   {
-    source: 'templates/StoryUI/index.tsx',
-    target: 'src/stories/StoryUI/index.tsx',
-    description: 'Panel registration'
-  },
-  {
     source: 'templates/StoryUI/manager.tsx',
     target: 'src/stories/StoryUI/manager.tsx',
-    description: '"Edit in Story UI" manager toolbar button'
+    description: 'Story UI manager tab (?path=/workspace/) and "Edit in Story UI" toolbar button'
+  },
+  // Panel siblings. StoryUIPanel.tsx imports each of these by relative path,
+  // so shipping the panel without them leaves the consumer with three
+  // unresolvable imports. `init` has always copied them; `update` did not,
+  // which meant updating an existing project BROKE the V1 panel.
+  // `__tests__/update-managed-files.test.ts` derives this list from the
+  // panel's own imports so the two cannot drift again.
+  {
+    source: 'templates/StoryUI/DesignContextPanel.tsx',
+    target: 'src/stories/StoryUI/DesignContextPanel.tsx',
+    description: 'Design context panel'
+  },
+  {
+    source: 'templates/StoryUI/VerificationBadge.tsx',
+    target: 'src/stories/StoryUI/VerificationBadge.tsx',
+    description: 'Verification result badge'
+  },
+  {
+    source: 'templates/StoryUI/HandoffDialog.tsx',
+    target: 'src/stories/StoryUI/HandoffDialog.tsx',
+    description: 'Handoff dialog'
   },
   // Voice Canvas files
   {
@@ -90,6 +107,13 @@ const MANAGED_FILES = [
     source: 'templates/StoryUI/voice/types.ts',
     target: 'src/stories/StoryUI/voice/types.ts',
     description: 'Voice module type definitions'
+  },
+  // V2 workspace — a single MDX entry beside the panel dir; the workspace
+  // itself ships in the package and updates with it
+  {
+    source: 'templates/StoryUIV2/StoryUIV2.mdx',
+    target: 'src/stories/StoryUIV2/StoryUIV2.mdx',
+    description: 'Story UI workspace (V2) MDX entry'
   }
 ];
 
@@ -135,6 +159,18 @@ function getPackageVersion(): string {
 }
 
 /**
+ * The string value of a top-level field in story-ui.config.js text. Init
+ * writes the file with JSON.stringify, so the key is quoted; a hand-written
+ * config leaves it bare. A regex that accepted only the bare form reported
+ * every init-written install as version "unknown".
+ */
+export function readConfigField(configContent: string, key: string): string | undefined {
+  const re = new RegExp(`(?:^|[{,\\s])["']?${key}["']?\\s*:\\s*(["'])((?:\\\\.|(?!\\1)[^\\\\])*)\\1`, 'm');
+  const m = configContent.match(re);
+  return m ? m[2] : undefined;
+}
+
+/**
  * Detect if Story UI is initialized in the current directory
  */
 function detectStoryUIInstallation(): {
@@ -142,22 +178,9 @@ function detectStoryUIInstallation(): {
   storyUIDir?: string;
   configPath?: string;
   installedVersion?: string;
+  componentFramework?: string;
 } {
   const cwd = process.cwd();
-
-  // Check for Story UI directory
-  const possibleStoryUIDirs = [
-    path.join(cwd, 'src', 'stories', 'StoryUI'),
-    path.join(cwd, 'stories', 'StoryUI')
-  ];
-
-  let storyUIDir: string | undefined;
-  for (const dir of possibleStoryUIDirs) {
-    if (fs.existsSync(dir)) {
-      storyUIDir = dir;
-      break;
-    }
-  }
 
   // Check for config file
   const configFiles = [
@@ -175,17 +198,37 @@ function detectStoryUIInstallation(): {
     }
   }
 
-  // Try to read installed version from config
+  // Try to read installed version and paths from config
   let installedVersion: string | undefined;
+  let configuredStoriesPath: string | undefined;
+  let componentFramework: string | undefined;
   if (configPath) {
     try {
       const configContent = fs.readFileSync(configPath, 'utf-8');
-      const versionMatch = configContent.match(/_storyUIVersion:\s*['"]([^'"]+)['"]/);
-      if (versionMatch) {
-        installedVersion = versionMatch[1];
-      }
+      installedVersion = readConfigField(configContent, '_storyUIVersion');
+      configuredStoriesPath = readConfigField(configContent, 'generatedStoriesPath');
+      componentFramework = readConfigField(configContent, 'componentFramework');
     } catch (error) {
       // Ignore read errors
+    }
+  }
+
+  // Check for Story UI directory. An init with a custom generatedStoriesPath
+  // installs the panel beside it, so derive that location from the config
+  // before falling back to the conventional spots.
+  const possibleStoryUIDirs = [
+    ...(configuredStoriesPath
+      ? [path.join(path.dirname(path.resolve(cwd, configuredStoriesPath)), 'StoryUI')]
+      : []),
+    path.join(cwd, 'src', 'stories', 'StoryUI'),
+    path.join(cwd, 'stories', 'StoryUI')
+  ];
+
+  let storyUIDir: string | undefined;
+  for (const dir of possibleStoryUIDirs) {
+    if (fs.existsSync(dir)) {
+      storyUIDir = dir;
+      break;
     }
   }
 
@@ -193,7 +236,8 @@ function detectStoryUIInstallation(): {
     isInstalled: !!(storyUIDir || configPath),
     storyUIDir,
     configPath,
-    installedVersion
+    installedVersion,
+    componentFramework
   };
 }
 
@@ -376,7 +420,7 @@ function updateConfigVersion(configPath: string, version: string): boolean {
  * template files (e.g. react-live for voice canvas). Installs any missing
  * packages using the detected package manager.
  */
-function ensureConsumerDependencies(options: UpdateOptions): { installed: string[]; errors: string[] } {
+function ensureConsumerDependencies(options: UpdateOptions, componentFramework?: string): { installed: string[]; errors: string[] } {
   const cwd = process.cwd();
   const packageJsonPath = path.join(cwd, 'package.json');
   const result = { installed: [] as string[], errors: [] as string[] };
@@ -394,7 +438,36 @@ function ensureConsumerDependencies(options: UpdateOptions): { installed: string
   }
 
   const allDeps = { ...packageJson.dependencies, ...packageJson.devDependencies };
-  const missing = REQUIRED_CONSUMER_DEPS.filter((pkg) => !allDeps[pkg]);
+  // react-live is the Voice Canvas's dependency, and the canvas story only
+  // compiles in a React Storybook; a Vue or Svelte host would carry it dead.
+  const required = (componentFramework && componentFramework !== 'react') ? [] : REQUIRED_CONSUMER_DEPS;
+  const missing = required.filter((pkg) => !allDeps[pkg]);
+
+  // The panel and the V2 workspace are React, rendered through addon-docs even
+  // in a non-React Storybook. react/@storybook/react are OPTIONAL peers of
+  // @tpitre/story-ui, so nothing force-installs them: npm usually hoists
+  // Storybook's own copy of react, pnpm does not — and then the /workspace
+  // export fails to resolve 'react'. Check resolution, not just declaration.
+  if (componentFramework && componentFramework !== 'react') {
+    const hostRequire = createRequire(packageJsonPath);
+    for (const pkg of ['react', 'react-dom']) {
+      if (allDeps[pkg]) continue;
+      try {
+        hostRequire.resolve(pkg);
+      } catch {
+        missing.push(`${pkg}@^18.3.1`);
+      }
+    }
+  }
+
+  // React hosts need '@storybook/react' — the type import every generated
+  // story starts with. It is an OPTIONAL peer of @tpitre/story-ui, and pnpm's
+  // auto-install-peers skips optional peers, so a React + pnpm host loses it
+  // unless it is installed explicitly, pinned to the host's Storybook major.
+  const storybookReactDep = missingReactStorybookDep(cwd, allDeps, componentFramework);
+  if (storybookReactDep) {
+    missing.push(`${storybookReactDep.name}@${storybookReactDep.range}`);
+  }
 
   if (missing.length === 0) {
     return result;
@@ -466,12 +539,72 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
 
   // Resolve managed-file targets against the DETECTED panel directory, so
   // installations at stories/StoryUI (no src/) update in place instead of
-  // getting a duplicate panel written to src/stories/StoryUI.
+  // getting a duplicate panel written to src/stories/StoryUI. The StoryUIV2
+  // dir lands beside the panel, so the shared prefix is the stories dir.
   const panelDirRel = installation.storyUIDir
     ? path.relative(process.cwd(), installation.storyUIDir).split(path.sep).join('/')
     : 'src/stories/StoryUI';
+  const storiesDirRel = path.dirname(panelDirRel).split(path.sep).join('/');
   const resolveTarget = (target: string): string =>
-    target.replace(/^src\/stories\/StoryUI/, panelDirRel);
+    target.replace(/^src\/stories/, storiesDirRel);
+
+  /**
+   * Manager addon + stories glob, idempotent. Ran only at the END of an
+   * update, after an early return for "all files already up to date" — so a
+   * project whose files were current could never get the toolbar button,
+   * and `check` kept sending people back to `update` in a circle. Also ran
+   * only when the panel directory already existed, so a first `update` on a
+   * fresh project skipped it. Called before the early return and again at
+   * the end; both calls are no-ops when nothing needs doing.
+   */
+  const wireStorybookEntries = () => {
+    if (options.dryRun) return;
+    const panelDir = installation.storyUIDir ?? path.resolve(process.cwd(), storiesDirRel, 'StoryUI');
+    try {
+      ensureManagerAddonWiring(panelDir);
+    } catch (wireError: any) {
+      result.errors.push(`manager wiring: ${wireError.message}`);
+    }
+    // The V2 workspace is an MDX docs page — a stories glob that never matches
+    // .mdx installs it invisibly. Same check init performs, same helper.
+    /**
+     * The Vite optimizeDeps block `init` writes. An install that predates it
+     * (or one made by hand) loses the docs-page workspace the first time
+     * Vite's cache is cleared: "classnames does not provide an export named
+     * default". `update` applies the same block, idempotently, and warns
+     * with the exact strings when a user-authored viteFinal is missing them.
+     */
+    try {
+      const sbDir = path.join(process.cwd(), '.storybook');
+      const mainPath = ['main.ts', 'main.mts', 'main.js', 'main.mjs', 'main.cjs']
+        .map(f => path.join(sbDir, f)).find(f => fs.existsSync(f));
+      if (mainPath && !/webpack/i.test(fs.readFileSync(mainPath, 'utf8'))) {
+        const mainContent = fs.readFileSync(mainPath, 'utf8');
+        if (!mainContent.includes('viteFinal')) {
+          const inserted = insertConfigProperty(mainContent, viteFinalConfigSnippet());
+          if (inserted) {
+            fs.writeFileSync(mainPath, inserted);
+            console.log(chalk.green(`   ✅ Added the Story UI viteFinal block to .storybook/${path.basename(mainPath)}`));
+          }
+        } else {
+          const missing = missingViteCjsIncludes(mainContent);
+          if (missing.length) {
+            console.log(chalk.yellow(`   ⚠️  .storybook/${path.basename(mainPath)} has its own viteFinal excluding @tpitre/story-ui but its optimizeDeps.include lacks: ${missing.join(', ')}`));
+          }
+        }
+      }
+    } catch (viteError: any) {
+      result.errors.push(`viteFinal: ${viteError.message}`);
+    }
+    const globResult = ensureStoriesGlobCoversMdx(path.resolve(process.cwd(), storiesDirRel));
+    if (!globResult.checked) {
+      console.log(chalk.yellow('   ⚠️  No .storybook/main.ts or main.js found — MDX glob coverage was NOT checked'));
+    } else if (globResult.added) {
+      console.log(chalk.green(`   ✅ Added ${globResult.added} to the Storybook stories array`));
+    } else if (!globResult.covered) {
+      console.log(chalk.yellow('   ⚠️  Could not extend the stories array — the V2 workspace stays hidden until a glob matches its MDX'));
+    }
+  };
 
   // Step 2: Show what will be updated
   console.log(chalk.bold('\n📦 Managed files to update:'));
@@ -497,9 +630,41 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
     }
   }
 
+  // The manager page reads its port from .storybook/manager-head.html, not
+  // from .env. Refreshed from the port init recorded BEFORE the early return
+  // below: an install whose managed files are current can still predate the
+  // meta, and `check` sends people here to get it.
+  if (!options.dryRun && fs.existsSync(path.join(process.cwd(), '.storybook'))) {
+    const configured = readConfiguredPort(process.cwd());
+    if (configured) {
+      try {
+        const head = ensureManagerHeadPort(process.cwd(), configured.port);
+        if (head.action !== 'unchanged') {
+          console.log(chalk.green(`   ✅ ${head.action === 'created' ? 'Created' : 'Updated'} .storybook/manager-head.html — the workspace page talks to port ${configured.port} (from ${configured.source})`));
+        }
+      } catch (headError: any) {
+        result.errors.push(`manager-head.html: ${headError.message}`);
+      }
+      // The third place the port lives. When .env is the source, the script
+      // follows it; when the script itself was the source there is nothing
+      // to reconcile.
+      try {
+        const script = ensureScriptPort(process.cwd(), configured.port);
+        if (script.action === 'created' || script.action === 'updated') {
+          console.log(chalk.green(`   ✅ ${script.action === 'created' ? 'Added' : 'Updated'} the package.json "story-ui" script — npm run story-ui starts on port ${configured.port} (from ${configured.source})`));
+        }
+      } catch (scriptError: any) {
+        result.errors.push(`package.json story-ui script: ${scriptError.message}`);
+      }
+    } else {
+      console.log(chalk.yellow('   ⚠️  No port in .env (VITE_STORY_UI_PORT) or the story-ui script — .storybook/manager-head.html was not written'));
+    }
+  }
+
   if (filesToUpdate.length === 0) {
+    wireStorybookEntries();
     console.log(chalk.green('\n✅ All files are already up to date!'));
-    result.success = true;
+    result.success = result.errors.length === 0;
     return result;
   }
 
@@ -511,12 +676,16 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
     console.log(chalk.gray('   • story-ui-docs/ (your documentation)'));
     console.log(chalk.gray('   • src/stories/generated/ (your generated stories)'));
 
-    const { confirm } = await inquirer.prompt([{
-      type: 'confirm',
-      name: 'confirm',
-      message: `Update ${filesToUpdate.length} file(s)?`,
-      default: true
-    }]);
+    // No terminal means no question: an agent or CI would hang on it.
+    const unattended = !process.stdin.isTTY || process.env.CI === 'true' || process.env.CI === '1' || process.env.STORY_UI_NONINTERACTIVE === 'true';
+    const { confirm } = unattended
+      ? { confirm: true }
+      : await inquirer.prompt([{
+          type: 'confirm',
+          name: 'confirm',
+          message: `Update ${filesToUpdate.length} file(s)?`,
+          default: true
+        }]);
 
     if (!confirm) {
       console.log(chalk.yellow('\n⏹️  Update cancelled.'));
@@ -549,20 +718,12 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
 
   // Step 5: Ensure required consumer dependencies are installed
   // (e.g. react-live, which voice canvas templates import directly)
-  const depsResult = ensureConsumerDependencies(options);
+  const depsResult = ensureConsumerDependencies(options, installation.componentFramework);
   if (depsResult.errors.length > 0) {
     result.errors.push(...depsResult.errors);
   }
 
-  // Wire the manager toolbar button for installs that predate it (no-op when
-  // already wired or on Storybook <9).
-  if (!options.dryRun && installation.storyUIDir) {
-    try {
-      ensureManagerAddonWiring(installation.storyUIDir);
-    } catch (wireError: any) {
-      result.errors.push(`manager wiring: ${wireError.message}`);
-    }
-  }
+  wireStorybookEntries();
 
   // Step 6: Update config version tracking
   if (!options.dryRun && installation.configPath) {

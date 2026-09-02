@@ -197,7 +197,7 @@ class AdapterRegistry {
 
     return {
       systemPrompt: adapter.generateSystemPrompt(config, options),
-      componentReference: adapter.generateComponentReference(components, config),
+      componentReference: adapter.generateComponentReference(components, config, options),
       layoutInstructions: layoutInstructionsString,
       examples: adapter.generateExamples(config),
       sampleStory: adapter.generateSampleStory(config, components),
@@ -228,29 +228,4 @@ export function getAdapterRegistry(): AdapterRegistry {
  */
 export function getAdapter(type: FrameworkType): FrameworkAdapter | undefined {
   return getAdapterRegistry().get(type);
-}
-
-/**
- * Get the default adapter
- */
-export function getDefaultAdapter(): FrameworkAdapter {
-  return getAdapterRegistry().getDefault();
-}
-
-/**
- * Auto-detect framework and get appropriate adapter
- */
-export async function autoDetectAdapter(projectRoot?: string): Promise<FrameworkAdapter> {
-  return getAdapterRegistry().autoDetect(projectRoot);
-}
-
-/**
- * Generate framework-specific prompt
- */
-export async function generateFrameworkPrompt(
-  config: StoryUIConfig,
-  components: DiscoveredComponent[],
-  options?: StoryGenerationOptions
-): Promise<FrameworkPrompt> {
-  return getAdapterRegistry().generatePrompt(config, components, options);
 }

@@ -58,6 +58,59 @@ export class StoryHistoryManager {
   }
 
   /**
+   * History is keyed by the story FILE, not by its prompt-derived stem.
+   *
+   * The id used to strip the content hash — `pricing-cards-2b036bdd.stories.tsx`
+   * and `pricing-cards-52a2a33e.stories.tsx` both became `pricing-cards` — so
+   * two DIFFERENT stories generated from similar prompts shared one history
+   * record, and each listed the other's versions as its own. The hash is
+   * exactly the part that distinguishes them; only the extension goes.
+   */
+  private storyIdFor(fileName: string): string {
+    return fileName.replace(/\.stories\.\w+$/, '');
+  }
+
+  /** The pre-fix key, so records written before the keying change stay reachable. */
+  private legacyStoryIdFor(fileName: string): string {
+    return fileName.replace(/-[a-f0-9]+\.stories\.tsx$/, '');
+  }
+
+  /**
+   * This file's versions, read out of a possibly-shared record.
+   *
+   * A legacy history may hold several stories' versions under one collided
+   * key. Each version records the fileName it was written for, so the record
+   * can be split honestly: return only THIS file's versions, under the
+   * per-file id. Returning a shared record whole is the bug the keying change
+   * fixes; discarding it entirely would orphan every history written before
+   * the change.
+   */
+  private fileView(record: StoryHistory | undefined, fileName: string): StoryHistory | null {
+    if (!record) return null;
+
+    const versions = record.versions.filter(v => v.fileName === fileName);
+    if (versions.length === 0) return null;
+
+    // Already strictly this file's record — hand back the live object so a
+    // subsequent addVersion appends in place, exactly as before.
+    if (versions.length === record.versions.length && record.storyId === this.storyIdFor(fileName)) {
+      return record;
+    }
+
+    // The shared record's current pointer may name another file's version;
+    // fall back to this file's newest.
+    const current = versions.find(v => v.id === record.currentVersionId)
+      ?? versions.reduce((a, b) => (b.timestamp >= a.timestamp ? b : a));
+
+    return {
+      storyId: this.storyIdFor(fileName),
+      title: record.title,
+      versions,
+      currentVersionId: current.id,
+    };
+  }
+
+  /**
    * Create a new story history or add a version to existing history
    */
   addVersion(
@@ -66,11 +119,13 @@ export class StoryHistoryManager {
     code: string,
     parentVersionId?: string
   ): StoryVersion {
-    // Extract story ID from filename (remove hash and extension)
-    const storyId = fileName.replace(/-[a-f0-9]+\.stories\.tsx$/, '');
-    
-    let history = this.histories.get(storyId);
-    
+    const storyId = this.storyIdFor(fileName);
+
+    // Adopt this file's versions from a shared legacy record on first write,
+    // so upgrading the keying does not orphan what was already recorded. The
+    // legacy file is left as it is — other stories' versions still live there.
+    let history = this.getHistory(fileName) ?? undefined;
+
     const newVersion: StoryVersion = {
       id: crypto.randomBytes(8).toString('hex'),
       timestamp: Date.now(),
@@ -102,20 +157,20 @@ export class StoryHistoryManager {
    * Get the current version of a story by filename
    */
   getCurrentVersion(fileName: string): StoryVersion | null {
-    const storyId = fileName.replace(/-[a-f0-9]+\.stories\.tsx$/, '');
-    const history = this.histories.get(storyId);
-    
+    const history = this.getHistory(fileName);
+
     if (!history) return null;
-    
+
     return history.versions.find(v => v.id === history.currentVersionId) || null;
   }
 
   /**
-   * Get all versions for a story
+   * Get all versions for a story — strictly this file's, never a sibling's
+   * that happened to share a prompt-derived stem.
    */
   getHistory(fileName: string): StoryHistory | null {
-    const storyId = fileName.replace(/-[a-f0-9]+\.stories\.tsx$/, '');
-    return this.histories.get(storyId) || null;
+    return this.fileView(this.histories.get(this.storyIdFor(fileName)), fileName)
+      ?? this.fileView(this.histories.get(this.legacyStoryIdFor(fileName)), fileName);
   }
 
   /**
@@ -132,8 +187,11 @@ export class StoryHistoryManager {
   }
 
   private titleFromFileName(fileName: string): string {
+    // The hash stays in the KEY (it is what tells two stories apart) but has
+    // no place in a human-readable title.
     return fileName
-      .replace(/-[a-f0-9]+\.stories\.tsx$/, '')
+      .replace(/-[a-f0-9]+\.stories\.\w+$/, '')
+      .replace(/\.stories\.\w+$/, '')
       .replace(/-/g, ' ')
       .replace(/\b\w/g, c => c.toUpperCase());
   }

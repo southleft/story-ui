@@ -26,6 +26,12 @@ export interface DiscoveredComponent {
   slots?: string[];
   examples?: string[];
   __componentPath?: string;
+  /**
+   * Standard attributes the props type extends and forwards, as written —
+   * `React.HTMLAttributes<HTMLElement>`. Read from a local declaration; absent
+   * when it does not extend one.
+   */
+  passthroughAttributes?: string;
 }
 
 /**

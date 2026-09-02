@@ -246,10 +246,51 @@ export function considerationsToPrompt(considerations: AIConsiderations): string
     });
   }
 
+  // Per-component rules. Previously declared on the interface but never rendered,
+  // so anyone who authored them got silence.
+  if (considerations.componentRules && Object.keys(considerations.componentRules).length > 0) {
+    promptParts.push('\nCOMPONENT-SPECIFIC RULES:');
+    for (const [component, rule] of Object.entries(considerations.componentRules)) {
+      if (rule == null) continue;
+      if (typeof rule === 'string') {
+        promptParts.push(`- ${component}: ${rule}`);
+      } else if (Array.isArray(rule)) {
+        rule.forEach(r => promptParts.push(`- ${component}: ${typeof r === 'string' ? r : JSON.stringify(r)}`));
+      } else {
+        promptParts.push(`- ${component}: ${JSON.stringify(rule)}`);
+      }
+    }
+  }
+
+  // Reusable composition patterns — the most directly imitable guidance a design
+  // system can supply, and previously discarded.
+  if (considerations.patterns && Object.keys(considerations.patterns).length > 0) {
+    promptParts.push('\nREQUIRED PATTERNS:');
+    for (const [name, pattern] of Object.entries(considerations.patterns)) {
+      if (pattern == null) continue;
+      promptParts.push(`- ${name}: ${typeof pattern === 'string' ? pattern : JSON.stringify(pattern)}`);
+    }
+  }
+
+  if (considerations.imports && Object.keys(considerations.imports).length > 0) {
+    promptParts.push('\nIMPORT RULES:');
+    for (const [name, imp] of Object.entries(considerations.imports)) {
+      if (imp == null) continue;
+      promptParts.push(`- ${name}: ${typeof imp === 'string' ? imp : JSON.stringify(imp)}`);
+    }
+  }
+
   if (considerations.aiInstructions) {
     if (considerations.aiInstructions.general && considerations.aiInstructions.general.length > 0) {
       promptParts.push('\nAI INSTRUCTIONS:');
       considerations.aiInstructions.general.forEach(instruction => {
+        promptParts.push(`- ${instruction}`);
+      });
+    }
+    // The field literally named for code generation was being thrown away.
+    if (considerations.aiInstructions.codeGeneration && considerations.aiInstructions.codeGeneration.length > 0) {
+      promptParts.push('\nCODE GENERATION INSTRUCTIONS:');
+      considerations.aiInstructions.codeGeneration.forEach(instruction => {
         promptParts.push(`- ${instruction}`);
       });
     }

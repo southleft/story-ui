@@ -1,9 +1,15 @@
+import { packageDirFor } from './knowledge/packageLocator.js';
 import fs from 'fs';
 import path from 'path';
 import { DiscoveredComponent, PropInfo } from './componentDiscovery.js';
 import { StoryUIConfig } from '../story-ui.config.js';
 import { DynamicPackageDiscovery } from './dynamicPackageDiscovery.js';
+import { packageComponentVerdict, declaredComponentExports, typesEntryFor } from './knowledge/componentShape.js';
+import { nearestNames } from './nameSimilarity.js';
 import { logger } from './logger.js';
+import { componentDirsFromStorybookConfig } from './knowledge/storybookConfig.js';
+import { readLocalComponent } from './knowledge/localComponentFacts.js';
+import { rankProps, type PropFact } from './knowledge/propExtractor.js';
 import { BaseFrameworkAdapter } from './framework-adapters/base-adapter.js';
 import { ReactAdapter } from './framework-adapters/react-adapter.js';
 import { VueAdapter } from './framework-adapters/vue-adapter.js';
@@ -26,15 +32,86 @@ export interface EnhancedComponent extends DiscoveredComponent {
   isComposite?: boolean; // Component that contains other components
 }
 
+/**
+ * A declaration-derived prop in the panel's `PropInfo` shape.
+ *
+ * `select` when the type enumerates its values, the primitive kinds when the
+ * type is one, `function` for handlers, and `unknown` — not `string` — for
+ * everything else: a control that guesses `string` for a ReactNode invites a
+ * value the component cannot render.
+ */
+export function propInfoFromFact(p: PropFact): PropInfo {
+  const t = (p.type || '').trim();
+  const kind: PropInfo['type'] = p.options && p.options.length > 1 ? 'select'
+    : t === 'boolean' ? 'boolean'
+    : t === 'number' ? 'number'
+    : t === 'string' ? 'string'
+    : /=>/.test(t) || t === 'function' || /^on[A-Z]/.test(p.name) ? 'function'
+    : /\[\]$|^(Readonly)?Array</.test(t) ? 'array'
+    : /ReactNode|ReactElement|JSX\.Element|^\{/.test(t) ? 'object'
+    : 'unknown';
+  return {
+    name: p.name,
+    type: kind,
+    ...(kind === 'select' && p.options ? { options: p.options } : {}),
+    ...(p.doc ? { description: p.doc } : {}),
+    required: p.required,
+    ...(p.defaultValue !== undefined ? { defaultValue: p.defaultValue } : {}),
+  };
+}
+
+/** Declaration facts first; a story's argTypes fill only what they did not say. */
+export function mergePropInfo(declared: PropInfo[], fromStory: PropInfo[]): PropInfo[] {
+  const byName = new Map<string, PropInfo>();
+  for (const p of declared) byName.set(p.name, { ...p });
+  for (const s of fromStory) {
+    const d = byName.get(s.name);
+    if (!d) { byName.set(s.name, { ...s }); continue; }
+    if (!d.description && s.description) d.description = s.description;
+    if (!d.control && s.control) d.control = s.control;
+    if ((!d.options || d.options.length === 0) && s.options?.length) { d.options = s.options; if (d.type === 'unknown') d.type = s.type; }
+    if (d.defaultValue === undefined && s.defaultValue !== undefined) d.defaultValue = s.defaultValue;
+  }
+  return [...byName.values()];
+}
+
 export class EnhancedComponentDiscovery {
   private config: StoryUIConfig;
   private discoveredComponents: Map<string, EnhancedComponent> = new Map();
   private validateAvailableComponents: Set<string> = new Set();
   private frameworkAdapter: BaseFrameworkAdapter;
+  /**
+   * Directories Storybook says this project's components live in.
+   *
+   * Supplied by the caller because reading Storybook is async and this class
+   * resolves sources synchronously. See setStorybookComponentDirs.
+   */
+  private storybookComponentDirs: string[] = [];
 
   constructor(config: StoryUIConfig) {
     this.config = config;
     this.frameworkAdapter = this.createFrameworkAdapter();
+  }
+
+  /**
+   * Tell discovery where the Storybook's own stories live.
+   *
+   * Local components were found by guessing at conventional directory names —
+   * src/components, src/ui, lib/components and six others. A team whose design
+   * system lives anywhere else got nothing, and "anywhere else" is common:
+   * src/design-system, src/kit, packages/ui, app/components.
+   *
+   * Measured: a four-component system in `src/housekit`, fully documented with
+   * stories and present in Storybook's own manifest, was invisible to
+   * discovery. The model was handed 237 "available components" that excluded
+   * it, and unsurprisingly composed from Mantine primitives instead — the
+   * exact failure of being dedicated to this Storybook's components.
+   *
+   * A component with a story in this Storybook IS part of this design system,
+   * by definition. That is not a convention to guess at; it is a fact to read.
+   */
+  setStorybookComponentDirs(dirs: string[]): void {
+    this.storybookComponentDirs = dirs;
   }
 
   /**
@@ -90,11 +167,66 @@ export class EnhancedComponentDiscovery {
       }
     }
 
+    // Components a per-component package exports by default, named from the
+    // package. Runs before manual config so a declaration can still correct it.
+    if (this.config.importPath?.startsWith('@') && !this.config.importPath.includes('/')) {
+      let added = 0;
+      for (const pkg of this.packagesInScope(this.config.importPath)) {
+        const found = this.defaultExportComponent(pkg);
+        if (!found || this.discoveredComponents.has(found.name)) continue;
+        this.discoveredComponents.set(found.name, {
+          name: found.name,
+          filePath: '',
+          source: { type: 'npm', path: pkg },
+          description: `${found.name} component`,
+          category: this.categorizeComponent(found.name, '') as any,
+          props: [],
+          slots: [],
+          examples: [],
+          __componentPath: found.importPath,
+          // How to import it, not just from where. Atlassian's Avatar is a
+          // DEFAULT export, and the model wrote `import { Avatar } from
+          // '@atlaskit/avatar'` — which compiles, then throws at runtime with
+          // "does not provide an export named 'Avatar'". The story rendered
+          // nothing.
+          __defaultExport: true,
+        } as EnhancedComponent);
+        this.validateAvailableComponents.add(found.name);
+        added++;
+      }
+      if (added) logger.log(`📦 ${added} component(s) named from their own package (default export)`);
+    }
+
     // Step 2: Apply manual configurations as override/fallback
     this.applyManualConfigurations();
 
     // Step 3: Resolve component conflicts and apply prioritization
     this.resolveComponentConflicts();
+
+    // Step 3b: what the project says it never wants offered.
+    this.applyExclusions();
+
+    /**
+     * Normalise names before anything downstream sees them.
+     *
+     * Some export parsers left trailing whitespace, so the catalog carried
+     * "AvatarContent ", "Grid " and "Manager ". A padded name matches no prop
+     * facts, no manifest entry and no declared import, and it reaches the model
+     * as an importable identifier that is not one. Trimming at the single point
+     * discovery returns is more reliable than auditing every parser that
+     * produces a name.
+     */
+    for (const [key, component] of [...this.discoveredComponents.entries()]) {
+      const trimmed = (component.name || '').trim();
+      if (trimmed === key && trimmed === component.name) continue;
+      this.discoveredComponents.delete(key);
+      if (!trimmed) continue;
+      if (!this.discoveredComponents.has(trimmed)) {
+        this.discoveredComponents.set(trimmed, { ...component, name: trimmed });
+      }
+      this.validateAvailableComponents.delete(key);
+      this.validateAvailableComponents.add(trimmed);
+    }
 
     const finalComponents = Array.from(this.discoveredComponents.values());
     logger.log(`✅ Discovery complete: ${finalComponents.length} components found`);
@@ -189,6 +321,106 @@ export class EnhancedComponentDiscovery {
   /**
    * Identify all potential component sources
    */
+  /**
+   * Packages published under an npm scope, when importPath names one.
+   *
+   * Returns [] for a normal package path so the single-package route is
+   * unchanged.
+   *
+   * Which packages under the scope are component packages is decided by what
+   * each one DECLARES: its types entry is read and every export classified
+   * (`knowledge/componentShape`). A package is excluded only when its
+   * declarations were reached and none of them is a component — tokens,
+   * analytics helpers, build tooling. A package with no declarations at all is
+   * admitted, because runtime discovery downstream can still judge its values.
+   *
+   * The previous filter was a name regex — `^(analytics|tokens?|theme|css|…)`
+   * — which would have dropped any `@scope/theme` package that happened to
+   * export a `ThemeProvider`, and said nothing about having done so. Every
+   * exclusion made here is logged with its reason.
+   */
+  private scopeVerdicts = new Map<string, string[]>();
+
+  private packagesInScope(importPath: string): string[] {
+    if (!importPath.startsWith('@') || importPath.includes('/')) return [];
+    const cached = this.scopeVerdicts.get(importPath);
+    if (cached) return cached;
+
+    const dir = path.join(this.getProjectRoot(), 'node_modules', importPath);
+    if (!fs.existsSync(dir)) return [];
+
+    const projectRoot = this.getProjectRoot();
+    const kept: string[] = [];
+    const excluded: string[] = [];
+    const admittedBlind: string[] = [];
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true })
+        .filter(e => e.isDirectory() && !e.name.startsWith('.'));
+      for (const e of entries) {
+        const name = `${importPath}/${e.name}`;
+        const { verdict, entry, excluded: types } = packageComponentVerdict(path.join(dir, e.name), projectRoot);
+        if (verdict === 'not-component') {
+          excluded.push(`${e.name} (${types.length} declared export(s), none a component)`);
+          continue;
+        }
+        if (verdict === 'unknown') admittedBlind.push(entry ? e.name : `${e.name} (no declarations entry)`);
+        kept.push(name);
+      }
+    } catch {
+      return [];
+    }
+    if (excluded.length) logger.log(`📦 ${importPath}: excluded ${excluded.length} package(s) whose declarations contain no component — ${excluded.join('; ')}`);
+    if (admittedBlind.length) logger.log(`📦 ${importPath}: admitted ${admittedBlind.length} package(s) without a readable component declaration, for runtime discovery — ${admittedBlind.join(', ')}`);
+    this.scopeVerdicts.set(importPath, kept);
+    return kept;
+  }
+
+  /**
+   * The component a per-component package exports by default.
+   *
+   * Atlassian's `@atlaskit/button/dist/types/index.d.ts` reads
+   * `export { default } from './old-button/button'`. The component has no
+   * exported NAME to discover — the package name IS the name. Scraping named
+   * exports instead produced `AvatarContent`, `Layering` and `Reanimate` while
+   * Button, Badge, Textfield and Lozenge were missing entirely.
+   *
+   * Runtime reflection cannot rescue this: these packages fail to import in
+   * plain Node, so the type declarations are the only readable source.
+   *
+   * Returns null when a package has no default export, so a scope containing
+   * utility packages does not gain phantom components.
+   */
+  private defaultExportComponent(packageName: string): { name: string; importPath: string } | null {
+    const pkgDir = packageDirFor(this.getProjectRoot(), packageName) ?? path.join(this.getProjectRoot(), 'node_modules', packageName);
+    const entry = typesEntryFor(pkgDir, '');
+    if (!entry) return null;
+
+    // The default export's own declaration decides, followed through
+    // `export { default } from './x'` to the file that declares it. A default
+    // export that is declared as a type, a config object or a context names no
+    // component, however the package is called.
+    const found = declaredComponentExports(entry, { projectRoot: this.getProjectRoot(), followBare: false });
+    if (!found.defaultExport) return null;
+    if (found.defaultExport === 'not-component') {
+      logger.log(`📦 ${packageName}: default export is declared as a non-component; not named from the package`);
+      return null;
+    }
+    if (found.defaultExport === 'unknown') {
+      logger.log(`📦 ${packageName}: default export admitted without a reachable declaration`);
+    }
+
+    // `@atlaskit/teams-avatar` -> `TeamsAvatar`
+    const leaf = packageName.split('/').pop() || packageName;
+    const name = leaf
+      .split(/[-_]/)
+      .filter(Boolean)
+      .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+      .join('');
+    if (!name) return null;
+
+    return { name, importPath: packageName };
+  }
+
   private identifySources(): ComponentSource[] {
     const sources: ComponentSource[] = [];
 
@@ -197,10 +429,33 @@ export class EnhancedComponentDiscovery {
     // Check for npm packages
     // Always run dynamic discovery for design systems
     if (this.config.importPath && !this.config.importPath.startsWith('.')) {
-      sources.push({
-        type: 'npm',
-        path: this.config.importPath
-      });
+      /**
+       * A SCOPE rather than a package — one npm package per component.
+       *
+       * Atlassian ships `@atlaskit/button`, `@atlaskit/badge`,
+       * `@atlaskit/textfield` and dozens more; there is no single module to
+       * point at. Pointing importPath at `@atlaskit` discovered 0 components,
+       * because `node_modules/@atlaskit` is a directory of packages and not a
+       * package. The same shape appears in Adobe Spectrum (`@react-spectrum/*`)
+       * and in most enterprise monorepo design systems.
+       *
+       * Naming the scope is an explicit statement — "my design system is
+       * @atlaskit" — so every package under it is a source. That needs no
+       * heuristic about which of a project's scopes is the design system, and
+       * no hand-listing of packages in config.
+       */
+      const scopePackages = this.packagesInScope(this.config.importPath);
+      if (scopePackages.length > 0) {
+        logger.log(`📦 ${this.config.importPath} is a scope: discovering ${scopePackages.length} package(s) under it`);
+        for (const pkg of scopePackages) {
+          sources.push({ type: 'npm', path: pkg });
+        }
+      } else {
+        sources.push({
+          type: 'npm',
+          path: this.config.importPath
+        });
+      }
     }
 
     // Also discover from layout components if specified
@@ -276,6 +531,34 @@ export class EnhancedComponentDiscovery {
       }
     }
 
+    // 2a. What .storybook/main.ts declares, which needs no running server.
+    //
+    // The live-index path below is authoritative but only exists when a dev
+    // server is answering. On a CLI run, in CI, or at cold start there is
+    // none, and the hardcoded convention list was then the only source — so a
+    // design system in an unguessed directory was invisible exactly when
+    // someone first tried the tool.
+    try {
+      for (const dir of componentDirsFromStorybookConfig(projectRoot)) {
+        const already = sources.some(s => s.type === 'local' && path.resolve(s.path) === path.resolve(dir));
+        if (!already) sources.push({ type: 'local', path: dir });
+      }
+    } catch {
+      // Config unreadable; the other sources still apply.
+    }
+
+    // 2b. Wherever Storybook says this project's own stories are.
+    //
+    // Authoritative, not conventional: it works for any directory layout,
+    // including ones nobody thought to add to the list above.
+    for (const dir of this.storybookComponentDirs) {
+      const already = sources.some(s => s.type === 'local' && path.resolve(s.path) === path.resolve(dir));
+      if (!already && fs.existsSync(dir)) {
+        logger.log(`📚 Storybook-declared component directory: ${dir}`);
+        sources.push({ type: 'local', path: dir });
+      }
+    }
+
     // 3. Scan alongside stories in src/stories directory (co-located components)
     // Story/test files are excluded downstream by isNonComponentFile().
     const storiesDir = path.join(projectRoot, 'src/stories');
@@ -316,38 +599,6 @@ export class EnhancedComponentDiscovery {
     // Functionality moved to guided installation process
   }
 
-  /**
-   * Check if a package is likely to contain React components (not utilities, types, etc.)
-   */
-  private isLikelyComponentPackage(packageName: string): boolean {
-    const name = packageName.toLowerCase();
-
-    // Skip obvious utility packages
-    const utilityPatterns = [
-      'types',
-      'utils', 'util', 'utilities',
-      'helpers', 'constants', 'config',
-      'analytics', 'tracking', 'metrics',
-      'tokens', 'theme', 'styles', 'css',
-      'icons', 'icon', // Icons are usually too numerous and specific
-      'editor-', // Editor plugins are usually too specific
-      'smart-card', // Requires SmartCardProvider wrapper - too complex for simple stories
-      '-types', '-utils', '-constants',
-      'babel-', 'webpack-', 'rollup-', 'eslint-',
-      'test', 'mock', 'fixture', 'storybook',
-      'codemod', 'migration',
-      'build', 'dev', 'cli'
-    ];
-
-    // Skip if contains utility patterns
-    if (utilityPatterns.some(pattern => name.includes(pattern))) {
-      return false;
-    }
-
-
-    return true;
-  }
-
     /**
    * Discover components from npm packages using dynamic runtime discovery
    */
@@ -371,7 +622,17 @@ export class EnhancedComponentDiscovery {
       }
     }
 
-    const packagePath = path.join(projectRoot, 'node_modules', normalizedPackageName);
+    /**
+     * Resolve, do not guess the layout.
+     *
+     * A literal join under the project's own node_modules is wrong for every
+     * monorepo, and wrong in two opposite ways: an npm workspace hoists the
+     * symlink to the repo root so the path does not exist, while a pnpm-style
+     * layout puts it locally but leaves the package unresolvable by Node. Both
+     * fixtures reported zero components.
+     */
+    const packagePath = packageDirFor(projectRoot, normalizedPackageName)
+      ?? path.join(projectRoot, 'node_modules', normalizedPackageName);
 
     // Helper function to load known components as fallback
     const loadFallbackComponents = () => {
@@ -442,8 +703,17 @@ export class EnhancedComponentDiscovery {
       } as EnhancedComponent);
     }
 
-    // Store the component names for validation
-    this.validateAvailableComponents = new Set(realComponents.map(c => c.name));
+    /**
+     * ACCUMULATE. This runs once per npm package.
+     *
+     * Assigning replaced the set on every call, so for a scope with 36
+     * packages the last one processed decided what the validator would accept.
+     * The catalog kept offering all 168 components while validation knew about
+     * a handful, so the model was told to use `Box`, rejected for using it,
+     * told again by the healing loop, rejected again, and generation failed
+     * outright — three cases in a row producing no code at all.
+     */
+    for (const c of realComponents) this.validateAvailableComponents.add(c.name);
   }
 
 
@@ -747,8 +1017,27 @@ export class EnhancedComponentDiscovery {
       if (this.isNonComponentFile(file)) {
         continue;
       }
+      // Vite's App.tsx / main.tsx at the root of `src` are the application,
+      // not the design system — a fresh project offered `App · 0 props` in
+      // the drawer and an import of it would have failed. Only entries
+      // DIRECTLY in the source root are skipped; a components directory of
+      // the same name deeper down is still read.
+      if (path.dirname(file) === path.resolve(source.path)
+          && /^(App|main|index|vite-env\.d)\.[jt]sx?$/.test(path.basename(file))
+          && /(^|\/)src$/.test(path.resolve(source.path))) {
+        logger.log(`   ↷ skipping application entry ${path.basename(file)} at the source root`);
+        continue;
+      }
 
       const content = fs.readFileSync(file, 'utf-8');
+
+      // A barrel index re-exports and declares nothing; including it would add
+      // a component named after the directory that no file actually defines.
+      // Decided by reading the file, not by its name — an index.tsx that DOES
+      // declare a component is exactly the layout we were previously blind to.
+      if (/(^|\/)index\.[jt]sx?$/i.test(file) && !this.declaresComponent(content)) {
+        continue;
+      }
       
       // Use framework adapter for component extraction
       const componentNames = this.frameworkAdapter.extractComponentNamesFromFile(file, content);
@@ -763,7 +1052,26 @@ export class EnhancedComponentDiscovery {
           continue;
         }
 
-        let props = this.extractPropsFromFile(content);
+        /**
+         * The component's own declaration, read with the TypeScript AST.
+         *
+         * The regex it replaces required `{` to follow the word `Props`, so
+         * `interface XProps extends Omit<React.HTMLAttributes<…>, …>` — the
+         * shape every hand-written React design system uses — yielded nothing,
+         * and its destructuring reader wanted `}: Type` where forwardRef writes
+         * `}, ref)`. Measured on a 46-component system: 13 components with
+         * zero props, and the model bypassed the purpose-built organisms for
+         * the exact prompts they exist for. The AST path resolves the props
+         * type the DECLARATION names, follows `extends`/intersections into
+         * local files, and keeps the regex only as a fallback for files it
+         * cannot read (Vue, Svelte, untyped JS).
+         */
+        const declared = /\.(tsx|ts|jsx|js|mts|mjs)$/.test(file)
+          ? readLocalComponent(file, componentName)
+          : null;
+        let props = declared && declared.props.length > 0
+          ? rankProps(declared.props).map(p => p.name)
+          : this.extractPropsFromFile(content);
 
         // Always check co-located story file for additional props (argTypes, args)
         // Story files often define props that aren't in the component source (e.g., disabled, children)
@@ -774,14 +1082,21 @@ export class EnhancedComponentDiscovery {
           }
         }
 
-        // Extract rich prop type information from story file argTypes
-        const propTypes = this.extractRichPropsFromStoryFile(file);
+        // Rich prop information: the declaration first, the story's argTypes
+        // filling what it did not say (a description, a control hint).
+        const storyPropTypes = this.extractRichPropsFromStoryFile(file);
+        const propTypes = declared && declared.props.length > 0
+          ? mergePropInfo(declared.props.map(propInfoFromFact), storyPropTypes)
+          : storyPropTypes;
 
         this.discoveredComponents.set(componentName, {
           name: componentName,
           filePath: file,
           props,
           propTypes: propTypes.length > 0 ? propTypes : undefined,
+          // Standard attributes the props type extends and forwards — a fact
+          // worth one line in the catalog, never an enumeration.
+          ...(declared?.passthrough ? { passthroughAttributes: declared.passthrough } : {}),
           source,
           description: `${componentName} component`,
           category: this.categorizeComponent(componentName, content),
@@ -795,14 +1110,49 @@ export class EnhancedComponentDiscovery {
   /**
    * Check if a file should be skipped (stories, tests, etc.)
    */
+  /**
+   * Does this file DEFINE a component, as opposed to re-exporting one?
+   *
+   * A function/class/const declaration returning markup counts; a file whose
+   * only statements are `export ... from` does not.
+   */
+  private declaresComponent(content: string): boolean {
+    const declaration = /(?:export\s+)?(?:default\s+)?(?:function|class)\s+[A-Z]\w*|(?:const|let|var)\s+[A-Z]\w*\s*[:=]/;
+    if (!declaration.test(content)) return false;
+    // Guard against a barrel that merely aliases: `export { Button as Btn } from './button'`
+    const reExportOnly = content
+      .split('\n')
+      .filter(l => l.trim() && !l.trim().startsWith('//') && !l.trim().startsWith('*') && !l.trim().startsWith('/*'))
+      .every(l => /^\s*(export|import)\s/.test(l));
+    return !reExportOnly;
+  }
+
   private isNonComponentFile(filePath: string): boolean {
+    // Story UI's own panel is vendored into the consuming project (usually
+    // src/stories/StoryUI/), which sits inside a directory we also scan for
+    // co-located components. Without this, our chat panel's internals get
+    // advertised to the model as part of the user's design system — and because
+    // they are local files they carry real extracted props, so they became the
+    // richest entries in an otherwise propless catalog. Exclude by PATH: a name
+    // prefix check misses VoiceCanvas, VoiceControls, DesignContextPanel, and
+    // anything else added to the panel later.
+    const normalized = filePath.split(path.sep).join('/');
+    if (/\/(StoryUI|story-ui)\//i.test(normalized)) {
+      return true;
+    }
+
     const fileName = path.basename(filePath);
     const skipPatterns = [
       /\.stories?\.(tsx?|jsx?)$/i,    // Story files
       /\.test\.(tsx?|jsx?)$/i,        // Test files
       /\.spec\.(tsx?|jsx?)$/i,        // Spec files
       /\.d\.ts$/i,                    // Type definition files
-      /index\.(tsx?|jsx?)$/i,         // Index files (usually just exports)
+      // NOT index files. `ComponentName/index.tsx` is the dominant layout for
+      // homegrown and monorepo design systems, where the implementation lives
+      // in index.tsx and the folder name is the component. Skipping them by
+      // name made every component in such a system invisible, so the model
+      // composed from npm primitives instead. An index that only re-exports is
+      // filtered below by reading it, which is a fact rather than a guess.
       /\.config\.(tsx?|jsx?)$/i,      // Config files
       /\.mock\.(tsx?|jsx?)$/i,        // Mock files
     ];
@@ -814,8 +1164,16 @@ export class EnhancedComponentDiscovery {
    * Check if a component should be skipped based on name or content
    */
   private shouldSkipComponent(componentName: string, content: string): boolean {
-    // Skip Story UI components
-    if (componentName === 'StoryUIPanel' || componentName.startsWith('StoryUI')) {
+    // Skip Story UI's own components. The path check in isNonComponentFile is
+    // the primary guard; this covers a panel file that has been moved or
+    // renamed out of the expected directory.
+    const STORY_UI_OWN = new Set([
+      'StoryUIPanel',
+      'DesignContextPanel',
+      'VoiceCanvas',
+      'VoiceControls',
+    ]);
+    if (STORY_UI_OWN.has(componentName) || componentName.startsWith('StoryUI')) {
       return true;
     }
 
@@ -877,16 +1235,34 @@ export class EnhancedComponentDiscovery {
       names.add(match[3]);
     }
 
-    // 2. Check for grouped exports: export { Name1, Name2 }
+    /**
+     * 2. Grouped exports: `export { Name }`, `export { X as Y }`.
+     *
+     * The EXPORTED name is the alias, not the local one. `export { X as Y }`
+     * means a consumer writes `import { Y }`; the local name is private and
+     * often not importable at all.
+     *
+     * Taking the name before `as` dropped every component a package re-exports
+     * from a default — `export { default as Box } from './components/box'`
+     * yielded the word `default`, which fails the PascalCase test and vanished.
+     * Measured on `@atlaskit/primitives`: `Grid` and `Bleed` were found because
+     * they happen to be plain named re-exports, while `Box`, `Inline`, `Stack`,
+     * `Flex`, `Text`, `Pressable` and `MetricText` were all invisible. That is
+     * the entire layout primitive set of the design system, which is why
+     * Atlassian compositions had nothing to lay out with and fell back to raw
+     * pixel values.
+     */
     const groupedExportRegex = /export\s*\{\s*([^}]+)\s*\}/g;
     while ((match = groupedExportRegex.exec(content)) !== null) {
       const exports = match[1].split(',');
       for (const exp of exports) {
-        // Handle "Name" or "Name as Alias" - we want the original name
-        const namePart = exp.trim().split(/\s+as\s+/)[0].trim();
-        // Only include PascalCase names (components start with uppercase)
-        if (/^[A-Z][A-Za-z0-9]*$/.test(namePart)) {
-          names.add(namePart);
+        const parts = exp.trim().split(/\s+as\s+/).map(p => p.trim()).filter(Boolean);
+        const exported = parts[parts.length - 1];
+        // `export { default }` with no alias exports no NAME to import.
+        if (!exported || exported === 'default') continue;
+        // Only PascalCase names (components start with uppercase).
+        if (/^[A-Z][A-Za-z0-9]*$/.test(exported)) {
+          names.add(exported);
         }
       }
     }
@@ -914,7 +1290,9 @@ export class EnhancedComponentDiscovery {
     const props: string[] = [];
 
     // Extract from TypeScript interfaces
-    const interfaceMatch = content.match(/interface\s+\w*Props\s*{([^}]+)}/);
+    // `extends …` may sit between the name and the brace; the AST path above
+    // is the real reader, this is the fallback for files it cannot parse.
+    const interfaceMatch = content.match(/interface\s+\w*Props\b[^{]*{([^}]+)}/);
     if (interfaceMatch) {
       const propsContent = interfaceMatch[1];
       const propMatches = propsContent.matchAll(/^\s*(\w+)(\?)?:/gm);
@@ -1540,6 +1918,27 @@ export class EnhancedComponentDiscovery {
   /**
    * Apply manual component configurations
    */
+  /**
+   * Remove what the config excludes, from both the catalog and the validation
+   * set. Until now the config could only add or override: RemoveScroll,
+   * MantineContext and friends could not be taken out of the catalog by any
+   * setting, and the blacklist was code.
+   */
+  private applyExclusions(): void {
+    const names = new Set<string>();
+    for (const n of (this.config as any).excludeComponents ?? []) if (typeof n === 'string' && n.trim()) names.add(n.trim());
+    for (const c of this.config.components ?? []) if ((c as any).exclude === true && c.name) names.add(c.name);
+    if (names.size === 0) return;
+    let removed = 0;
+    const missing: string[] = [];
+    for (const name of names) {
+      const had = this.discoveredComponents.delete(name);
+      this.validateAvailableComponents.delete(name);
+      if (had) removed++; else missing.push(name);
+    }
+    logger.log(`🚫 Excluded ${removed} component(s) by config${missing.length ? ` (not found, nothing to exclude: ${missing.join(', ')})` : ''}`);
+  }
+
   private applyManualConfigurations(): void {
     // Add main components from config
     if (this.config.components && Array.isArray(this.config.components)) {
@@ -1548,7 +1947,14 @@ export class EnhancedComponentDiscovery {
 
         this.discoveredComponents.set(comp.name, {
           name: comp.name,
-          filePath: '',
+          // Keep the discovered file path. Declaring a component in config used
+          // to blank it, which destroyed the one field import rewriting needs:
+          // buildComponentToImportMap maps a component to its module by taking
+          // its filePath relative to componentsPath, and skips anything without
+          // one. So declaring `Card` in story-ui.config.js made Card's import
+          // UNRESOLVABLE — the config that exists to improve fidelity was the
+          // thing breaking it.
+          filePath: existing?.filePath || '',
           props: comp.props || existing?.props || [],
           source: {
             type: 'custom-elements',
@@ -1557,8 +1963,17 @@ export class EnhancedComponentDiscovery {
           description: comp.description || existing?.description || `${comp.name} component`,
           category: comp.category || existing?.category || this.categorizeComponent(comp.name, ''),
           slots: comp.slots || existing?.slots || [],
-          examples: comp.examples || existing?.examples || []
-        });
+          examples: comp.examples || existing?.examples || [],
+          // The declared import specifier. Everything else a project writes
+          // down was already honoured here; this field was dropped, and it is
+          // the one that decides whether the story can import anything at all.
+          // college-town declares `CardHeader -> '@/components/card/card'` for
+          // 22 components; without this the adapter fell back to a shadcn-shaped
+          // guess, `@/components/card-header`, which is not a module. 41% of
+          // that project's generated imports 404'd and most stories rendered
+          // blank while scoring full marks on component selection.
+          __componentPath: comp.importPath || existing?.__componentPath,
+        } as EnhancedComponent);
       }
     }
 
@@ -1569,7 +1984,14 @@ export class EnhancedComponentDiscovery {
 
         this.discoveredComponents.set(comp.name, {
           name: comp.name,
-          filePath: '',
+          // Keep the discovered file path. Declaring a component in config used
+          // to blank it, which destroyed the one field import rewriting needs:
+          // buildComponentToImportMap maps a component to its module by taking
+          // its filePath relative to componentsPath, and skips anything without
+          // one. So declaring `Card` in story-ui.config.js made Card's import
+          // UNRESOLVABLE — the config that exists to improve fidelity was the
+          // thing breaking it.
+          filePath: existing?.filePath || '',
           props: comp.props || existing?.props || [],
           source: {
             type: 'custom-elements',
@@ -1578,8 +2000,9 @@ export class EnhancedComponentDiscovery {
           description: comp.description || existing?.description || `${comp.name} component`,
           category: comp.category || existing?.category || this.categorizeComponent(comp.name, ''),
           slots: comp.slots || existing?.slots || [],
-          examples: comp.examples || existing?.examples || []
-        });
+          examples: comp.examples || existing?.examples || [],
+          __componentPath: comp.importPath || existing?.__componentPath,
+        } as EnhancedComponent);
       }
     }
   }
@@ -1592,20 +2015,31 @@ export class EnhancedComponentDiscovery {
     invalid: string[];
     suggestions: Map<string, string>;
   }> {
-    // If we have real component validation data, use it
-    if (this.validateAvailableComponents.size > 0) {
+    /**
+     * Anything the CATALOG offers is valid, by construction.
+     *
+     * These were two independently maintained sets, and when they diverged the
+     * model was told to use a component and then punished for using it — an
+     * unwinnable loop that burned every healing attempt and returned no code.
+     * The catalog is what the model is shown, so it is the authority on what
+     * the model may use; the validation set can only ever add to it.
+     */
+    const allowed = new Set<string>(this.validateAvailableComponents);
+    for (const name of this.discoveredComponents.keys()) allowed.add(name);
+
+    if (allowed.size > 0) {
       const valid: string[] = [];
       const invalid: string[] = [];
       const suggestions = new Map<string, string>();
 
       for (const componentName of componentNames) {
-        if (this.validateAvailableComponents.has(componentName)) {
+        if (allowed.has(componentName)) {
           valid.push(componentName);
         } else {
           invalid.push(componentName);
 
           // Find a similar component
-          const suggestion = this.findSimilarComponent(componentName, Array.from(this.validateAvailableComponents));
+          const suggestion = this.findSimilarComponent(componentName, Array.from(allowed));
           if (suggestion) {
             suggestions.set(componentName, suggestion);
           }
@@ -1632,55 +2066,31 @@ export class EnhancedComponentDiscovery {
   }
 
   /**
-   * Find a similar component name
+   * The nearest discovered name, by similarity. No fixed vocabulary: the
+   * `'stack' → BlockStack, InlineStack, LegacyStack` table this replaces was
+   * Polaris's, and answered wrongly for every other design system.
    */
   private findSimilarComponent(targetName: string, availableComponents: string[]): string | null {
-    if (!targetName || typeof targetName !== 'string') {
-      return null;
-    }
-    const targetLower = targetName.toLowerCase();
+    if (!targetName || typeof targetName !== 'string') return null;
+    return nearestNames(targetName, availableComponents.filter(n => typeof n === 'string'), 1)[0] ?? null;
+  }
 
-    // Direct substring matches
-    for (const available of availableComponents) {
-      if (!available || typeof available !== 'string') {
-        continue;
-      }
-      const availableLower = available.toLowerCase();
-      if (availableLower.includes(targetLower) || targetLower.includes(availableLower)) {
-        return available;
-      }
-    }
-
-    // Special case mappings for common mistakes
-    const commonMappings: Record<string, string[]> = {
-      'stack': ['BlockStack', 'InlineStack', 'LegacyStack'],
-      'layout': ['Layout', 'Box'],
-      'container': ['Box', 'Layout'],
-      'grid': ['Grid', 'InlineGrid'],
-      'text': ['Text'],
-      'button': ['Button'],
-      'card': ['Card', 'LegacyCard']
-    };
-
-    const mapping = commonMappings[targetLower];
-    if (mapping) {
-      for (const suggestion of mapping) {
-        if (availableComponents.includes(suggestion)) {
-          return suggestion;
-        }
-      }
-    }
-
-    return null;
+  /**
+   * Everything discovery found, for callers that need more than names —
+   * import-isolation reports where a wrongly-imported component actually lives.
+   */
+  getDiscoveredComponents(): EnhancedComponent[] {
+    return Array.from(this.discoveredComponents.values());
   }
 
   /**
    * Get the available component names for validation
    */
   getAvailableComponentNames(): string[] {
-    if (this.validateAvailableComponents.size > 0) {
-      return Array.from(this.validateAvailableComponents).sort();
-    }
-    return Array.from(this.discoveredComponents.keys()).sort();
+    // Union, for the same reason validateComponentNames takes one: returning
+    // only the validation set hid components the catalog was actively offering.
+    const all = new Set<string>(this.validateAvailableComponents);
+    for (const name of this.discoveredComponents.keys()) all.add(name);
+    return Array.from(all).sort();
   }
 }

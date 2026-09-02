@@ -12,6 +12,9 @@ export { BaseLLMProvider } from './base-provider.js';
 
 // Provider implementations
 export { ClaudeProvider, CLAUDE_MODELS } from './claude-provider.js';
+import { CLAUDE_SMALL_MODEL } from './claude-provider.js';
+import { OPENAI_SMALL_MODEL } from './openai-provider.js';
+import { GEMINI_SMALL_MODEL } from './gemini-provider.js';
 export { OpenAIProvider, OPENAI_MODELS } from './openai-provider.js';
 export { GeminiProvider, GEMINI_MODELS } from './gemini-provider.js';
 
@@ -170,6 +173,21 @@ export function getProvider(type: ProviderType): LLMProvider | undefined {
 /**
  * Convenience function to get the default provider
  */
+/**
+ * The cheap model of a provider, for calls where quality does not matter:
+ * a story title, a two-sentence chat summary. Generation keeps the model the
+ * user chose.
+ */
+export function smallModelFor(provider?: ProviderType | string): string | undefined {
+  const type = (provider as ProviderType | undefined) || getDefaultProvider()?.type;
+  switch (type) {
+    case 'claude': return CLAUDE_SMALL_MODEL;
+    case 'openai': return OPENAI_SMALL_MODEL;
+    case 'gemini': return GEMINI_SMALL_MODEL;
+    default: return undefined;
+  }
+}
+
 export function getDefaultProvider(): LLMProvider | undefined {
   return getProviderRegistry().getDefault();
 }
@@ -195,7 +213,7 @@ export function initializeFromEnv(): void {
   if (claudeKey) {
     registry.configureProvider('claude', {
       apiKey: claudeKey,
-      model: resolveModelAlias(process.env.CLAUDE_MODEL || 'claude-sonnet-5'),
+      model: resolveModelAlias(process.env.CLAUDE_MODEL || 'claude-opus-5'),
     });
     logger.info('Claude provider configured from environment');
   }

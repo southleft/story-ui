@@ -13,6 +13,20 @@
     "./panel": {
       "import": "./dist/templates/StoryUI/index.js",
       "types": "./dist/templates/StoryUI/index.d.ts"
+    },
+    "./workspace": {
+      "import": "./dist/templates/StoryUIV2/Workspace.js",
+      "types": "./dist/templates/StoryUIV2/Workspace.d.ts"
+    },
+    "./workspace.css": "./dist/templates/StoryUIV2/workspace.css",
+    "./manager": {
+      "types": "./dist/templates/StoryUIV2/managerTab.bundle.d.ts",
+      "import": "./dist/templates/StoryUIV2/managerTab.bundle.js"
+    },
+    "./manager.css": "./dist/templates/StoryUIV2/managerTab.bundle.css",
+    "./api-base": {
+      "types": "./dist/templates/StoryUIV2/apiBase.d.ts",
+      "import": "./dist/templates/StoryUIV2/apiBase.js"
     }
   },
   "bin": {
@@ -21,13 +35,17 @@
   "files": [
     "dist",
     "templates/StoryUI",
+    "templates/StoryUIV2",
     ".env.sample",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "templates/story-ui-considerations.md",
+    "templates/story-ui-docs-README.md",
+    "scripts/bundle-workspace-manager.mjs"
   ],
   "scripts": {
-    "build": "tsc && npm run copy-templates",
-    "copy-templates": "node -e \"const fs=require('fs');const path=require('path');const src='templates/StoryUI';const dst='dist/templates/StoryUI';['.css','.mdx','.tsx','.ts'].forEach(ext=>{fs.readdirSync(src).filter(f=>f.endsWith(ext)).forEach(f=>fs.copyFileSync(path.join(src,f),path.join(dst,f)))});const vsrc=path.join(src,'voice');const vdst=path.join(dst,'voice');if(fs.existsSync(vsrc)){fs.mkdirSync(vdst,{recursive:true});fs.readdirSync(vsrc).filter(f=>f.endsWith('.tsx')||f.endsWith('.ts')).forEach(f=>fs.copyFileSync(path.join(vsrc,f),path.join(vdst,f)));const csrc=path.join(vsrc,'canvas');const cdst=path.join(vdst,'canvas');if(fs.existsSync(csrc)){fs.mkdirSync(cdst,{recursive:true});fs.readdirSync(csrc).filter(f=>f.endsWith('.tsx')||f.endsWith('.ts')).forEach(f=>fs.copyFileSync(path.join(csrc,f),path.join(cdst,f)))}}console.log('Template files copied to dist/')\"",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc && npm run copy-templates",
+    "copy-templates": "node -e \"const fs=require('fs');const path=require('path');const copyDir=(src,dst)=>{if(!fs.existsSync(src))return;fs.mkdirSync(dst,{recursive:true});for(const e of fs.readdirSync(src,{withFileTypes:true})){const s=path.join(src,e.name),t=path.join(dst,e.name);if(e.isDirectory())copyDir(s,t);else if(/\\\\.(css|mdx|tsx|ts)$/.test(e.name))fs.copyFileSync(s,t);}};copyDir('templates/StoryUI','dist/templates/StoryUI');copyDir('templates/StoryUIV2','dist/templates/StoryUIV2');console.log('Template files copied to dist/')\" && node scripts/bundle-workspace-manager.mjs",
     "start": "npm run build && node dist/mcp-server/index.js",
     "mcp": "npm run build && node dist/mcp-server/mcp-stdio-server.js",
     "dev": "tsc --watch",
@@ -67,7 +85,7 @@
   },
   "homepage": "https://github.com/southleft/story-ui#readme",
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=20.0.0"
   },
   "publishConfig": {
     "access": "public",
@@ -75,6 +93,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.23.0",
+    "@radix-ui/themes": "^3.3.0",
     "chalk": "^5.3.0",
     "commander": "^11.0.0",
     "cors": "^2.8.5",
@@ -107,21 +126,22 @@
     "commitizen": "^4.3.1",
     "concurrently": "^8.2.0",
     "cz-conventional-changelog": "^3.3.0",
+    "esbuild": "^0.25.5",
     "husky": "^9.1.7",
     "semantic-release": "^24.2.0",
     "ts-node": "^10.9.2",
     "vitest": "^4.1.0"
   },
   "peerDependencies": {
-    "@storybook/react": ">=6.0.0",
+    "@storybook/react": ">=8.0.0",
     "react": ">=16.8.0"
   },
   "peerDependenciesMeta": {
     "react": {
-      "optional": false
+      "optional": true
     },
     "@storybook/react": {
-      "optional": false
+      "optional": true
     }
   },
   "config": {

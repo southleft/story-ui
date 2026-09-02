@@ -80,8 +80,30 @@ export interface ChatOptions {
   topK?: number;
   stopSequences?: string[];
   systemPrompt?: string;
+  /**
+   * Send the system prompt as a cacheable block so the static prefix of a
+   * prompt is read from the provider's prompt cache on repeat calls instead
+   * of being re-billed in full. Defaults to true. Only Claude acts on it
+   * today; other providers ignore it.
+   */
+  cacheSystemPrompt?: boolean;
+  /** Reasoning effort for models that take one: low | medium | high | xhigh | max. */
+  effort?: string;
+  /**
+   * Wall-clock budget for a buffered (non-streaming) call, in ms. The
+   * provider's configured timeout applies when absent. Vision turns need
+   * more than the 120s default: a full-page composition from a screenshot
+   * on Opus 5 timed out on it every time.
+   */
+  timeoutMs?: number;
   stream?: boolean;
   tools?: ToolDefinition[];
+  /**
+   * Caller-side abort — e.g. a verification-phase budget cancelling an
+   * in-flight repair call. Combined with the provider's own wall-clock
+   * timeout; an abort is never retried.
+   */
+  signal?: AbortSignal;
 }
 
 // Tool/Function calling support
@@ -107,18 +129,45 @@ export interface ChatResponse {
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
+    /** Prompt tokens served from the provider's prompt cache (Claude). */
+    cacheReadInputTokens?: number;
+    /** Prompt tokens written to the provider's prompt cache on this call (Claude). */
+    cacheCreationInputTokens?: number;
   };
   toolCalls?: ToolCall[];
   raw?: any; // Original response from provider
 }
 
+/**
+ * Why a stream ended, normalised across providers. The named members are the
+ * ones callers branch on ('length' is the truncation signal); the open string
+ * lets a provider pass through a value this union has not learned yet rather
+ * than mislabel it as a clean stop.
+ */
+export type StreamFinishReason =
+  | 'stop'
+  | 'length'
+  | 'content_filter'
+  | 'tool_use'
+  | 'tool_calls'
+  | 'error'
+  | (string & {});
+
 // Streaming response
 export interface StreamChunk {
-  type: 'text' | 'tool_call' | 'error' | 'done';
+  type: 'text' | 'thinking' | 'tool_call' | 'error' | 'done';
   content?: string;
   toolCall?: Partial<ToolCall>;
   error?: string;
   usage?: ChatResponse['usage'];
+  /**
+   * On the 'done' chunk only: the provider's stop reason. Left undefined when
+   * the stream ended without the provider ever saying why (a cut connection),
+   * so "absent" and "stopped cleanly" never look the same to a caller.
+   */
+  finishReason?: StreamFinishReason;
+  /** On the 'done' chunk: the model that actually served the request. */
+  model?: string;
 }
 
 // Image analysis response

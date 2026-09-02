@@ -10,7 +10,35 @@ import React, { useState, useEffect, useRef, useCallback, useReducer } from 'rea
 import './StoryUIPanel.css';
 import { VoiceControls } from './voice/VoiceControls';
 import { VoiceCanvas, type VoiceCanvasHandle } from './voice/VoiceCanvas';
+import { DesignContextPanel } from './DesignContextPanel';
+import { VerificationBadge } from './VerificationBadge';
+import { HandoffDialog } from './HandoffDialog';
 import type { VoiceCommand } from './voice/types';
+
+/**
+ * Every call to the Story UI server goes through this so a server that
+ * requires STORY_UI_TOKEN can be reached: the token comes from
+ * window.__STORY_UI_TOKEN__ or VITE_STORY_UI_TOKEN, or from the cookie the
+ * server sets when the site is first opened with ?token= (sent automatically).
+ */
+function storyUiToken(): string | null {
+  try {
+    const w = window as unknown as { __STORY_UI_TOKEN__?: string };
+    if (typeof w.__STORY_UI_TOKEN__ === 'string' && w.__STORY_UI_TOKEN__) return w.__STORY_UI_TOKEN__;
+  } catch { /* no window */ }
+  try {
+    const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
+    if (env?.VITE_STORY_UI_TOKEN) return env.VITE_STORY_UI_TOKEN;
+  } catch { /* no import.meta.env */ }
+  return null;
+}
+function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const token = storyUiToken();
+  if (!token) return fetch(input, init);
+  const headers = new Headers(init.headers ?? {});
+  if (!headers.has('authorization')) headers.set('authorization', `Bearer ${token}`);
+  return fetch(input, { ...init, headers });
+}
 
 // ============================================
 // Types & Interfaces
@@ -22,6 +50,13 @@ interface Message {
   isStreaming?: boolean;
   streamingData?: StreamingState;
   attachedImages?: AttachedImage[];
+  /**
+   * Persisted thumbnails for images attached to this message. attachedImages
+   * holds File objects and blob: URLs, neither of which survives being written
+   * to localStorage or the manifest — without these, reopening a chat lost the
+   * reference image entirely.
+   */
+  thumbnails?: string[];
   /** Follow-up refinement prompts rendered as clickable chips (AI messages). */
   suggestions?: string[];
   /** Generated story code, shown behind a "View code" toggle (AI messages). */
@@ -32,8 +67,21 @@ interface Message {
   retryInput?: string;
   /** Storybook entry ID once the new story is indexed — enables "Open story". */
   storyEntryId?: string;
+  /** Browser verification for the story this message produced. */
+  verification?: VerificationResult;
+  /** File this message produced, so it can be handed off to a branch. */
+  storyFileName?: string;
+  storyTitle?: string;
+  /**
+   * Set when the story file was written but never showed up in Storybook's
+   * index. Storybook's dev-server watcher can stop noticing new files, and
+   * silently rendering no action left the story unreachable.
+   */
+  storyIndexStalled?: { storybookId: string; fileName?: string };
   /** Generation duration — rendered as a muted metadata stamp, not prose. */
   generationTimeMs?: number;
+  /** Storybook component id (persisted) — resolved to a full entry id on chat open. */
+  storybookComponentId?: string;
 }
 
 interface ChatSession {
@@ -51,6 +99,8 @@ interface AttachedImage {
   preview: string;
   base64: string;
   mediaType: string;
+  /** Small data-URL copy that survives persistence (blob URLs and File do not). */
+  thumbnail?: string;
 }
 
 interface IntentPreview {
@@ -77,6 +127,11 @@ interface ValidationFeedback {
   isValid: boolean;
   errors?: string[];
   autoFixApplied?: boolean;
+  /**
+   * What the auto-fix actually changed, one clause each ("rewrote 3 import
+   * paths to 'vuetify/components'"). Absent on a server that predates it.
+   */
+  fixDetails?: string[];
 }
 
 interface RetryInfo {
@@ -101,6 +156,22 @@ interface StyleChoice {
   reason?: string;
 }
 
+interface VerificationFinding {
+  id: string;
+  severity: 'blocker' | 'warning' | 'info';
+  class: 'code' | 'a11y' | 'interaction' | 'infrastructure';
+  message: string;
+  evidence?: string;
+  selector?: string;
+}
+
+interface VerificationResult {
+  outcome: 'verified' | 'issues' | 'not_verified';
+  reason?: string;
+  findings: VerificationFinding[];
+  metrics?: Record<string, number | string | boolean | string[]>;
+}
+
 interface CompletionFeedback {
   success: boolean;
   isFallback?: boolean; // True when a fallback error placeholder was created
@@ -108,6 +179,8 @@ interface CompletionFeedback {
   fileName?: string;
   title?: string;
   code?: string;
+  /** What the browser actually observed after rendering the story. */
+  verification?: VerificationResult;
   summary: { action: string; details: string };
   componentsUsed: ComponentUsage[];
   layoutChoices: LayoutChoice[];
@@ -348,6 +421,18 @@ const PROVIDER_PREFS_KEY = 'story-ui-provider-prefs';
 const PENDING_GEN_KEY = 'story-ui-pending-generation';
 const MAX_IMAGES = 4;
 const MAX_IMAGE_SIZE_MB = 20;
+// Vision models downsample anything larger than ~1568px on the long edge, so
+// sending a raw retina screenshot just burns bytes and tokens for no extra
+// detail. Downscaling client-side is what makes big screenshots work at all.
+const MAX_IMAGE_DIMENSION = 1568;
+// Above this, re-encode as JPEG — full-page screenshots are far smaller as JPEG
+// and the fidelity loss is irrelevant for layout recognition.
+const JPEG_FALLBACK_BYTES = 1.5 * 1024 * 1024;
+const JPEG_QUALITY = 0.85;
+// Persisted chat thumbnails. Small enough that a few of them per chat stay well
+// inside the localStorage quota.
+const THUMB_MAX_DIMENSION = 240;
+const THUMB_QUALITY = 0.6;
 
 // ============================================
 // Helper Functions
@@ -478,7 +563,7 @@ async function detectStorybookMcp(): Promise<boolean> {
     const storybookOrigin = typeof window !== 'undefined' ? window.location.origin : '';
     const mcpEndpoint = `${storybookOrigin}/mcp`;
 
-    const response = await fetch(mcpEndpoint, {
+    const response = await apiFetch(mcpEndpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -544,7 +629,7 @@ function saveStorybookMcpPref(enabled: boolean): void {
 
 async function testMCPConnection(): Promise<{ connected: boolean; error?: string }> {
   try {
-    const response = await fetch(PROVIDERS_API(), { method: 'GET' });
+    const response = await apiFetch(PROVIDERS_API(), { method: 'GET' });
     if (response.ok) return { connected: true };
     return { connected: false, error: `Server returned ${response.status}` };
   } catch (e) {
@@ -566,7 +651,7 @@ async function testMCPConnection(): Promise<{ connected: boolean; error?: string
  */
 async function fetchStorybookOrder(): Promise<Map<string, number>> {
   try {
-    const response = await fetch('/index.json');
+    const response = await apiFetch('/index.json');
     if (!response.ok) return new Map();
     const data = await response.json();
     const entries: Record<string, any> = data.entries ?? {};
@@ -588,7 +673,7 @@ async function fetchStorybookOrder(): Promise<Map<string, number>> {
 
 async function syncWithActualStories(): Promise<ChatSession[]> {
   try {
-    const response = await fetch(MANIFEST_API());
+    const response = await apiFetch(MANIFEST_API());
     if (!response.ok) throw new Error('manifest unavailable');
     const data = await response.json();
     const entries: Record<string, any> = data.stories ?? {};
@@ -597,7 +682,7 @@ async function syncWithActualStories(): Promise<ChatSession[]> {
     const sessions: ChatSession[] = Object.values(entries)
       .filter((e: any) => e.source !== 'voice-canvas') // scratchpad excluded from chat list
       .map((e: any) => {
-        const serverConv = (e.conversation ?? []).map((m: any) => ({ role: m.role as 'user' | 'ai', content: m.content }));
+        const serverConv = (e.conversation ?? []).map((m: any) => ({ role: m.role as 'user' | 'ai', content: m.content, thumbnails: m.thumbnails }));
         // If no conversation history but the original prompt is known, synthesize one so
         // users can open the story and immediately continue iterating with full context.
         const conversation: Message[] = serverConv.length > 0
@@ -608,6 +693,23 @@ async function syncWithActualStories(): Promise<ChatSession[]> {
                 { role: 'ai' as const, content: `Story generated: "${e.title}"` },
               ]
             : [];
+        // Rehydrate the last reply's completion payload (code viewer, timing,
+        // suggestion chips) — persisted server-side precisely because the
+        // preview iframe can reload mid-generation and lose the live event.
+        const lastCompletion = e.metadata?.lastCompletion;
+        const lastMsg = conversation[conversation.length - 1];
+        if (lastCompletion && lastMsg?.role === 'ai') {
+          lastMsg.code = lastCompletion.code || undefined;
+          lastMsg.suggestions = lastCompletion.suggestions?.length ? lastCompletion.suggestions : undefined;
+          lastMsg.generationTimeMs = lastCompletion.generationTimeMs || undefined;
+          lastMsg.storybookComponentId = lastCompletion.storybookId || undefined;
+          // The story this reply produced. Without these a reopened chat had
+          // no "Open in Storybook", no "Hand off" and no verification badge —
+          // they existed only in the session that generated the story.
+          lastMsg.storyEntryId = lastMsg.storyEntryId || (e.id ? String(e.id) : undefined);
+          lastMsg.storyFileName = lastMsg.storyFileName || e.fileName || undefined;
+          lastMsg.verification = lastMsg.verification || (lastCompletion.verification as any) || undefined;
+        }
         return {
           id: e.id ?? e.fileName.replace(/\.stories\.[a-z]+$/, ''),
           title: e.title,
@@ -651,11 +753,13 @@ async function migrateLocalStorageToManifest(
         if (!chat.conversation?.length) continue;
         const conversation = chat.conversation
           .filter(m => (m.role === 'user' || m.role === 'ai') && m.content)
-          .map(m => ({ role: m.role as 'user' | 'ai', content: m.content }));
-        await fetch(`${MANIFEST_API()}/${encodeURIComponent(chat.fileName)}`, {
+          .map(m => ({ role: m.role as 'user' | 'ai', content: m.content, thumbnails: m.thumbnails }));
+        await apiFetch(`${MANIFEST_API()}/${encodeURIComponent(chat.fileName)}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: chat.id, title: chat.title, source: 'panel', conversation }),
+          // `backfilled`: this restores history the manifest was missing, it
+          // is not new activity — the server leaves updatedAt alone for it.
+          body: JSON.stringify({ id: chat.id, title: chat.title, source: 'panel', conversation, metadata: { backfilled: true } }),
         });
         migrated++;
       }
@@ -671,11 +775,13 @@ async function migrateLocalStorageToManifest(
         if (!entry || entry.source !== 'mcp-external' || (entry.conversation?.length ?? 0) > 0) continue;
         const conversation = chat.conversation
           .filter(m => (m.role === 'user' || m.role === 'ai') && m.content)
-          .map(m => ({ role: m.role as 'user' | 'ai', content: m.content }));
-        await fetch(`${MANIFEST_API()}/${encodeURIComponent(chat.fileName)}`, {
+          .map(m => ({ role: m.role as 'user' | 'ai', content: m.content, thumbnails: m.thumbnails }));
+        await apiFetch(`${MANIFEST_API()}/${encodeURIComponent(chat.fileName)}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: chat.id, title: chat.title, source: 'panel', conversation }),
+          // `backfilled`: this restores history the manifest was missing, it
+          // is not new activity — the server leaves updatedAt alone for it.
+          body: JSON.stringify({ id: chat.id, title: chat.title, source: 'panel', conversation, metadata: { backfilled: true } }),
         });
         migrated++;
       }
@@ -687,12 +793,17 @@ async function migrateLocalStorageToManifest(
     // v3: seed synthetic conversations for any manifest entry with metadata.prompt but no conversation.
     // Runs regardless of localStorage — covers MCP-external and voice-saved stories.
     // This makes all generated stories openable and continuable from the chat UI.
+    //
+    // Marked `backfilled` so the server does not stamp updatedAt: this runs
+    // once per browser origin, and without the marker every older story
+    // jumped to "just now" in the workspace's Recent work the first time the
+    // classic panel was opened.
     if (!localStorage.getItem(MIGRATION_FLAG_V3)) {
       const toSeed = Object.entries(manifestEntries).filter(([, e]) =>
         (e.conversation?.length ?? 0) === 0 && e.metadata?.prompt
       );
       await Promise.all(toSeed.map(([fileName, e]) =>
-        fetch(`${MANIFEST_API()}/${encodeURIComponent(fileName)}`, {
+        apiFetch(`${MANIFEST_API()}/${encodeURIComponent(fileName)}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -700,6 +811,7 @@ async function migrateLocalStorageToManifest(
               { role: 'user', content: e.metadata.prompt },
               { role: 'ai', content: `Story generated: "${e.title}"` },
             ],
+            metadata: { backfilled: true },
           }),
         }).catch(() => {}),
       ));
@@ -726,8 +838,8 @@ async function persistChatToManifest(session: ChatSession): Promise<void> {
   try {
     const conversation = session.conversation
       .filter(m => (m.role === 'user' || m.role === 'ai') && m.content)
-      .map(m => ({ role: m.role as 'user' | 'ai', content: m.content }));
-    await fetch(`${MANIFEST_API()}/${encodeURIComponent(session.fileName)}`, {
+      .map(m => ({ role: m.role as 'user' | 'ai', content: m.content, thumbnails: m.thumbnails }));
+    await apiFetch(`${MANIFEST_API()}/${encodeURIComponent(session.fileName)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ conversation }),
@@ -741,7 +853,7 @@ async function fetchOrphanStories(): Promise<OrphanStory[]> {
   try {
     // With the manifest, "orphans" are entries the server knows about but have
     // no conversation history (externally generated from Claude Desktop / MCP).
-    const response = await fetch(MANIFEST_API());
+    const response = await apiFetch(MANIFEST_API());
     if (!response.ok) throw new Error('manifest unavailable');
     const data = await response.json();
     const entries: Record<string, any> = data.stories ?? {};
@@ -759,7 +871,7 @@ async function fetchOrphanStories(): Promise<OrphanStory[]> {
   } catch {
     // Fall back to the old localStorage-based orphan detection
     try {
-      const response = await fetch(STORIES_API());
+      const response = await apiFetch(STORIES_API());
       if (!response.ok) return [];
       const data = await response.json();
       const serverStories = data.stories || [];
@@ -778,7 +890,7 @@ async function deleteStoryAndChat(chatId: string, fileName?: string): Promise<bo
   // Use fileName if provided (more reliable), otherwise fall back to chatId
   const fileId = fileName || chatId;
   try {
-    const response = await fetch(`${STORIES_API()}/${encodeURIComponent(fileId)}`, { method: 'DELETE' });
+    const response = await apiFetch(`${STORIES_API()}/${encodeURIComponent(fileId)}`, { method: 'DELETE' });
     // Delete chat from localStorage if:
     // - Story was successfully deleted (200/204)
     // - Story doesn't exist (404) - orphan chat case
@@ -1165,8 +1277,19 @@ interface StoryUIPanelProps {
 
 function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   const [state, dispatch] = useReducer(panelReducer, initialState);
-  const [panelMode, setPanelMode] = useState<'chat' | 'canvas'>(() => {
-    try { return localStorage.getItem('__sui_panel_mode__') === 'canvas' ? 'canvas' : 'chat'; } catch { return 'chat'; }
+  // Handoff availability is a property of the repo, not the story, so it is
+  // fetched once and reused for every message's action row.
+  const [handoffStatus, setHandoffStatus] = useState<{
+    available: boolean; reason?: string; branch?: string; remote?: string | null;
+    canPush?: boolean; canOpenPr?: boolean; prUnavailableReason?: string;
+  } | null>(null);
+  const [handoffFor, setHandoffFor] = useState<{ fileName: string; title: string } | null>(null);
+
+  const [panelMode, setPanelMode] = useState<'chat' | 'canvas' | 'context'>(() => {
+    try {
+      const stored = localStorage.getItem('__sui_panel_mode__');
+      return stored === 'canvas' ? 'canvas' : stored === 'context' ? 'context' : 'chat';
+    } catch { return 'chat'; }
   });
   // Tracks whether Voice Canvas is available (React-only feature). Defaults true to
   // avoid flashing the tab away on initial render; corrected after canvas-config loads.
@@ -1263,7 +1386,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     const pollForExternalStories = async () => {
       try {
         const baseUrl = getApiBaseUrl();
-        const response = await fetch(`${baseUrl}/story-ui/stories`);
+        const response = await apiFetch(`${baseUrl}/story-ui/stories`);
         if (!response.ok) return;
 
         const data = await response.json();
@@ -1321,6 +1444,21 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   // Detect Storybook MCP addon availability
   useEffect(() => {
     const checkStorybookMcp = async () => {
+      // Ask only when there is reason to: the server saw the addon in
+      // .storybook/main.*, or the user turned the toggle on before. A blind
+      // probe answered 404 in the console on every load of every project
+      // without the addon.
+      // The stored value only when the user set it: loadStorybookMcpPref()
+      // defaults to true (the toggle's default once the addon is known),
+      // which made every project probe.
+      let worthAsking = (() => { try { return localStorage.getItem(STORYBOOK_MCP_PREF_KEY) === 'true'; } catch { return false; } })();
+      if (!worthAsking) {
+        try {
+          const cfg = await apiFetch(`${getApiBase()}/mcp/canvas-config`);
+          if (cfg.ok) worthAsking = !!(await cfg.json())?.storybookMcpAddon;
+        } catch { /* server down: nothing to detect */ }
+      }
+      if (!worthAsking) return;
       const available = await detectStorybookMcp();
       dispatch({ type: 'SET_STORYBOOK_MCP_AVAILABLE', payload: available });
 
@@ -1365,7 +1503,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     }
 
     // Restore the conversation and show a resuming state
-    dispatch({ type: 'SET_CONVERSATION', payload: pending.conversation.map(m => ({ role: m.role, content: m.content })) });
+    dispatch({ type: 'SET_CONVERSATION', payload: pending.conversation.map(m => ({ role: m.role, content: m.content, thumbnails: (m as any).thumbnails })) });
     if (pending.chatId) {
       dispatch({ type: 'SET_ACTIVE_CHAT', payload: { id: pending.chatId, title: pending.title || '' } });
     }
@@ -1385,7 +1523,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
       const deadline = pending.startedAt + MAX_RECOVERY_MS;
       while (!cancelled && Date.now() < deadline) {
         try {
-          const res = await fetch(MANIFEST_API());
+          const res = await apiFetch(MANIFEST_API());
           if (res.ok) {
             const data = await res.json();
             const entries: Record<string, any> = data.stories ?? {};
@@ -1398,10 +1536,18 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
             if (entry && last?.role === 'ai') {
               if (cancelled) return;
               finishRecovery();
-              dispatch({
-                type: 'SET_CONVERSATION',
-                payload: conv.map((m: any) => ({ role: m.role, content: m.content })),
-              });
+              const restored: Message[] = conv.map((m: any) => ({ role: m.role, content: m.content, thumbnails: m.thumbnails }));
+              const lastCompletion = entry.metadata?.lastCompletion;
+              const restoredLast = restored[restored.length - 1];
+              if (lastCompletion && restoredLast?.role === 'ai') {
+                restoredLast.code = lastCompletion.code || undefined;
+                restoredLast.suggestions = lastCompletion.suggestions?.length ? lastCompletion.suggestions : undefined;
+                restoredLast.generationTimeMs = lastCompletion.generationTimeMs || undefined;
+                restoredLast.storyEntryId = restoredLast.storyEntryId || (entry.id ? String(entry.id) : undefined);
+                restoredLast.storyFileName = restoredLast.storyFileName || entry.fileName || undefined;
+                restoredLast.verification = restoredLast.verification || (lastCompletion.verification as any) || undefined;
+              }
+              dispatch({ type: 'SET_CONVERSATION', payload: restored });
               dispatch({ type: 'SET_ACTIVE_CHAT', payload: { id: entry.fileName || entry.id, title: entry.title || pending.title || '' } });
               try {
                 const sessions = await syncWithActualStories();
@@ -1447,6 +1593,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     if (chat) {
       dispatch({ type: 'SET_CONVERSATION', payload: chat.conversation });
       dispatch({ type: 'SET_ACTIVE_CHAT', payload: { id: chat.id, title: chat.title } });
+      awaitStoryIndexed(request!.componentId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.recentChats]);
@@ -1568,7 +1715,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
       dispatch({ type: 'SET_CONNECTION_STATUS', payload: connectionTest });
       if (connectionTest.connected) {
         try {
-          const res = await fetch(PROVIDERS_API());
+          const res = await apiFetch(PROVIDERS_API());
           if (res.ok) {
             const data: ProvidersResponse = await res.json();
             const configuredProviders = data.providers.filter(p => p.configured);
@@ -1604,7 +1751,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           console.error('Failed to fetch providers:', e);
         }
         try {
-          const res = await fetch(CONSIDERATIONS_API());
+          const res = await apiFetch(CONSIDERATIONS_API());
           if (res.ok) {
             const data = await res.json();
             if (data.hasConsiderations && data.considerations) {
@@ -1615,7 +1762,15 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           console.error('Failed to fetch considerations:', e);
         }
         try {
-          const canvasCfgRes = await fetch(`${getApiBase()}/mcp/canvas-config`);
+          // Whether this project can accept a handoff at all (git repo, remote,
+          // gh auth). Fetched once; the action row reuses it per message.
+          const res = await apiFetch(`${getApiBase()}/story-ui/handoff/status`);
+          if (res.ok) setHandoffStatus(await res.json());
+        } catch {
+          // Handoff simply stays unavailable.
+        }
+        try {
+          const canvasCfgRes = await apiFetch(`${getApiBase()}/mcp/canvas-config`);
           if (canvasCfgRes.ok) {
             const canvasCfg = await canvasCfgRes.json();
             const isReact = !canvasCfg.componentFramework || canvasCfg.componentFramework === 'react';
@@ -1671,6 +1826,89 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     });
   };
 
+  // Decode a File into an <img> we can draw to a canvas.
+  const loadImageElement = (file: File): Promise<HTMLImageElement> =>
+    new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Could not decode image')); };
+      img.src = url;
+    });
+
+  /** Build a small, persistable data-URL preview of an attachment. */
+  const makeThumbnail = async (file: File): Promise<string | undefined> => {
+    try {
+      const img = await loadImageElement(file);
+      const longEdge = Math.max(img.width, img.height);
+      const scale = Math.min(1, THUMB_MAX_DIMENSION / longEdge);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return undefined;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      return canvas.toDataURL('image/jpeg', THUMB_QUALITY);
+    } catch {
+      return undefined;
+    }
+  };
+
+  /**
+   * Prepare an attachment for upload: downscale to the vision model's effective
+   * resolution ceiling and re-encode large images as JPEG.
+   *
+   * Returns raw base64 (no data: prefix) plus the media type that actually
+   * matches the encoded bytes — these must agree or the provider rejects it.
+   * Falls back to the original bytes if canvas encoding is unavailable.
+   */
+  const prepareImageForUpload = async (
+    file: File
+  ): Promise<{ base64: string; mediaType: string }> => {
+    try {
+      const img = await loadImageElement(file);
+      const longEdge = Math.max(img.width, img.height);
+      const scale = longEdge > MAX_IMAGE_DIMENSION ? MAX_IMAGE_DIMENSION / longEdge : 1;
+      const needsResize = scale < 1;
+      const needsRecompress = file.size > JPEG_FALLBACK_BYTES;
+
+      if (!needsResize && !needsRecompress) {
+        return { base64: await fileToBase64(file), mediaType: file.type || 'image/png' };
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        return { base64: await fileToBase64(file), mediaType: file.type || 'image/png' };
+      }
+      // White matte: JPEG has no alpha, and transparent screenshot regions
+      // would otherwise composite to black.
+      const asJpeg = needsRecompress || file.type === 'image/jpeg';
+      if (asJpeg) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      const mediaType = asJpeg ? 'image/jpeg' : 'image/png';
+      const dataUrl = canvas.toDataURL(mediaType, asJpeg ? JPEG_QUALITY : undefined);
+      const base64 = dataUrl.split(',')[1];
+      if (!base64) {
+        return { base64: await fileToBase64(file), mediaType: file.type || 'image/png' };
+      }
+      return { base64, mediaType };
+    } catch {
+      // Canvas path failed (tainted, decode error, headless) — send as-is.
+      return { base64: await fileToBase64(file), mediaType: file.type || 'image/png' };
+    }
+  };
+
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
@@ -1686,11 +1924,12 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
         continue;
       }
       try {
-        const base64 = await fileToBase64(file);
+        const { base64, mediaType } = await prepareImageForUpload(file);
+        const thumbnail = await makeThumbnail(file);
         const preview = URL.createObjectURL(file);
         dispatch({
           type: 'ADD_ATTACHED_IMAGE',
-          payload: { id: `${Date.now()}-${i}`, file, preview, base64, mediaType: file.type || 'image/png' },
+          payload: { id: `${Date.now()}-${i}`, file, preview, base64, mediaType, thumbnail },
         });
       } catch {
         errors.push(`${file.name}: Failed to process`);
@@ -1747,11 +1986,12 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
         continue;
       }
       try {
-        const base64 = await fileToBase64(file);
+        const { base64, mediaType } = await prepareImageForUpload(file);
+        const thumbnail = await makeThumbnail(file);
         const preview = URL.createObjectURL(file);
         dispatch({
           type: 'ADD_ATTACHED_IMAGE',
-          payload: { id: `${Date.now()}-${i}`, file, preview, base64, mediaType: file.type || 'image/png' },
+          payload: { id: `${Date.now()}-${i}`, file, preview, base64, mediaType, thumbnail },
         });
       } catch {
         errors.push(`${file.name}: Failed to process`);
@@ -1778,17 +2018,20 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
       const file = imageItems[i].getAsFile();
       if (!file) continue;
       try {
-        const base64 = await fileToBase64(file);
+        const { base64, mediaType } = await prepareImageForUpload(file);
+        const thumbnail = await makeThumbnail(file);
         const preview = URL.createObjectURL(file);
         const timestamp = new Date().toISOString().slice(11, 19).replace(/:/g, '-');
+        const ext = mediaType === 'image/jpeg' ? 'jpg' : 'png';
         dispatch({
           type: 'ADD_ATTACHED_IMAGE',
           payload: {
             id: `paste-${Date.now()}-${i}`,
-            file: new File([file], `pasted-image-${timestamp}.png`, { type: file.type }),
+            file: new File([file], `pasted-image-${timestamp}.${ext}`, { type: file.type }),
             preview,
             base64,
-            mediaType: file.type || 'image/png',
+            mediaType,
+            thumbnail,
           },
         });
       } catch {
@@ -1833,7 +2076,17 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     }
 
     if (completion.validation?.autoFixApplied) {
-      parts.push(`\n\n[WRENCH] **Auto-fixed:** Minor syntax issues were automatically corrected.`);
+      // Say what was fixed, not "minor syntax issues": on Vue every story
+      // carried that line, and the fix was actually import paths being
+      // rewritten onto the configured barrel. A server that reports the
+      // fix but describes it as having changed nothing gets no banner —
+      // there is nothing to tell the user about.
+      const details = completion.validation.fixDetails;
+      if (details === undefined) {
+        parts.push(`\n\n[WRENCH] **Auto-fixed:** the generated code was automatically corrected before it was saved.`);
+      } else if (details.length > 0) {
+        parts.push(`\n\n[WRENCH] **Auto-fixed:** ${details.join('; ')}.`);
+      }
     }
     if (completion.runtimeValidation?.enabled && !completion.runtimeValidation.success) {
       parts.push(`\n\n⚠️ **Heads up:** the story saved but may not render correctly in Storybook (${completion.runtimeValidation.error || 'runtime error'}). Ask me to fix it or try regenerating.`);
@@ -1852,16 +2105,18 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
    * client-side via the addons channel. Replaces the old full-page reload
    * workaround for storybookjs/storybook#30431, which is fixed upstream.
    */
-  const awaitStoryIndexed = useCallback((storybookId: string) => {
+  const awaitStoryIndexed = useCallback((storybookId: string, fileName?: string) => {
     let cancelled = false;
-    const maxAttempts = 15;
+    // ~45s. Large compositions can take a moment to be picked up; the previous
+    // 22s window expired before slower indexes caught up.
+    const maxAttempts = 30;
     let attempt = 0;
 
     const poll = async () => {
       while (!cancelled && attempt < maxAttempts) {
         attempt++;
         try {
-          const res = await fetch('/index.json', { cache: 'no-store' });
+          const res = await apiFetch('/index.json', { cache: 'no-store' });
           if (res.ok) {
             const index = await res.json();
             const entries = index.entries || {};
@@ -1871,7 +2126,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
               Object.keys(entries).find(id => id.startsWith(`${storybookId}--`));
             if (entryId) {
               if (!cancelled) {
-                dispatch({ type: 'PATCH_LAST_AI_MESSAGE', payload: { storyEntryId: entryId } });
+                dispatch({ type: 'PATCH_LAST_AI_MESSAGE', payload: { storyEntryId: entryId, storyIndexStalled: undefined } });
               }
               return;
             }
@@ -1882,7 +2137,13 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
         await new Promise(resolve => setTimeout(resolve, 1500));
       }
       if (!cancelled) {
+        // The file is on disk but Storybook never indexed it. Say so in the UI:
+        // failing silently here is what left generated stories unreachable.
         console.warn(`[Story UI] Story "${storybookId}" did not appear in the index after ${maxAttempts} polls`);
+        dispatch({
+          type: 'PATCH_LAST_AI_MESSAGE',
+          payload: { storyIndexStalled: { storybookId, fileName } },
+        });
       }
     };
 
@@ -1890,23 +2151,70 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     return () => { cancelled = true; };
   }, []);
 
+  /**
+   * Re-check the index on demand. Storybook rebuilds its index on restart, so
+   * this turns the stalled notice into a working button without a full reload.
+   */
+  const recheckStoryIndex = useCallback(async (storybookId: string) => {
+    try {
+      const res = await apiFetch('/index.json', { cache: 'no-store' });
+      if (!res.ok) return false;
+      const entries = (await res.json()).entries || {};
+      const entryId =
+        Object.keys(entries).find(id => id.startsWith(`${storybookId}--`) && entries[id].type === 'story') ||
+        Object.keys(entries).find(id => id.startsWith(`${storybookId}--`));
+      if (entryId) {
+        dispatch({ type: 'PATCH_LAST_AI_MESSAGE', payload: { storyEntryId: entryId, storyIndexStalled: undefined } });
+        return true;
+      }
+    } catch { /* still unreachable */ }
+    return false;
+  }, []);
+
   /** Navigate the Storybook manager to a story without a page reload. */
   const openStoryInStorybook = useCallback((entryId: string) => {
+    // The panel lives in the preview iframe, so the channel here is the
+    // preview's. Emitting selectStory usually reaches the manager — but when it
+    // doesn't, the old code had already returned and the button did nothing.
+    // Emit, then verify the manager actually navigated and fall back to a URL.
+    const navigateByUrl = () => {
+      try {
+        const target = window.top ?? window;
+        target.location.href = `${target.location.pathname}?path=/story/${entryId}`;
+      } catch {
+        window.open(`/?path=/story/${entryId}`, '_blank');
+      }
+    };
+
+    let emitted = false;
     try {
       const channel = (window as any).__STORYBOOK_ADDONS_CHANNEL__;
       if (channel?.emit) {
+        // Storybook has used both event names across versions; emitting the
+        // one the running manager doesn't know is harmless.
         channel.emit('selectStory', { storyId: entryId });
-        return;
+        channel.emit('setCurrentStory', { storyId: entryId });
+        emitted = true;
       }
     } catch {
       // fall through to URL navigation
     }
-    try {
-      const target = window.top ?? window;
-      target.location.href = `${target.location.pathname}?path=/story/${entryId}`;
-    } catch {
-      window.open(`/?path=/story/${entryId}`, '_blank');
+
+    if (!emitted) {
+      navigateByUrl();
+      return;
     }
+
+    // If the manager didn't move to the story shortly after the emit, navigate
+    // directly rather than leaving the click with no visible effect.
+    window.setTimeout(() => {
+      try {
+        const search = (window.top ?? window).location.search || '';
+        if (!search.includes(entryId)) navigateByUrl();
+      } catch {
+        navigateByUrl();
+      }
+    }, 400);
   }, []);
 
   // Finalize streaming
@@ -1930,6 +2238,9 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
       isError: !completion.success,
       retryInput: !completion.success ? userInput : undefined,
       generationTimeMs: completion.metrics?.totalTimeMs,
+      verification: completion.verification,
+      storyFileName: completion.fileName,
+      storyTitle: completion.title,
     };
     const updatedConversation = [...newConversation, aiMsg];
     dispatch({ type: 'SET_CONVERSATION', payload: updatedConversation });
@@ -1975,7 +2286,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     // Watch the story index and attach an "Open story" link when the new
     // story is ready — no page reload needed (Storybook ≥9 indexes live).
     if (completion.success && completion.storybookId) {
-      awaitStoryIndexed(completion.storybookId);
+      awaitStoryIndexed(completion.storybookId, completion.fileName);
     }
   }, [state.activeChatId, state.activeTitle, state.conversation.length, awaitStoryIndexed]);
 
@@ -1984,7 +2295,12 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   const handleSend = async (e?: React.FormEvent, overrideInput?: string) => {
     if (e) e.preventDefault();
     if (!overrideInput && !state.input.trim() && state.attachedImages.length === 0) return;
-    const userInput = overrideInput?.trim() || state.input.trim() || (state.attachedImages.length > 0 ? 'Create a component that matches this design' : '');
+    // Default prompt for a bare image upload. Phrased as a composition on
+    // purpose: "a component" biased the model toward extracting one card out
+    // of a full-page screenshot.
+    const userInput = overrideInput?.trim() || state.input.trim() || (state.attachedImages.length > 0
+      ? 'Recreate this design. Reproduce every region visible in the image, in the same layout.'
+      : '');
     dispatch({ type: 'SET_ERROR', payload: null });
     dispatch({ type: 'SET_LOADING', payload: true });
     dispatch({ type: 'SET_STREAMING_STATE', payload: null });
@@ -2001,6 +2317,11 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
       role: 'user',
       content: userInput,
       attachedImages: hasImages ? imagesToSend : undefined,
+      // Kept separately so the reference image is still visible after the chat
+      // is reloaded from storage.
+      thumbnails: hasImages
+        ? imagesToSend.map(img => img.thumbnail).filter((t): t is string => !!t)
+        : undefined,
     };
     const newConversation: Message[] = [...state.conversation, userMessage];
     dispatch({ type: 'SET_CONVERSATION', payload: newConversation });
@@ -2026,7 +2347,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
         try {
           sessionStorage.setItem(PENDING_GEN_KEY, JSON.stringify({
             userInput,
-            conversation: newConversation.map(m => ({ role: m.role, content: m.content })),
+            conversation: newConversation.map(m => ({ role: m.role, content: m.content, thumbnails: m.thumbnails })),
             fileName: activeFileName || null,
             chatId: state.activeChatId || null,
             title: state.activeTitle || null,
@@ -2041,26 +2362,36 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           isUpdate: !!(state.activeChatId && activeFileName),
           originalTitle: state.activeTitle || undefined,
           storyId: state.activeChatId || undefined,
+          // mediaType must describe the bytes we actually encoded — after
+          // downscaling that can differ from the original file's type.
           images: hasImages
-            ? imagesToSend.map(img => ({ type: 'base64' as const, data: img.base64, mediaType: img.file.type }))
+            ? imagesToSend.map(img => ({ type: 'base64' as const, data: img.base64, mediaType: img.mediaType }))
             : undefined,
           visionMode: hasImages ? 'screenshot_to_story' : undefined,
           provider: state.selectedProvider || undefined,
           model: state.selectedModel || undefined,
           considerations: state.considerations || undefined,
           useStorybookMcp: state.storybookMcpAvailable && state.useStorybookMcp,
-          // The panel runs inside Storybook, so it knows the origin where the
-          // MCP addon lives — lets the server fetch context with zero config.
-          storybookUrl: state.storybookMcpAvailable && state.useStorybookMcp ? window.location.origin : undefined,
+          // The panel runs inside Storybook's docs iframe, so it knows the
+          // origin. Sent unconditionally, as the V2 workspace does
+          // (useGeneration.ts): it used to ride only with the Storybook-MCP
+          // toggle, so with the toggle off the server verified against port
+          // 6006 "by convention" and reported a story indexed on :6103 within
+          // seconds as "did not appear in Storybook's index".
+          storybookUrl: typeof window !== 'undefined' ? window.location.origin : undefined,
           voiceMode: voiceModeActiveRef.current || undefined,
         };
-        const response = await fetch(MCP_STREAM_API(), {
+        const response = await apiFetch(MCP_STREAM_API(), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(requestBody),
           signal: abortControllerRef.current.signal,
         });
-        if (!response.ok) throw new Error(`Streaming request failed: ${response.status}`);
+        if (!response.ok) {
+          const streamErr = new Error(`Streaming request failed: ${response.status}`);
+          (streamErr as any).status = response.status;
+          throw streamErr;
+        }
         const reader = response.body?.getReader();
         if (!reader) throw new Error('No response body');
         const decoder = new TextDecoder();
@@ -2125,11 +2456,27 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
         }
       } catch (err: unknown) {
         if ((err as Error).name === 'AbortError') return;
+
+        // A rejected payload will be rejected again by the fallback, and
+        // retrying without the images would silently produce a story that
+        // ignores the design the user attached. Surface it instead.
+        if ((err as any)?.status === 413) {
+          try { sessionStorage.removeItem(PENDING_GEN_KEY); } catch {}
+          dispatch({ type: 'SET_STREAMING_STATE', payload: null });
+          dispatch({ type: 'SET_LOADING', payload: false });
+          const msg = 'The attached image is too large for the server to accept. Try a smaller or lower-resolution image, or attach fewer images.';
+          dispatch({ type: 'SET_ERROR', payload: msg });
+          dispatch({ type: 'SET_CONVERSATION', payload: [...newConversation, {
+            role: 'ai' as const, content: `Error: ${msg}`, isError: true, retryInput: userInput,
+          }] });
+          return;
+        }
+
         console.warn('Streaming failed, falling back to non-streaming:', err);
         try { sessionStorage.removeItem(PENDING_GEN_KEY); } catch {}
         dispatch({ type: 'SET_STREAMING_STATE', payload: null });
         try {
-          const res = await fetch(MCP_API(), {
+          const res = await apiFetch(MCP_API(), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2139,13 +2486,23 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
               isUpdate: !!(state.activeChatId && activeFileName),
               originalTitle: state.activeTitle || undefined,
               storyId: state.activeChatId || undefined,
+              // Vision inputs must survive the fallback. Dropping them here is
+              // what made image uploads look like they were being ignored.
+              images: hasImages
+                ? imagesToSend.map(img => ({ type: 'base64' as const, data: img.base64, mediaType: img.mediaType }))
+                : undefined,
+              visionMode: hasImages ? 'screenshot_to_story' : undefined,
               provider: state.selectedProvider || undefined,
               model: state.selectedModel || undefined,
               considerations: state.considerations || undefined,
               useStorybookMcp: state.storybookMcpAvailable && state.useStorybookMcp,
-          // The panel runs inside Storybook, so it knows the origin where the
-          // MCP addon lives — lets the server fetch context with zero config.
-          storybookUrl: state.storybookMcpAvailable && state.useStorybookMcp ? window.location.origin : undefined,
+          // The panel runs inside Storybook's docs iframe, so it knows the
+          // origin. Sent unconditionally, as the V2 workspace does
+          // (useGeneration.ts): it used to ride only with the Storybook-MCP
+          // toggle, so with the toggle off the server verified against port
+          // 6006 "by convention" and reported a story indexed on :6103 within
+          // seconds as "did not appear in Storybook's index".
+          storybookUrl: typeof window !== 'undefined' ? window.location.origin : undefined,
             }),
           });
           const data = await res.json();
@@ -2191,6 +2548,10 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   const handleSelectChat = (chat: ChatSession) => {
     dispatch({ type: 'SET_CONVERSATION', payload: chat.conversation });
     dispatch({ type: 'SET_ACTIVE_CHAT', payload: { id: chat.id, title: chat.title } });
+    const last = chat.conversation[chat.conversation.length - 1];
+    if (last?.role === 'ai' && last.storybookComponentId) {
+      awaitStoryIndexed(last.storybookComponentId);
+    }
   };
 
   const handleNewChat = () => {
@@ -2265,7 +2626,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     if (!state.connectionStatus.connected) return;
     try {
       const chatFileNames = state.recentChats.map(chat => chat.fileName);
-      const response = await fetch(ORPHAN_STORIES_API(), {
+      const response = await apiFetch(ORPHAN_STORIES_API(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chatFileNames }),
@@ -2288,7 +2649,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     setIsDeletingOrphans(true);
     try {
       const chatFileNames = state.recentChats.map(chat => chat.fileName);
-      const response = await fetch(ORPHAN_STORIES_API(), {
+      const response = await apiFetch(ORPHAN_STORIES_API(), {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chatFileNames }),
@@ -2341,7 +2702,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
       }
       // Propagate rename to story file and manifest (non-blocking)
       if (chat.fileName) {
-        fetch(`${STORIES_API()}/${encodeURIComponent(chat.fileName)}/rename`, {
+        apiFetch(`${STORIES_API()}/${encodeURIComponent(chat.fileName)}/rename`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ title: newTitle }),
@@ -2372,7 +2733,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     if (!confirm(`Delete ${count} selected ${count === 1 ? 'story' : 'stories'}?`)) return;
     dispatch({ type: 'SET_BULK_DELETING', payload: true });
     try {
-      const response = await fetch(`${STORIES_API()}/delete-bulk`, {
+      const response = await apiFetch(`${STORIES_API()}/delete-bulk`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids: Array.from(state.selectedStoryIds) }),
@@ -2395,7 +2756,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     if (!confirm(`Delete ALL ${state.orphanStories.length} generated stories?`)) return;
     dispatch({ type: 'SET_BULK_DELETING', payload: true });
     try {
-      const response = await fetch(STORIES_API(), { method: 'DELETE' });
+      const response = await apiFetch(STORIES_API(), { method: 'DELETE' });
       if (response.ok) {
         dispatch({ type: 'SET_ORPHAN_STORIES', payload: [] });
         dispatch({ type: 'SET_SELECTED_STORY_IDS', payload: new Set() });
@@ -2411,7 +2772,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
 
   const handleDeleteOrphan = async (storyId: string) => {
     try {
-      const response = await fetch(`${STORIES_API()}/${storyId}`, { method: 'DELETE' });
+      const response = await apiFetch(`${STORIES_API()}/${storyId}`, { method: 'DELETE' });
       if (response.ok) {
         dispatch({ type: 'SET_ORPHAN_STORIES', payload: state.orphanStories.filter(s => s.id !== storyId) });
         const newSet = new Set(state.selectedStoryIds);
@@ -2611,6 +2972,15 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                   onClick={() => { canvasModeRef.current = true; setPanelMode('canvas'); try { localStorage.setItem('__sui_panel_mode__', 'canvas'); } catch {} }}
                 >Voice Canvas</button>
               )}
+              {/* Design context is the highest-authority input to generation, so
+                  it gets a first-class home rather than living only on disk. */}
+              <button
+                type="button"
+                className={`sui-mode-toggle-btn ${panelMode === 'context' ? 'sui-mode-toggle-btn--active' : ''}`}
+                aria-pressed={panelMode === 'context'}
+                title="Teach the generator how your design system works"
+                onClick={() => { canvasModeRef.current = false; setPanelMode('context'); try { localStorage.setItem('__sui_panel_mode__', 'context'); } catch {} }}
+              >Design Context</button>
             </div>
           </div>
           <div className="sui-header-right">
@@ -2677,7 +3047,33 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           </div>
         </header>
 
-        {panelMode === 'canvas' ? (
+        {handoffFor && handoffStatus?.available && (
+          <HandoffDialog
+            apiBase={getApiBase()}
+            status={handoffStatus}
+            fileName={handoffFor.fileName}
+            title={handoffFor.title}
+            onClose={() => setHandoffFor(null)}
+          />
+        )}
+        {panelMode === 'context' ? (
+          <DesignContextPanel
+            apiBase={getApiBase()}
+            onContextChanged={() => {
+              // Re-pull considerations so the very next generation uses the
+              // edits the user just made, without a reload.
+              (async () => {
+                try {
+                  const res = await apiFetch(CONSIDERATIONS_API());
+                  if (res.ok) {
+                    const data = await res.json();
+                    dispatch({ type: 'SET_CONSIDERATIONS', payload: data.considerations || '' });
+                  }
+                } catch { /* keep the previous considerations */ }
+              })();
+            }}
+          />
+        ) : panelMode === 'canvas' ? (
           <VoiceCanvas
             ref={voiceCanvasRef}
             apiBase={getApiBase()}
@@ -2749,6 +3145,15 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                         ))}
                       </div>
                     )}
+                    {/* Reloaded from storage: the live attachments are gone, but
+                        the persisted thumbnails still show what was referenced. */}
+                    {msg.role === 'user' && !msg.attachedImages?.length && !!msg.thumbnails?.length && (
+                      <div className="sui-message-images">
+                        {msg.thumbnails.map((src, ti) => (
+                          <img key={ti} src={src} alt="Image attached to this message" className="sui-message-image" />
+                        ))}
+                      </div>
+                    )}
                     {msg.role === 'ai' && typeof msg.generationTimeMs === 'number' && msg.generationTimeMs > 0 && (
                       <div className="sui-message-meta">{(msg.generationTimeMs / 1000).toFixed(1)}s</div>
                     )}
@@ -2772,6 +3177,12 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                   )}
                   {/* Primary action on its own row; suggestions grouped below —
                       mixing them in one wrapped row produced ragged layouts. */}
+                  {/* What the browser actually observed. "Not verified" is shown
+                      as plainly as a pass — claiming success we cannot prove is
+                      the failure mode this whole subsystem exists to end. */}
+                  {msg.role === 'ai' && !msg.isError && msg.verification && !state.loading && (
+                    <VerificationBadge verification={msg.verification} />
+                  )}
                   {msg.role === 'ai' && !msg.isError && msg.storyEntryId && !state.loading && (
                     <div className="sui-message-actions" aria-label="Story actions">
                       <button
@@ -2780,6 +3191,41 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                         onClick={() => openStoryInStorybook(msg.storyEntryId!)}
                       >
                         Open in Storybook {Icons.openExternal}
+                      </button>
+                      {handoffStatus?.available && msg.storyFileName && (
+                        <button
+                          type="button"
+                          className="sui-chip"
+                          title="Commit this story to a new branch for a product engineer"
+                          onClick={() => setHandoffFor({ fileName: msg.storyFileName!, title: msg.storyTitle || 'Story' })}
+                        >
+                          Hand off →
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {/* The story exists on disk but Storybook's watcher never
+                      indexed it. Tell the user plainly and give them a way out
+                      instead of rendering nothing. */}
+                  {msg.role === 'ai' && !msg.isError && !msg.storyEntryId && msg.storyIndexStalled && !state.loading && (
+                    <div className="sui-message-actions sui-index-stalled" aria-label="Story indexing notice">
+                      <div className="sui-index-stalled-text">
+                        Storybook hasn’t picked this story up yet. The file was written
+                        {msg.storyIndexStalled.fileName ? ` to ${msg.storyIndexStalled.fileName}` : ''}, but
+                        it isn’t in the story index — this usually means Storybook’s file watcher stopped.
+                        Restart Storybook, then check again.
+                      </div>
+                      <button
+                        type="button"
+                        className="sui-chip"
+                        onClick={async () => {
+                          const found = await recheckStoryIndex(msg.storyIndexStalled!.storybookId);
+                          if (!found) {
+                            dispatch({ type: 'SET_ERROR', payload: 'Still not in the story index. Restart Storybook to pick up newly generated stories.' });
+                          }
+                        }}
+                      >
+                        Check again
                       </button>
                     </div>
                   )}

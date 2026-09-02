@@ -20,6 +20,8 @@ import {
   ValidationFeedback,
   CompletionFeedback,
   ErrorFeedback,
+  PreviewReady,
+  LlmText,
   formatSSE,
   createStreamEvent,
   StreamGenerateRequest,
@@ -30,6 +32,7 @@ class StreamWriter {
   private res: Response;
   private startTime: number;
   private llmCalls: number = 0;
+  private heartbeat?: ReturnType<typeof setInterval>;
 
   constructor(res: Response) {
     this.res = res;
@@ -38,6 +41,46 @@ class StreamWriter {
 
   send(event: StreamEvent): void {
     this.res.write(formatSSE(event));
+  }
+
+  /** Tell the client which run this is, so Stop can cancel it. */
+  sendStarted(generationId: string): void {
+    this.send(createStreamEvent('started', { generationId }));
+  }
+
+  /** The file is on disk: the client should show it now and treat the rest as background. */
+  sendPreviewReady(preview: PreviewReady): void {
+    this.send(createStreamEvent('preview_ready', preview));
+  }
+
+  sendLlmText(text: LlmText): void {
+    this.send(createStreamEvent('llm_text', text));
+  }
+
+  /**
+   * Keep the socket warm while the pipeline is silent.
+   *
+   * Between "AI is generating your story" and the next phase, nothing is
+   * written for the whole LLM call, and verification adds a further budget of
+   * browser work plus a vision call. Any proxy with an idle timeout — and most
+   * have one around 60s — drops the stream in that gap, which the client can
+   * only read as a failed generation for work that in fact completed.
+   *
+   * A comment line is the SSE-native no-op: it keeps the connection alive and
+   * is ignored by every parser, including ours.
+   */
+  startHeartbeat(everyMs = 15000): void {
+    this.stopHeartbeat();
+    this.heartbeat = setInterval(() => {
+      try { this.res.write(': keep-alive\n\n'); } catch { this.stopHeartbeat(); }
+    }, everyMs);
+    // Never hold the process open for a heartbeat.
+    this.heartbeat.unref?.();
+  }
+
+  stopHeartbeat(): void {
+    if (this.heartbeat) clearInterval(this.heartbeat);
+    this.heartbeat = undefined;
   }
 
   sendIntent(intent: IntentPreview): void {
@@ -112,6 +155,10 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
     return;
   }
 
+  // The pipeline goes silent for the whole LLM call and again through
+  // verification; without this a proxy idle timeout reads as a failure.
+  stream.startHeartbeat();
+
   try {
     const outcome = await runStoryGeneration(
       {
@@ -124,9 +171,11 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
         framework: body.framework,
         autoDetectFramework: body.autoDetectFramework,
         images: body.images as any,
+        files: body.files,
         visionMode: body.visionMode,
         designSystem: body.designSystem,
         considerations: body.considerations,
+        selection: body.selection,
         provider: body.provider,
         model: body.model,
         useStorybookMcp: body.useStorybookMcp,
@@ -140,6 +189,9 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
         onValidation: (validation) => stream.sendValidation(validation),
         onRetry: (attempt, maxAttempts, reason, errors) =>
           stream.sendRetry(attempt, maxAttempts, reason, errors),
+        onStarted: (generationId) => stream.sendStarted(generationId),
+        onPreviewReady: (preview) => stream.sendPreviewReady(preview),
+        onLlmText: (text) => stream.sendLlmText(text),
         onLLMCall: () => stream.trackLLMCall(),
       }
     );
@@ -161,8 +213,22 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
       layoutChoices: outcome.analysis.layoutChoices,
       styleChoices: outcome.analysis.styleChoices,
       suggestions: outcome.suggestions,
+      notice: outcome.notice,
+      pins: outcome.pins,
+      edits: outcome.edits,
       chatSummary: outcome.chatSummary,
       storybookId: outcome.storybookId,
+      // Browser verification — forwarded verbatim so the panel can show what was
+      // actually observed, including an honest "not verified".
+      verification: outcome.verification ? {
+        outcome: outcome.verification.outcome,
+        reason: outcome.verification.reason,
+        findings: outcome.verification.findings.map(f => ({
+          id: f.id, severity: f.severity, class: f.class,
+          message: f.message, evidence: f.evidence, selector: f.selector,
+        })),
+        metrics: outcome.verification.metrics,
+      } : undefined,
       // Only surface runtime results the user should act on: a pass, or a
       // genuine in-Storybook crash. Inconclusive infra results (story not
       // indexed yet, Storybook unreachable) would show a false alarm.
@@ -180,12 +246,15 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
         errors: outcome.validation.errors,
         warnings: outcome.validation.warnings,
         autoFixApplied: outcome.validation.autoFixApplied,
+        fixDetails: outcome.validation.fixDetails,
       },
       code: outcome.code,
     });
 
+    stream.stopHeartbeat();
     res.end();
   } catch (err: any) {
+    stream.stopHeartbeat();
     if (err instanceof GenerationError) {
       stream.sendError({
         code: err.code,

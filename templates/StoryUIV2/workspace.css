@@ -1,0 +1,995 @@
+/**
+ * Story UI V2 — layout only.
+ *
+ * Everything that used to live here (surfaces, text steps, button states,
+ * spacing rhythm, focus rings, contrast) is now Radix Themes' job. Hand-rolling
+ * that layer produced a steady drip of defects: a reset that outranked its own
+ * button classes and killed every colour, a primary CTA at 3.90:1, a composer
+ * row that clipped the Build button. None of those are interesting problems.
+ *
+ * What remains is genuinely specific to this product — the two-pane frame, the
+ * preview stage, and escaping Storybook's docs padding. Radix has no opinion
+ * about any of that.
+ */
+
+/* Storybook's docs wrapper pads content 64px/20px and centres it. A workspace
+   has to escape that or it renders as a page inside a page. */
+.sbdocs-wrapper:has(.suiw-root),
+.sbdocs-content:has(.suiw-root) {
+  padding: 0 !important;
+  margin: 0 !important;
+  max-width: none !important;
+}
+
+.suiw-root {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+/* Inside Storybook's manager the host measures the content cell (managerBounds.ts). */
+.suiw-manager-host > .suiw-root,
+.suiw-manager-host .suiw-root {
+  inset: auto;
+  left: var(--suiw-left, 0);
+  top: var(--suiw-top, 0);
+  width: var(--suiw-width, 100vw);
+  height: var(--suiw-height, 100vh);
+}
+
+/* Radix Themes fills its container but does not position itself. */
+.suiw-root .radix-themes {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---- two-pane frame ---------------------------------------------------- */
+
+.suiw-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 400px 1fr;
+  /*
+   * One row, exactly the container's height. An implicit `auto` row sizes to
+   * its content, and a long thread made the rail 941px tall inside an 806px
+   * page: the composer sat below the fold and nothing could scroll to it.
+   */
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.suiw-rail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--gray-a5);
+}
+
+.suiw-canvas {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/*
+ * Narrow viewports. The old rule stacked the rail OVER the canvas below
+ * 1100px with the rail capped at 45% — at 1024×700 the thread had ~58px,
+ * at 800×600 ~24px, with a dead band between the two. Two columns hold
+ * down to 900px as long as the rail keeps a readable minimum; below that
+ * it is one pane at a time: the rail is the workspace at full height, and
+ * the canvas takes the body when the preview is asked for (fullscreen —
+ * the header's Preview button, the canvas's own toggle to come back).
+ */
+@media (max-width: 1100px) {
+  .suiw-body { grid-template-columns: minmax(320px, 38%) 1fr; }
+}
+
+@media (max-width: 900px) {
+  .suiw-body { grid-template-columns: 1fr; }
+  .suiw-rail { border-right: 0; }
+  .suiw-body:not(.suiw-body--fullscreen) > .suiw-canvas { display: none; }
+}
+
+/* The header's way to the preview, only where the canvas is not on screen. */
+.suiw-narrow-only { display: none; }
+@media (max-width: 900px) {
+  .suiw-narrow-only { display: inline-flex; }
+}
+
+.suiw-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--gray-a6) transparent;
+}
+
+.suiw-scroll::-webkit-scrollbar { width: 8px; }
+.suiw-scroll::-webkit-scrollbar-thumb {
+  background: var(--gray-a6);
+  border-radius: var(--radius-6);
+}
+
+/* ---- preview stage ------------------------------------------------------ */
+
+.suiw-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  overflow: auto;
+  /* A faint grid so a white composition reads as an artifact sitting on a
+     surface rather than as the page itself. */
+  background-image:
+    linear-gradient(var(--gray-a3) 1px, transparent 1px),
+    linear-gradient(90deg, var(--gray-a3) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/**
+ * With a frame on screen the frame IS the stage: no padding, no grid — every
+ * pixel spent on a backdrop is preview the reviewer cannot see. Applied ONLY
+ * while a frame is mounted (see PreviewCanvas): `stretch` is right for a
+ * full-bleed frame and wrong for every placeholder state, which the base
+ * rule centres.
+ */
+.suiw-stage--fit {
+  padding: 0;
+  background-image: none;
+  place-items: stretch;
+  background-position: -1px -1px;
+}
+
+.suiw-frame {
+  background: #fff;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+  transition: opacity 180ms ease;
+}
+
+/* The canvas keeps showing the previous composition while a new one builds, so
+   you can still read what you are iterating on. Dimming beats blanking. */
+.suiw-frame--stale { opacity: 0.55; }
+
+.suiw-frame iframe { display: block; border: 0; width: 100%; height: 100%; }
+
+/* ---- recent work -------------------------------------------------------- */
+
+.suiw-recent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-3);
+}
+
+/* The thumbnail is the real story at half scale — nothing to screenshot or
+   invalidate. Mounted only when scrolled into view, since each frame is
+   another Storybook runtime. */
+.suiw-thumb {
+  height: 124px;
+  overflow: hidden;
+  position: relative;
+  background: var(--gray-2);
+  border-bottom: 1px solid var(--gray-a5);
+  display: block;
+}
+
+.suiw-thumb iframe {
+  width: 200%;
+  height: 200%;
+  border: 0;
+  transform: scale(0.5);
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+
+.suiw-thumb--idle { display: grid; place-items: center; }
+
+/* ---- motion ------------------------------------------------------------- */
+
+/* The only looping animation in the product. It means "work in progress" and
+   nothing else. */
+@keyframes suiw-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.suiw-pulse { animation: suiw-pulse 1.4s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .suiw-pulse { animation: none; }
+  .suiw-frame { transition: none; }
+}
+
+/* Truncate rather than grow: a long story title must never push the header's
+   right-hand controls out of the row. */
+.suiw-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* ---- attachments -------------------------------------------------------- */
+
+/* The whole composer is the drop target — aiming for the textarea alone is a
+   precision game nobody signed up for. */
+.suiw-composer--drag {
+  outline: 2px dashed var(--accent-8);
+  outline-offset: -6px;
+  border-radius: var(--radius-4);
+}
+
+.suiw-attach-thumb {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-2);
+  overflow: hidden;
+  border: 1px solid var(--gray-a6);
+  background: var(--gray-2);
+}
+
+.suiw-attach-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.suiw-attach-thumb button {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--color-panel-solid);
+  color: var(--gray-12);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+/* Sent attachments stay on the turn as its record, smaller than in the
+   composer — the message is the subject now, not the upload. */
+.suiw-turn-thumbs img {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: var(--radius-2);
+  border: 1px solid var(--gray-a6);
+  display: block;
+}
+
+/* ---- inspector ---------------------------------------------------------- */
+
+/* The stage and the inspector share the canvas body: the frame takes what is
+   left, the inspector is a fixed column at the right edge. */
+.suiw-canvas-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+}
+
+.suiw-canvas-body > .suiw-stage {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.suiw-inspector {
+  flex: 0 0 300px;
+  width: 300px;
+  min-height: 0;
+  overflow-y: auto;
+  border-left: 1px solid var(--gray-a5);
+  background: var(--color-panel-solid);
+  scrollbar-width: thin;
+  scrollbar-color: var(--gray-a6) transparent;
+}
+
+.suiw-inspector-hint {
+  padding-bottom: var(--space-1);
+  border-bottom: 1px solid var(--gray-a4);
+}
+
+.suiw-inspector-status {
+  /* Pinned: the answer to "did that apply?" must not scroll off with a long
+     property list — that is the ambiguity the inspector exists to remove. */
+  position: sticky;
+  bottom: 0;
+  margin: 0 calc(-1 * var(--space-3)) calc(-1 * var(--space-3));
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-panel-solid);
+  border-top: 1px solid var(--gray-a4);
+}
+
+/* The control that just changed, for a moment. */
+.suiw-prop {
+  border-radius: var(--radius-2);
+  margin: 0 calc(-1 * var(--space-1));
+  padding: var(--space-1);
+  transition: background 600ms ease;
+}
+
+.suiw-prop--flash {
+  background: var(--green-a3);
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .suiw-prop { transition: none; }
+}
+
+/* ---------------------------------------------------------------------------
+ * Classes the markup applies that nothing defined.
+ *
+ * Each of these was referenced in Workspace.tsx and had no rule, so the
+ * element rendered with whatever it inherited. The chat body is the one that
+ * mattered: an assistant reply carrying line breaks collapsed into a single
+ * run-on paragraph, and a long unbroken token could push the rail wider than
+ * its column.
+ * ------------------------------------------------------------------------- */
+
+/* Model replies arrive as prose with real line breaks. Honour them, and never
+   let an unbroken token (a class name, a URL) widen the rail. */
+.suiw-turn-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The primary navigation on the home screen had no hover or focus treatment
+   at all, so nothing indicated the cards were clickable. */
+.suiw-recent-card {
+  border-radius: 8px;
+  transition: box-shadow 120ms ease, transform 120ms ease;
+}
+.suiw-recent-card:hover {
+  box-shadow: 0 2px 10px -2px var(--gray-a6);
+  transform: translateY(-1px);
+}
+.suiw-recent-card:focus-visible {
+  outline: 2px solid var(--accent-8);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .suiw-recent-card { transition: none; }
+  .suiw-recent-card:hover { transform: none; }
+}
+
+/* A step's captured reason, rendered beside its label. */
+.suiw-step-detail {
+  opacity: 0.8;
+}
+
+/* A step that failed keeps its label readable rather than greying out with
+   the completed ones. */
+.suiw-step--failed .suiw-step-label {
+  font-weight: 500;
+}
+
+/* A step that could not run (verification without a browser) is amber: not a
+   failure, not a pass. */
+.suiw-step--warn .suiw-step-label {
+  font-weight: 500;
+}
+
+/* Advice attached to a turn — "automatic fixes were applied" — set apart from
+   the reply it follows so it reads as a note, not as something the model
+   said. */
+.suiw-turn-notice {
+  color: var(--gray-11);
+  border-left: 2px solid var(--gray-a6);
+  padding-left: var(--space-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- verification findings ---------------------------------------------- */
+
+.suiw-findings {
+  border: 1px solid var(--gray-a5);
+  border-radius: var(--radius-3);
+  background: var(--gray-a2);
+}
+
+.suiw-finding + .suiw-finding {
+  border-top: 1px solid var(--gray-a4);
+}
+
+.suiw-finding-evidence {
+  font-family: var(--code-font-family);
+  font-size: var(--font-size-1);
+  color: var(--gray-11);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---- code view ---------------------------------------------------------- */
+
+/* Sits where the frame does. The frame itself stays mounted underneath so
+   toggling back does not cold-boot Storybook. */
+.suiw-code {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-panel-solid);
+  color: var(--gray-12);
+}
+
+.suiw-code pre {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  overflow: auto;
+  font-family: var(--code-font-family);
+  font-size: var(--font-size-1);
+  line-height: 1.6;
+  tab-size: 2;
+  scrollbar-width: thin;
+  scrollbar-color: var(--gray-a6) transparent;
+}
+
+.suiw-code code {
+  display: block;
+  white-space: pre;
+}
+
+.suiw-code-line {
+  display: block;
+}
+
+.suiw-code-line::before {
+  content: attr(data-line);
+  display: inline-block;
+  width: 3.5ch;
+  margin-right: var(--space-3);
+  text-align: right;
+  color: var(--gray-a9);
+  user-select: none;
+}
+
+/* ---- changes (diff) view ------------------------------------------------ */
+
+/* Same footprint as the code view: sits over the stage, frame kept mounted
+   underneath. Red is the workspace's tone for a blocker and green for a pass,
+   so removed and added lines borrow them — and both scales flip with the
+   appearance, which hand-picked hex values would not. */
+.suiw-diff {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-panel-solid);
+  color: var(--gray-12);
+}
+
+.suiw-diff-summary {
+  font-variant-numeric: tabular-nums;
+}
+
+.suiw-diff-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-3) 0;
+  font-family: var(--code-font-family);
+  font-size: var(--font-size-1);
+  line-height: 1.6;
+  tab-size: 2;
+  scrollbar-width: thin;
+  scrollbar-color: var(--gray-a6) transparent;
+}
+
+.suiw-diff-hunk {
+  padding: var(--space-1) var(--space-4);
+  margin-top: var(--space-3);
+  color: var(--accent-11);
+  background: var(--accent-a2);
+  white-space: pre;
+}
+
+.suiw-diff-hunk:first-child {
+  margin-top: 0;
+}
+
+/* Two gutters (old and new line numbers), a sign, then the line. Grid rather
+   than inline spans so long lines scroll inside the body without breaking
+   the gutter alignment. */
+.suiw-diff-line {
+  display: grid;
+  grid-template-columns: 3.5ch 3.5ch 1.5ch minmax(0, max-content);
+  column-gap: var(--space-2);
+  padding: 0 var(--space-4);
+  white-space: pre;
+  min-width: max-content;
+}
+
+.suiw-diff-line--context {
+  color: var(--gray-11);
+}
+
+.suiw-diff-line--add {
+  background: var(--green-a3);
+  color: var(--green-12);
+}
+
+.suiw-diff-line--del {
+  background: var(--red-a3);
+  color: var(--red-12);
+}
+
+.suiw-diff-no {
+  text-align: right;
+  color: var(--gray-a9);
+  user-select: none;
+}
+
+.suiw-diff-sign {
+  user-select: none;
+  text-align: center;
+}
+
+.suiw-diff-line--add .suiw-diff-sign { color: var(--green-11); }
+.suiw-diff-line--del .suiw-diff-sign { color: var(--red-11); }
+
+/* The stage becomes the positioning context for the overlays (code view,
+   changes view, failure callout) that replace the frame without unmounting
+   it. */
+.suiw-stage {
+  position: relative;
+}
+
+.suiw-frame--hidden {
+  visibility: hidden;
+  position: absolute;
+  pointer-events: none;
+}
+
+/* ---- components drawer -------------------------------------------------- */
+
+.suiw-inventory-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-1);
+  border-bottom: 1px solid var(--gray-a4);
+}
+
+.suiw-inventory-name {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--accent-11);
+  cursor: pointer;
+  text-align: left;
+}
+
+.suiw-inventory-name:hover,
+.suiw-inventory-name:focus-visible {
+  text-decoration: underline;
+}
+
+.suiw-inventory-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-9);
+  flex: 0 0 auto;
+}
+
+.suiw-inventory-dot--empty {
+  background: transparent;
+  border: 1px solid var(--gray-a7);
+}
+
+/* ---- live narration ----------------------------------------------------- */
+
+/* The model's own words while it works, above the step list. It is prose,
+   not a status line, so it wears the assistant turn's treatment plus a caret
+   to say the sentence is still being written. */
+.suiw-live {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Reasoning is provisional and reads as such: muted and italic, so the
+   moment the plan replaces it the change of register is visible. */
+.suiw-live--thinking .suiw-turn-body {
+  font-style: italic;
+  opacity: 0.7;
+}
+
+.suiw-live-label {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.suiw-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--accent-9);
+  animation: suiw-caret 1s steps(2, start) infinite;
+}
+
+@keyframes suiw-caret {
+  50% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .suiw-caret { animation: none; }
+}
+
+/* ---- fullscreen preview ------------------------------------------------- */
+
+/* The preview takes the whole workspace; the rail folds to a strip wide
+   enough for the chevron that brings it back. Independent of Storybook's own
+   chrome, which the manager addon handles when it is wired. */
+.suiw-body--fullscreen {
+  grid-template-columns: 36px 1fr;
+}
+
+.suiw-rail--collapsed {
+  align-items: center;
+  padding-top: var(--space-2);
+}
+
+@media (max-width: 900px) {
+  .suiw-body--fullscreen { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .suiw-rail--collapsed { max-height: none; flex-direction: row; padding: var(--space-1) var(--space-2); }
+}
+
+/* Below 1100px a 300px inspector column left a 1024px canvas ~380px wide.
+   It overlays the stage instead, right-aligned, closable with its × or Esc. */
+@media (max-width: 1100px) {
+  .suiw-canvas-body { position: relative; }
+  .suiw-inspector {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(320px, 100%);
+    z-index: 3;
+    box-shadow: -8px 0 24px -12px var(--black-a8);
+  }
+}
+
+.suiw-inline-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; padding: 0 4px; border-radius: 3px; background: var(--gray-a3); color: var(--gray-12); }
+
+/* ---- chrome ------------------------------------------------------------- */
+
+/* One 40px row each. The header holds the sidebar toggle, wordmark, story
+   switcher, Components, connection and New; the toolbar holds the view
+   control, Select, History and fullscreen. Nothing else. */
+.suiw-header,
+.suiw-toolbar {
+  height: 40px;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--gray-a5);
+}
+
+.suiw-wordmark {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  line-height: 1;
+}
+
+/* Icon + label buttons: the icon sits on the text's baseline box, not above it. */
+.suiw-header .rt-Button > svg,
+.suiw-toolbar .rt-Button > svg,
+.suiw-switcher-actions .rt-Button > svg {
+  margin-right: 2px;
+}
+
+.suiw-switcher {
+  max-width: 280px;
+  min-width: 0;
+}
+
+.suiw-switcher-title {
+  display: block;
+}
+
+.suiw-switcher-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.suiw-switcher-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-2);
+  padding: var(--space-1) var(--space-2);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.suiw-switcher-item:hover,
+.suiw-switcher-item:focus-visible {
+  background: var(--gray-a3);
+  outline: none;
+}
+
+.suiw-switcher-item--current {
+  background: var(--accent-a3);
+}
+
+.suiw-switcher-empty {
+  padding: var(--space-2);
+}
+
+.suiw-switcher-actions .rt-Button {
+  justify-content: flex-start;
+  width: 100%;
+}
+
+.suiw-tooltip-anchor {
+  display: inline-flex;
+  width: 100%;
+}
+
+/* Connection: a dot and a word. The red "Server unreachable" state is a
+   badge, since it is the one that needs to be seen. */
+.suiw-conn-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--gray-a7);
+}
+
+.suiw-conn-dot--on {
+  background: var(--green-9);
+}
+
+/* ---- composer ----------------------------------------------------------- */
+
+/* Pinned: the thread scrolls above it, never the rail. */
+.suiw-composer {
+  flex: 0 0 auto;
+}
+
+.suiw-composer-row .rt-IconButton svg {
+  display: block;
+}
+
+.suiw-btn-send:disabled {
+  opacity: 0.45;
+}
+
+.suiw-mic--on {
+  animation: suiw-pulse 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .suiw-mic--on { animation: none; }
+}
+
+/* A document chip: icon, name, size, remove. */
+.suiw-attach-doc {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  height: 28px;
+  padding: 0 var(--space-1) 0 var(--space-2);
+  border: 1px solid var(--gray-a6);
+  border-radius: var(--radius-2);
+  background: var(--gray-a2);
+  font-size: var(--font-size-1);
+  color: var(--gray-12);
+}
+
+.suiw-attach-doc-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 180px;
+}
+
+.suiw-attach-doc-size {
+  color: var(--gray-11);
+  white-space: nowrap;
+}
+
+.suiw-attach-doc button {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--gray-11);
+  cursor: pointer;
+}
+
+.suiw-attach-doc button:hover {
+  background: var(--gray-a4);
+  color: var(--gray-12);
+}
+
+.suiw-turn-files .rt-Badge svg {
+  margin-right: 2px;
+}
+
+.suiw-settings label {
+  color: var(--gray-11);
+}
+
+/* ---- assistant markdown ------------------------------------------------- */
+
+/* The block model from markdownLite. The turn body's pre-wrap would double
+   every paragraph gap, so blocks own their spacing and the body does not. */
+.suiw-turn-body--md {
+  white-space: normal;
+}
+
+.suiw-md p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.suiw-md ul {
+  margin: 0;
+  padding-left: 1.25em;
+}
+
+.suiw-md li + li {
+  margin-top: 2px;
+}
+
+.suiw-md p + p,
+.suiw-md p + ul,
+.suiw-md ul + p,
+.suiw-md ul + ul {
+  margin-top: var(--space-2);
+}
+
+.suiw-md strong {
+  font-weight: 600;
+}
+
+/* ---- folded steps ------------------------------------------------------- */
+
+.suiw-steps-summary {
+  min-height: 24px;
+}
+
+.suiw-verify-reason {
+  overflow-wrap: anywhere;
+}
+
+/* ---- portals over Storybook's manager ----------------------------------- */
+
+/* Storybook's manager gives its page slot a stacking context (a flex item
+   with z-index: 1). Everything Radix portals to <body> — popovers, menus,
+   selects, tooltips, dialog overlays — lands there with z-index auto and
+   painted UNDER the workspace: the story switcher was in the DOM, reported a
+   bounding box, and could not be seen or clicked. Radix Popper copies the
+   content's computed z-index onto its fixed wrapper, so the content classes
+   are where it must be set. */
+.rt-PopoverContent,
+.rt-DropdownMenuContent,
+.rt-ContextMenuContent,
+.rt-SelectContent,
+.rt-HoverCardContent,
+.rt-TooltipContent,
+.rt-BaseDialogOverlay {
+  z-index: 20;
+}
+
+/* Ghost buttons carry a negative margin for their hit area; stacked full
+   width in a popover that margin overflows the panel. */
+.suiw-switcher-actions .rt-Button {
+  margin: 0;
+}
+
+/* A suggestion is one line of prose in a chip; a long one truncates rather
+   than widening the rail. */
+.suiw-turn-actions .rt-Button {
+  display: block;
+  min-width: 0; /* a flex item's auto minimum is its full text width */
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+
+/* The chip row is itself a flex item in a column with `align-items: start`,
+   so it would size to its longest chip; cap it at the column. */
+.suiw-turn-actions {
+  max-width: 100%;
+  min-width: 0;
+}
+
+/* ---- spacing between independent controls ------------------------------ */
+
+/* Radix ghost buttons carry a negative margin so their label aligns with
+   surrounding text. In a row of controls that margin eats the row's gap —
+   the header's buttons measured 4px apart with gap 8 — so rows of controls
+   zero it and let the gap be the gap. */
+.suiw-header .rt-BaseButton,
+.suiw-toolbar .rt-BaseButton,
+.suiw-composer-row .rt-BaseButton,
+.suiw-selection-row .rt-BaseButton,
+.suiw-inspector-status .rt-BaseButton {
+  margin: 0;
+}
+
+/* A file input the browser must still render: WebKit ignores .click() on a
+   display:none input, which is what `hidden` gives it. */
+.suiw-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  opacity: 0;
+  clip-path: inset(50%);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* ---- a story that does not render ---------------------------------------- */
+
+/* The stage's calm replacement for Storybook's error page. Centred by the
+   stage's base rule; the reason is one line of evidence, wrapped rather than
+   clipped so a long module path is still readable. */
+.suiw-render-failed {
+  max-width: min(520px, 100%);
+}
+
+.suiw-render-failed-reason {
+  font-family: var(--code-font-family);
+  overflow-wrap: anywhere;
+}
+
+/* A Home card whose story does not render: a neutral hatch where the
+   thumbnail would be, and a small red label. The frame, when mounted, stays
+   underneath so a repair from elsewhere clears the mark on its own. */
+.suiw-thumb--failed iframe {
+  visibility: hidden;
+}
+
+.suiw-thumb-failed {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background:
+    repeating-linear-gradient(
+      135deg,
+      transparent 0 10px,
+      var(--gray-a3) 10px 11px
+    ),
+    var(--gray-2);
+}

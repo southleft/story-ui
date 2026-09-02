@@ -12,37 +12,31 @@ const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 import express from 'express';
 import cors from 'cors';
-import { getComponents, getProps } from './routes/components.js';
-import { claudeProxy } from './routes/claude.js';
+import { resolveAccessPolicy, accessControl } from './auth.js';
+import { getComponents, getComponentInventory, getProps } from './routes/components.js';
+import { editablePropsHandler, editPropHandler } from './routes/editProp.js';
+import { makeHandoff, makeHandoffStatus } from './routes/handoff.js';
+import { makeListVersions, makeRestoreVersion } from './routes/storyVersions.js';
+import {
+  getDesignContext,
+  getDesignContextFile,
+  putDesignContextFile,
+  deleteDesignContextFile,
+  scaffoldDesignContext,
+} from './routes/designContext.js';
 import { generateStoryFromPrompt } from './routes/generateStory.js';
 import { generateStoryFromPromptStream } from './routes/generateStoryStream.js';
+import { activeGenerationsHandler, cancelGenerationHandler } from './routes/activeGenerations.js';
 import { loadUserConfig } from '../story-generator/configLoader.js';
 import { loadConsiderations, considerationsToPrompt } from '../story-generator/considerationsLoader.js';
 import { DocumentationLoader } from '../story-generator/documentationLoader.js';
 import fs from 'fs';
 import { UrlRedirectService } from '../story-generator/urlRedirectService.js';
-import {
-  getProviders,
-  getModels,
-  configureProviderRoute,
-  validateApiKey,
-  setDefaultProvider,
-  setModel,
-  getUISettings,
-  applyUISettings,
-  getSettingsConfig
-} from './routes/providers.js';
-import {
-  listFrameworks,
-  detectCurrentFramework,
-  getFrameworkDetails,
-  validateStoryForFramework,
-  postProcessStoryForFramework,
-} from './routes/frameworks.js';
+import { getProviders, getModels } from './routes/providers.js';
 import mcpRemoteRouter from './routes/mcpRemote.js';
 // Voice Canvas endpoints
 import { canvasSaveHandler } from './routes/canvasSave.js';
-import { canvasGenerateHandler, ensureVoiceCanvasStory } from './routes/canvasGenerate.js';
+import { canvasGenerateHandler } from './routes/canvasGenerate.js';
 import { getAdapterRegistry } from '../story-generator/framework-adapters/index.js';
 // Manifest — story ↔ chat source of truth
 import {
@@ -132,29 +126,63 @@ const corsOptions = {
   credentials: true,
 };
 app.use(cors(corsOptions));
-app.use(express.json({ limit: '10mb' })); // Increased limit for file uploads
+
+// Who may talk to this server at all. Resolved before any route is mounted and
+// refuses to start a public deployment with no token — see auth.ts.
+let accessPolicy: ReturnType<typeof resolveAccessPolicy>;
+try {
+  accessPolicy = resolveAccessPolicy();
+} catch (err) {
+  console.error(`\n❌ ${err instanceof Error ? err.message : String(err)}\n`);
+  process.exit(1);
+}
+app.get('/health', (_req, res) => { res.json({ ok: true }); });
+app.use(accessControl(accessPolicy));
+// Vision requests carry base64 image payloads. The panel downscales before
+// upload, but keep headroom above the per-image ceiling (4 images x 20MB raw,
+// ~33% base64 inflation) so an oversized attachment produces a clear error
+// from the image validator rather than an opaque 413 from body-parser.
+// The panel downscales images to 1568px JPEG before upload (well under 1MB
+// each, four at most), so 25MB is generous headroom, not a memory hazard.
+app.use(express.json({ limit: process.env.STORY_UI_MAX_BODY || '25mb' }));
+
+// Turn body-parser's 413 into a JSON error the panel can actually display.
+// Without this the panel sees a non-OK response, assumes the stream failed,
+// and silently retries without the images.
+app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err?.type === 'entity.too.large' || err?.status === 413) {
+    return res.status(413).json({
+      success: false,
+      error: 'Image payload too large',
+      suggestion: 'Attach a smaller or lower-resolution image, or fewer images.',
+    });
+  }
+  return next(err);
+});
 
 // Component discovery routes
 app.get('/mcp/components', getComponents);
+// Inventory for people, not the model: name, provenance, how much is known.
+app.get('/mcp/components/inventory', getComponentInventory);
+// Direct property editing — the deterministic path for changes that have
+// exactly one correct answer, so "make this button red" never reaches a model.
+app.get('/mcp/editable-props', editablePropsHandler);
+app.post('/mcp/edit-prop', editPropHandler);
 app.get('/mcp/props', getProps);
 
 // AI generation routes
-app.post('/mcp/claude', claudeProxy);
 app.post('/mcp/generate-story', generateStoryFromPrompt);
 app.post('/mcp/generate-story-stream', generateStoryFromPromptStream);
 // Voice Canvas endpoints
 app.post('/mcp/canvas-generate', canvasGenerateHandler); // generate + write voice-canvas.stories.tsx
 app.post('/mcp/canvas-save', canvasSaveHandler);         // save canvas to named .stories.tsx
-// Ensure voice-canvas story template exists (lightweight, no LLM call)
-app.post('/mcp/canvas-ensure', (_req, res) => {
-  try {
-    const storiesDir = config.generatedStoriesPath || './src/stories/generated/';
-    ensureVoiceCanvasStory(storiesDir);
-    return res.json({ ok: true });
-  } catch (err) {
-    return res.json({ ok: false });
-  }
-});
+// In-flight generations — lets a reconnecting poller distinguish "the server
+// is still working on my prompt" from "the generation was lost". Registered in
+// generationCore at pipeline start, removed in a finally on every outcome.
+app.get('/story-ui/active-generations', activeGenerationsHandler);
+// Stop: ask a running generation to stand down. Cooperative — the pipeline
+// checks the flag at phase boundaries.
+app.delete('/story-ui/active-generations/:id', cancelGenerationHandler);
 
 // Manifest — story ↔ chat source of truth
 // NOTE: /reconcile must be registered BEFORE /:fileName to avoid route conflict
@@ -165,33 +193,34 @@ app.patch('/story-ui/manifest/:fileName', manifestPatchHandler);
 app.delete('/story-ui/manifest/:fileName', manifestDeleteHandler);
 // Expose design-system config for auto-registry loading
 app.get('/mcp/canvas-config', (_req, res) => {
+  // Whether the host Storybook lists @storybook/addon-mcp. Read from
+  // .storybook/main.* so the classic panel can decide whether the addon's
+  // /mcp endpoint is worth asking for — probing blindly logged a 404 on
+  // every load in every project without it.
+  const storybookMcpAddon = (() => {
+    try {
+      const sbDir = path.join(process.cwd(), '.storybook');
+      const main = ['main.ts', 'main.mts', 'main.js', 'main.mjs', 'main.cjs'].map(f => path.join(sbDir, f)).find(f => fs.existsSync(f));
+      return !!main && fs.readFileSync(main, 'utf8').includes('@storybook/addon-mcp');
+    } catch { return false; }
+  })();
   res.json({
+    storybookMcpAddon,
     importPath: config.importPath || '',
     importStyle: config.importStyle || 'barrel',
     componentPrefix: config.componentPrefix || '',
     componentFramework: config.componentFramework || 'react',
+    // The design system's human name, when the config declares one — the
+    // workspace shows this to people ("Mantine"), not the import specifier.
+    // Empty when undeclared; the client falls back to importPath rather than
+    // guessing a name from a package path.
+    designSystemName: config.designSystemGuidelines?.name || '',
   });
 });
 
-// LLM Provider management routes
+// LLM Provider routes (read-only: the panel and workspace list providers and models)
 app.get('/mcp/providers', getProviders);
 app.get('/mcp/providers/models', getModels);
-app.post('/mcp/providers/configure', configureProviderRoute);
-app.post('/mcp/providers/validate', validateApiKey);
-app.post('/mcp/providers/default', setDefaultProvider);
-app.post('/mcp/providers/model', setModel);
-
-// UI Settings routes (hybrid model selection for non-technical users)
-app.get('/mcp/providers/settings', getUISettings);
-app.post('/mcp/providers/settings', applyUISettings);
-app.get('/mcp/providers/config', getSettingsConfig);
-
-// Framework detection and adapter routes
-app.get('/mcp/frameworks', listFrameworks);
-app.get('/mcp/frameworks/detect', detectCurrentFramework);
-app.get('/mcp/frameworks/:type', getFrameworkDetails);
-app.post('/mcp/frameworks/validate', validateStoryForFramework);
-app.post('/mcp/frameworks/post-process', postProcessStoryForFramework);
 
 // MCP story management routes - for Claude Desktop and other MCP clients
 // List all stories
@@ -386,9 +415,17 @@ app.delete('/mcp/stories/:storyId', async (req, res) => {
 app.post('/story-ui/generate', generateStoryFromPrompt);
 app.post('/story-ui/generate-stream', generateStoryFromPromptStream);
 // voice-render and convert-to-story aliases removed
-app.post('/story-ui/claude', claudeProxy);
 app.get('/story-ui/components', getComponents);
 app.get('/story-ui/props', getProps);
+
+// Design context authoring — story-ui-docs/ is the high-authority channel
+// (verbatim, code fences preserved, injected closest to the user request), so
+// the panel edits it directly rather than the lossy single-file considerations.
+app.get('/story-ui/design-context', getDesignContext);
+app.post('/story-ui/design-context/scaffold', scaffoldDesignContext);
+app.get('/story-ui/design-context/:name', getDesignContextFile);
+app.put('/story-ui/design-context/:name', putDesignContextFile);
+app.delete('/story-ui/design-context/:name', deleteDesignContextFile);
 
 // Design system considerations endpoint - serves considerations for environment parity
 app.get('/story-ui/considerations', async (req, res) => {
@@ -437,25 +474,9 @@ app.get('/story-ui/considerations', async (req, res) => {
   }
 });
 
-// Provider management proxy routes
+// Provider proxy routes
 app.get('/story-ui/providers', getProviders);
 app.get('/story-ui/providers/models', getModels);
-app.post('/story-ui/providers/configure', configureProviderRoute);
-app.post('/story-ui/providers/validate', validateApiKey);
-app.post('/story-ui/providers/default', setDefaultProvider);
-app.post('/story-ui/providers/model', setModel);
-
-// UI Settings proxy routes (for non-technical users)
-app.get('/story-ui/providers/settings', getUISettings);
-app.post('/story-ui/providers/settings', applyUISettings);
-app.get('/story-ui/providers/config', getSettingsConfig);
-
-// Framework management proxy routes
-app.get('/story-ui/frameworks', listFrameworks);
-app.get('/story-ui/frameworks/detect', detectCurrentFramework);
-app.get('/story-ui/frameworks/:type', getFrameworkDetails);
-app.post('/story-ui/frameworks/validate', validateStoryForFramework);
-app.post('/story-ui/frameworks/post-process', postProcessStoryForFramework);
 
 // List generated stories from file system
 app.get('/story-ui/stories', async (req, res) => {
@@ -622,49 +643,6 @@ app.delete('/story-ui/stories/:id', async (req, res) => {
   } catch (error) {
     console.error('Error deleting story:', error);
     return res.status(500).json({ error: 'Failed to delete story' });
-  }
-});
-
-// Delete story from file system (legacy POST endpoint)
-app.post('/story-ui/delete', async (req, res) => {
-  try {
-    const { chatId, storyId } = req.body;
-    const id = chatId || storyId;
-
-    if (!id) {
-      return res.status(400).json({ error: 'chatId or storyId is required' });
-    }
-
-    console.log(`🗑️ Attempting to delete story: ${id}`);
-
-    const storiesPath = config.generatedStoriesPath;
-    console.log(`🔍 Searching for story in: ${storiesPath}`);
-
-    if (fs.existsSync(storiesPath)) {
-      const files = fs.readdirSync(storiesPath);
-      const matchingFile = files.find(file =>
-        file.includes(id) || removeStoryExtension(file) === id
-      );
-
-      if (matchingFile) {
-        const filePath = path.join(storiesPath, matchingFile);
-        fs.unlinkSync(filePath);
-        console.log(`✅ Deleted story file: ${filePath}`);
-        return res.json({
-          success: true,
-          message: 'Story deleted successfully'
-        });
-      }
-    }
-
-    console.log(`❌ Story not found: ${id}`);
-    return res.status(404).json({
-      success: false,
-      error: 'Story not found'
-    });
-  } catch (error) {
-    console.error('Error deleting story:', error);
-    res.status(500).json({ error: 'Failed to delete story' });
   }
 });
 
@@ -972,6 +950,23 @@ app.get('/story-ui/redirects.js', (req, res) => {
 // Load user config and initialize services
 const config = loadUserConfig();
 
+// Expose the configured design system so routes can pick sensible defaults
+// (e.g. which starter design-context document to scaffold) without the client
+// having to know or send it.
+app.set('storyUiImportPath', config.importPath);
+
+// Handoff — prototype to branch/PR. Registered here because it needs the loaded
+// config. Every mutating step is opt-in and driven by an explicit user action in
+// the panel; see routes/handoff.ts for the guardrails.
+// Version history. The storage has always existed (StoryHistoryManager); these
+// are the reader and the restore that were never built, so a damaging edit was
+// unrecoverable. See routes/storyVersions.ts.
+app.get('/story-ui/versions/:fileName', makeListVersions({ generatedStoriesPath: config.generatedStoriesPath }));
+app.post('/story-ui/versions/:fileName/restore', makeRestoreVersion({ generatedStoriesPath: config.generatedStoriesPath }));
+
+app.get('/story-ui/handoff/status', makeHandoffStatus({ generatedStoriesPath: config.generatedStoriesPath }));
+app.post('/story-ui/handoff', makeHandoff({ generatedStoriesPath: config.generatedStoriesPath }));
+
 // Initialize URL redirect service
 const redirectService = new UrlRedirectService(process.cwd());
 
@@ -1016,19 +1011,20 @@ if (storybookProxyEnabled) {
 }
 
 // Start server
-app.listen(PORT, () => {
-  console.error(`MCP server running on port ${PORT}`);
-  console.error(`Stories will be generated to: ${config.generatedStoriesPath}`);
-  // Ensure voice-canvas scratchpad story file exists before client polling starts.
-  // Only for React projects — voice-canvas.stories.tsx imports react-live which
-  // breaks non-React Storybook builds (Vue, Angular, Svelte, Web Components).
-  if (!config.componentFramework || config.componentFramework === 'react') {
-    try {
-      ensureVoiceCanvasStory(config.generatedStoriesPath || './src/stories/generated/');
-    } catch (err) {
-      console.error('[voice-canvas] Could not pre-create story template:', err);
-    }
+app.listen(PORT, accessPolicy.host, () => {
+  console.error(`MCP server running on ${accessPolicy.host}:${PORT}`);
+  if (accessPolicy.token) {
+    console.error('🔐 Token required: send "Authorization: Bearer <STORY_UI_TOKEN>" or open once with ?token=');
+  } else if (accessPolicy.unauthenticatedPublic) {
+    console.error('⚠️  Reachable from other machines with NO authentication (STORY_UI_ALLOW_UNAUTHENTICATED=true)');
+  } else {
+    console.error('🔒 Loopback only. Set STORY_UI_TOKEN to expose it to other machines.');
   }
+  console.error(`Stories will be generated to: ${config.generatedStoriesPath}`);
+  // The voice-canvas scratch story is NOT written here. Writing it at start
+  // put "Generated/Voice Canvas" into every user's sidebar before they had
+  // asked for anything; the canvas route (POST /mcp/canvas-generate) writes
+  // it on first use, which is the first time the iframe can need it.
   // Initialize manifest manager (loads file, migrates from StoryTracker, reconciles)
   setTimeout(() => {
     try {

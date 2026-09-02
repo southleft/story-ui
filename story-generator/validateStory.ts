@@ -108,13 +108,22 @@ export function validateStoryCode(code: string, fileName: string = 'story.tsx', 
     // Check for React import - but only for React-based frameworks
     const isReactFramework = framework === 'react' || framework.includes('react');
     const hasJSX = code.includes('<') || code.includes('/>');
-    const hasReactImport = code.includes('import React from \'react\';');
+    const hasReactImport = hasReactDefaultImport(code);
     const hasLitHtml = code.includes('import { html }') || code.includes('from \'lit\'');
 
-    // Only require React import for React frameworks, and skip for web-components/angular/vue/svelte
+    // A missing React import is mechanically fixable, so fix it and move on.
+    //
+    // It used to be reported as a blocking error, which was doubly wrong: the
+    // detection was an exact string match for `import React from 'react';`, so
+    // the extremely common `import React, { useState } from 'react';` read as
+    // missing — and the auto-fixer used a looser test, saw the import, and
+    // changed nothing. The model was then asked, up to three times, to add an
+    // import it already had, and the repair budget died on a phantom defect.
+    // Nothing that can be fixed deterministically should ever cost a retry.
     if (hasJSX && !hasReactImport && isReactFramework && !hasLitHtml) {
-      result.errors.push('Missing React import - add "import React from \'react\';" at the top of the file');
-      result.isValid = false;
+      code = fixMissingReactImport(code);
+      result.fixedCode = code;
+      result.warnings.push('Added missing React import');
     }
 
     // CRITICAL: For non-React frameworks, REMOVE any React imports that the LLM incorrectly generated
@@ -150,6 +159,22 @@ export function validateStoryCode(code: string, fileName: string = 'story.tsx', 
 }
 
 /**
+ * Collect every identifier introduced by a binding name, including nested
+ * object/array destructuring (const { a, b: { c } } = x, ({ Slot }) => ...).
+ */
+function collectBoundNames(name: ts.BindingName, out: Set<string>): void {
+  if (ts.isIdentifier(name)) {
+    out.add(name.text);
+    return;
+  }
+  if (ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name)) {
+    name.elements.forEach(el => {
+      if (ts.isBindingElement(el)) collectBoundNames(el.name, out);
+    });
+  }
+}
+
+/**
  * Performs additional semantic checks on the AST
  */
 function performSemanticChecks(sourceFile: ts.SourceFile, config?: any): string[] {
@@ -157,6 +182,10 @@ function performSemanticChecks(sourceFile: ts.SourceFile, config?: any): string[
   const availableComponents = new Set<string>();
   const importedComponents = new Set<string>();
   const usedJsxComponents = new Set<string>();
+  // Components declared in the file itself. Multi-region compositions routinely
+  // factor sections into local helpers (const TopNav = () => ...); those are
+  // defined, not missing, and must not be reported as absent imports.
+  const locallyDeclared = new Set<string>();
 
   // If config is provided, collect available components
   if (config && config.componentsToImport) {
@@ -173,7 +202,21 @@ function performSemanticChecks(sourceFile: ts.SourceFile, config?: any): string[
         // CRITICAL: Check for incorrect import paths that contain the configured importPath but with extra segments
         // This catches LLM errors like: vuetify/components/lib/components/VAlert instead of vuetify/components
         // NOTE: Web Components often require deep imports to register custom elements, so we skip this check for them
-        if (config && config.importPath && config.componentFramework !== 'web-components') {
+        //
+        // A BARE SCOPE IS NOT AN IMPORTABLE PACKAGE, so nothing "deeper" than it
+        // is a mistake. Atlassian configures `importPath: '@atlaskit'` because it
+        // ships one package per component; correct code imports
+        // `@atlaskit/primitives`, which starts with `@atlaskit/` and so tripped
+        // this check. The advice it produced — import from '@atlaskit' — names a
+        // package that cannot resolve, and the pipeline elsewhere runs
+        // splitScopeImports precisely to REPAIR that spelling. Two parts of the
+        // engine demanding opposite things is how correct imports got rewritten
+        // into packages that do not exist.
+        //
+        // Derived from the value rather than from a config flag: `@scope` with no
+        // slash is never importable, whatever importStyle happens to say.
+        const scopeRootOnly = typeof config?.importPath === 'string' && /^@[^/]+$/.test(config.importPath);
+        if (config && config.importPath && config.componentFramework !== 'web-components' && !scopeRootOnly) {
           const configuredPath = config.importPath;
 
           // Check if LLM used a deep/incorrect path instead of the configured one
@@ -197,21 +240,20 @@ function performSemanticChecks(sourceFile: ts.SourceFile, config?: any): string[
               // Check if component exists in available components
               if (availableComponents.size > 0) {
                 if (isBlacklistedComponent(componentName, availableComponents)) {
-                  // This is a blacklisted component
+                  // Not in the catalog. The only useful help is the nearest
+                  // names the catalog actually has — not a fixed list of
+                  // "basic components" from some other design system.
                   const validation = validateImports([componentName], availableComponents);
                   const suggestions = validation.suggestions.get(componentName);
 
-                  let errorMsg = `Import error: "${componentName}" is not a valid component from ${importPath}. This appears to be a story export name or made-up component.`;
-
+                  let errorMsg = `Import error: "${componentName}" is an unknown component (not in the catalog for ${importPath}).`;
                   if (suggestions && suggestions.length > 0) {
-                    errorMsg += ` Use these components instead: ${suggestions.join(', ')}.`;
+                    errorMsg += ` Nearest catalog names: ${suggestions.join(', ')}.`;
                   } else {
-                    errorMsg += ` Use basic components like Box, Stack, Text, Button instead.`;
+                    errorMsg += ` Available components include: ${Array.from(availableComponents).slice(0, 10).join(', ')}...`;
                   }
 
                   errors.push(errorMsg);
-                } else if (!availableComponents.has(componentName)) {
-                  errors.push(`Import error: "${componentName}" is not available from ${importPath}. Available components include: ${Array.from(availableComponents).slice(0, 10).join(', ')}...`);
                 }
               }
             });
@@ -230,6 +272,28 @@ function performSemanticChecks(sourceFile: ts.SourceFile, config?: any): string[
     // Track default imports (e.g., import React from 'react')
     if (ts.isImportDeclaration(node) && node.importClause && node.importClause.name) {
       importedComponents.add(node.importClause.name.text);
+    }
+
+    // Track namespace imports (e.g., import * as Icons from '...')
+    if (
+      ts.isImportDeclaration(node) &&
+      node.importClause?.namedBindings &&
+      ts.isNamespaceImport(node.importClause.namedBindings)
+    ) {
+      importedComponents.add(node.importClause.namedBindings.name.text);
+    }
+
+    // Track components/values declared in this file so they aren't mistaken
+    // for missing imports: const Foo = ..., function Foo() {}, class Foo {},
+    // destructured locals, and parameters (render props / component-as-prop).
+    if (ts.isVariableDeclaration(node) || ts.isParameter(node)) {
+      collectBoundNames(node.name, locallyDeclared);
+    }
+    if (ts.isFunctionDeclaration(node) && node.name) {
+      locallyDeclared.add(node.name.text);
+    }
+    if (ts.isClassDeclaration(node) && node.name) {
+      locallyDeclared.add(node.name.text);
     }
 
     // Track JSX element names - CRITICAL: Catch undefined components
@@ -265,11 +329,11 @@ function performSemanticChecks(sourceFile: ts.SourceFile, config?: any): string[
   // This catches bugs where a component is used but never imported
   // This is framework-agnostic - works for any JSX-based framework
   for (const componentName of usedJsxComponents) {
-    if (!importedComponents.has(componentName)) {
+    if (!importedComponents.has(componentName) && !locallyDeclared.has(componentName)) {
       errors.push(
-        `JSX error: "${componentName}" is used but was never imported. ` +
-        `Either add it to your imports, or if you intended to use a sub-component, ` +
-        `use the correct syntax (e.g., Parent.Child instead of ParentChild).`
+        `JSX error: "${componentName}" is used but was never imported or defined. ` +
+        `Either add it to your imports, define it in this file, or if you intended ` +
+        `to use a sub-component, use the correct syntax (e.g., Parent.Child instead of ParentChild).`
       );
     }
   }
@@ -608,10 +672,24 @@ function fixUnterminatedStrings(code: string): string {
 /**
  * Fixes missing React import for JSX
  */
+/**
+ * True when the file already brings React into scope as a value binding.
+ *
+ * Covers every shape the model actually emits:
+ *   import React from 'react';
+ *   import React, { useState } from "react";
+ *   import * as React from 'react';
+ * Deliberately does NOT match `import { useState } from 'react'` — that binds
+ * hooks but not the React identifier itself.
+ */
+export function hasReactDefaultImport(code: string): boolean {
+  return /import\s+(?:\*\s+as\s+)?React\b[^;'"]*from\s*['"]react['"]/.test(code);
+}
+
 function fixMissingReactImport(code: string): string {
   // Check if code has JSX but no React import
   const hasJSX = code.includes('<') || code.includes('/>');
-  const hasReactImport = code.includes('import React') || code.includes('* as React');
+  const hasReactImport = hasReactDefaultImport(code);
 
   if (hasJSX && !hasReactImport) {
     // Find the first import statement or the beginning of the file
@@ -662,6 +740,27 @@ function fixIncorrectImportPaths(code: string, correctImportPath: string): strin
   //   import { VBtn } from 'vuetify/components/lib/components/VBtn';
   // should become:
   //   import { VAlert, VBtn } from 'vuetify/components';
+
+  /**
+   * Never consolidate onto an npm SCOPE — it is not a module.
+   *
+   * This transform exists for Vuetify, where deep paths like
+   * `vuetify/components/lib/components/VBtn` genuinely should collapse to
+   * `vuetify/components`. Applied to a package-per-component design system it
+   * does the exact opposite of what is needed: `@atlaskit/avatar`,
+   * `@atlaskit/lozenge` and `@atlaskit/primitives` are the CORRECT specifiers,
+   * and rewriting them to `@atlaskit` produces a module that does not exist.
+   *
+   * This ran after validation had already passed, so the defect reached the
+   * written file with every gate green — and it looked for all the world like
+   * the model ignoring its instructions. Three prompt revisions and a
+   * deterministic import repair were spent before the transform doing it was
+   * found.
+   */
+  const targetIsScope = correctImportPath.startsWith('@') && !correctImportPath.includes('/');
+  if (targetIsScope) {
+    return fixedCode.replace(/\n\n\n+/g, '\n\n');
+  }
 
   // Find all component imports from wrong paths
   const wrongPathImports: string[] = [];
@@ -924,42 +1023,6 @@ export function extractAndValidateCodeBlock(aiResponse: string, config?: any, fi
 
   // Validate the extracted code
   return validateStoryCode(extractedCode, fileName, config);
-}
-
-/**
- * Creates a fallback story template when generation fails
- */
-export function createFallbackStory(prompt: string, config: any): string {
-  const title = prompt.length > 50 ? prompt.substring(0, 50) + '...' : prompt;
-  const escapedTitle = title.replace(/"/g, '\\"');
-  const storybookFramework = config.storybookFramework || '@storybook/react';
-
-  return `import React from 'react';
-import type { StoryObj } from '${storybookFramework}';
-
-// Fallback story generated due to AI generation error
-export default {
-  title: '${config.storyPrefix || 'Generated/'}${escapedTitle}',
-  component: () => (
-    <div style={{ padding: '2rem', textAlign: 'center', border: '2px dashed #ccc', borderRadius: '8px' }}>
-      <h2>Story Generation Error</h2>
-      <p>The AI-generated story contained syntax errors and could not be created.</p>
-      <p><strong>Original prompt:</strong> ${escapedTitle}</p>
-      <p>Please try rephrasing your request or contact support.</p>
-    </div>
-  ),
-  parameters: {
-    docs: {
-      description: {
-        story: 'This is a fallback story created when the AI generation failed due to syntax errors.'
-      }
-    }
-  }
-};
-
-export const Default: StoryObj = {
-  args: {}
-};`;
 }
 
 /**
