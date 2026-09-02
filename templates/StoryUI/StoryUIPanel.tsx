@@ -1442,7 +1442,10 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
       // .storybook/main.*, or the user turned the toggle on before. A blind
       // probe answered 404 in the console on every load of every project
       // without the addon.
-      let worthAsking = loadStorybookMcpPref();
+      // The stored value only when the user set it: loadStorybookMcpPref()
+      // defaults to true (the toggle's default once the addon is known),
+      // which made every project probe.
+      let worthAsking = (() => { try { return localStorage.getItem(STORYBOOK_MCP_PREF_KEY) === 'true'; } catch { return false; } })();
       if (!worthAsking) {
         try {
           const cfg = await apiFetch(`${getApiBase()}/mcp/canvas-config`);
