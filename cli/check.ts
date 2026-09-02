@@ -14,6 +14,9 @@ import { loadUserConfig } from '../story-generator/configLoader.js';
 import { EnhancedComponentDiscovery } from '../story-generator/enhancedComponentDiscovery.js';
 import { extractProps } from '../story-generator/knowledge/propExtractor.js';
 import { storiesGlobCoversMdx } from './setup.js';
+import { resolveHostTooling, canLaunchBrowser } from '../story-generator/verify/hostTooling.js';
+import { closeBrowserSession } from '../story-generator/verify/browserSession.js';
+import { describeLaunchFailure } from '../story-generator/verify/verifyStory.js';
 
 export interface CheckItem {
   id: string;
@@ -108,6 +111,26 @@ export async function runChecks(opts: { server?: string; cwd?: string } = {}): P
 
   // 4. Generated stories directory and Storybook globs.
   const generatedDir = path.resolve(cwd, config.generatedStoriesPath || './src/stories/generated/');
+  // Verification needs Playwright AND a downloaded browser; the package alone
+  // fails at launch with a boxed multi-line error that read as a crash.
+  {
+    let detail = 'Playwright is not installed — stories will be generated but not rendered for verification';
+    let ok: boolean | null = null;
+    let fix: string | undefined = 'npm install -D playwright && npx playwright install chromium';
+    try {
+      const tooling = resolveHostTooling(cwd);
+      if (tooling) {
+        // executablePath() is computed, not checked: it named chromium-1187
+        // on a machine that had 1200–1234. Only a launch tells the truth.
+        const launch = await canLaunchBrowser(tooling);
+        await closeBrowserSession();
+        if (launch.ok) { ok = true; detail = 'Playwright and its browser are installed — verification can run'; fix = undefined; }
+        else { ok = false; detail = describeLaunchFailure(launch.error || ''); fix = 'npx playwright install chromium'; }
+      }
+    } catch { /* stays not-installed */ }
+    items.push({ id: 'verification', ok, detail, fix });
+  }
+
   items.push({ id: 'generated-dir', ok: fs.existsSync(generatedDir), detail: fs.existsSync(generatedDir) ? `generated stories go to ${path.relative(cwd, generatedDir)}` : `${path.relative(cwd, generatedDir)} does not exist yet`, fix: fs.existsSync(generatedDir) ? undefined : `mkdir -p ${path.relative(cwd, generatedDir)}` });
   const mainPath = ['main.ts', 'main.tsx', 'main.js', 'main.mjs'].map(f => path.join(cwd, '.storybook', f)).find(f => fs.existsSync(f));
   if (mainPath) {
