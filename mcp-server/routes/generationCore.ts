@@ -115,7 +115,7 @@ import { isSafeStoryFileName,
 } from '../../story-generator/storyArtifacts.js';
 import { attemptVerificationRepair } from './verifyRepair.js';
 import type { VerifyReport, RepairSummary } from '../../story-generator/verify/findings.js';
-import { registerActiveGeneration, unregisterActiveGeneration, isGenerationCancelled } from './activeGenerations.js';
+import { registerActiveGeneration, unregisterActiveGeneration, isGenerationCancelled, cancellationSignal } from './activeGenerations.js';
 
 // ============================================================
 // Public interface
@@ -301,8 +301,11 @@ async function runStoryGenerationPipeline(
    * at phase boundaries rather than pre-empted, because there is no safe point
    * to kill a pipeline mid-write.
    */
+  const cancelSignal = cancellationSignal(generationId);
   const throwIfCancelled = (phase: string) => {
     if (isGenerationCancelled(generationId)) {
+      // Say so in the log: a cancelled run and a finished one used to look identical there.
+      logger.log(`🛑 Generation ${generationId} stopped by the user during ${phase}`);
       throw new GenerationError('CANCELLED', `Generation stopped by the user during ${phase}`, {
         httpStatus: 499, recoverable: false,
       });
@@ -995,9 +998,21 @@ async function runStoryGenerationPipeline(
     let planSent = '';
     let codeSent = '';
     let lastCodeEmit = 0;
-    const llmResult = attachments.length > 0
-      ? await callLLM(messages, attachments, { provider, model })
-      : await callLLMStreaming(messages, { provider, model }, (chars, accumulated) => {
+    // Only an image or a PDF needs the buffered multi-part call. Text files
+    // are folded into the user turn by callLLM anyway; sending them through
+    // the buffered path lost the thinking/plan narration for the whole run.
+    const needsBufferedCall = attachments.some(a => a.type !== 'text');
+    if (!needsBufferedCall && attachments.length > 0) {
+      const textBlocks = attachments.filter((a): a is TextContent => a.type === 'text');
+      const targetIndex = messages.findIndex(m => m.role === 'user');
+      if (targetIndex !== -1) {
+        const preface = `${fileFraming(textBlocks.length)}\n\n${textBlocks.map(b => b.text).join('\n\n')}\n\n`;
+        messages[targetIndex] = { ...messages[targetIndex], content: preface + messages[targetIndex].content };
+      }
+    }
+    const llmResult = needsBufferedCall
+      ? await callLLM(messages, attachments, { provider, model, ...(cancelSignal ? { signal: cancelSignal } : {}) })
+      : await callLLMStreaming(messages, { provider, model, ...(cancelSignal ? { signal: cancelSignal } : {}) }, (chars, accumulated) => {
           /**
            * The model is asked to say, in a few sentences, what it is about to
            * build before it writes the code. That prose is the narration the
@@ -1120,7 +1135,22 @@ async function runStoryGenerationPipeline(
         messages.push({ role: 'user', content: 'You did not provide a code block. Please provide the complete story in a single `tsx` code block.' });
         continue;
       }
-      break;
+      /**
+       * A reply with no code is an answer, not a story. Falling through wrote
+       * the prose into a fallback story titled with the model's first sentence
+       * ("I'd be happy to help but I don't see an attached spec…"); the
+       * apostrophe broke the file and Storybook's index lost every story.
+       * The model's words go back to the user as the reply, and nothing is
+       * written.
+       */
+      const said = proseBeforeFence(claudeResponse).replace(/\s+/g, ' ').slice(0, 400);
+      logger.warn(`🙅 The model answered without code after ${attempts} attempt(s): ${said.slice(0, 160)}`);
+      throw new GenerationError('MODEL_DECLINED', said || 'The model did not produce a story.', {
+        httpStatus: 422,
+        recoverable: true,
+        suggestion: 'Rephrase the request, or attach what the model asked for, and send again.',
+        details: said,
+      });
     }
     aiText = extractedCode;
 
@@ -1504,7 +1534,7 @@ async function runStoryGenerationPipeline(
   }
 
   const prettyPrompt = escapeTitleForTS(aiTitle);
-  const cleanTitle = isActualUpdate ? prettyPrompt : storyTracker.getNextVersionTitle(prettyPrompt);
+  const cleanTitle = sanitizeStoryTitle(isActualUpdate ? prettyPrompt : storyTracker.getNextVersionTitle(prettyPrompt));
   if (cleanTitle !== prettyPrompt) {
     logger.log(`📋 Title "${prettyPrompt}" already exists, using "${cleanTitle}" instead`);
   }
@@ -3105,7 +3135,11 @@ export function alignStorybookTypesImport(code: string, storybookFramework?: str
 /** Inject storyPrefix into the title and a unique id after it. */
 function applyTitleAndId(code: string, cleanTitle: string, storyIdSlug: string, storyPrefix: string): string {
   let fixed = code;
-  const titleToUse = cleanTitle.startsWith(storyPrefix) ? cleanTitle : storyPrefix + cleanTitle;
+  // The title lands inside a string literal. A model refusal became the
+  // title "I'd be happy to help…", the apostrophe closed the literal, and the
+  // syntax error took every story out of Storybook's index.
+  const safeTitle = sanitizeStoryTitle(cleanTitle);
+  const titleToUse = safeTitle.startsWith(storyPrefix) ? safeTitle : storyPrefix + safeTitle;
 
   // Pattern 1: CSF format - const meta = { title: "..." }
   fixed = fixed.replace(
@@ -3957,4 +3991,9 @@ export function proseBeforeFence(reply: string): string {
   const head = (cut === -1 ? reply : reply.slice(0, cut)).trim();
   // Edit-block replies carry their prose after the fence too; keep the head only.
   return head.replace(/^<{7} SEARCH[\s\S]*$/m, '').trim().slice(0, 2000);
+}
+
+/** A title that can sit inside any string literal and any sidebar: no quotes, backslashes or line breaks. */
+export function sanitizeStoryTitle(title: string): string {
+  return title.replace(/[\\"'`]/g, '').replace(/[\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) || 'Untitled';
 }

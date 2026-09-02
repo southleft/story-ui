@@ -30,10 +30,12 @@ export interface FilePayload {
   name: string;
   mediaType: string;
   data: string;
+  /** How `data` is encoded. Absent means base64, for older clients. */
+  encoding?: 'text' | 'base64';
 }
 
 export const MAX_TEXT_BYTES = 200 * 1024;
-export const MAX_PDF_BYTES = 10 * 1024 * 1024;
+export const MAX_PDF_BYTES = 20 * 1024 * 1024; // matches the server's limit
 
 const IMAGE_EXT: Record<string, string> = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif',
@@ -90,7 +92,17 @@ export function sizeError(kind: 'text' | 'pdf', size: number, name: string): str
   return null;
 }
 
-export const toPayload = (d: AttachedDocument): FilePayload => ({ name: d.name, mediaType: d.mediaType, data: d.data });
+/**
+ * Text files travel as the text itself, PDFs as base64 — and the payload SAYS
+ * which. The server assumed base64 for everything and decoded a Markdown spec
+ * into bytes the model read as noise ("I don't see an attached spec").
+ */
+export const toPayload = (d: AttachedDocument): FilePayload => ({
+  name: d.name,
+  mediaType: d.mediaType,
+  data: d.data,
+  encoding: d.mediaType === 'application/pdf' ? 'base64' : 'text',
+});
 
 /** Split a file list into what each pipeline takes, and what neither does. */
 export function partitionFiles<T extends { name: string; type: string }>(files: T[]): {

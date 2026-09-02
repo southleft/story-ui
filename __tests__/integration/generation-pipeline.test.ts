@@ -605,14 +605,28 @@ describe('generation pipeline (integration)', () => {
   });
 
   it('retries after a failed generation without being divergence-blocked by the placeholder', async () => {
-    // Three responses with no code block at all — the pipeline gives up and
-    // writes the fallback placeholder, records it in history, and reports
-    // success: false. The V2 panel keeps its activeFile on failure, so the
-    // user's follow-up arrives as an UPDATE whose baseline is the error box.
+    // A reply with no code at all is an ANSWER, not a story: after its
+    // retries the pipeline refuses with the model's words and writes nothing.
+    // (It used to write the prose into a placeholder titled with the model's
+    // first sentence; an apostrophe in that title broke Storybook's index.)
     llm.queue.push(
-      { content: 'I could not produce a story this time.' },
+      { content: "I'd be happy to help but I don't see an attached spec." },
       { content: 'Still nothing usable.' },
       { content: 'No code block here either.' },
+    );
+    await expect(runStoryGeneration({
+      prompt: 'Create an analytics dashboard',
+      conversation: [{ role: 'user', content: 'Create an analytics dashboard' }],
+    })).rejects.toMatchObject({ code: 'MODEL_DECLINED' });
+
+    // Code that never validates — the pipeline gives up, writes the fallback
+    // placeholder, records it in history, and reports success: false. The V2
+    // panel keeps its activeFile on failure, so the user's follow-up arrives
+    // as an UPDATE whose baseline is the error box.
+    llm.queue.push(
+      { content: '```tsx\nexport const = ;\n```' },
+      { content: '```tsx\nexport const = ;\n```' },
+      { content: '```tsx\nexport const = ;\n```' },
     );
     const failed = await runStoryGeneration({
       prompt: 'Create an analytics dashboard',

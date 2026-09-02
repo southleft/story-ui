@@ -119,3 +119,27 @@ describe('browser launch failure message', () => {
     expect(describeLaunchFailure('spawn EACCES\n  at ChildProcess…\n  at …')).toBe('Browser could not launch: spawn EACCES');
   });
 });
+
+describe('attachment encoding contract', () => {
+  it('reads text sent as text, base64 sent as base64, and guesses honestly when unlabelled', () => {
+    const plain = "# Spec\n\na single green Button labelled 'Approve invoice' and nothing else";
+    const asText = processFileInputs([{ name: 'spec.md', data: plain, encoding: 'text' }]);
+    expect((asText.blocks[0] as any).text).toContain('Approve invoice');
+    const asB64 = processFileInputs([{ name: 'spec.md', data: b64(plain), encoding: 'base64' }]);
+    expect((asB64.blocks[0] as any).text).toContain('Approve invoice');
+    // An older client that sends the text itself without saying so.
+    const unlabelled = processFileInputs([{ name: 'spec.md', data: plain }]);
+    expect((unlabelled.blocks[0] as any).text).toContain('Approve invoice');
+    const unlabelledB64 = processFileInputs([{ name: 'spec.md', data: b64(plain) }]);
+    expect((unlabelledB64.blocks[0] as any).text).toContain('Approve invoice');
+  });
+});
+
+describe('story titles inside string literals', () => {
+  it('drops quotes, backslashes and line breaks', async () => {
+    const { sanitizeStoryTitle } = await import('../mcp-server/routes/generationCore');
+    expect(sanitizeStoryTitle(`I'd be happy to help but I don't see an "attached" spec`)).toBe('Id be happy to help but I dont see an attached spec');
+    expect(sanitizeStoryTitle('Line\none\\two')).toBe('Line onetwo');
+    expect(sanitizeStoryTitle('   ')).toBe('Untitled');
+  });
+});

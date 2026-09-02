@@ -32,6 +32,12 @@ export interface ActiveGeneration {
   startedAt: number;
   /** Set by DELETE; the pipeline checks it between phases and stands down. */
   cancelled?: boolean;
+  /**
+   * Aborts the in-flight model call the moment Stop arrives. The phase-
+   * boundary flag alone let a stopped run finish a 26s, 2.4k-token call,
+   * validate it, reserve a title and re-run discovery before standing down.
+   */
+  controller: AbortController;
 }
 
 const active = new Map<string, ActiveGeneration>();
@@ -43,10 +49,15 @@ const active = new Map<string, ActiveGeneration>();
  * Keyed by a string rather than a Symbol because the id has to survive a trip
  * over HTTP — a Symbol cannot be named by the client that wants to cancel.
  */
-export function registerActiveGeneration(entry: Omit<ActiveGeneration, 'id'>): string {
+export function registerActiveGeneration(entry: Omit<ActiveGeneration, 'id' | 'controller'>): string {
   const id = crypto.randomUUID();
-  active.set(id, { ...entry, id });
+  active.set(id, { ...entry, id, controller: new AbortController() });
   return id;
+}
+
+/** The signal a run's model calls should carry, so Stop cuts them off. */
+export function cancellationSignal(id: string | undefined): AbortSignal | undefined {
+  return id ? active.get(id)?.controller.signal : undefined;
 }
 
 /** Remove in a finally — success, fallback and throw must all end here. */
@@ -69,6 +80,7 @@ export function cancelActiveGeneration(id: string): boolean {
   const entry = active.get(id);
   if (!entry) return false;
   entry.cancelled = true;
+  entry.controller.abort(new Error('Generation stopped by the user'));
   return true;
 }
 

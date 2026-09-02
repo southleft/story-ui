@@ -249,7 +249,7 @@ export interface StreamGenerateRequest {
     mediaType?: string;
   }>;
   /** Reference files: text-like ones are inlined, PDFs go to Claude as documents. */
-  files?: Array<{ name: string; mediaType?: string; data: string }>;
+  files?: Array<{ name: string; mediaType?: string; data: string; encoding?: 'text' | 'base64' }>;
   visionMode?: string;
   designSystem?: string;
   provider?: string;  // LLM provider (claude, openai, gemini)

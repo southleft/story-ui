@@ -140,7 +140,7 @@ describe('fileAttachments', () => {
     expect(sizeError('text', MAX_TEXT_BYTES, 'x.txt')).toBeNull();
     expect(sizeError('text', MAX_TEXT_BYTES + 1, 'x.txt')).toBe('x.txt: larger than 200 KB');
     expect(sizeError('pdf', MAX_PDF_BYTES, 'x.pdf')).toBeNull();
-    expect(sizeError('pdf', MAX_PDF_BYTES + 1, 'x.pdf')).toBe('x.pdf: larger than 10.0 MB');
+    expect(sizeError('pdf', MAX_PDF_BYTES + 1, 'x.pdf')).toBe('x.pdf: larger than 20.0 MB');
   });
 
   it('formats bytes for a chip', () => {
