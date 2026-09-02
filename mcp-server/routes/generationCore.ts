@@ -1854,7 +1854,7 @@ async function runStoryGenerationPipeline(
               const ast = validateStoryCode(candidate, finalFileName, config);
               return patternErrors.length === 0 && ast.isValid;
             },
-            callModel: async (prompt) => {
+            callModel: async (prompt, currentCode) => {
               events.onLLMCall?.();
               // Fresh, minimal context — not the growing generate transcript.
               // The budget signal reaches the provider's fetch, so exhaustion
@@ -1878,6 +1878,22 @@ async function runStoryGenerationPipeline(
                   'it is too large to rewrite in one response, so the original is kept',
                 );
                 return null;
+              }
+              /**
+               * Repair answers with edit blocks, applied to the current code.
+               * A whole-file rewrite of a 13k-character story on Opus 5 ran
+               * past the verification budget (observed: 2:18 and aborted);
+               * a block that changes three lines takes seconds and cannot
+               * disturb the rest of the story.
+               */
+              if (hasPatchBlocks(result.content)) {
+                const patched = applyPatches(currentCode, parsePatchBlocks(result.content));
+                if (patched.failures.length > 0) {
+                  logger.warn(`✂️ Repair: ${patched.failures.length} edit block(s) did not match the story — keeping the original`);
+                  return null;
+                }
+                logger.log(`✂️ Repair applied ${patched.applied.length} edit block(s)`);
+                return patched.code;
               }
               return extractCodeBlock(result.content, detectedFramework);
             },

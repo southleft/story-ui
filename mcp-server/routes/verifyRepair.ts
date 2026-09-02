@@ -24,7 +24,8 @@ export interface RepairAttemptArgs {
   code: string;
   report: VerifyReport;
   /** Re-run the full LLM call with a self-contained prompt. */
-  callModel: (prompt: string) => Promise<string | null>;
+  /** Given the prompt and the code it is about, returns the corrected code or null. */
+  callModel: (prompt: string, currentCode: string) => Promise<string | null>;
   /** Write the candidate and re-verify it in the browser. */
   writeAndVerify: (code: string) => Promise<VerifyReport>;
   /** Static gate; a repair that fails static validation is discarded. */
@@ -63,7 +64,18 @@ const REPAIR_PREAMBLE = [
   'You previously generated the Storybook story below. It renders, but automated',
   'browser verification found problems that make parts of it non-functional.',
   '',
-  'Return the COMPLETE corrected story in a single code block.',
+  'Fix them with edit blocks, not a rewrite. Reply with one or more blocks in this exact form,',
+  'each changing only the lines the fix needs:',
+  '',
+  '<<<<<<< SEARCH',
+  '(lines copied EXACTLY from CURRENT STORY — same indentation, same text)',
+  '=======',
+  '(the corrected lines)',
+  '>>>>>>> REPLACE',
+  '',
+  'Every SEARCH must match exactly one place in CURRENT STORY. Put the blocks in one ```edit',
+  'fence. Only if a fix genuinely needs most of the file rewritten may you return the complete',
+  'story in a single ```tsx block instead.',
 ].join('\n');
 
 export async function attemptVerificationRepair(args: RepairAttemptArgs): Promise<RepairOutcome> {
@@ -109,7 +121,7 @@ export async function attemptVerificationRepair(args: RepairAttemptArgs): Promis
 
     let candidate: string | null;
     try {
-      candidate = await callModel(prompt);
+      candidate = await callModel(prompt, bestCode);
     } catch (error) {
       // A budget abort mid-LLM-call and a model failure are different facts,
       // and reporting them the same way is how three diagnoses on this branch
