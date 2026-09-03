@@ -82,6 +82,13 @@ interface Message {
   generationTimeMs?: number;
   /** Storybook component id (persisted) — resolved to a full entry id on chat open. */
   storybookComponentId?: string;
+  /**
+   * Progress messages seen while this reply streamed, in order — the
+   * "12 steps · 31s" disclosure. Live only: the manifest does not keep them.
+   */
+  steps?: string[];
+  /** True when this reply updated an existing story rather than creating one. */
+  isUpdate?: boolean;
 }
 
 interface ChatSession {
@@ -1058,10 +1065,25 @@ const Icons = {
       <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
     </svg>
   ),
-  openExternal: ( /* Storybook ShareAltIcon geometry — used by "Open in Storybook" */
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12.5 4.5H5.75A1.75 1.75 0 0 0 4 6.25v12A1.75 1.75 0 0 0 5.75 20h12a1.75 1.75 0 0 0 1.75-1.75V11.5" />
-      <path d="M14.5 3.5H20.5V9.5M20 4 11.5 12.5" />
+  openExternal: ( /* "Open in Storybook" — box with an arrow leaving it */
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 4h6v6M20 4l-9 9M18 13v6H5V6h6" />
+    </svg>
+  ),
+  code: ( /* "View code" — angle brackets */
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 7l-5 5 5 5M16 7l5 5-5 5" />
+    </svg>
+  ),
+  chevronRight: ( /* steps disclosure; rotated 90° by CSS when open */
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 6l6 6-6 6" />
+    </svg>
+  ),
+  gear: ( /* settings */
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
     </svg>
   ),
 };
@@ -1194,16 +1216,6 @@ function parseInline(text: string): React.ReactNode[] {
 // Sub-Components
 // ============================================
 
-interface BadgeProps {
-  variant?: 'default' | 'secondary' | 'success' | 'destructive' | 'outline';
-  children: React.ReactNode;
-  className?: string;
-}
-
-const Badge: React.FC<BadgeProps> = ({ variant = 'default', children, className = '' }) => (
-  <span className={`sui-badge sui-badge-${variant} ${className}`}>{children}</span>
-);
-
 interface ProgressIndicatorProps {
   streamingState: StreamingState;
 }
@@ -1319,6 +1331,13 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   const [orphanCount, setOrphanCount] = useState<number>(0);
   const [isDeletingOrphans, setIsDeletingOrphans] = useState<boolean>(false);
   const [storybookOrder, setStorybookOrder] = useState<Map<string, number>>(new Map());
+  // Presentation-only state for the thread: which popover is open (one at a
+  // time), which turns show their steps / code, and a transient "Copied".
+  type OpenMenu = null | 'title' | 'gear' | 'model' | { turn: number };
+  const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
+  const [openSteps, setOpenSteps] = useState<Record<number, boolean>>({});
+  const [openCode, setOpenCode] = useState<Record<number, boolean>>({});
+  const [copiedTurn, setCopiedTurn] = useState<number | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -1766,6 +1785,44 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
       document.removeEventListener('keydown', handleEscape);
     };
   }, [contextMenuId]);
+
+  // One popover at a time: a press outside its anchor, or Escape, closes it.
+  useEffect(() => {
+    if (!openMenu) return;
+    const handlePointerDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target?.closest?.('.sui-menu-anchor')) setOpenMenu(null);
+    };
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpenMenu(null);
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [openMenu]);
+
+  // Disclosure state is keyed by turn index; it must not carry over from one
+  // conversation into the next.
+  useEffect(() => {
+    setOpenSteps({});
+    setOpenCode({});
+    setOpenMenu(null);
+  }, [state.activeChatId]);
+
+  const copyCode = useCallback((turn: number, code: string) => {
+    const fail = () => dispatch({ type: 'SET_ERROR', payload: 'Could not copy the code to the clipboard.' });
+    try {
+      navigator.clipboard.writeText(code).then(() => {
+        setCopiedTurn(turn);
+        window.setTimeout(() => setCopiedTurn(t => (t === turn ? null : t)), 1600);
+      }).catch(fail);
+    } catch {
+      fail();
+    }
+  }, []);
 
   // Initialize on mount
   useEffect(() => {
@@ -2277,7 +2334,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   }, []);
 
   // Finalize streaming
-  const finalizeStreamingConversation = useCallback(async (newConversation: Message[], completion: CompletionFeedback, userInput: string) => {
+  const finalizeStreamingConversation = useCallback(async (newConversation: Message[], completion: CompletionFeedback, userInput: string, steps?: string[]) => {
     // Track this story as panel-generated to prevent false MCP detection
     // The story ID is the fileName without .stories.tsx extension
     if (completion.success && completion.fileName) {
@@ -2300,6 +2357,8 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
       verification: completion.verification,
       storyFileName: completion.fileName,
       storyTitle: completion.title,
+      steps: steps?.length ? steps : undefined,
+      isUpdate,
     };
     const updatedConversation = [...newConversation, aiMsg];
     dispatch({ type: 'SET_CONVERSATION', payload: updatedConversation });
@@ -2457,6 +2516,8 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
         let buffer = '';
         let completionData: CompletionFeedback | null = null;
         let errorData: ErrorFeedback | null = null;
+        // Every progress message, once — becomes the reply's steps disclosure.
+        const progressLog: string[] = [];
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -2471,15 +2532,23 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                   case 'intent':
                     dispatch({ type: 'UPDATE_STREAMING_STATE', payload: { intent: event.data as IntentPreview } });
                     break;
-                  case 'progress':
-                    dispatch({ type: 'UPDATE_STREAMING_STATE', payload: { progress: event.data as ProgressUpdate } });
+                  case 'progress': {
+                    const progress = event.data as ProgressUpdate;
+                    if (progress?.message && progressLog[progressLog.length - 1] !== progress.message) {
+                      progressLog.push(progress.message);
+                    }
+                    dispatch({ type: 'UPDATE_STREAMING_STATE', payload: { progress } });
                     break;
+                  }
                   case 'validation':
                     dispatch({ type: 'UPDATE_STREAMING_STATE', payload: { validation: event.data as ValidationFeedback } });
                     break;
-                  case 'retry':
-                    dispatch({ type: 'UPDATE_STREAMING_STATE', payload: { retry: event.data as RetryInfo } });
+                  case 'retry': {
+                    const retry = event.data as RetryInfo;
+                    if (retry?.reason) progressLog.push(`Retry ${retry.attempt}/${retry.maxAttempts}: ${retry.reason}`);
+                    dispatch({ type: 'UPDATE_STREAMING_STATE', payload: { retry } });
                     break;
+                  }
                   case 'completion':
                     completionData = event.data as CompletionFeedback;
                     // Register immediately so the story poller never classifies
@@ -2502,7 +2571,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
         }
         try { sessionStorage.removeItem(PENDING_GEN_KEY); } catch {}
         if (completionData) {
-          finalizeStreamingConversation(newConversation, completionData, userInput);
+          finalizeStreamingConversation(newConversation, completionData, userInput, progressLog);
         } else if (errorData) {
           dispatch({ type: 'SET_ERROR', payload: errorData.message });
           const errorConversation = [...newConversation, {
@@ -2857,37 +2926,36 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   // ours on a tie and painted every heading and paragraph in the Design
   // Context and Voice Canvas tabs in the docs theme's fixed text colour:
   // #2E3338 on a dark panel, 1.2:1.
+  const connected = state.connectionStatus.connected;
+  // One ordering for the sidebar and the header's story switcher: Storybook's
+  // own sidebar order (from /index.json), alphabetical fallback.
+  const sortedChats = [...state.recentChats].sort((a, b) => {
+    const posA = storybookOrder.get(a.title.toLowerCase()) ?? Infinity;
+    const posB = storybookOrder.get(b.title.toLowerCase()) ?? Infinity;
+    if (posA !== posB) return posA - posB;
+    return a.title.localeCompare(b.title);
+  });
+  const composerPlaceholder = state.attachedImages.length > 0
+    ? 'Describe what to build from these images…'
+    : state.conversation.length > 0
+      ? 'Describe a change, or ask for something new'
+      : 'Describe a component or layout…';
+
   return (
     <div className={`sui-root sb-unstyled ${state.isDarkMode ? 'dark' : 'light'}`}>
-      {/* Sidebar */}
-      <aside className={`sui-sidebar ${state.sidebarOpen ? '' : 'collapsed'}`} aria-label="Chat history">
+      {/* Sidebar — toggled from the header; collapsed means zero width, and
+          its contents unmount so nothing hidden stays in the tab order. */}
+      <aside className={`sui-sidebar ${state.sidebarOpen ? '' : 'collapsed'}`} aria-label="Chat history" aria-hidden={!state.sidebarOpen}>
         {state.sidebarOpen && (
           <div className="sui-sidebar-content">
-            {/* New story + hide sidebar (icon-only) on one row */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
-              <button className="sui-button sui-button-default" onClick={handleNewChat} style={{ flex: 1 }}>
-                {Icons.plus}
-                <span>{panelMode === 'canvas' ? 'New canvas' : 'New story'}</span>
-              </button>
-              <button
-                className="sui-button sui-button-ghost sui-button-icon"
-                onClick={() => dispatch({ type: 'TOGGLE_SIDEBAR' })}
-                aria-label="Hide sidebar"
-                title="Hide sidebar"
-              >
-                {Icons.panelLeft}
-              </button>
-            </div>
+            <button className="sui-button sui-button-default sui-sidebar-new" onClick={handleNewChat}>
+              {Icons.plus}
+              <span>{panelMode === 'canvas' ? 'New canvas' : 'New story'}</span>
+            </button>
 
             {/* Chat history */}
             <div className="sui-sidebar-chats">
-              {[...state.recentChats].sort((a, b) => {
-                // Match Storybook sidebar order (from /index.json); alphabetical fallback
-                const posA = storybookOrder.get(a.title.toLowerCase()) ?? Infinity;
-                const posB = storybookOrder.get(b.title.toLowerCase()) ?? Infinity;
-                if (posA !== posB) return posA - posB;
-                return a.title.localeCompare(b.title);
-              }).map(chat => (
+              {sortedChats.map(chat => (
                 <div
                   key={chat.id}
                   className={`sui-chat-item ${state.activeChatId === chat.id ? 'active' : ''} ${contextMenuId === chat.id ? 'menu-open' : ''} ${chat.conversation.length === 0 ? 'sui-chat-item--no-history' : ''}`}
@@ -2994,13 +3062,6 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
 
           </div>
         )}
-        {!state.sidebarOpen && (
-          <div style={{ padding: '12px', display: 'flex', justifyContent: 'center' }}>
-            <button className="sui-button sui-button-ghost sui-button-icon" onClick={() => dispatch({ type: 'SET_SIDEBAR', payload: true })} aria-label="Show sidebar">
-              {Icons.panelLeft}
-            </button>
-          </div>
-        )}
       </aside>
 
       {/* Main */}
@@ -3015,14 +3076,60 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           </div>
         )}
 
-        {/* Header */}
+        {/* Header: wordmark + current story on the left, mode tabs centred,
+            status / settings / New on the right. Provider and model live in
+            the composer; the Storybook MCP toggle lives behind the gear. */}
         <header className="sui-header">
           <div className="sui-header-left">
+            <button
+              type="button"
+              className="sui-icon-btn"
+              onClick={() => dispatch({ type: 'TOGGLE_SIDEBAR' })}
+              aria-label={state.sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+              title={state.sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+            >
+              {Icons.panelLeft}
+            </button>
             <span className="sui-header-title">Story UI</span>
-            <Badge variant={state.connectionStatus.connected ? 'success' : 'destructive'}>
-              <span className="sui-badge-dot" />
-              {state.connectionStatus.connected ? getConnectionDisplayText() : 'Disconnected'}
-            </Badge>
+            {panelMode === 'chat' && (
+              <div className="sui-menu-anchor">
+                <button
+                  type="button"
+                  className="sui-title-chip"
+                  aria-haspopup="menu"
+                  aria-expanded={openMenu === 'title'}
+                  onClick={() => setOpenMenu(m => (m === 'title' ? null : 'title'))}
+                  title="Switch story"
+                >
+                  <span className="sui-title-chip-text">{state.activeTitle || 'New story'}</span>
+                  {Icons.chevronDown}
+                </button>
+                {openMenu === 'title' && (
+                  <div className="sui-menu sui-menu--stories" role="menu" aria-label="Stories">
+                    <button type="button" role="menuitem" className="sui-menu-item" onClick={() => { setOpenMenu(null); handleNewChat(); }}>
+                      {Icons.plus}
+                      <span className="sui-menu-item-label">New story</span>
+                    </button>
+                    {sortedChats.length > 0 && <div className="sui-menu-sep" role="separator" />}
+                    {sortedChats.map(chat => (
+                      <button
+                        key={chat.id}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={chat.id === state.activeChatId}
+                        className={`sui-menu-item ${chat.id === state.activeChatId ? 'sui-menu-item--active' : ''}`}
+                        onClick={() => { setOpenMenu(null); handleSelectChat(chat); }}
+                      >
+                        <span className="sui-menu-item-label">{chat.title}</span>
+                        {chat.id === state.activeChatId && Icons.check}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          <div className="sui-header-center">
             <div className="sui-mode-toggle">
               <button
                 type="button"
@@ -3050,66 +3157,58 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
             </div>
           </div>
           <div className="sui-header-right">
-            {state.connectionStatus.connected && state.availableProviders.length > 0 && (
-              <>
-                <div className="sui-select">
-                  <div className="sui-select-trigger">
-                    <span>{state.availableProviders.find(p => p.type === state.selectedProvider)?.name || 'Provider'}</span>
-                    {Icons.chevronDown}
+            <span
+              className={`sui-status ${connected ? 'sui-status--ok' : 'sui-status--bad'}`}
+              title={connected ? getConnectionDisplayText() : (state.connectionStatus.error || 'Server not running')}
+            >
+              <span className="sui-status-dot" aria-hidden="true" />
+              {connected ? 'Connected' : 'Disconnected'}
+            </span>
+            <div className="sui-menu-anchor">
+              <button
+                type="button"
+                className="sui-icon-btn"
+                aria-label="Settings"
+                title="Settings"
+                aria-haspopup="menu"
+                aria-expanded={openMenu === 'gear'}
+                onClick={() => setOpenMenu(m => (m === 'gear' ? null : 'gear'))}
+              >
+                {Icons.gear}
+              </button>
+              {openMenu === 'gear' && (
+                <div className="sui-menu sui-menu--right" role="menu" aria-label="Settings">
+                  <div className="sui-menu-row" role="presentation">
+                    <span>Server</span>
+                    <span className="sui-menu-row-value">{connected ? getConnectionDisplayText() : (state.connectionStatus.error || 'Not connected')}</span>
                   </div>
-                  <select
-                    className="sui-select-native"
-                    value={state.selectedProvider}
-                    onChange={e => {
-                      const newProvider = e.target.value;
-                      dispatch({ type: 'SET_SELECTED_PROVIDER', payload: newProvider });
-                      const provider = state.availableProviders.find(p => p.type === newProvider);
-                      if (provider?.models.length) dispatch({ type: 'SET_SELECTED_MODEL', payload: provider.models[0] });
-                    }}
-                    aria-label="Select provider"
-                  >
-                    {state.availableProviders.map(p => <option key={p.type} value={p.type}>{p.name}</option>)}
-                  </select>
+                  {/* Storybook MCP toggle — only when the addon is detected */}
+                  {state.storybookMcpAvailable && (
+                    <label className="sui-menu-row sui-menu-row--toggle" title="Use Storybook MCP context for enhanced component generation">
+                      <span>MCP context</span>
+                      <span className="sui-toggle-switch">
+                        <input
+                          type="checkbox"
+                          role="menuitemcheckbox"
+                          checked={state.useStorybookMcp}
+                          onChange={e => {
+                            const enabled = e.target.checked;
+                            dispatch({ type: 'SET_USE_STORYBOOK_MCP', payload: enabled });
+                            saveStorybookMcpPref(enabled);
+                          }}
+                          aria-label="Use Storybook MCP context"
+                        />
+                        <span className="sui-toggle-slider" />
+                      </span>
+                    </label>
+                  )}
                 </div>
-                <div className="sui-select">
-                  <div className="sui-select-trigger">
-                    <span>{getModelDisplayName(state.selectedModel)}</span>
-                    {Icons.chevronDown}
-                  </div>
-                  <select
-                    className="sui-select-native"
-                    value={state.selectedModel}
-                    onChange={e => dispatch({ type: 'SET_SELECTED_MODEL', payload: e.target.value })}
-                    aria-label="Select model"
-                  >
-                    {state.availableProviders.find(p => p.type === state.selectedProvider)?.models.map(model => (
-                      <option key={model} value={model}>{getModelDisplayName(model)}</option>
-                    ))}
-                  </select>
-                </div>
-              </>
-            )}
-            {/* Storybook MCP Toggle - only shown when MCP addon is detected */}
-            {state.storybookMcpAvailable && (
-              <div className="sui-mcp-toggle" title="Use Storybook MCP context for enhanced component generation">
-                <label className="sui-toggle-label">
-                  <span className="sui-toggle-text">MCP context</span>
-                  <div className="sui-toggle-switch">
-                    <input
-                      type="checkbox"
-                      checked={state.useStorybookMcp}
-                      onChange={e => {
-                        const enabled = e.target.checked;
-                        dispatch({ type: 'SET_USE_STORYBOOK_MCP', payload: enabled });
-                        saveStorybookMcpPref(enabled);
-                      }}
-                      aria-label="Use Storybook MCP context"
-                    />
-                    <span className="sui-toggle-slider" />
-                  </div>
-                </label>
-              </div>
-            )}
+              )}
+            </div>
+            <button type="button" className="sui-button sui-button-default" onClick={handleNewChat}>
+              {Icons.plus}
+              <span>New</span>
+            </button>
           </div>
         </header>
 
@@ -3197,128 +3296,264 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
               </div>
             </div>
           ) : (
-            <div className="sui-chat-messages" role="log">
+            <div className="sui-thread" role="log">
               {state.conversation.map((msg, i) => {
                 const isLastMessage = i === state.conversation.length - 1;
-                return (
-                <article key={i} className={`sui-message ${msg.role === 'user' ? 'sui-message-user' : 'sui-message-ai'}`}>
-                  <div className="sui-message-bubble">
-                    {msg.role === 'ai' ? renderMarkdown(msg.content) : msg.content}
-                    {msg.role === 'user' && msg.attachedImages && msg.attachedImages.length > 0 && (
-                      <div className="sui-message-images">
-                        {msg.attachedImages.map(img => (
-                          <img key={img.id} src={img.base64 ? `data:${img.mediaType};base64,${img.base64}` : img.preview} alt="Image attached to this message" className="sui-message-image" />
-                        ))}
+
+                if (msg.role === 'user') {
+                  return (
+                    <article key={i} className="sui-turn sui-turn-user">
+                      <div className="sui-bubble">
+                        {msg.content}
+                        {msg.attachedImages && msg.attachedImages.length > 0 && (
+                          <div className="sui-message-images">
+                            {msg.attachedImages.map(img => (
+                              <img key={img.id} src={img.base64 ? `data:${img.mediaType};base64,${img.base64}` : img.preview} alt="Image attached to this message" className="sui-message-image" />
+                            ))}
+                          </div>
+                        )}
+                        {/* Reloaded from storage: the live attachments are gone, but
+                            the persisted thumbnails still show what was referenced. */}
+                        {!msg.attachedImages?.length && !!msg.thumbnails?.length && (
+                          <div className="sui-message-images">
+                            {msg.thumbnails.map((src, ti) => (
+                              <img key={ti} src={src} alt="Image attached to this message" className="sui-message-image" />
+                            ))}
+                          </div>
+                        )}
                       </div>
-                    )}
-                    {/* Reloaded from storage: the live attachments are gone, but
-                        the persisted thumbnails still show what was referenced. */}
-                    {msg.role === 'user' && !msg.attachedImages?.length && !!msg.thumbnails?.length && (
-                      <div className="sui-message-images">
-                        {msg.thumbnails.map((src, ti) => (
-                          <img key={ti} src={src} alt="Image attached to this message" className="sui-message-image" />
-                        ))}
-                      </div>
-                    )}
-                    {msg.role === 'ai' && typeof msg.generationTimeMs === 'number' && msg.generationTimeMs > 0 && (
-                      <div className="sui-message-meta">{(msg.generationTimeMs / 1000).toFixed(1)}s</div>
-                    )}
-                    {msg.role === 'ai' && msg.code && (
-                      <details className="sui-message-code">
-                        <summary>View generated code</summary>
-                        <pre><code>{msg.code}</code></pre>
-                      </details>
-                    )}
-                  </div>
-                  {msg.role === 'ai' && msg.isError && msg.retryInput && isLastMessage && !state.loading && (
-                    <div className="sui-message-actions">
+                    </article>
+                  );
+                }
+
+                // An update turn puts its meta line under the prose ("Updated ·
+                // Show changes · Verified"); a creation turn leads with it.
+                // Messages restored from the manifest predate the flag, so fall
+                // back to position: any reply after the first is an update.
+                const aiOrdinal = state.conversation.slice(0, i).filter(m => m.role === 'ai').length;
+                const isUpdateTurn = msg.isUpdate ?? aiOrdinal > 0;
+                const steps = msg.steps ?? [];
+                const secs = typeof msg.generationTimeMs === 'number' && msg.generationTimeMs > 0
+                  ? `${Math.round(msg.generationTimeMs / 1000)}s`
+                  : null;
+                const stepsOpen = !!openSteps[i];
+                const codeOpen = !!openCode[i];
+                const menuOpen = typeof openMenu === 'object' && openMenu !== null && openMenu.turn === i;
+                const showChanges = isUpdateTurn && !!msg.code;
+                const hasMeta = !msg.isError && (steps.length > 0 || !!secs || !!msg.verification || showChanges);
+                const canAct = !msg.isError && !state.loading && !!(msg.storyEntryId || msg.code || msg.storyFileName || state.activeChatId);
+                const priorUser = isLastMessage
+                  ? [...state.conversation.slice(0, i)].reverse().find(m => m.role === 'user')
+                  : undefined;
+                const toggleCode = () => setOpenCode(s => ({ ...s, [i]: !s[i] }));
+
+                const metaRow = hasMeta && (
+                  <div className="sui-turn-meta">
+                    {steps.length > 0 ? (
                       <button
                         type="button"
-                        className="sui-chip sui-chip-retry"
-                        onClick={() => handleSend(undefined, msg.retryInput)}
+                        className="sui-steps-toggle"
+                        aria-expanded={stepsOpen}
+                        onClick={() => setOpenSteps(s => ({ ...s, [i]: !s[i] }))}
+                        title={stepsOpen ? 'Hide generation steps' : 'Show generation steps'}
                       >
-                        ↻ Try again
+                        <span className={`sui-steps-chevron ${stepsOpen ? 'open' : ''}`} aria-hidden="true">{Icons.chevronRight}</span>
+                        <span>{steps.length} {steps.length === 1 ? 'step' : 'steps'}{secs ? ` · ${secs}` : ''}</span>
                       </button>
-                    </div>
-                  )}
-                  {/* Primary action on its own row; suggestions grouped below —
-                      mixing them in one wrapped row produced ragged layouts. */}
-                  {/* What the browser actually observed. "Not verified" is shown
-                      as plainly as a pass — claiming success we cannot prove is
-                      the failure mode this whole subsystem exists to end. */}
-                  {msg.role === 'ai' && !msg.isError && msg.verification && !state.loading && (
-                    <VerificationBadge verification={msg.verification} />
-                  )}
-                  {msg.role === 'ai' && !msg.isError && msg.storyEntryId && !state.loading && (
-                    <div className="sui-message-actions" aria-label="Story actions">
-                      <button
-                        type="button"
-                        className="sui-chip sui-chip-open-story"
-                        onClick={() => openStoryInStorybook(msg.storyEntryId!)}
-                      >
-                        Open in Storybook {Icons.openExternal}
-                      </button>
-                      {handoffStatus?.available && msg.storyFileName && (
-                        <button
-                          type="button"
-                          className="sui-chip"
-                          title="Commit this story to a new branch for a product engineer"
-                          onClick={() => setHandoffFor({ fileName: msg.storyFileName!, title: msg.storyTitle || 'Story' })}
-                        >
-                          Hand off →
+                    ) : secs ? (
+                      <span className="sui-turn-meta-text">{isUpdateTurn ? `Updated in ${secs}` : secs}</span>
+                    ) : showChanges ? (
+                      <span className="sui-turn-meta-text">Updated the story</span>
+                    ) : null}
+                    {showChanges && (
+                      <>
+                        <span className="sui-turn-meta-dot" aria-hidden="true">·</span>
+                        <button type="button" className="sui-link-btn" aria-expanded={codeOpen} onClick={toggleCode}>
+                          {codeOpen ? 'Hide changes' : 'Show changes'}
                         </button>
+                      </>
+                    )}
+                    {msg.verification && <VerificationBadge verification={msg.verification} />}
+                  </div>
+                );
+
+                return (
+                  <article key={i} className="sui-turn sui-turn-ai">
+                    <div className="sui-avatar" aria-hidden="true">S</div>
+                    <div className="sui-turn-body">
+                      {!isUpdateTurn && metaRow}
+                      {stepsOpen && steps.length > 0 && (
+                        <ol className="sui-steps" aria-label="Generation steps">
+                          {steps.map((s, si) => <li key={si}>{s}</li>)}
+                        </ol>
+                      )}
+                      <div className="sui-turn-prose">{renderMarkdown(msg.content)}</div>
+                      {isUpdateTurn && metaRow}
+                      {codeOpen && msg.code && (
+                        <div className="sui-code">
+                          <pre><code>{msg.code}</code></pre>
+                        </div>
+                      )}
+                      {msg.isError && msg.retryInput && isLastMessage && !state.loading && (
+                        <div className="sui-turn-suggestions">
+                          <button
+                            type="button"
+                            className="sui-chip sui-chip-retry"
+                            onClick={() => handleSend(undefined, msg.retryInput)}
+                          >
+                            ↻ Try again
+                          </button>
+                        </div>
+                      )}
+                      {/* The story exists on disk but Storybook's watcher never
+                          indexed it. Tell the user plainly and give them a way out
+                          instead of rendering nothing. */}
+                      {!msg.isError && !msg.storyEntryId && msg.storyIndexStalled && !state.loading && (
+                        <div className="sui-index-stalled" aria-label="Story indexing notice">
+                          <div className="sui-index-stalled-text">
+                            Storybook hasn’t picked this story up yet. The file was written
+                            {msg.storyIndexStalled.fileName ? ` to ${msg.storyIndexStalled.fileName}` : ''}, but
+                            it isn’t in the story index — this usually means Storybook’s file watcher stopped.
+                            Restart Storybook, then check again.
+                          </div>
+                          <button
+                            type="button"
+                            className="sui-chip"
+                            onClick={async () => {
+                              const found = await recheckStoryIndex(msg.storyIndexStalled!.storybookId);
+                              if (!found) {
+                                dispatch({ type: 'SET_ERROR', payload: 'Still not in the story index. Restart Storybook to pick up newly generated stories.' });
+                              }
+                            }}
+                          >
+                            Check again
+                          </button>
+                        </div>
+                      )}
+                      {/* Quiet action row: shown on hover, on focus-within for
+                          keyboard users, and while its menu is open. */}
+                      {canAct && (
+                        <div className={`sui-turn-actions ${menuOpen ? 'is-open' : ''}`} aria-label="Story actions">
+                          {msg.storyEntryId && (
+                            <button
+                              type="button"
+                              className="sui-icon-btn"
+                              title="Open in Storybook"
+                              aria-label="Open in Storybook"
+                              onClick={() => openStoryInStorybook(msg.storyEntryId!)}
+                            >
+                              {Icons.openExternal}
+                            </button>
+                          )}
+                          {msg.code && (
+                            <button
+                              type="button"
+                              className="sui-icon-btn"
+                              title={codeOpen ? 'Hide code' : 'View code'}
+                              aria-label={codeOpen ? 'Hide code' : 'View code'}
+                              aria-pressed={codeOpen}
+                              onClick={toggleCode}
+                            >
+                              {Icons.code}
+                            </button>
+                          )}
+                          <div className="sui-menu-anchor">
+                            <button
+                              type="button"
+                              className="sui-icon-btn"
+                              title="More actions"
+                              aria-label="More actions"
+                              aria-haspopup="menu"
+                              aria-expanded={menuOpen}
+                              onClick={() => setOpenMenu(m => (typeof m === 'object' && m !== null && m.turn === i ? null : { turn: i }))}
+                            >
+                              {Icons.moreVertical}
+                            </button>
+                            {menuOpen && (
+                              <div className="sui-menu" role="menu" aria-label="More actions">
+                                {handoffStatus?.available && msg.storyFileName && (
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    className="sui-menu-item"
+                                    title="Commit this story to a new branch for a product engineer"
+                                    onClick={() => { setOpenMenu(null); setHandoffFor({ fileName: msg.storyFileName!, title: msg.storyTitle || state.activeTitle || 'Story' }); }}
+                                  >
+                                    Hand off
+                                  </button>
+                                )}
+                                {msg.code && (
+                                  <button type="button" role="menuitem" className="sui-menu-item" onClick={() => { setOpenMenu(null); copyCode(i, msg.code!); }}>
+                                    Copy code
+                                  </button>
+                                )}
+                                {priorUser && (
+                                  <button type="button" role="menuitem" className="sui-menu-item" onClick={() => { setOpenMenu(null); handleSend(undefined, priorUser.content); }}>
+                                    Regenerate
+                                  </button>
+                                )}
+                                {state.activeChatId && (
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    className="sui-menu-item"
+                                    onClick={() => {
+                                      setOpenMenu(null);
+                                      // Rename edits inline in the sidebar list, so make sure it is visible.
+                                      dispatch({ type: 'SET_SIDEBAR', payload: true });
+                                      handleStartRename(state.activeChatId!, state.activeTitle);
+                                    }}
+                                  >
+                                    Rename story
+                                  </button>
+                                )}
+                                {state.activeChatId && (
+                                  <>
+                                    <div className="sui-menu-sep" role="separator" />
+                                    <button
+                                      type="button"
+                                      role="menuitem"
+                                      className="sui-menu-item sui-menu-item--danger"
+                                      onClick={() => { setOpenMenu(null); handleDeleteChat(state.activeChatId!); }}
+                                    >
+                                      Delete story
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          {copiedTurn === i && <span className="sui-turn-meta-text" role="status">Copied</span>}
+                        </div>
+                      )}
+                      {!msg.isError && isLastMessage && !state.loading && (msg.suggestions?.length ?? 0) > 0 && (
+                        <div className="sui-turn-suggestions" aria-label="Suggested follow-ups">
+                          {msg.suggestions!.map((suggestion, si) => (
+                            <button
+                              key={si}
+                              type="button"
+                              className="sui-chip sui-chip-suggestion"
+                              onClick={() => handleSend(undefined, suggestion)}
+                            >
+                              {suggestion}
+                            </button>
+                          ))}
+                        </div>
                       )}
                     </div>
-                  )}
-                  {/* The story exists on disk but Storybook's watcher never
-                      indexed it. Tell the user plainly and give them a way out
-                      instead of rendering nothing. */}
-                  {msg.role === 'ai' && !msg.isError && !msg.storyEntryId && msg.storyIndexStalled && !state.loading && (
-                    <div className="sui-message-actions sui-index-stalled" aria-label="Story indexing notice">
-                      <div className="sui-index-stalled-text">
-                        Storybook hasn’t picked this story up yet. The file was written
-                        {msg.storyIndexStalled.fileName ? ` to ${msg.storyIndexStalled.fileName}` : ''}, but
-                        it isn’t in the story index — this usually means Storybook’s file watcher stopped.
-                        Restart Storybook, then check again.
-                      </div>
-                      <button
-                        type="button"
-                        className="sui-chip"
-                        onClick={async () => {
-                          const found = await recheckStoryIndex(msg.storyIndexStalled!.storybookId);
-                          if (!found) {
-                            dispatch({ type: 'SET_ERROR', payload: 'Still not in the story index. Restart Storybook to pick up newly generated stories.' });
-                          }
-                        }}
-                      >
-                        Check again
-                      </button>
-                    </div>
-                  )}
-                  {msg.role === 'ai' && !msg.isError && isLastMessage && !state.loading && (msg.suggestions?.length ?? 0) > 0 && (
-                    <div className="sui-message-suggestions" aria-label="Suggested follow-ups">
-                      {msg.suggestions!.map((suggestion, si) => (
-                        <button
-                          key={si}
-                          type="button"
-                          className="sui-chip sui-chip-suggestion"
-                          onClick={() => handleSend(undefined, suggestion)}
-                        >
-                          {suggestion}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </article>
+                  </article>
                 );
               })}
               {state.loading && (
-                <div className="sui-message sui-message-ai">
-                  {state.streamingState ? <ProgressIndicator streamingState={state.streamingState} /> : (
-                    <div className="sui-progress">
-                      <span className="sui-progress-label">Generating your story<span className="sui-loading" /></span>
-                    </div>
-                  )}
+                <div className="sui-turn sui-turn-ai">
+                  <div className="sui-avatar" aria-hidden="true">S</div>
+                  <div className="sui-turn-body">
+                    {state.streamingState ? <ProgressIndicator streamingState={state.streamingState} /> : (
+                      <div className="sui-progress">
+                        <span className="sui-progress-label">Generating your story<span className="sui-loading" /></span>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
               <div ref={chatEndRef} />
@@ -3326,9 +3561,10 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           )}
         </section>
 
-        {/* Input area */}
-        <div className="sui-input-area">
-          <div className="sui-input-container">
+        {/* Composer: bordered card; the prompt on top, controls underneath —
+            attach, voice, model chip, and the round send at the right. */}
+        <div className="sui-composer-area">
+          <form onSubmit={handleSend} className="sui-composer">
             <input ref={fileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={handleFileSelect} />
             {state.attachedImages.length > 0 && (
               <div className="sui-image-previews">
@@ -3336,33 +3572,41 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                 {state.attachedImages.map(img => (
                   <div key={img.id} className="sui-image-preview-item">
                     <img src={img.preview} alt="Attached image preview" className="sui-image-preview-thumb" />
-                    <button className="sui-image-preview-remove" onClick={() => removeAttachedImage(img.id)} aria-label="Remove attached image">{Icons.x}</button>
+                    <button type="button" className="sui-image-preview-remove" onClick={() => removeAttachedImage(img.id)} aria-label="Remove attached image">{Icons.x}</button>
                   </div>
                 ))}
               </div>
             )}
-            <form onSubmit={handleSend} className="sui-input-form" style={state.attachedImages.length > 0 ? { borderTopLeftRadius: 0, borderTopRightRadius: 0 } : undefined}>
-              <button type="button" className="sui-input-form-upload" onClick={() => fileInputRef.current?.click()} disabled={state.loading || state.attachedImages.length >= MAX_IMAGES} aria-label="Attach images">
-                {Icons.image}
-              </button>
-              <textarea
-                ref={inputRef}
-                rows={1}
-                className="sui-input-form-field"
-                value={state.input}
-                onChange={e => dispatch({ type: 'SET_INPUT', payload: e.target.value })}
-                onKeyDown={e => {
-                  // Submit on Enter, newline on Shift+Enter
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    if (!state.loading && (state.input.trim() || state.attachedImages.length > 0)) {
-                      handleSend(e as unknown as React.FormEvent);
-                    }
+            <textarea
+              ref={inputRef}
+              rows={1}
+              className="sui-composer-field"
+              value={state.input}
+              onChange={e => dispatch({ type: 'SET_INPUT', payload: e.target.value })}
+              onKeyDown={e => {
+                // Submit on Enter, newline on Shift+Enter
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  if (!state.loading && (state.input.trim() || state.attachedImages.length > 0)) {
+                    handleSend(e as unknown as React.FormEvent);
                   }
-                }}
-                onPaste={handlePaste}
-                placeholder={state.attachedImages.length > 0 ? 'Describe what to build from these images…' : 'Describe a component or layout…'}
-              />
+                }
+              }}
+              onPaste={handlePaste}
+              placeholder={composerPlaceholder}
+              aria-label="Prompt"
+            />
+            <div className="sui-composer-row">
+              <button
+                type="button"
+                className="sui-icon-btn"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={state.loading || state.attachedImages.length >= MAX_IMAGES}
+                aria-label="Attach images"
+                title="Attach images"
+              >
+                {Icons.plus}
+              </button>
               <VoiceControls
                 onTranscript={handleVoiceTranscript}
                 onCommand={handleVoiceCommand}
@@ -3370,11 +3614,56 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                 onListeningChange={(listening) => { voiceModeActiveRef.current = listening; }}
                 disabled={state.loading}
               />
-              <button type="submit" className="sui-input-form-send" disabled={state.loading || (!state.input.trim() && state.attachedImages.length === 0)} aria-label="Send">
+              {connected && state.availableProviders.length > 0 && (
+                <div className="sui-menu-anchor">
+                  <button
+                    type="button"
+                    className="sui-model-chip"
+                    aria-haspopup="menu"
+                    aria-expanded={openMenu === 'model'}
+                    onClick={() => setOpenMenu(m => (m === 'model' ? null : 'model'))}
+                    title="Choose provider and model"
+                  >
+                    <span>{state.selectedModel ? getModelDisplayName(state.selectedModel) : 'Model'}</span>
+                    {Icons.chevronDown}
+                  </button>
+                  {openMenu === 'model' && (
+                    <div className="sui-menu sui-menu--up" role="menu" aria-label="Provider and model">
+                      {state.availableProviders.map(p => (
+                        <div key={p.type} className="sui-menu-group" role="group" aria-label={p.name}>
+                          <div className="sui-menu-heading">{p.name}</div>
+                          {p.models.map(model => {
+                            const selected = p.type === state.selectedProvider && model === state.selectedModel;
+                            return (
+                              <button
+                                key={model}
+                                type="button"
+                                role="menuitemradio"
+                                aria-checked={selected}
+                                className={`sui-menu-item ${selected ? 'sui-menu-item--active' : ''}`}
+                                onClick={() => {
+                                  dispatch({ type: 'SET_SELECTED_PROVIDER', payload: p.type });
+                                  dispatch({ type: 'SET_SELECTED_MODEL', payload: model });
+                                  setOpenMenu(null);
+                                }}
+                              >
+                                <span className="sui-menu-item-label">{getModelDisplayName(model)}</span>
+                                {selected && Icons.check}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              <span className="sui-composer-spacer" />
+              <button type="submit" className="sui-composer-send" disabled={state.loading || (!state.input.trim() && state.attachedImages.length === 0)} aria-label="Send">
                 {Icons.send}
               </button>
-            </form>
-          </div>
+            </div>
+          </form>
         </div>
         </>
         )}
