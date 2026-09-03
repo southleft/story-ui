@@ -202,7 +202,7 @@ try {
  * Every field carries its provenance; a missing catalog or an empty token set
  * makes the check n/a, and the report says which.
  */
-const genericKnowledge = { catalog: null, tokens: null };
+const genericKnowledge = { catalog: null, tokens: null, icons: null };
 
 async function loadGenericKnowledge() {
   // Catalog
@@ -257,6 +257,19 @@ async function loadGenericKnowledge() {
   } catch (e) {
     genericKnowledge.tokens = { known: null, check: null, error: e.message };
     log(`tokens: dist knowledge modules not importable (${e.message}); token conformance will be n/a`);
+  }
+
+  // Icon packages the engine derives and allows (project or design-system
+  // dependency whose manifest says icons). Imports from them are icons, not
+  // catalog components.
+  try {
+    const { derivedIconPackages } = await import(pathToFileURL(path.join(STORY_UI_ROOT, 'dist', 'story-generator', 'knowledge', 'iconFacts.js')).href);
+    const pkgs = derivedIconPackages(opts.project, importPath, projectConfig.iconImports?.package);
+    genericKnowledge.icons = { packages: pkgs.map(p => p.name), exports: Object.fromEntries(pkgs.map(p => [p.name, p.exports.length])) };
+    log(pkgs.length ? `icons: ${pkgs.map(p => `${p.name} (${p.via}, ${p.exports.length} exports)`).join(', ')} — imports from these are not judged against the catalog` : 'icons: no installed icon package derived');
+  } catch (e) {
+    genericKnowledge.icons = { packages: [], error: e.message };
+    log(`icons: dist iconFacts not importable (${e.message})`);
   }
 }
 
@@ -347,7 +360,7 @@ async function generationStep({ label, prompt, expect, update, images, pins, tag
     code, expect, events: stream.events, completion,
     errorEvent: stream.errorEvent || (stream.transportError ? { data: { code: 'TRANSPORT', message: stream.transportError } } : undefined),
     importPath, previousCode, divergence, pins,
-    generic: opts.generic, catalog: genericKnowledge.catalog, tokens: genericKnowledge.tokens,
+    generic: opts.generic, catalog: genericKnowledge.catalog, tokens: genericKnowledge.tokens, icons: genericKnowledge.icons,
   });
 
   const shot = await captureScreenshot({ tag, fileName, storybookId: completion?.storybookId, title });
@@ -608,6 +621,7 @@ function writeReport() {
       // Names and import paths are stored so bench/fidelity-rescore.mjs can re-judge the run without the server.
       catalog: genericKnowledge.catalog ? { source: genericKnowledge.catalog.source, size: genericKnowledge.catalog.names.size, byOrigin: genericKnowledge.catalog.byOrigin ?? null, reason: genericKnowledge.catalog.reason ?? null, names: [...genericKnowledge.catalog.names], importPaths: genericKnowledge.catalog.importPaths ? Object.fromEntries(genericKnowledge.catalog.importPaths) : null } : null,
       tokens: genericKnowledge.tokens ? { known: genericKnowledge.tokens.known?.size ?? 0, groups: genericKnowledge.tokens.groups ?? null, sources: genericKnowledge.tokens.sources ?? null, error: genericKnowledge.tokens.error ?? null } : null,
+      icons: genericKnowledge.icons ?? null,
     } : null,
     results: results.map(r => ({ scenario: r.scenario, kind: r.kind, round: r.round, pass: r.pass, skipped: r.skipped, error: r.error ? e2(r.error) : null, durationMs: r.durationMs, steps: r.steps.map(st => stepSummary(st)) })),
   }, null, 2));

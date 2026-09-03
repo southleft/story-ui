@@ -16,6 +16,8 @@ import { DiscoveredComponent } from '../componentDiscovery.js';
 import { logger } from '../logger.js';
 import { saysMoreThanName } from '../knowledge/descriptionQuality.js';
 import { importSpecifierFor, localImportSpecifier } from '../knowledge/importSpecifier.js';
+import { formatSpacingRules } from '../knowledge/spacingFacts.js';
+import { formatImageRules } from '../knowledge/iconFacts.js';
 
 /**
  * Abstract Base Framework Adapter
@@ -530,7 +532,7 @@ export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
   /**
    * Get common story structure rules including MANDATORY spacing
    */
-  protected getCommonRules(): string {
+  protected getCommonRules(options?: StoryGenerationOptions): string {
     return `
 GENERAL RULES:
 - Follow the component library's design patterns
@@ -587,13 +589,9 @@ and any design-system considerations provided below).
    inert? is any icon unaligned or standing in for a button? is any hover/active appearance
    being faked with a static style? Fix all three before you output.
 
-IMAGE RULES:
-- Use Lorem Picsum for placeholder images: https://picsum.photos/[width]/[height]
-- Always include alt text for images
-- Example: https://picsum.photos/400/300?random=1
+${formatImageRules(options?.icons, this.type === 'react' ? 'jsx' : 'html')}
 
-MANDATORY SPACING & LAYOUT RULES (NON-NEGOTIABLE):
-** CRITICAL: Every generated component MUST have professional-quality spacing. Components without proper spacing look broken and unprofessional. **
+SPACING & LAYOUT:
 
 ** SCOPE LIMIT — READ BEFORE COPYING THE EXAMPLES BELOW **
 The inline style objects shown in this section are for STATIC LAYOUT SPACING ONLY.
@@ -623,51 +621,20 @@ better answer, and a stylesheet that merely restates what a prop already does is
 than not writing one. Reference design-system tokens/CSS variables inside it rather than
 hardcoded colors, so the result still inherits theming and dark mode.
 
-1. STORY WRAPPER (REQUIRED for every story):
-   - The rendered story MUST have a wrapper element with padding
-   - Pattern: ${this.getSpacingExample('wrapper')}
-   - This ensures content has breathing room within the Storybook canvas
-
-2. FORM FIELD SPACING (CRITICAL):
-   - ALWAYS wrap form fields in a container with vertical spacing
-   - Use flexbox column with gap: ${this.getSpacingExample('formGap')}
-   - Or use design system spacing tokens if available
-   - MINIMUM 16px gap between form fields
-
-3. BUTTON SPACING:
-   - Submit/action buttons: 24px margin-top from form fields above
-   - Pattern: ${this.getSpacingExample('buttonMargin')}
-   - Button groups should be wrapped with margin-top from content
-
-4. SECTION SPACING:
-   - Between major sections: 32-48px
-   - Between related content groups: 24px
-   - Use dividers or significant whitespace between unrelated content
-
-5. HEADING SPACING:
-   - More space ABOVE headings (24-32px) than below (8-16px)
-
-6. CARD/CONTAINER PADDING:
-   - Internal padding: minimum 16px, preferred 24px
-
-7. SPECIFIC VALUES TO USE:
-   - Tight spacing (icons, inline): 4-8px
-   - Related items: 8-12px
-   - Form fields: 16px gap
-   - Buttons from content: 24px margin-top
-   - Sections: 32-48px
-   - Major divisions: 48-64px
-
-SPACING VALIDATION (Self-check before generating):
-Ask yourself: "Does every element have adequate breathing room from its neighbors?"
-If any elements appear cramped or touching, add appropriate spacing.
+${formatSpacingRules(options?.spacing, this.type === 'react' ? 'jsx' : 'html', {
+  wrapper: this.getSpacingExample('wrapper'),
+  formGap: this.getSpacingExample('formGap'),
+  buttonMargin: this.getSpacingExample('buttonMargin'),
+})}
 `;
   }
 
   /**
-   * Framework-appropriate syntax for the spacing examples embedded in the
-   * common rules. JSX style objects only make sense for React; the other
-   * frameworks get examples in their own template syntax.
+   * Framework-appropriate syntax for the FALLBACK spacing examples — used only
+   * when the design system declares no gap primitive, no spacing tokens and no
+   * utility scale (see knowledge/spacingFacts.ts). JSX style objects only make
+   * sense for React; the other frameworks get examples in their own template
+   * syntax.
    */
   protected getSpacingExample(kind: 'wrapper' | 'formGap' | 'buttonMargin'): string {
     switch (this.type) {

@@ -192,7 +192,7 @@ class AdapterRegistry {
     logger.debug('Generating prompt with adapter', { adapter: adapter.type });
 
     // Generate layout instructions including mandatory spacing rules
-    const layoutInstructionsArray = generateLayoutInstructions(config);
+    const layoutInstructionsArray = generateLayoutInstructions(config, options);
     const layoutInstructionsString = layoutInstructionsArray.join('\n');
 
     return {

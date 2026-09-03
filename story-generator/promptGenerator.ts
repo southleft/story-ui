@@ -1,6 +1,7 @@
 import { StoryUIConfig } from '../story-ui.config.js';
 import { DiscoveredComponent } from './componentDiscovery.js';
 import { loadConsiderations, considerationsToPrompt } from './considerationsLoader.js';
+import { deriveIconVocabulary, formatIconRules } from './knowledge/iconFacts.js';
 import { DocumentationLoader } from './documentationLoader.js';
 import {
   getAdapterRegistry,
@@ -15,230 +16,23 @@ import * as path from 'path';
 /**
  * Icon package information for smart detection
  */
-interface IconPackageInfo {
-  name: string;
-  importPath: string;
-  commonIcons: string[];
-  importStyle: 'named' | 'default';
-  description: string;
-}
-
 /**
- * Known icon packages and their common icons
- * Used for smart detection when icon packages are installed
+ * Icon instructions, derived from the project.
+ *
+ * Replaces a hard-coded list of four icon packages (which could not know that
+ * `@carbon/icons-react` ships with `@carbon/react`, or that a local
+ * `src/icons` module exists) and advice to "use Unicode symbols" when none of
+ * the four was installed — the advice that produced ⋯ × ✓ as icons in six MUI
+ * stories. See knowledge/iconFacts.ts.
  */
-const KNOWN_ICON_PACKAGES: IconPackageInfo[] = [
-  {
-    name: '@tabler/icons-react',
-    importPath: '@tabler/icons-react',
-    commonIcons: [
-      'IconHome', 'IconSettings', 'IconUser', 'IconSearch', 'IconMenu2',
-      'IconBell', 'IconMail', 'IconCalendar', 'IconClock', 'IconStar',
-      'IconHeart', 'IconPlus', 'IconMinus', 'IconX', 'IconCheck',
-      'IconChevronRight', 'IconChevronLeft', 'IconChevronDown', 'IconChevronUp',
-      'IconArrowRight', 'IconArrowLeft', 'IconArrowUp', 'IconArrowDown',
-      'IconEdit', 'IconTrash', 'IconDownload', 'IconUpload', 'IconShare',
-      'IconFilter', 'IconSort', 'IconRefresh', 'IconEye', 'IconEyeOff',
-      'IconLock', 'IconUnlock', 'IconCopy', 'IconClipboard', 'IconFolder',
-      'IconFile', 'IconImage', 'IconVideo', 'IconMusic', 'IconLink',
-      'IconExternalLink', 'IconDots', 'IconDotsVertical', 'IconGripVertical',
-      'IconSun', 'IconMoon', 'IconCloud', 'IconBolt', 'IconDroplet',
-      'IconMapPin', 'IconPhone', 'IconMessage', 'IconSend', 'IconInbox',
-      'IconArchive', 'IconTag', 'IconBookmark', 'IconFlag', 'IconAward',
-      'IconTrendingUp', 'IconTrendingDown', 'IconActivity', 'IconPieChart',
-      'IconBarChart', 'IconLineChart', 'IconDatabase', 'IconServer', 'IconCode',
-      'IconTerminal', 'IconBrandGithub', 'IconBrandTwitter', 'IconBrandLinkedin',
-      'IconWorld', 'IconGlobe', 'IconWifi', 'IconBluetooth', 'IconCpu',
-      'IconDeviceDesktop', 'IconDeviceMobile', 'IconPrinter', 'IconCamera',
-      'IconMicrophone', 'IconVolume', 'IconPlayerPlay', 'IconPlayerPause',
-    ],
-    importStyle: 'named',
-    description: 'Tabler Icons - Free and open source icons (Mantine recommended)',
-  },
-  {
-    name: 'lucide-react',
-    importPath: 'lucide-react',
-    commonIcons: [
-      'Home', 'Settings', 'User', 'Search', 'Menu',
-      'Bell', 'Mail', 'Calendar', 'Clock', 'Star',
-      'Heart', 'Plus', 'Minus', 'X', 'Check',
-      'ChevronRight', 'ChevronLeft', 'ChevronDown', 'ChevronUp',
-      'ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown',
-      'Edit', 'Trash', 'Download', 'Upload', 'Share',
-      'Filter', 'RefreshCw', 'Eye', 'EyeOff',
-      'Lock', 'Unlock', 'Copy', 'Clipboard', 'Folder',
-      'File', 'Image', 'Video', 'Music', 'Link',
-      'ExternalLink', 'MoreHorizontal', 'MoreVertical', 'GripVertical',
-      'Sun', 'Moon', 'Cloud', 'Zap', 'Droplet',
-      'MapPin', 'Phone', 'MessageSquare', 'Send', 'Inbox',
-    ],
-    importStyle: 'named',
-    description: 'Lucide Icons - Beautiful & consistent icons',
-  },
-  {
-    name: '@heroicons/react',
-    importPath: '@heroicons/react/24/outline',
-    commonIcons: [
-      'HomeIcon', 'Cog6ToothIcon', 'UserIcon', 'MagnifyingGlassIcon', 'Bars3Icon',
-      'BellIcon', 'EnvelopeIcon', 'CalendarIcon', 'ClockIcon', 'StarIcon',
-      'HeartIcon', 'PlusIcon', 'MinusIcon', 'XMarkIcon', 'CheckIcon',
-      'ChevronRightIcon', 'ChevronLeftIcon', 'ChevronDownIcon', 'ChevronUpIcon',
-      'ArrowRightIcon', 'ArrowLeftIcon', 'ArrowUpIcon', 'ArrowDownIcon',
-      'PencilIcon', 'TrashIcon', 'ArrowDownTrayIcon', 'ArrowUpTrayIcon', 'ShareIcon',
-      'FunnelIcon', 'ArrowPathIcon', 'EyeIcon', 'EyeSlashIcon',
-      'LockClosedIcon', 'LockOpenIcon', 'ClipboardIcon', 'FolderIcon',
-      'DocumentIcon', 'PhotoIcon', 'VideoCameraIcon', 'MusicalNoteIcon', 'LinkIcon',
-    ],
-    importStyle: 'named',
-    description: 'Heroicons - Beautiful hand-crafted SVG icons by Tailwind',
-  },
-  {
-    name: 'react-icons',
-    importPath: 'react-icons/fi', // Feather icons subset - most common
-    commonIcons: [
-      'FiHome', 'FiSettings', 'FiUser', 'FiSearch', 'FiMenu',
-      'FiBell', 'FiMail', 'FiCalendar', 'FiClock', 'FiStar',
-      'FiHeart', 'FiPlus', 'FiMinus', 'FiX', 'FiCheck',
-      'FiChevronRight', 'FiChevronLeft', 'FiChevronDown', 'FiChevronUp',
-      'FiArrowRight', 'FiArrowLeft', 'FiArrowUp', 'FiArrowDown',
-      'FiEdit', 'FiTrash', 'FiDownload', 'FiUpload', 'FiShare',
-      'FiFilter', 'FiRefreshCw', 'FiEye', 'FiEyeOff',
-    ],
-    importStyle: 'named',
-    description: 'React Icons - Popular icon packs as React components',
-  },
-  {
-    name: '@phosphor-icons/react',
-    importPath: '@phosphor-icons/react',
-    commonIcons: [
-      'House', 'Gear', 'User', 'MagnifyingGlass', 'List',
-      'Bell', 'Envelope', 'Calendar', 'Clock', 'Star',
-      'Heart', 'Plus', 'Minus', 'X', 'Check',
-      'CaretRight', 'CaretLeft', 'CaretDown', 'CaretUp',
-      'ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown',
-      'PencilSimple', 'Trash', 'DownloadSimple', 'UploadSimple', 'ShareNetwork',
-      'Funnel', 'ArrowsClockwise', 'Eye', 'EyeSlash',
-    ],
-    importStyle: 'named',
-    description: 'Phosphor Icons - Flexible icon family',
-  },
-];
-
-/**
- * Detects installed icon packages by checking package.json
- * Returns the first detected icon package info, or null if none found
- */
-function detectInstalledIconPackage(projectPath?: string): IconPackageInfo | null {
-  const cwd = projectPath || process.cwd();
-  const packageJsonPath = path.join(cwd, 'package.json');
-
-  try {
-    if (!fs.existsSync(packageJsonPath)) {
-      return null;
-    }
-
-    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
-    const allDeps = {
-      ...packageJson.dependencies,
-      ...packageJson.devDependencies,
-    };
-
-    // Check each known icon package
-    for (const iconPackage of KNOWN_ICON_PACKAGES) {
-      if (allDeps[iconPackage.name]) {
-        return iconPackage;
-      }
-    }
-
-    return null;
-  } catch (error) {
-    // If we can't read package.json, assume no icon package
-    return null;
-  }
-}
-
-/**
- * Generates icon usage instructions for the prompt
- * Uses smart detection to enable real icons when a supported icon package is installed
- */
-function generateIconInstructions(components: DiscoveredComponent[], projectPath?: string): string[] {
-  const instructions: string[] = [];
-
-  // First, check if an icon package is installed in the project
-  const installedIconPackage = detectInstalledIconPackage(projectPath);
-
-  if (installedIconPackage) {
-    // Icon package detected - enable icon usage with the installed package
-    const sampleIcons = installedIconPackage.commonIcons.slice(0, 20).join(', ');
-    instructions.push(
-      '',
-      '✅ ICON LIBRARY AVAILABLE ✅',
-      `You have ${installedIconPackage.name} installed in this project.`,
-      `${installedIconPackage.description}`,
-      '',
-      '📦 How to use icons:',
-      `   Import path: import { IconName } from '${installedIconPackage.importPath}';`,
-      `   Example icons: ${sampleIcons}`,
-      '',
-      '🎯 ICON BEST PRACTICES:',
-      '   - Use icons to enhance visual clarity and user experience',
-      '   - Common use cases: navigation, actions, status indicators, decorative elements',
-      '   - Icons should complement text, not replace it entirely for accessibility',
-      '   - Use consistent icon sizing (typically 16-24px for inline, 24-48px for prominent)',
-      '',
-      '⚠️ IMPORTANT:',
-      `   - ONLY import icons from '${installedIconPackage.importPath}'`,
-      '   - Do NOT import from other icon libraries not installed in the project',
-      '   - If you need an icon that may not exist, use a similar common icon from the list above',
-      ''
-    );
-    return instructions;
-  }
-
-  // No icon package installed - check if design system has icon components
-  const iconComponents = components.filter(c =>
-    c.name && typeof c.name === 'string' &&
-    (c.name.toLowerCase().includes('icon') || c.name === 'Icon' || c.name === 'v-icon' || c.name === 'mat-icon' || c.name === 'sl-icon')
-  );
-
-  if (iconComponents.length > 0) {
-    // Design system has icon support - allow those, prohibit external libraries
-    const allowedIconNames = iconComponents.map(c => c.name).join(', ');
-    instructions.push(
-      '',
-      '🔶 ICON USAGE RULES 🔶',
-      `Your design system includes icon components: ${allowedIconNames}`,
-      '✅ You MAY use these icon components from the Available components list',
-      '🚫 Do NOT import from external icon libraries:',
-      '   - @tabler/icons-react, @tabler/icons',
-      '   - react-icons, lucide-react, @heroicons/react',
-      '   - @fortawesome/react-fontawesome, @phosphor-icons/react',
-      '   - Any other external icon package',
-      'If you need icons beyond what the design system provides, use Unicode symbols (→ ✓ + ×) or text labels instead.',
-      ''
-    );
-  } else {
-    // No icon components discovered - prohibit all icon imports
-    instructions.push(
-      '',
-      '🔴 ICON IMPORT RESTRICTION 🔴',
-      'This design system does not include icon components in the available components list.',
-      '🚫 Do NOT import from ANY icon library:',
-      '   - @tabler/icons-react, @tabler/icons',
-      '   - react-icons, lucide-react, @heroicons/react',
-      '   - @fortawesome/react-fontawesome, @phosphor-icons/react',
-      '   - @mui/icons-material, @chakra-ui/icons',
-      '   - Any other icon package',
-      '✅ Instead, use:',
-      '   - Unicode symbols: → ✓ ✗ + − × ÷ • ★ ♦ ▶ ◀ ▲ ▼',
-      '   - Text labels: "Add", "Remove", "Edit", "Delete"',
-      '   - Badge or Button components with text content',
-      'Icons are NOT in the available components list and WILL cause import errors.',
-      ''
-    );
-  }
-
-  return instructions;
+function generateIconInstructions(components: DiscoveredComponent[], config?: StoryUIConfig, options?: StoryGenerationOptions): string[] {
+  const vocab = options?.icons ?? deriveIconVocabulary({
+    projectRoot: process.cwd(),
+    importPath: config?.importPath,
+    configuredPackage: config?.iconImports?.package,
+    components: components as any[],
+  });
+  return formatIconRules(vocab, options?.framework && options.framework !== 'react' ? 'html' : 'jsx');
 }
 
 /**
@@ -255,11 +49,25 @@ export interface FrameworkAwarePrompt extends Omit<FrameworkPrompt, 'layoutInstr
  * @param config - The StoryUI configuration object
  * @returns Array of layout instruction strings to be included in the prompt
  */
-export function generateLayoutInstructions(config: StoryUIConfig): string[] {
+export function generateLayoutInstructions(config: StoryUIConfig, options?: StoryGenerationOptions): string[] {
   const instructions: string[] = [];
   const layoutRules = config.layoutRules;
 
+  /**
+   * When the design system states its own spacing mechanism, the adapter's
+   * common rules carry it (knowledge/spacingFacts.ts) and the pixel doctrine
+   * below is withheld: it taught `gap: "16px"` and `marginTop: "24px"` to
+   * Carbon, Mantine and Tailwind projects alike, and the model copied it over
+   * the `Stack.gap` sitting in its own catalog.
+   */
+  const derived = options?.spacing?.hasScale === true;
+  if (derived) {
+    instructions.push('SPACING: follow the "MANDATORY SPACING & LAYOUT RULES — DERIVED FROM THIS DESIGN SYSTEM" section. No inline pixel/rem margins, paddings or gaps.');
+    instructions.push('');
+  }
+
   // MANDATORY VERTICAL SPACING RULES - These are non-negotiable for professional UI quality
+  if (!derived) {
   instructions.push('MANDATORY VERTICAL SPACING RULES (NON-NEGOTIABLE):');
   instructions.push('');
   instructions.push('** CRITICAL: Every component MUST have proper vertical spacing. Components without spacing look broken and unprofessional. **');
@@ -291,8 +99,21 @@ export function generateLayoutInstructions(config: StoryUIConfig): string[] {
   instructions.push('   - render: () => <div style={{ padding: "24px" }}>...content...</div>');
   instructions.push('   - This ensures content has breathing room within the Storybook canvas');
   instructions.push('');
+  }
 
-  if (layoutRules.multiColumnWrapper && layoutRules.columnComponent) {
+  // The config's wrapper/column names are stated only when the catalog
+  // confirms they exist; a config naming `Grid` where no Grid is exported
+  // (Sail Shelf) would otherwise instruct the model to import a phantom.
+  const columns = options?.spacing?.columns;
+  if (derived) {
+    if (columns?.column) {
+      instructions.push('MULTI-COLUMN LAYOUT RULES:');
+      instructions.push(`- For ANY multi-column layout (2, 3, or more columns), use ${columns.wrapper} with each column in its own ${columns.column}`);
+      instructions.push(`- Structure: <${columns.wrapper}><${columns.column}>column 1</${columns.column}><${columns.column}>column 2</${columns.column}></${columns.wrapper}>`);
+      instructions.push(`- NEVER use CSS properties as props (like display="grid" or gridTemplateColumns) - these are not valid props`);
+      instructions.push('');
+    }
+  } else if (layoutRules.multiColumnWrapper && layoutRules.columnComponent) {
     instructions.push('MULTI-COLUMN LAYOUT RULES:');
     instructions.push(`- For ANY multi-column layout (2, 3, or more columns), use ${layoutRules.multiColumnWrapper} components`);
     instructions.push(`- Each column must be wrapped in its own ${layoutRules.columnComponent} element`);
@@ -313,7 +134,7 @@ export function generateLayoutInstructions(config: StoryUIConfig): string[] {
   instructions.push(`- Use semantic heading components from your design system instead of raw <h1>-<h6> tags`);
   instructions.push(`- Use the design system's layout components and spacing tokens instead of inline styles when available`);
   instructions.push(`- Prefer design system components over plain HTML elements for consistent styling`);
-  instructions.push(`- ALWAYS test mentally: "Does this component have enough visual breathing room?" If not, add spacing.`);
+  if (!derived) instructions.push(`- ALWAYS test mentally: "Does this component have enough visual breathing room?" If not, add spacing.`);
 
   return instructions;
 }
@@ -341,7 +162,7 @@ export async function generateFrameworkAwarePrompt(
   const frameworkPrompt = await registry.generatePrompt(config, components, options);
 
   // Generate layout instructions (framework-agnostic)
-  const layoutInstructions = generateLayoutInstructions(config);
+  const layoutInstructions = generateLayoutInstructions(config, options);
 
   return {
     ...frameworkPrompt,
@@ -436,7 +257,7 @@ export async function buildFrameworkAwarePrompt(
   }
 
   // Smart icon handling - detect installed icon packages or fall back to design system icons
-  const iconInstructions2 = generateIconInstructions(components);
+  const iconInstructions2 = generateIconInstructions(components, config, options);
   promptParts.push(...iconInstructions2);
 
   // Add framework-specific rules

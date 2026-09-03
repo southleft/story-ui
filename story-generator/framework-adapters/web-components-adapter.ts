@@ -232,7 +232,7 @@ SLOTS:
 - Named slots: Use slot="name" attribute
 - Example: <my-card><span slot="header">Title</span>Content</my-card>
 
-${this.getCommonRules()}`;
+${this.getCommonRules(options)}`;
   }
 
   generateExamples(config: StoryUIConfig): string {
