@@ -1,3 +1,10 @@
+# [5.3.0](https://github.com/southleft/story-ui/compare/v5.2.0...v5.3.0) (2026-09-03)
+
+
+### Features
+
+* **generator:** spacing, typography, icons and images are derived from the design system ([f7230bd](https://github.com/southleft/story-ui/commit/f7230bd296020d50af9d3c060a787f426983106a))
+
 # [5.2.0](https://github.com/southleft/story-ui/compare/v5.1.0...v5.2.0) (2026-09-03)
 
 
