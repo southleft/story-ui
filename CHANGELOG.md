@@ -1,3 +1,11 @@
+## [5.0.2](https://github.com/southleft/story-ui/compare/v5.0.1...v5.0.2) (2026-09-03)
+
+
+### Bug Fixes
+
+* **cli:** prop knowledge cache invalidates on upgrade; Workspace entry opens Home; index wait fits Storybook 10.5.10 ([ff92857](https://github.com/southleft/story-ui/commit/ff92857a0e3eff471944bacc553456045a607ac4))
+* knowledge cache invalidates on upgrade; Workspace entry opens Home; index wait matches Storybook 10.5.10 ([#33](https://github.com/southleft/story-ui/issues/33)) ([d660620](https://github.com/southleft/story-ui/commit/d660620a3b22ca90291b0b116c88cd78e23460e2))
+
 ## [5.0.1](https://github.com/southleft/story-ui/compare/v5.0.0...v5.0.1) (2026-09-03)
 
 
