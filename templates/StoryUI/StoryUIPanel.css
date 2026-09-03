@@ -93,6 +93,23 @@
   --max-chat-width: 768px;
 }
 
+/* Semantic aliases for the panel's newer surfaces (Design Context, Voice
+   Canvas, verification). Their styles read these names; nothing defined them,
+   so every one fell back to a light-mode literal in both schemes. Derived
+   from the hsl tokens above, so the dark block below re-colours them too. */
+.sui-root {
+  --sui-text: hsl(var(--foreground));
+  --sui-text-secondary: hsl(var(--muted-foreground));
+  --sui-border: hsl(var(--border));
+  --sui-surface: hsl(var(--card));
+  --sui-surface-subtle: hsl(var(--secondary));
+  --sui-accent: hsl(var(--primary));
+  --sui-success: hsl(var(--success));
+  --sui-warning: hsl(var(--warning));
+  --sui-danger: hsl(var(--destructive));
+  --sui-mono: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
 /* Dark Mode - Storybook 10 dark palette */
 .sui-root.dark {
   --background: 220 4% 14%;
