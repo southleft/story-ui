@@ -1,3 +1,22 @@
+# [5.2.0](https://github.com/southleft/story-ui/compare/v5.1.0...v5.2.0) (2026-09-03)
+
+
+### Bug Fixes
+
+* empty first render reloads once; title lookup stays in the file; classic panel reopens its chat ([4b3c4b1](https://github.com/southleft/story-ui/commit/4b3c4b1d38df2bc309883553fc25d5fa67148685))
+* **inspector:** forwardRef components keep their name; args-only stories are not edited blindly ([db5a676](https://github.com/southleft/story-ui/commit/db5a676f16da9d9a434223cbc1b41c7ecb843751))
+* invented props are flagged; findings survive the reload; a stale reply is not restored ([e559e3b](https://github.com/southleft/story-ui/commit/e559e3ba82500ecd3d04f879a385a6f94cac877b))
+* meta-anchored ids; classic recovery keys sessions right; classic panel attaches documents ([f4a2110](https://github.com/southleft/story-ui/commit/f4a2110e4abd360a743b583e1937ec8cb31eb045))
+* panel port always from .env; health names the project; overlay shifts measured against the root ([86db07b](https://github.com/southleft/story-ui/commit/86db07ba3d1d98008402d35b23e681d6a6826b37))
+* the change guard compares the bytes the pipeline wrote, so its own repair is not refused ([9c6af9a](https://github.com/southleft/story-ui/commit/9c6af9a2a09e1e5e04af81dd5ffbda64a8165f81))
+* **verify:** React's invalid-nesting warnings become findings too ([5bcc5c3](https://github.com/southleft/story-ui/commit/5bcc5c395dbb61ac8f1b7a69a714809d5191f3df))
+
+
+### Features
+
+* **validate:** props must be declared on the component — asked of the project's own TypeScript ([95e9867](https://github.com/southleft/story-ui/commit/95e98677b72070e41dd9d86a405fdf4f34ef5e06))
+* **verify:** layout probe catches stretched controls, spread toolbars and ragged grid rows ([0689326](https://github.com/southleft/story-ui/commit/06893263dda0e3dba3914337aa4e8e8fe894ce83))
+
 # [5.1.0](https://github.com/southleft/story-ui/compare/v5.0.7...v5.1.0) (2026-09-03)
 
 
