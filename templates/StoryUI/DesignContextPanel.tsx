@@ -19,6 +19,8 @@ interface DocFile {
   name: string;
   chars: number;
   overBudget: boolean;
+  /** A README the loader skips; shown, editable, never counted. */
+  instructional?: boolean;
   updatedAt: string;
 }
 
@@ -240,8 +242,8 @@ export const DesignContextPanel: React.FC<DesignContextPanelProps> = ({
               >
                 <button type="button" className="sui-context-item-open" onClick={() => openDoc(f.name)}>
                   <span className="sui-context-item-name">{f.name}</span>
-                  <span className={`sui-context-item-size ${f.overBudget ? 'sui-context-item-size--over' : ''}`}>
-                    {(f.chars / 1000).toFixed(1)}k
+                  <span className={`sui-context-item-size ${f.overBudget ? 'sui-context-item-size--over' : ''}`} title={f.instructional ? 'README files guide you; the generator does not read them' : undefined}>
+                    {f.instructional ? 'not sent' : `${(f.chars / 1000).toFixed(1)}k`}
                   </span>
                 </button>
                 <button
