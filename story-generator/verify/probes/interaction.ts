@@ -138,6 +138,27 @@ export async function runInteractionProbe(
 
       const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
+      /**
+       * A press, the way a pointer delivers one: pointerdown, mousedown,
+       * pointerup, mouseup, click. `el.click()` alone fires only the last of
+       * those, and a control wired to mousedown never sees it — Mantine's
+       * PasswordInput visibility toggle (onMouseDown + onTouchEnd + Space,
+       * deliberately no onClick, so the input keeps focus) was reported
+       * "does not respond to a click" on every form that used one, and a
+       * repair was spent on correct code. A user's click is the whole
+       * sequence; the probe's must be too.
+       */
+      const press = (el: HTMLElement) => {
+        const r = el.getBoundingClientRect();
+        const init = { bubbles: true, cancelable: true, composed: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0 };
+        const fire = (type: string, Ctor: any) => { try { el.dispatchEvent(new Ctor(type, init)); } catch { /* an engine without PointerEvent */ } };
+        fire('pointerdown', (window as any).PointerEvent || MouseEvent);
+        fire('mousedown', MouseEvent);
+        fire('pointerup', (window as any).PointerEvent || MouseEvent);
+        fire('mouseup', MouseEvent);
+        el.click();
+      };
+
       const nameOf = (el: Element): string => {
         const aria = el.getAttribute('aria-label');
         if (aria) return aria;
@@ -255,7 +276,7 @@ export async function runInteractionProbe(
 
       for (const el of toggles) {
         const before = toggleState(el);
-        try { (el as HTMLElement).click(); } catch { continue; }
+        try { press(el as HTMLElement); } catch { continue; }
         await sleep(120);
         const after = toggleState(el);
         result.controlsTested++;
@@ -271,7 +292,7 @@ export async function runInteractionProbe(
           });
         } else {
           // Put it back. The story may be screenshotted after this.
-          try { (el as HTMLElement).click(); await sleep(60); } catch { /* best effort */ }
+          try { press(el as HTMLElement); await sleep(60); } catch { /* best effort */ }
         }
       }
 
@@ -323,7 +344,7 @@ export async function runInteractionProbe(
           return { n, top: r.top, left: r.left };
         });
 
-        try { el.click(); } catch { continue; }
+        try { press(el); } catch { continue; }
         await sleep(220);   // allow the overlay to mount and position
         result.overlaysTested++;
 
@@ -349,7 +370,7 @@ export async function runInteractionProbe(
         try {
           el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
           await sleep(80);
-          if (el.getAttribute('aria-expanded') === 'true') { el.click(); await sleep(80); }
+          if (el.getAttribute('aria-expanded') === 'true') { press(el); await sleep(80); }
         } catch { /* best effort */ }
       }
 

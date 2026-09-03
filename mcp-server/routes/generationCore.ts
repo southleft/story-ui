@@ -79,6 +79,8 @@ import { processFileInputs, fileFraming, FileInput } from '../../story-generator
 import { checkTokenUsage, formatTokenErrors } from '../../story-generator/knowledge/tokenConformance.js';
 import { targetComponentFromSelection, repairWithinTarget, scopedCritiqueRequest, repairScopeNote } from '../../story-generator/editing/repairScope.js';
 import { relocateUnresolvableImports, resolveLocalModule, relativeSpecifier } from '../../story-generator/editing/relocateImports.js';
+import { resolveSpecifier } from '../../story-generator/knowledge/moduleResolution.js';
+import { chooseStorybookUrl } from '../../story-generator/storybookOrigin.js';
 import { VisionPromptType, buildVisionAwarePrompt } from '../../story-generator/visionPrompts.js';
 import { ImageContent, MessageContent, TextContent } from '../../story-generator/llm-providers/types.js';
 import {
@@ -104,7 +106,7 @@ import { saysMoreThanName } from '../../story-generator/knowledge/descriptionQua
  */
 const GEOMETRY_PROP = /^(sm|md|lg|xl|xxl|max|xs|span|offset|start|end|gap|columns|narrow|condensed|fullWidth|orientation)$/;
 const LAYOUT_PROSE = /\b(column|columns|grid|breakpoint|gutter|span|spacing|width|row|layout)\b/i;
-import { enrichWithSourceFacts } from '../../story-generator/knowledge/sourceFacts.js';
+import { enrichWithSourceFacts, withLocalPropFacts } from '../../story-generator/knowledge/sourceFacts.js';
 import { readStylingFacts, formatStylingGuidance, readDesignTokens } from '../../story-generator/knowledge/stylingFacts.js';
 import { inheritCompoundExamples } from '../../story-generator/knowledge/storybookCatalog.js';
 import { checkConformance, formatConformanceErrors } from '../../story-generator/knowledge/conformance.js';
@@ -149,8 +151,8 @@ export interface GenerationRequest {
   useStorybookMcp?: boolean;
   /**
    * Storybook origin detected by the panel (it runs inside Storybook, so it
-   * knows). Lets the MCP-context toggle work with zero configuration; an
-   * explicit config.storybookMcpUrl still takes precedence.
+   * knows). Wins over config.storybookMcpUrl whenever this server can reach
+   * it — see chooseStorybookUrl.
    */
   storybookUrl?: string;
   voiceMode?: boolean;
@@ -429,6 +431,21 @@ async function runStoryGenerationPipeline(
   events.onProgress?.(2, totalSteps, 'components_discovered', 'Discovering available components...');
   const discovery = new EnhancedComponentDiscovery(config);
 
+  /**
+   * This request's Storybook, chosen once and used everywhere a URL is needed:
+   * component-directory discovery, the MCP context, runtime validation and
+   * browser verification. The panel's origin wins when this server can reach
+   * it; story-ui.config's storybookMcpUrl otherwise; the environment last.
+   * See storybookOrigin.ts for why the config no longer wins outright.
+   */
+  const storybookChoice = await chooseStorybookUrl({
+    callerOrigin: storybookUrl,
+    configured: config.storybookMcpUrl,
+    fallback: getStorybookUrl(),
+  });
+  const projectStorybookUrl = storybookChoice.url;
+  if (storybookChoice.note) logger.log(`🔭 Storybook: ${storybookChoice.note}`);
+
   // Where Storybook says this project's components are.
   //
   // Discovery otherwise guesses at conventional directory names, so a design
@@ -436,7 +453,7 @@ async function runStoryGenerationPipeline(
   // told about is a component it will not use, however good the rest of the
   // context is.
   try {
-    const sbUrl = config.storybookMcpUrl || storybookUrl || getStorybookUrl();
+    const sbUrl = projectStorybookUrl;
     if (sbUrl) {
       const dirs = await storybookComponentDirs({ storybookUrl: sbUrl, projectRoot: process.cwd() });
       if (dirs.length) discovery.setStorybookComponentDirs(dirs);
@@ -493,7 +510,7 @@ async function runStoryGenerationPipeline(
     // Held for the validation loop below, which checks the generated code
     // against these same facts. Same object, so the catalog the model was given
     // and the catalog it is judged against can never drift apart.
-    knownProps = extracted;
+    knownProps = withLocalPropFacts(extracted, components as any[], config.importPath);
     if (extracted) {
       let enriched = 0;
       let describedFromTypes = 0;
@@ -669,7 +686,7 @@ async function runStoryGenerationPipeline(
   // simply never loaded whenever a caller did not pass storybookUrl, which is
   // every request that is not the panel. The client, the manifest endpoint and
   // the formatter all already worked; nothing ever triggered them.
-  const mcpUrl = config.storybookMcpUrl || storybookUrl || getStorybookUrl() || undefined;
+  const mcpUrl = projectStorybookUrl || undefined;
   if (mcpUrl && shouldUseMcp) {
     // Pass the generated-stories directory so our own prior output is kept out
     // of the exemplar pool it sends back as the house style.
@@ -876,7 +893,7 @@ async function runStoryGenerationPipeline(
       storybookContext,
       selection,
       pins,
-      storybookUrl: config.storybookMcpUrl || storybookUrl || getStorybookUrl() || undefined,
+      storybookUrl: projectStorybookUrl || undefined,
     }
   );
 
@@ -1300,7 +1317,7 @@ async function runStoryGenerationPipeline(
     // A resolving specifier is not an existing binding: verified against the
     // module on disk, for relative imports where that answer is certain.
     const namedImportErrors = validateLocalNamedImports(
-      aiText, path.resolve(process.cwd(), config.generatedStoriesPath || './src/stories/generated'), components as any,
+      aiText, path.resolve(process.cwd(), config.generatedStoriesPath || './src/stories/generated'), components as any, config as any,
     );
     /**
      * Does the output conform to the facts we handed the model?
@@ -1771,7 +1788,7 @@ async function runStoryGenerationPipeline(
       events.onProgress?.(9, totalSteps, 'runtime_check', 'Checking the story renders in Storybook...');
       runtimeResult = await validateStoryRuntime(fixedFileContents, aiTitle, config.storyPrefix,
         { storyId: computeStorybookId(fixedFileContents, storyIdSlug), projectRoot: process.cwd(),
-          storybookUrl: config.storybookMcpUrl || storybookUrl || undefined });
+          storybookUrl: projectStorybookUrl || undefined });
       // Only spend a healing LLM call on genuine in-Storybook failures.
       // Infrastructure problems (Storybook not running, story not indexed
       // yet, timeouts) are not code errors and can't be healed.
@@ -1811,7 +1828,7 @@ async function runStoryGenerationPipeline(
           try {
             runtimeResult = await validateStoryRuntime(fixedFileContents, aiTitle, config.storyPrefix,
               { storyId: computeStorybookId(fixedFileContents, storyIdSlug), projectRoot: process.cwd(),
-                storybookUrl: config.storybookMcpUrl || storybookUrl || undefined });
+                storybookUrl: projectStorybookUrl || undefined });
             runtimeHealed = runtimeResult.success;
           } catch {
             // Leave the last known result in place.
@@ -1878,7 +1895,7 @@ async function runStoryGenerationPipeline(
     );
     verifyBudgetTimer.unref?.();
     try {
-      const verifyUrl = config.storybookMcpUrl || storybookUrl || getStorybookUrl();
+      const verifyUrl = projectStorybookUrl;
       /**
        * Say when the URL was a guess.
        *
@@ -1889,7 +1906,7 @@ async function runStoryGenerationPipeline(
        * story simply is not in that index, and the report describes somebody
        * else's page. Naming it turns a confusing result into an actionable one.
        */
-      if (!config.storybookMcpUrl && !storybookUrl && isGuessedStorybookUrl()) {
+      if (storybookChoice.source === 'environment' && isGuessedStorybookUrl()) {
         logger.log(
           `🔍 No Storybook URL was supplied and STORYBOOK_PORT is unset — verifying against ${verifyUrl} by convention. ` +
           `If this project's Storybook runs elsewhere, set STORYBOOK_PORT so verification reaches it.`,
@@ -3027,7 +3044,7 @@ async function attemptRuntimeHealing(args: {
     );
     const namedImportErrors = validateLocalNamedImports(
       code, path.resolve(process.cwd(), config.generatedStoriesPath || './src/stories/generated'),
-      (discovery?.getDiscoveredComponents?.() ?? []) as any,
+      (discovery?.getDiscoveredComponents?.() ?? []) as any, config as any,
     );
     const errors = aggregateValidationErrors(astResult, patternErrors, [
       ...(importValidation.isValid ? [] : importValidation.errors),
@@ -3339,6 +3356,56 @@ function getConsumerDependencies(): Set<string> {
 }
 
 /**
+ * The packages a local design system's own source depends on.
+ *
+ * college-town's `Form` is built on react-hook-form (form.tsx imports
+ * FormProvider and useFormContext from it) and its own story — one of the
+ * usage examples the prompt hands the model — imports zod and
+ * @hookform/resolvers. The isolation check then forbade all three, so the
+ * model was shown a form built one way, told to build it that way, and
+ * rejected for doing so; a healing retry rebuilt the form without the
+ * project's Form component at all. What a component's source imports is a
+ * fact about the design system, and the allowance is derived from it here.
+ * Only local files are read (npm components carry their own package.json),
+ * and only packages the project actually installs count.
+ */
+const _librarySourceDepsCache = new Map<string, { at: number; deps: Set<string> }>();
+export function librarySourceDependencies(
+  components: Array<{ name: string; filePath?: string }>,
+  installed: Set<string>,
+): Set<string> {
+  const files = new Set<string>();
+  for (const c of components) {
+    const f = c.filePath;
+    if (!f || !path.isAbsolute(f) || f.includes(`${path.sep}node_modules${path.sep}`)) continue;
+    files.add(f);
+    // The component's own co-located stories: documented usage.
+    try {
+      const dir = path.dirname(f);
+      for (const entry of fs.readdirSync(dir)) {
+        if (/\.stories\.(tsx|ts|jsx|js|mjs|vue|svelte)$/.test(entry)) files.add(path.join(dir, entry));
+      }
+    } catch { /* a directory we cannot list adds nothing */ }
+  }
+  const key = [...files].sort().join('\n');
+  const cached = _librarySourceDepsCache.get(key);
+  if (cached && Date.now() - cached.at < 60_000) return cached.deps;
+
+  const deps = new Set<string>();
+  for (const file of files) {
+    let text: string;
+    try { text = fs.readFileSync(file, 'utf-8'); } catch { continue; }
+    for (const m of text.matchAll(/(?:^|\n)\s*(?:import|export)\s[^'"]*?from\s*['"]([^'".][^'"]*)['"]/g)) {
+      const root = importSpecifierRoot(m[1]);
+      if (root && installed.has(root)) deps.add(root);
+    }
+  }
+  _librarySourceDepsCache.clear();
+  _librarySourceDepsCache.set(key, { at: Date.now(), deps });
+  return deps;
+}
+
+/**
  * Is this package provably NOT part of the project?
  *
  * Must answer "no" whenever it cannot see the project, because the caller
@@ -3445,6 +3512,8 @@ export function validateLocalNamedImports(
   generatedDir: string,
   /** Where discovery says each component lives, to name the right module. */
   components: Array<{ name: string; __componentPath?: string; filePath?: string }> = [],
+  /** The declared importPath → componentsPath pairing, so an alias import resolves too. */
+  config?: { importPath?: string; componentsPath?: string },
 ): string[] {
   const errors: string[] = [];
   /**
@@ -3455,7 +3524,8 @@ export function validateLocalNamedImports(
    * "'../../housekit/Datagrid' does not export 'Meta'", and the healing loop
    * could not satisfy it because there was nothing wrong.
    */
-  const importRegex = /import\s+(?:([^'"]*?)\s+from\s+)?['"](\.[^'"]+)['"]/g;
+  const importRegex = /import\s+(?:([^'"]*?)\s+from\s+)?['"]([^'"]+)['"]/g;
+  const aliasOptions = { projectRoot: process.cwd(), fromDir: generatedDir, importPath: config?.importPath, componentsPath: config?.componentsPath };
 
   let match;
   while ((match = importRegex.exec(code)) !== null) {
@@ -3471,7 +3541,23 @@ export function validateLocalNamedImports(
       .filter(s => /^[A-Za-z_$][\w$]*$/.test(s));
     if (bindings.length === 0) continue;
 
-    const file = resolveLocalModule(specifier, generatedDir);
+    /**
+     * Relative specifiers resolve from the generated directory; an ALIAS
+     * (`@/components/data-table/data-table`, through tsconfig `paths` or the
+     * declared importPath → componentsPath pairing) resolves to a local file
+     * too, and is checked the same way. Before this only `./` and `../`
+     * imports were checked, so `import { DataTable } from '@/components'` —
+     * a barrel that does not export it — passed every gate and rendered
+     * blank. A bare npm specifier is not this check's business and is skipped.
+     */
+    let file: string | null;
+    if (specifier.startsWith('.')) {
+      file = resolveLocalModule(specifier, generatedDir);
+    } else {
+      const r = resolveSpecifier(specifier, aliasOptions);
+      if (!r.aliasMatched) continue;
+      file = r.file;
+    }
     if (!file) {
       /**
        * This used to `continue`, on the belief that import validation had
@@ -3542,7 +3628,7 @@ export function validateImportIsolation(
   framework: FrameworkType,
   considerationsText: string,
   /** Discovered components, so a wrong import can be told where the real one lives. */
-  components: Array<{ name: string; __componentPath?: string }> = [],
+  components: Array<{ name: string; __componentPath?: string; filePath?: string }> = [],
 ): string[] {
   const errors: string[] = [];
 
@@ -3578,11 +3664,18 @@ export function validateImportIsolation(
   }
 
   const consumerDeps = getConsumerDependencies();
+  const libraryDeps = librarySourceDependencies(components, consumerDeps);
 
   for (const [specifier, boundNames] of specifiers) {
     // Relative imports can't smuggle in foreign packages.
     if (specifier.startsWith('.') || specifier.startsWith('/')) continue;
     const root = importSpecifierRoot(specifier);
+    // The design system's own source imports it: part of the system, by its
+    // own account.
+    if (libraryDeps.has(root) && !allowedRoots.has(root)) {
+      logger.log(`🔓 Import "${specifier}" permitted — the project's own components import ${root}`);
+      continue;
+    }
 
     /**
      * A SCOPE is not a package.

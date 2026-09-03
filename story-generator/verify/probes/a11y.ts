@@ -22,6 +22,7 @@
 
 import path from 'path';
 import type { HostTooling } from '../hostTooling.js';
+import { logger } from '../../logger.js';
 
 export interface A11yViolation {
   id: string;
@@ -39,6 +40,15 @@ export interface A11yResult {
   reason?: string;
   violations: A11yViolation[];
   passCount: number;
+  /**
+   * Violations whose offending element is the story ROOT itself — Storybook's
+   * `#storybook-root`, which no story authors. Only an overlay library's
+   * `hideOthers` puts `aria-hidden` on it, while a Select, Dialog or Popover
+   * is open, and axe then reports "ARIA hidden element must not contain
+   * focusable elements" against the harness, not the composition. Counted
+   * here rather than dropped silently, so a log can say what was set aside.
+   */
+  environmentViolations?: A11yViolation[];
 }
 
 /**
@@ -170,6 +180,26 @@ export async function runA11yProbe(page: any, tooling: HostTooling): Promise<A11
   }
 
   try {
+    /**
+     * Let an overlay the interaction probe opened finish closing first.
+     *
+     * The probes run in order and the interaction probe opens menus, selects
+     * and dialogs before this one runs. Radix (and every `aria-hidden`-based
+     * overlay) marks the story root `aria-hidden="true"` while one is open;
+     * measured on a college-town form, the Select's close had not landed by
+     * the time axe ran, and the story was blocked for a defect in
+     * `#storybook-root`. Escape, then wait for the root to be visible again,
+     * bounded so an overlay that refuses to close cannot hold this up.
+     */
+    await page.evaluate(async () => {
+      const root = document.querySelector('#storybook-root') || document.querySelector('#root');
+      if (!root || root.getAttribute('aria-hidden') !== 'true') return;
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      for (let i = 0; i < 10 && root.getAttribute('aria-hidden') === 'true'; i++) {
+        await new Promise(r => setTimeout(r, 100));
+      }
+    }).catch(() => { /* a page that cannot be asked is judged as it is */ });
+
     const raw = await page.evaluate(async () => {
       const axe = (window as any).axe;
       if (!axe?.run) return null;
@@ -201,7 +231,19 @@ export async function runA11yProbe(page: any, tooling: HostTooling): Promise<A11
     if (!raw) {
       return { ran: false, reason: 'axe did not initialise in the page', violations: [], passCount: 0 };
     }
-    return { ran: true, violations: raw.violations, passCount: raw.passCount };
+    // The root is Storybook's element, not the story's markup (see A11yResult).
+    const isRoot = (selector?: string) => !!selector && /^#(storybook-root|root)$/.test(selector.trim());
+    const environmentViolations = raw.violations.filter((v: A11yViolation) => isRoot(v.selector));
+    const violations = raw.violations.filter((v: A11yViolation) => !isRoot(v.selector));
+    if (environmentViolations.length) {
+      logger.log(`♿ axe: ${environmentViolations.length} violation(s) on the story root itself set aside as environment (an overlay's aria-hidden), not the story: ${environmentViolations.map((v: A11yViolation) => v.id).join(', ')}`);
+    }
+    return {
+      ran: true,
+      violations,
+      passCount: raw.passCount,
+      ...(environmentViolations.length ? { environmentViolations } : {}),
+    };
   } catch (error) {
     return {
       ran: false,

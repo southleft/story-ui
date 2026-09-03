@@ -126,18 +126,41 @@ export function checkConformance(
            * `color="blue.9"` on correct code and cost two retries.
            */
           if (fact.options?.length && !fact.optionsOpen && attr.initializer) {
-            let literal: string | null = null;
-            if (ts.isStringLiteral(attr.initializer)) literal = attr.initializer.text;
-            else if (ts.isJsxExpression(attr.initializer)
-              && attr.initializer.expression
-              && ts.isStringLiteral(attr.initializer.expression)) {
-              literal = attr.initializer.expression.text;
-            }
-            if (literal !== null && !fact.options.includes(literal)) {
+            const accepts = `${fact.options.slice(0, 10).join(' | ')}${fact.options.length > 10 ? ' | …' : ''}`;
+            const expr = ts.isStringLiteral(attr.initializer)
+              ? attr.initializer
+              : ts.isJsxExpression(attr.initializer) ? attr.initializer.expression : undefined;
+            if (!expr) continue;
+            const { values, castToAny } = literalValuesOf(expr, source);
+            /**
+             * Every value the expression can take, when the file states them.
+             *
+             * A plain literal, a conditional, or a lookup into a const object
+             * literal written in the same file all have a closed set of string
+             * values, and each is judged. `STATE_TONE[row.state]` where
+             * STATE_TONE maps to 'success' | 'warning' | 'danger' — another
+             * library's names — crashed a house Pillbox whose palette has no
+             * such keys ("undefined is not iterable"), twice, and the repair
+             * could not see why. An expression whose values the file does not
+             * state is left alone, as before.
+             */
+            const bad = values.filter(v => !fact.options!.includes(v));
+            if (bad.length) {
               out.push({
                 kind: 'enum_value', component: tag, prop, line: lineOf(attr),
-                message: `<${tag} ${prop}="${literal}"> is not one of the values this prop accepts: `
-                  + `${fact.options.slice(0, 10).join(' | ')}${fact.options.length > 10 ? ' | …' : ''}.`,
+                message: `<${tag} ${prop}=${values.length === 1 && ts.isStringLiteral(expr) ? `"${bad[0]}"` : `{…}`}> `
+                  + `${values.length === 1 && ts.isStringLiteral(expr) ? 'is' : `can be "${bad.slice(0, 4).join('" | "')}", which is`} `
+                  + `not one of the values this prop accepts: ${accepts}. Map your data to those values.`,
+              });
+            } else if (castToAny && values.length === 0) {
+              /**
+               * `as any` on a closed-enum prop exists only to defeat the type
+               * — the value came from somewhere the type would have rejected.
+               */
+              out.push({
+                kind: 'enum_value', component: tag, prop, line: lineOf(attr),
+                message: `<${tag} ${prop}={… as any}> casts away this prop's type; it accepts only ${accepts}. `
+                  + `Map your data to those values and drop the cast.`,
               });
             }
           }
@@ -148,6 +171,66 @@ export function checkConformance(
   };
   visit(source);
   return out;
+}
+
+/**
+ * The string values an expression can evaluate to, when the file states them:
+ * a literal, a conditional's branches, a lookup into a const object literal
+ * declared in this file, or any of those behind a cast. `castToAny` records
+ * an `as any` / `<any>` anywhere in the chain.
+ */
+function literalValuesOf(expr: ts.Expression, source: ts.SourceFile, depth = 0): { values: string[]; castToAny: boolean } {
+  const none = { values: [] as string[], castToAny: false };
+  if (depth > 4) return none;
+  if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) return { values: [expr.text], castToAny: false };
+  if (ts.isParenthesizedExpression(expr)) return literalValuesOf(expr.expression, source, depth + 1);
+  if (ts.isAsExpression(expr) || ts.isTypeAssertionExpression(expr)) {
+    const inner = literalValuesOf(expr.expression, source, depth + 1);
+    const toAny = expr.type.kind === ts.SyntaxKind.AnyKeyword;
+    return { values: inner.values, castToAny: inner.castToAny || toAny };
+  }
+  if (ts.isConditionalExpression(expr)) {
+    const a = literalValuesOf(expr.whenTrue, source, depth + 1);
+    const b = literalValuesOf(expr.whenFalse, source, depth + 1);
+    if (!a.values.length || !b.values.length) return { values: [], castToAny: a.castToAny || b.castToAny };
+    return { values: [...new Set([...a.values, ...b.values])], castToAny: a.castToAny || b.castToAny };
+  }
+  if ((ts.isElementAccessExpression(expr) || ts.isPropertyAccessExpression(expr)) && ts.isIdentifier(expr.expression)) {
+    const table = objectLiteralNamed(expr.expression.text, source);
+    if (!table) return none;
+    if (ts.isPropertyAccessExpression(expr)) {
+      const member = table.properties.find(p => ts.isPropertyAssignment(p) && p.name.getText(source).replace(/['"]/g, '') === expr.name.text);
+      if (member && ts.isPropertyAssignment(member)) return literalValuesOf(member.initializer, source, depth + 1);
+      return none;
+    }
+    // A dynamic key: every value the table holds is reachable.
+    const values: string[] = [];
+    for (const p of table.properties) {
+      if (!ts.isPropertyAssignment(p)) return none;
+      const v = literalValuesOf(p.initializer, source, depth + 1);
+      if (!v.values.length) return none;
+      values.push(...v.values);
+    }
+    return { values: [...new Set(values)], castToAny: false };
+  }
+  return none;
+}
+
+/** `const NAME = { … }` at any depth of the file, when its initializer is an object literal. */
+function objectLiteralNamed(name: string, source: ts.SourceFile): ts.ObjectLiteralExpression | null {
+  let found: ts.ObjectLiteralExpression | null = null;
+  const visit = (node: ts.Node) => {
+    if (found) return;
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name && node.initializer) {
+      let init: ts.Expression = node.initializer;
+      while (ts.isAsExpression(init) || ts.isSatisfiesExpression(init) || ts.isParenthesizedExpression(init)) init = init.expression;
+      if (ts.isObjectLiteralExpression(init)) found = init;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
 }
 
 /** Violations as the self-healing loop consumes them. */

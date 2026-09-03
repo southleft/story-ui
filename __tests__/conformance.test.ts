@@ -61,7 +61,9 @@ describe('enum values', () => {
     // `kind={x}` could be anything; guessing is how a check starts rejecting
     // correct code.
     expect(checkConformance(`const a = <Button kind={variant} />;`, CARBON)).toEqual([]);
-    expect(checkConformance(`const a = <Button kind={cond ? 'a' : 'b'} />;`, CARBON)).toEqual([]);
+    // A conditional of two UNSTATED values is still anything; one of two
+    // literals is judged below, because the file states both.
+    expect(checkConformance(`const a = <Button kind={cond ? a : b} />;`, CARBON)).toEqual([]);
   });
 
   it('says nothing about a prop with no resolved options', () => {
@@ -142,5 +144,56 @@ describe('open value sets', () => {
     ] } } } as any;
     expect(checkConformance(`const a = <Badge color="blue.9">Go</Badge>;`, MANTINE)).toEqual([]);
     expect(checkConformance(`const a = <Badge variant="glow">Go</Badge>;`, MANTINE)).toHaveLength(1);
+  });
+});
+
+/**
+ * Every value the FILE states for a prop is judged, not just a bare literal.
+ * `<Pillbox status={STATE_TONE[row.state] as any}>` with STATE_TONE mapping to
+ * 'success' | 'warning' | 'danger' — another library's names — crashed a house
+ * component whose palette has no such keys, twice, and the repair could not
+ * see why. The cast that hid it is itself the tell.
+ */
+describe('enum values stated by the file', () => {
+  const HOUSE = known({
+    Pillbox: { name: 'Pillbox', props: [{ name: 'status', options: ['neutral', 'live', 'degraded', 'down', 'pending'] }] },
+  });
+
+  it('judges every value of a const lookup table used with a dynamic key', () => {
+    const v = checkConformance(`
+      const STATE_TONE: Record<string, string> = { operational: 'success', degraded: 'degraded', offline: 'danger' };
+      const a = <Pillbox status={STATE_TONE[row.state] as any} dot />;
+    `, HOUSE);
+    expect(v).toHaveLength(1);
+    expect(v[0].kind).toBe('enum_value');
+    expect(v[0].message).toContain('"success"');
+    expect(v[0].message).toContain('"danger"');
+    expect(v[0].message).not.toContain('"degraded"');
+    expect(v[0].message).toContain('neutral');
+  });
+
+  it('accepts a lookup table whose values are all legal', () => {
+    const v = checkConformance(`
+      const TONE = { ok: 'live', bad: 'down' } as const;
+      const a = <Pillbox status={TONE[k]} />;
+    `, HOUSE);
+    expect(v).toEqual([]);
+  });
+
+  it('judges both branches of a conditional', () => {
+    expect(checkConformance(`const a = <Pillbox status={ok ? 'live' : 'error'} />;`, HOUSE)).toHaveLength(1);
+    expect(checkConformance(`const a = <Pillbox status={ok ? 'live' : 'down'} />;`, HOUSE)).toEqual([]);
+  });
+
+  it('flags an `as any` cast that hides the value entirely', () => {
+    const v = checkConformance(`const a = <Pillbox status={row.status as any} />;`, HOUSE);
+    expect(v).toHaveLength(1);
+    expect(v[0].message).toContain('as any');
+    expect(v[0].message).toContain('pending');
+  });
+
+  it('still leaves an unstated expression alone', () => {
+    expect(checkConformance(`const a = <Pillbox status={row.status} />;`, HOUSE)).toEqual([]);
+    expect(checkConformance(`const a = <Pillbox status={toStatus(row)} />;`, HOUSE)).toEqual([]);
   });
 });

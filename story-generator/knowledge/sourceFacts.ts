@@ -35,6 +35,7 @@ import ts from 'typescript';
 import { logger } from '../logger.js';
 import { formatPropForCatalog, mergeProps, rankProps, type PropFact } from './propExtractor.js';
 import { readLocalComponent, readLocalComponents } from './localComponentFacts.js';
+import type { ExtractedProps } from './propExtractor.js';
 import { saysMoreThanName } from './descriptionQuality.js';
 
 export interface VariantFacts {
@@ -372,6 +373,8 @@ export function enrichWithSourceFacts(components: any[]): number {
      */
     if (facts.declaredProps?.length) {
       const merged = mergePropFactsFromSource(facts.declaredProps, { variants: facts.variants });
+      // The structured facts, for the conformance check (see withLocalPropFacts).
+      component.__propFacts = merged;
       const declaredNames = new Set(merged.map(p => p.name));
       const live = merged.filter(p => !p.deprecated);
       const extra = (Array.isArray(component.props) ? component.props as string[] : [])
@@ -405,4 +408,35 @@ export function enrichWithSourceFacts(components: any[]): number {
   }
   if (enriched) logger.log(`📖 Read source facts for ${enriched} local component(s)`);
   return enriched;
+}
+
+/**
+ * Local components' declared props, joined to the record the conformance
+ * check judges generated code against.
+ *
+ * `extractProps` reads installed packages, so `knownProps` held npm
+ * components only. A local component's interface was read (above), rendered
+ * into the catalog line the model saw — `status: 'neutral' | 'live' | …` —
+ * and then never consulted again: `<Pillbox status={row.status as any}>`
+ * passed every static gate and crashed the house component at render, twice.
+ * The same facts the model was given are what it is judged against.
+ */
+export function withLocalPropFacts(
+  known: ExtractedProps | null,
+  components: any[],
+  importPath: string,
+): ExtractedProps | null {
+  const locals = components.filter(c => Array.isArray(c.__propFacts) && c.__propFacts.length && c.name);
+  if (!locals.length) return known;
+  const base: ExtractedProps = known ?? {
+    importPath,
+    components: {},
+    inheritedOnly: [],
+    extractedAt: new Date().toISOString(),
+  } as ExtractedProps;
+  for (const c of locals) {
+    if (base.components[c.name]) continue;
+    base.components[c.name] = { name: c.name, props: c.__propFacts as PropFact[] };
+  }
+  return base;
 }
