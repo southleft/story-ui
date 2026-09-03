@@ -1,3 +1,11 @@
+## [5.0.1](https://github.com/southleft/story-ui/compare/v5.0.0...v5.0.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* reopened classic chats no longer blank the panel; the Workspace entry opens the workspace ([#32](https://github.com/southleft/story-ui/issues/32)) ([2bf4ade](https://github.com/southleft/story-ui/commit/2bf4ade104db564cce1a4c6ec41e50aa6bf7dfa4))
+* **ui:** reopened classic chats no longer blank the panel; the Workspace entry opens the workspace ([2109dfc](https://github.com/southleft/story-ui/commit/2109dfc132e211fe65577201ad08f2f2bfa1a206))
+
 # [5.0.0](https://github.com/southleft/story-ui/compare/v4.17.0...v5.0.0) (2026-09-03)
 
 
