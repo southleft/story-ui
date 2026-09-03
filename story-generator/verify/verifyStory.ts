@@ -260,6 +260,9 @@ export function censusFindings(problems: Awaited<ReturnType<typeof runDomCensus>
   });
 }
 
+/** How long a new story gets to reach Storybook's index. A live watcher answers in about a second; a busy one in tens. */
+export const INDEX_WAIT_MS = 60_000;
+
 export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyReport> {
   const started = Date.now();
   const { storybookUrl, storyIdPrefix, title, projectRoot = process.cwd(), timeoutMs = 20000, libraryComponents, generatedDir, visualCritic, request, componentsUsed, framework } = options;
@@ -287,7 +290,9 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
   // machine, a story the harness later found within a minute was reported
   // "not in the index" at thirty seconds. A live watcher (polling) still
   // answers in about a second; the cap only matters when it is busy.
-  const indexed = await waitForStoryIndexed(storybookUrl, storyIdPrefix, Math.min(60000, timeoutMs), 250, title, options.fileName);
+  // Independent of the render timeout: that defaults to 20s and capped the
+  // index wait with it, so a story indexed at 25s was reported missing.
+  const indexed = await waitForStoryIndexed(storybookUrl, storyIdPrefix, INDEX_WAIT_MS, 250, title, options.fileName);
   if (!indexed.indexed || !indexed.storyId) {
     // Down, stale watcher, or not picked up yet? Reachability and the counts
     // answer it, and the three need different responses from whoever reads
@@ -569,7 +574,8 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
       for (const v of a11y.violations) {
         // A violation on markup the library renders is not something the story
         // can fix, however severe the rule.
-        const libraryInternal = isDesignSystemInternal(v.selector);
+        const libraryInternal = isDesignSystemInternal(v.selector)
+          || (!!v.owner && (libraryComponents ?? []).includes(v.owner));
         /**
          * Unreadable text blocks, unless the library rendered it.
          *
