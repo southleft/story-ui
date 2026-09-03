@@ -266,7 +266,7 @@ interface PanelState {
   availableProviders: ProviderInfo[];
   selectedProvider: string;
   selectedModel: string;
-  connectionStatus: { connected: boolean; error?: string };
+  connectionStatus: { connected: boolean; error?: string; project?: string };
   streamingState: StreamingState | null;
   error: string | null;
   considerations: string;
@@ -300,7 +300,7 @@ type PanelAction =
   | { type: 'SET_PROVIDERS'; payload: ProviderInfo[] }
   | { type: 'SET_SELECTED_PROVIDER'; payload: string }
   | { type: 'SET_SELECTED_MODEL'; payload: string }
-  | { type: 'SET_CONNECTION_STATUS'; payload: { connected: boolean; error?: string } }
+  | { type: 'SET_CONNECTION_STATUS'; payload: { connected: boolean; error?: string; project?: string } }
   | { type: 'SET_STREAMING_STATE'; payload: StreamingState | null }
   | { type: 'UPDATE_STREAMING_STATE'; payload: Partial<StreamingState> }
   | { type: 'SET_ERROR'; payload: string | null }
@@ -671,10 +671,16 @@ function saveStorybookMcpPref(enabled: boolean): void {
   }
 }
 
-async function testMCPConnection(): Promise<{ connected: boolean; error?: string }> {
+async function testMCPConnection(): Promise<{ connected: boolean; error?: string; project?: string }> {
   try {
     const response = await apiFetch(PROVIDERS_API(), { method: 'GET' });
-    if (response.ok) return { connected: true };
+    if (response.ok) {
+      // Which project answered. A server on the default port can belong to a
+      // different project; the gear menu names it so that is visible.
+      let project: string | undefined;
+      try { project = (await response.json())?.project || undefined; } catch { /* older server */ }
+      return { connected: true, project };
+    }
     return { connected: false, error: `Server returned ${response.status}` };
   } catch (e) {
     return { connected: false, error: 'Cannot connect to MCP server' };
@@ -3259,7 +3265,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
               {openMenu === 'gear' && (
                 <div className="sui-menu sui-menu--right" role="menu" aria-label="Settings">
                   <div className="sui-menu-row" role="presentation">
-                    <span>Server</span>
+                    <span>Server{state.connectionStatus.project ? ` · ${state.connectionStatus.project}` : ''}</span>
                     <span className="sui-menu-row-value">{connected ? getConnectionDisplayText() : (state.connectionStatus.error || 'Not connected')}</span>
                   </div>
                   {/* Storybook MCP toggle — only when the addon is detected */}

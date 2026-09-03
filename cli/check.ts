@@ -265,6 +265,8 @@ export async function runChecks(opts: { server?: string; storybook?: string; cwd
       items.push({ id: 'script-port', ok: null, detail: 'package.json has no "story-ui" script (npm run story-ui will not work; start the server with npx story-ui start)', fix: `npx story-ui update (adds "story-ui": "story-ui start --port ${port}")` });
     } else if (scriptPortValue === null) {
       items.push({ id: 'script-port', ok: false, detail: `the "story-ui" script names no --port, so npm run story-ui starts on 4001 while .env/manager-head expect ${port}`, fix: `npx story-ui update (sets --port ${port} in the script)` });
+    } else if (readConfiguredPort(cwd)?.source !== '.env VITE_STORY_UI_PORT') {
+      items.push({ id: 'script-port', ok: false, detail: `.env has no VITE_STORY_UI_PORT — the docs-page panel reads only that, so it connects to port 4001 (possibly another project's server) while the script starts this one on ${scriptPortValue}`, fix: `npx story-ui update (writes VITE_STORY_UI_PORT=${scriptPortValue} to .env), then restart Storybook` });
     } else if (scriptPortValue !== port) {
       items.push({ id: 'script-port', ok: false, detail: `the "story-ui" script starts the server on port ${scriptPortValue} but .env says ${port} — npm run story-ui would come up where the workspace is not looking`, fix: `npx story-ui update (rewrites the script's --port to ${port}), or set VITE_STORY_UI_PORT=${scriptPortValue} in .env` });
     } else {

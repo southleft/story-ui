@@ -343,16 +343,29 @@ export async function runInteractionProbe(
           const r = n.getBoundingClientRect();
           return { n, top: r.top, left: r.left };
         });
+        // Mantine and MUI lock scroll when a portalled Menu or Select opens:
+        // body gets overflow:hidden plus padding-right for the scrollbar it
+        // removed, and EVERY element shifts by the scrollbar width. That is
+        // not an overlay in the flow — measured as one, it blocked two
+        // stories per library and cost repairs of correct code. Displacement
+        // is read relative to the story root: an in-flow overlay moves the
+        // elements BELOW the trigger and not the root; a body-level shift
+        // moves both by the same amount and cancels.
+        const rootEl = (document.querySelector('#storybook-root') || document.body) as HTMLElement;
+        const rootBefore = rootEl.getBoundingClientRect();
 
         try { press(el); } catch { continue; }
         await sleep(220);   // allow the overlay to mount and position
         result.overlaysTested++;
 
+        const rootAfter = rootEl.getBoundingClientRect();
+        const rootDx = rootAfter.left - rootBefore.left;
+        const rootDy = rootAfter.top - rootBefore.top;
         let worst = 0;
         let moved = 0;
         for (const b of before) {
           const r = b.n.getBoundingClientRect();
-          const d = Math.max(Math.abs(r.top - b.top), Math.abs(r.left - b.left));
+          const d = Math.max(Math.abs((r.top - b.top) - rootDy), Math.abs((r.left - b.left) - rootDx));
           if (d > 2) { moved++; worst = Math.max(worst, d); }
         }
 

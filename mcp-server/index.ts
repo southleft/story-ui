@@ -136,7 +136,10 @@ try {
   console.error(`\n❌ ${err instanceof Error ? err.message : String(err)}\n`);
   process.exit(1);
 }
-app.get('/health', (_req, res) => { res.json({ ok: true }); });
+// The project this server generates into. A panel connected to the wrong
+// port (another project's server) looked exactly like a healthy one; the
+// name lets the panel say which project it is talking to.
+app.get('/health', (_req, res) => { res.json({ ok: true, project: path.basename(process.cwd()), port: PORT }); });
 app.use(accessControl(accessPolicy));
 // Vision requests carry base64 image payloads. The panel downscales before
 // upload, but keep headroom above the per-image ceiling (4 images x 20MB raw,
