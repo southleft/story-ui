@@ -1,3 +1,15 @@
+# [5.1.0](https://github.com/southleft/story-ui/compare/v5.0.7...v5.1.0) (2026-09-03)
+
+
+### Bug Fixes
+
+* generated stories keep the imports, deps and prop values the project itself states ([91a534b](https://github.com/southleft/story-ui/commit/91a534b353b4de9e125717b8f86f9d53b170c1a0))
+
+
+### Features
+
+* **ui:** classic panel thread redesign — avatar turns, hover actions, menus, composer chip ([c988a9a](https://github.com/southleft/story-ui/commit/c988a9a81028a38e652803355b17bf7d550169a0))
+
 ## [5.0.7](https://github.com/southleft/story-ui/compare/v5.0.6...v5.0.7) (2026-09-03)
 
 
