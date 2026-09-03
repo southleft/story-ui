@@ -36,7 +36,7 @@ import { getProviders, getModels } from './routes/providers.js';
 import mcpRemoteRouter from './routes/mcpRemote.js';
 // Voice Canvas endpoints
 import { canvasSaveHandler } from './routes/canvasSave.js';
-import { canvasGenerateHandler } from './routes/canvasGenerate.js';
+import { canvasGenerateHandler, refreshVoiceCanvasStory } from './routes/canvasGenerate.js';
 import { getAdapterRegistry } from '../story-generator/framework-adapters/index.js';
 // Manifest — story ↔ chat source of truth
 import {
@@ -1021,10 +1021,17 @@ app.listen(PORT, accessPolicy.host, () => {
     console.error('🔒 Loopback only. Set STORY_UI_TOKEN to expose it to other machines.');
   }
   console.error(`Stories will be generated to: ${config.generatedStoriesPath}`);
-  // The voice-canvas scratch story is NOT written here. Writing it at start
+  // The voice-canvas scratch story is NOT created here. Writing it at start
   // put "Generated/Voice Canvas" into every user's sidebar before they had
   // asked for anything; the canvas route (POST /mcp/canvas-generate) writes
-  // it on first use, which is the first time the iframe can need it.
+  // it on first use, which is the first time the iframe can need it. One
+  // that already exists is brought up to date, so an upgrade's template
+  // change (tags, catalog scope) lands on restart.
+  setTimeout(() => {
+    refreshVoiceCanvasStory(config)
+      .then(refreshed => { if (refreshed) console.error('[canvas] Voice canvas story checked against the current catalog'); })
+      .catch(err => console.error('[canvas] Voice canvas refresh skipped:', err instanceof Error ? err.message : err));
+  }, 1500);
   // Initialize manifest manager (loads file, migrates from StoryTracker, reconciles)
   setTimeout(() => {
     try {
