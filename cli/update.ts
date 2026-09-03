@@ -79,6 +79,11 @@ const MANAGED_FILES = [
     description: 'Verification result badge'
   },
   {
+    source: 'templates/StoryUI/fileAttachments.ts',
+    target: 'src/stories/StoryUI/fileAttachments.ts',
+    description: 'Attachment classification shared with the workspace'
+  },
+  {
     source: 'templates/StoryUI/HandoffDialog.tsx',
     target: 'src/stories/StoryUI/HandoffDialog.tsx',
     description: 'Handoff dialog'

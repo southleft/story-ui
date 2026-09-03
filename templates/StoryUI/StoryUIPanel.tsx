@@ -11,6 +11,7 @@ import './StoryUIPanel.css';
 import { VoiceControls } from './voice/VoiceControls';
 import { VoiceCanvas, type VoiceCanvasHandle } from './voice/VoiceCanvas';
 import { DesignContextPanel } from './DesignContextPanel';
+import { ACCEPT, partitionFiles, processDocumentFiles, toPayload, formatBytes, type AttachedDocument } from './fileAttachments';
 import { VerificationBadge } from './VerificationBadge';
 import { HandoffDialog } from './HandoffDialog';
 import type { VoiceCommand } from './voice/types';
@@ -50,6 +51,8 @@ interface Message {
   isStreaming?: boolean;
   streamingData?: StreamingState;
   attachedImages?: AttachedImage[];
+  /** Names of the documents (Markdown, CSV, JSON, text, PDF) sent with this message. */
+  documents?: string[];
   /**
    * Persisted thumbnails for images attached to this message. attachedImages
    * holds File objects and blob: URLs, neither of which survives being written
@@ -257,6 +260,8 @@ interface PanelState {
   activeTitle: string;
   input: string;
   attachedImages: AttachedImage[];
+  /** Reference documents for the next message — the same pipeline the workspace uses. */
+  attachedDocs: AttachedDocument[];
   selectedStoryIds: Set<string>;
   availableProviders: ProviderInfo[];
   selectedProvider: string;
@@ -286,6 +291,8 @@ type PanelAction =
   | { type: 'SET_INPUT'; payload: string }
   | { type: 'SET_ATTACHED_IMAGES'; payload: AttachedImage[] }
   | { type: 'ADD_ATTACHED_IMAGE'; payload: AttachedImage }
+  | { type: 'ADD_ATTACHED_DOCS'; payload: AttachedDocument[] }
+  | { type: 'REMOVE_ATTACHED_DOC'; payload: string }
   | { type: 'REMOVE_ATTACHED_IMAGE'; payload: string }
   | { type: 'CLEAR_ATTACHED_IMAGES' }
   | { type: 'SET_SELECTED_STORY_IDS'; payload: Set<string> }
@@ -316,6 +323,7 @@ const initialState: PanelState = {
   activeTitle: '',
   input: '',
   attachedImages: [],
+  attachedDocs: [],
   selectedStoryIds: new Set(),
   availableProviders: [],
   selectedProvider: '',
@@ -374,8 +382,12 @@ function panelReducer(state: PanelState, action: PanelAction): PanelState {
         ...state,
         attachedImages: state.attachedImages.filter(img => img.id !== action.payload),
       };
+    case 'ADD_ATTACHED_DOCS':
+      return { ...state, attachedDocs: [...state.attachedDocs, ...action.payload] };
+    case 'REMOVE_ATTACHED_DOC':
+      return { ...state, attachedDocs: state.attachedDocs.filter(d => d.id !== action.payload) };
     case 'CLEAR_ATTACHED_IMAGES':
-      return { ...state, attachedImages: [] };
+      return { ...state, attachedImages: [], attachedDocs: [] };
     case 'SET_SELECTED_STORY_IDS':
       return { ...state, selectedStoryIds: action.payload };
     case 'TOGGLE_STORY_SELECTION': {
@@ -950,6 +962,8 @@ function formatTime(timestamp: number): string {
 function getModelDisplayName(model: string): string {
   const displayNames: Record<string, string> = {
     // Claude
+    'claude-fable-5-1': 'Claude Fable 5.1',
+    'claude-opus-5': 'Claude Opus 5',
     'claude-opus-4-8': 'Claude Opus 4.8',
     'claude-sonnet-5': 'Claude Sonnet 5',
     'claude-haiku-4-5': 'Claude Haiku 4.5',
@@ -963,13 +977,21 @@ function getModelDisplayName(model: string): string {
     'gemini-3.1-flash-lite': 'Gemini 3.1 Flash-Lite',
   };
   if (displayNames[model]) return displayNames[model];
-  // Fallback: turn an unknown ID into a readable label instead of raw ID,
-  // e.g. "claude-sonnet-4-6" -> "Claude Sonnet 4 6".
-  return model
-    .split(/[-_.]/)
-    .filter(Boolean)
-    .map(part => (/^\d/.test(part) ? part : part.charAt(0).toUpperCase() + part.slice(1)))
-    .join(' ');
+  // Fallback for an id the table does not know: "claude-fable-5-1" reads as
+  // "Claude Fable 5.1", "gpt-5-6-sol" as "GPT-5.6 Sol" — consecutive number
+  // segments are one version, a date suffix is dropped, and family acronyms
+  // keep their case. The old split-and-title-case gave "Claude Fable 5 1".
+  const ACRONYMS: Record<string, string> = { gpt: 'GPT', o1: 'o1', o3: 'o3', o4: 'o4' };
+  const parts = model.split(/[-_]/).filter(Boolean).filter(p => !/^\d{8}$/.test(p));
+  const out: string[] = [];
+  for (const part of parts) {
+    const numeric = /^\d+(\.\d+)?$/.test(part);
+    const prev = out[out.length - 1];
+    if (numeric && prev !== undefined && /^\d+(\.\d+)*$/.test(prev)) out[out.length - 1] = `${prev}.${part}`;
+    else if (numeric && prev !== undefined && ACRONYMS[prev.toLowerCase()]) out[out.length - 1] = `${prev}-${part}`;
+    else out.push(ACRONYMS[part.toLowerCase()] ?? (numeric ? part : part.charAt(0).toUpperCase() + part.slice(1)));
+  }
+  return out.join(' ');
 }
 
 // ============================================
@@ -997,6 +1019,12 @@ const Icons = {
   x: (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="m6 6 12 12M18 6 6 18" />
+    </svg>
+  ),
+  file: ( /* a page with a folded corner */
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 3.5h8l4.5 4.5v12.5h-12.5z" />
+      <path d="M14 3.5v4.5h4.5" />
     </svg>
   ),
   image: ( /* geometry from Storybook PhotoIcon: frame + dot + mountain */
@@ -1602,7 +1630,11 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                 restoredLast.verification = restoredLast.verification || verificationFromSummary(lastCompletion.verification);
               }
               dispatch({ type: 'SET_CONVERSATION', payload: restored });
-              dispatch({ type: 'SET_ACTIVE_CHAT', payload: { id: entry.fileName || entry.id, title: entry.title || pending.title || '' } });
+              // Sessions are keyed by the file stem (what /story-ui/stories
+              // returns), not the manifest id and not the fileName. The wrong
+              // key here made the next message a NEW story instead of an update,
+              // and dropped the panel to the welcome screen after a reload.
+              dispatch({ type: 'SET_ACTIVE_CHAT', payload: { id: entry.fileName ? entry.fileName.replace(/\.stories\.[a-z]+$/, '') : entry.id, title: entry.title || pending.title || '' } });
               try {
                 const sessions = await syncWithActualStories();
                 if (!cancelled) dispatch({ type: 'SET_RECENT_CHATS', payload: sessions });
@@ -2026,15 +2058,21 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   };
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
+    const selected = e.target.files;
+    if (!selected) return;
     const errors: string[] = [];
+    // Images go through the vision path; Markdown, CSV, JSON, text and PDF
+    // travel as reference documents (the "+" used to refuse them as "Not an
+    // image file", so a spec attached to a prompt was never read).
+    const { images: files, documents: docFiles, rejected } = partitionFiles(Array.from(selected));
+    for (const f of rejected) errors.push(`${f.name}: not a supported file (images, PDF, Markdown, CSV, JSON or text)`);
+    if (docFiles.length) {
+      const { documents, errors: docErrors } = await processDocumentFiles(docFiles);
+      if (documents.length) dispatch({ type: 'ADD_ATTACHED_DOCS', payload: documents });
+      errors.push(...docErrors);
+    }
     for (let i = 0; i < files.length && (state.attachedImages.length + i) < MAX_IMAGES; i++) {
       const file = files[i];
-      if (!file.type.startsWith('image/')) {
-        errors.push(`${file.name}: Not an image file`);
-        continue;
-      }
       if (file.size > MAX_IMAGE_SIZE_MB * 1024 * 1024) {
         errors.push(`${file.name}: File too large (max ${MAX_IMAGE_SIZE_MB}MB)`);
         continue;
@@ -2412,7 +2450,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   // without round-tripping through the (possibly stale) input state.
   const handleSend = async (e?: React.FormEvent, overrideInput?: string) => {
     if (e) e.preventDefault();
-    if (!overrideInput && !state.input.trim() && state.attachedImages.length === 0) return;
+    if (!overrideInput && !state.input.trim() && state.attachedImages.length === 0 && state.attachedDocs.length === 0) return;
     // Default prompt for a bare image upload. Phrased as a composition on
     // purpose: "a component" biased the model toward extracting one card out
     // of a full-page screenshot.
@@ -2431,10 +2469,12 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     }
     const imagesToSend = [...state.attachedImages];
     const hasImages = imagesToSend.length > 0;
+    const docsToSend = [...state.attachedDocs];
     const userMessage: Message = {
       role: 'user',
       content: userInput,
       attachedImages: hasImages ? imagesToSend : undefined,
+      documents: docsToSend.length ? docsToSend.map(d => d.name) : undefined,
       // Kept separately so the reference image is still visible after the chat
       // is reloaded from storage.
       thumbnails: hasImages
@@ -2485,6 +2525,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           images: hasImages
             ? imagesToSend.map(img => ({ type: 'base64' as const, data: img.base64, mediaType: img.mediaType }))
             : undefined,
+          files: docsToSend.length ? docsToSend.map(toPayload) : undefined,
           visionMode: hasImages ? 'screenshot_to_story' : undefined,
           provider: state.selectedProvider || undefined,
           model: state.selectedModel || undefined,
@@ -2619,6 +2660,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
               images: hasImages
                 ? imagesToSend.map(img => ({ type: 'base64' as const, data: img.base64, mediaType: img.mediaType }))
                 : undefined,
+              files: docsToSend.length ? docsToSend.map(toPayload) : undefined,
               visionMode: hasImages ? 'screenshot_to_story' : undefined,
               provider: state.selectedProvider || undefined,
               model: state.selectedModel || undefined,
@@ -3565,7 +3607,17 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
             attach, voice, model chip, and the round send at the right. */}
         <div className="sui-composer-area">
           <form onSubmit={handleSend} className="sui-composer">
-            <input ref={fileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={handleFileSelect} />
+            <input ref={fileInputRef} type="file" accept={ACCEPT} multiple style={{ display: 'none' }} onChange={handleFileSelect} />
+            {state.attachedDocs.length > 0 && (
+              <div className="sui-doc-chips" aria-label="Attached documents">
+                {state.attachedDocs.map(d => (
+                  <span key={d.id} className="sui-doc-chip">
+                    {Icons.file} {d.name} <span className="sui-doc-chip-size">{formatBytes(d.size)}</span>
+                    <button type="button" className="sui-doc-chip-remove" onClick={() => dispatch({ type: 'REMOVE_ATTACHED_DOC', payload: d.id })} aria-label={`Remove ${d.name}`}>{Icons.x}</button>
+                  </span>
+                ))}
+              </div>
+            )}
             {state.attachedImages.length > 0 && (
               <div className="sui-image-previews">
                 <span className="sui-image-preview-label">{Icons.image} {state.attachedImages.length} image{state.attachedImages.length > 1 ? 's' : ''}</span>
@@ -3587,7 +3639,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                 // Submit on Enter, newline on Shift+Enter
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
-                  if (!state.loading && (state.input.trim() || state.attachedImages.length > 0)) {
+                  if (!state.loading && (state.input.trim() || state.attachedImages.length > 0 || state.attachedDocs.length > 0)) {
                     handleSend(e as unknown as React.FormEvent);
                   }
                 }

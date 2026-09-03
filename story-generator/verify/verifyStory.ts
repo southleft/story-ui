@@ -281,7 +281,11 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
   // Storybook 10.5.10 indexes a new file reliably but not instantly: with a
   // 10s wait, two of three stories were declared "index behind" and never
   // verified, then appeared a moment later. 30s, bounded by the budget.
-  const indexed = await waitForStoryIndexed(storybookUrl, storyIdPrefix, Math.min(30000, timeoutMs), 250, title);
+  // 60s, not 30: with several Storybooks rebuilding their indexes on one
+  // machine, a story the harness later found within a minute was reported
+  // "not in the index" at thirty seconds. A live watcher (polling) still
+  // answers in about a second; the cap only matters when it is busy.
+  const indexed = await waitForStoryIndexed(storybookUrl, storyIdPrefix, Math.min(60000, timeoutMs), 250, title);
   if (!indexed.indexed || !indexed.storyId) {
     // Down, stale watcher, or not picked up yet? Reachability and the counts
     // answer it, and the three need different responses from whoever reads

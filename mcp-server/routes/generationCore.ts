@@ -3182,51 +3182,41 @@ export function alignStorybookTypesImport(code: string, storybookFramework?: str
   });
 }
 
-/** Inject storyPrefix into the title and a unique id after it. */
-function applyTitleAndId(code: string, cleanTitle: string, storyIdSlug: string, storyPrefix: string): string {
-  let fixed = code;
+/**
+ * Inject storyPrefix into the title and a unique id after it.
+ *
+ * Everything happens INSIDE the meta object. The first version searched the
+ * whole file for `title:` and `id:` — and a kanban story whose column data
+ * began `{ id: 'todo', title: 'To do' }` matched there first: the injector
+ * decided the story already had an id, wrote none, Storybook derived one
+ * from the title, and the next update could not find the story by id.
+ */
+export function applyTitleAndId(code: string, cleanTitle: string, storyIdSlug: string, storyPrefix: string): string {
   // The title lands inside a string literal. A model refusal became the
   // title "I'd be happy to help…", the apostrophe closed the literal, and the
   // syntax error took every story out of Storybook's index.
   const safeTitle = sanitizeStoryTitle(cleanTitle);
   const titleToUse = safeTitle.startsWith(storyPrefix) ? safeTitle : storyPrefix + safeTitle;
 
-  // Pattern 1: CSF format - const meta = { title: "..." }
-  fixed = fixed.replace(
-    /(const\s+meta\s*(?::\s*\w+(?:<[^>]+>)?)?\s*=\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
-    (_m, p1, _old, p3) => p1 + titleToUse + p3
-  );
+  // Where the meta object starts: CSF `const meta = {`, `export default {`,
+  // or Svelte's `defineMeta({`. Nothing before it is touched.
+  const metaStart = code.search(/const\s+meta\s*(?::\s*\w+(?:<[^>]+>)?)?\s*=\s*\{|export\s+default\s*\{|defineMeta\s*\(\s*\{/);
+  if (metaStart < 0) return code;
+  const head = code.slice(0, metaStart);
+  let meta = code.slice(metaStart);
 
-  // Pattern 2: export default { title: "..." }
-  if (!fixed.includes(storyPrefix)) {
-    fixed = fixed.replace(
-      /(export\s+default\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
-      (_m, p1, _old, p3) => p1 + titleToUse + p3
-    );
-  }
+  meta = meta.replace(/(title:\s*["'])([^"']+)(["'])/, (_m, p1, _old, p3) => p1 + titleToUse + p3);
 
-  // Pattern 3: Svelte native format - defineMeta({ title: "..." })
-  if (!fixed.includes(storyPrefix)) {
-    fixed = fixed.replace(
-      /(defineMeta\s*\(\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
-      (_m, p1, _old, p3) => p1 + titleToUse + p3
-    );
-  }
-
-  // Unique story id after the title line. Anchor on the *title line* rather
-  // than a bare includes("id:") check, which any `id:` in the user's JSX trips.
-  // Skip for Svelte defineMeta: addon-svelte-csf's indexer derives IDs from the
-  // title and ignores a custom `id`, so injecting one desyncs index vs runtime
-  // ("Couldn't find story matching id ... after importing a CSF file").
-  const isDefineMetaFormat = fixed.includes('defineMeta');
-  const hasMetaId = /title:\s*["'][^"']+["'],\s*\n\s*id:/.test(fixed);
+  // Skip the id for Svelte defineMeta: addon-svelte-csf's indexer derives IDs
+  // from the title and ignores a custom `id`, so injecting one desyncs index
+  // vs runtime ("Couldn't find story matching id ... after importing a CSF file").
+  const isDefineMetaFormat = meta.startsWith('defineMeta');
+  const hasMetaId = /^\s*id:\s*['"]/m.test(meta.slice(0, meta.indexOf('title:')))
+    || /title:\s*["'][^"']+["'],\s*\n\s*id:/.test(meta);
   if (!hasMetaId && !isDefineMetaFormat) {
-    fixed = fixed.replace(
-      /(title:\s*["'][^"']+["'])(,?\s*\n)/,
-      `$1,\n  id: '${storyIdSlug}'$2`
-    );
+    meta = meta.replace(/(title:\s*["'][^"']+["'])(,?\s*\n)/, `$1,\n  id: '${storyIdSlug}'$2`);
   }
-  return fixed;
+  return head + meta;
 }
 
 export function cleanPromptForTitle(prompt: string): string {
