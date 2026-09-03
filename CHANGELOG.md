@@ -1,3 +1,10 @@
+## [5.0.4](https://github.com/southleft/story-ui/compare/v5.0.3...v5.0.4) (2026-09-03)
+
+
+### Bug Fixes
+
+* **ui:** classic panel opts out of docs typography; semantic tokens defined in both schemes ([12f70dd](https://github.com/southleft/story-ui/commit/12f70ddf440c4c2ad74940362de1729679f2e44e)), closes [#2E3338](https://github.com/southleft/story-ui/issues/2E3338) [#6b7280](https://github.com/southleft/story-ui/issues/6b7280)
+
 ## [5.0.3](https://github.com/southleft/story-ui/compare/v5.0.2...v5.0.3) (2026-09-03)
 
 
