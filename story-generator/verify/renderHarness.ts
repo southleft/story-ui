@@ -330,7 +330,7 @@ export async function indexIsStale(
     return { stale: false, onDisk, indexed: 0 };
   }
 
-  return { stale: onDisk > indexed, onDisk, indexed };
+  return { stale: onDisk - indexed > 1, onDisk, indexed };
 }
 
 export async function waitForStoryIndexed(

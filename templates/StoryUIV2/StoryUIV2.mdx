@@ -64,6 +64,11 @@ export const Mount = () => {
   useEffect(() => {
     if (!tabRoute) return;
     try {
+      // The sidebar entry means "take me to the workspace", not "resume the
+      // story I had open": clear the remembered story so the page opens on
+      // Home. A reload mid-work still restores the story, because nothing
+      // clears the key on that path.
+      try { sessionStorage.removeItem('story-ui-v2-active'); } catch {}
       const target = `${window.location.origin}/?path=${tabRoute}`;
       if (window.top && window.top.location.href !== target) window.top.location.href = target;
     } catch { /* cross-origin host: fall through to the inline workspace */ }
