@@ -29,18 +29,35 @@ export interface LayoutMetrics {
   underfilledRows: number;
   /** Sibling groups whose left edges disagree by a sub-pixel-to-small margin. */
   raggedGroups: number;
+  /** Grid rows whose spans stop one or two tracks short of the right edge. */
+  raggedRows: number;
+  /** Content-hugging controls a flex/grid parent stretched wide. */
+  stretchedControls: number;
+  /** Sibling pairs separated by far more than their parent's declared gap. */
+  gapOutliers: number;
+  /** Hug-content candidates whose content could not be measured (absent ≠ zero). */
+  unmeasurableControls: number;
+}
+
+export type LayoutProblemKind =
+  | 'grid_underfilled'
+  | 'ragged_edges'
+  | 'grid_ragged'
+  | 'stretched_control'
+  | 'gap_outlier';
+
+export interface LayoutProblem {
+  kind: LayoutProblemKind;
+  message: string;
+  evidence: string;
+  selector?: string;
+  owner?: string;
+  ownedByLibrary?: boolean;
 }
 
 export interface LayoutResult {
   metrics: LayoutMetrics;
-  problems: Array<{
-    kind: 'grid_underfilled' | 'ragged_edges';
-    message: string;
-    evidence: string;
-    selector?: string;
-    owner?: string;
-    ownedByLibrary?: boolean;
-  }>;
+  problems: LayoutProblem[];
 }
 
 export interface LayoutOptions {
@@ -113,6 +130,237 @@ export async function runLayoutProbe(page: any, options: LayoutOptions = {}): Pr
     let grids = 0;
     let underfilledRows = 0;
     let raggedGroups = 0;
+    let raggedRows = 0;
+    let stretchedControls = 0;
+    let gapOutliers = 0;
+    let unmeasurableControls = 0;
+
+    const px = (v: string): number => {
+      const n = parseFloat(v);
+      return Number.isFinite(n) ? n : 0;
+    };
+
+    /**
+     * Who WROTE the JSX that put this element here — distinct from `ownerOf`,
+     * which names the component that rendered the node.
+     *
+     * The two disagree on exactly the defects below. A Tag stretched by the
+     * Stack it sits in is markup the library rendered, so `ownerOf` says
+     * "Tag, a design system component" and the finding would never block —
+     * on Mantine, Chakra, MUI, every one of them, because every badge is the
+     * library's markup. But the PLACEMENT is the story's: it wrote
+     * `<Stack><Tag/></Stack>`. Fiber's `_debugOwner` (which React 19 kept)
+     * names the component whose render created the element, so walking out
+     * through the element's own implementation layers (Button → ButtonBase →
+     * button) to the outermost composite that IS this element, then asking
+     * who owns that, answers "story" for a Tag the story placed and "Tile"
+     * for a Tag the library's Tile rendered internally.
+     *
+     * Unknown (no fiber, no owner) returns {} and blocks, as the census does:
+     * suppressing what cannot be explained is worse than a false blocker.
+     */
+    const authorOf = (node: any): { owner?: string; ownedByLibrary?: boolean } => {
+      const key = Object.keys(node).find((k: string) =>
+        k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$'));
+      if (!key) return {};
+      const nameOf = (t: any): string | null => {
+        if (!t) return null;
+        if (typeof t === 'string') return null;
+        if (typeof t === 'function') return t.displayName || t.name || null;
+        if (typeof t === 'object') return t.displayName || nameOf(t.render) || nameOf(t.type) || null;
+        return null;
+      };
+      const NOISE = /^(Fragment|ForwardRef|Memo|Unknown|Anonymous|Slot|Provider|_c\d*)$/;
+      const cleanName = (f: any): string | null => {
+        if (!f || typeof f.type === 'string' || !f.type) return null;
+        const n = (nameOf(f.type) || '').replace(/^.*\//, '');
+        return n && !NOISE.test(n) ? n : null;
+      };
+      const firstNamedOwner = (f: any): string | null => {
+        let o = f?._debugOwner;
+        let guard = 0;
+        while (o && guard++ < 40) {
+          const n = cleanName(o);
+          if (n) return n;
+          o = o._debugOwner;
+        }
+        return null;
+      };
+      let f: any = node[key];
+      let last: any = f;
+      let guard = 0;
+      while (f?.return && guard++ < 40) {
+        const p = f.return;
+        // Reached the parent DOM node: every composite passed is a layer of
+        // THIS element, and the outermost one's owner wrote it.
+        if (typeof p.type === 'string' || !p.type) break;
+        const n = cleanName(p);
+        if (n && !LIBRARY.has(n)) {
+          // A component the story defined (or Storybook's wrapper) produced
+          // this element directly — unless it is a library internal such as
+          // ButtonBase, which the catalog does not list but a library
+          // component owns. Keep walking through those.
+          const o = firstNamedOwner(p);
+          if (!o || !LIBRARY.has(o)) return { owner: n, ownedByLibrary: false };
+        }
+        last = p;
+        f = p;
+      }
+      const o = firstNamedOwner(last);
+      return o ? { owner: o, ownedByLibrary: LIBRARY.has(o) } : {};
+    };
+
+    /**
+     * A container the LIBRARY composed lays out its own children by design:
+     * a vertical tab list stretches its tabs, a notification nudges its icon
+     * down to the first text line. Measured: four "stretched" tabs and one
+     * "misaligned" icon on stories a designer passed. Nothing in the story
+     * put those children there, so there is nothing to report — this is not
+     * an unexplained finding demoted to a warning, it is an explained one.
+     */
+    const laidOutByLibrary = (container: HTMLElement): boolean => authorOf(container).ownedByLibrary === true;
+
+    /** The React props on the element and each composite layer that is this element. */
+    const propsOf = (node: any): any[] => {
+      const key = Object.keys(node).find((k: string) => k.startsWith('__reactFiber$'));
+      if (!key) return [];
+      const out: any[] = [];
+      let f: any = node[key];
+      let guard = 0;
+      while (f && guard++ < 12) {
+        if (f.memoizedProps && typeof f.memoizedProps === 'object') out.push(f.memoizedProps);
+        const p = f.return;
+        if (!p || typeof p.type === 'string' || !p.type) break;
+        f = p;
+      }
+      return out;
+    };
+
+    /**
+     * Did the source size this element on purpose? Read from the props the
+     * story (or a library layer) actually passed — not guessed from the
+     * computed width, which is the same number whether stretch or `width:
+     * 100%` produced it.
+     */
+    const explicitlySized = (el: HTMLElement): boolean => {
+      if (el.style.width || el.style.inlineSize || el.style.minWidth || el.style.flex || el.style.flexGrow) return true;
+      for (const p of propsOf(el)) {
+        for (const k of ['fullWidth', 'isFullWidth', 'full', 'block', 'fluid', 'w', 'width', 'inlineSize', 'stretch', 'grow', 'flex', 'expand', 'shouldFitContainer']) {
+          if (p[k] !== undefined && p[k] !== false && p[k] !== null && p[k] !== 'auto') return true;
+        }
+        const st = p.style;
+        if (st && typeof st === 'object' && (st.width !== undefined || st.inlineSize !== undefined || st.minWidth !== undefined || st.flex !== undefined || st.flexGrow !== undefined)) return true;
+        // A width utility class is a value the story wrote, read only to
+        // SUPPRESS a finding — a missed defect costs less than a false one.
+        const cls = typeof p.className === 'string' ? p.className : typeof p.class === 'string' ? p.class : '';
+        if (/(^|\s)(w-full|w-100|full-width|fullwidth|w-screen|flex-1|grow)(\s|$)/.test(cls)) return true;
+      }
+      return false;
+    };
+
+    /**
+     * The box the element's own content occupies, without touching the DOM.
+     *
+     * A Range over each text node gives the glyph box the browser already
+     * laid out; icon-ish leaves (svg, img) add their border boxes. Nothing
+     * is mutated, so no ResizeObserver in the library fires and the page the
+     * later probes see is byte-identical.
+     *
+     * Returns null when there is nothing honest to measure: no text, or text
+     * that wraps (a wrapped label is not a pill), or an image-only control.
+     */
+    const contentBox = (el: HTMLElement): { width: number; lines: number; text: string } | null => {
+      let left = Infinity, right = -Infinity;
+      const tops: number[] = [];
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      let n: Node | null;
+      let text = '';
+      while ((n = walker.nextNode())) {
+        if (!n.textContent || !n.textContent.trim()) continue;
+        const parent = n.parentElement;
+        if (!parent || parent.closest('svg')) continue;
+        const ps = getComputedStyle(parent);
+        if (ps.display === 'none' || ps.visibility === 'hidden') continue;
+        // Visually-hidden text (sr-only) is clipped to a pixel; it says
+        // nothing about the visible box.
+        if (ps.position === 'absolute' && (ps.clip !== 'auto' || px(ps.width) <= 1)) continue;
+        const range = document.createRange();
+        range.selectNodeContents(n);
+        for (const b of Array.from(range.getClientRects())) {
+          if (b.width === 0) continue;
+          left = Math.min(left, b.left);
+          right = Math.max(right, b.right);
+          if (!tops.some(t => Math.abs(t - b.top) <= 2)) tops.push(b.top);
+        }
+        text += n.textContent.trim() + ' ';
+      }
+      if (right <= left) return null;
+      let icons = 0;
+      for (const leaf of Array.from(el.querySelectorAll('svg, img')) as HTMLElement[]) {
+        if (leaf.parentElement?.closest('svg')) continue;
+        const r = leaf.getBoundingClientRect();
+        if (r.width > 0 && isVisible(leaf)) icons += r.width;
+      }
+      return { width: right - left + icons, lines: tops.length, text: text.trim() };
+    };
+
+    /**
+     * A "hug-content control": something whose width should follow its
+     * label. Interactive (button, link, role=button) or a decorated pill (a
+     * background or border makes the stretched box VISIBLE — undecorated
+     * text stretched full-width is simply a paragraph). Short, single-line,
+     * few descendants, no form control inside: a card with a background and
+     * three lines of copy is not a pill however it is styled.
+     */
+    const isHugControl = (el: HTMLElement): boolean => {
+      const tag = el.tagName;
+      if (/^(INPUT|SELECT|TEXTAREA|IMG|SVG|VIDEO|CANVAS|TABLE|UL|OL|LI|P|H[1-6]|FORM|FIELDSET)$/.test(tag)) return false;
+      if (el.querySelector('input, select, textarea, table, h1, h2, h3, h4, h5, h6, p, ul, ol')) return false;
+      const role = el.getAttribute('role') || '';
+      // A plain text link is interactive but has no box: stretched, its hit
+      // area is wide and nothing shows. Measured on a login form's "Forgot
+      // your password?" at 512px — the reviewer passed it, and rightly, since
+      // the screenshot cannot tell. Buttons and decorated pills are the
+      // visible case.
+      const interactive = tag === 'BUTTON' || /^(button|tab|menuitem)$/.test(role);
+      const s = getComputedStyle(el);
+      const decorated =
+        (s.backgroundColor && !/^(rgba\(0, 0, 0, 0\)|transparent)$/.test(s.backgroundColor)) ||
+        px(s.borderLeftWidth) > 0 || px(s.borderRightWidth) > 0 || s.backgroundImage !== 'none';
+      if (!interactive && !decorated) return false;
+      const r = el.getBoundingClientRect();
+      // Two text lines of a large type scale; a pill or button is one.
+      if (r.height > 64) return false;
+      const descendants = (Array.from(el.querySelectorAll('*')) as Element[]).filter(d => !d.parentElement?.closest('svg'));
+      if (descendants.length > 4) return false;
+      const t = (el.textContent || '').trim();
+      return t.length > 0 && t.length <= 40;
+    };
+
+    /** The control, or a wrapper that holds exactly one control and nothing else. */
+    const controlOf = (el: HTMLElement): HTMLElement | null => {
+      if (isHugControl(el)) return el;
+      const kids = (Array.from(el.children) as HTMLElement[]).filter(isVisible);
+      if (kids.length === 1) {
+        const inner = controlOf(kids[0]);
+        if (inner) return inner;
+      }
+      return null;
+    };
+
+    const label = (el: HTMLElement): string => {
+      const t = (el.textContent || '').trim().replace(/\s+/g, ' ');
+      return t ? `"${t.slice(0, 32)}${t.length > 32 ? '…' : ''}"` : `<${el.tagName.toLowerCase()}>`;
+    };
+
+    /** Track sizes as the browser resolved them; empty when not all in px. */
+    const trackList = (s: CSSStyleDeclaration): number[] => {
+      const raw = s.gridTemplateColumns.trim();
+      if (!raw || raw === 'none') return [];
+      const parts = raw.split(/\s+/).filter(Boolean);
+      const nums = parts.map(px);
+      return parts.every(p => /px$/.test(p)) ? nums : [];
+    };
 
     /* ── 1. Grid rows that do not use the columns they declare ───────────── */
 
@@ -275,8 +523,341 @@ export async function runLayoutProbe(page: any, options: LayoutOptions = {}): Pr
       }
     }
 
+    /* ── 3. Rows whose spans stop one or two tracks short of the edge ──── */
+
+    /**
+     * Check 1 deliberately ignores a small shortfall: 15 of 16 is a designed
+     * inset when it is one reading column. It is not when it is THREE equal
+     * cards — `lg={5}` ×3 — whose row ends a column short of the header
+     * above it. Measured on three of twenty-two Carbon stories: tiers and
+     * product cards ending 95px and 25px before the row above, every one a
+     * sum the story wrote that did not reach the track count.
+     *
+     * Ragged means: several children, spans all readable, laid contiguously
+     * from the first track, no explicit line placement anywhere on the row
+     * (an offset is a decision), and the total short by 1 or 2 tracks —
+     * larger shortfalls are check 1's. The last row of a multi-row grid is
+     * skipped for the reason check 1 skips it.
+     */
+    for (const el of Array.from(root.querySelectorAll('*')) as HTMLElement[]) {
+      const style = getComputedStyle(el);
+      if (style.display !== 'grid' && style.display !== 'inline-grid') continue;
+      if (!isVisible(el)) continue;
+      const tracks = trackList(style);
+      const columnCount = tracks.length || style.gridTemplateColumns.trim().split(/\s+/).filter(Boolean).length;
+      if (columnCount < 3 || style.gridTemplateColumns.trim() === 'none') continue;
+      const children = (Array.from(el.children) as HTMLElement[]).filter(isVisible);
+      if (children.length < 2) continue;
+
+      const rows = new Map<number, HTMLElement[]>();
+      for (const child of children) {
+        const top = Math.round(child.getBoundingClientRect().top);
+        const key = [...rows.keys()].find(k => Math.abs(k - top) <= 2);
+        if (key === undefined) rows.set(top, [child]);
+        else rows.get(key)!.push(child);
+      }
+      const rowList = [...rows.values()];
+      const contentLeft = el.getBoundingClientRect().left + px(style.paddingLeft) + px(style.borderLeftWidth);
+
+      for (let i = 0; i < rowList.length; i++) {
+        const row = rowList[i].slice().sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+        if (rowList.length > 1 && i === rowList.length - 1) continue;
+        if (row.length < 2) continue;
+
+        let used = 0;
+        let measurable = true;
+        let explicit = false;
+        const spans: number[] = [];
+        for (const child of row) {
+          const cs = getComputedStyle(child);
+          const raw = `${cs.gridColumnStart} / ${cs.gridColumnEnd}`;
+          const spanMatch = raw.match(/span\s+(\d+)/);
+          if (spanMatch) { const n = Number(spanMatch[1]); used += n; spans.push(n); continue; }
+          const nums = raw.match(/^(\d+)\s*\/\s*(\d+)$/);
+          if (nums) {
+            // Explicit lines. Placement someone chose; not this check's business.
+            explicit = true;
+            break;
+          }
+          measurable = false;
+          break;
+        }
+        if (!measurable || explicit || used === 0) continue;
+
+        // Contiguous from the first track: the first child sits on the grid's
+        // left content edge (within the first track), or the gap is a choice.
+        const firstLeft = row[0].getBoundingClientRect().left;
+        const firstTrack = tracks[0] || 0;
+        if (firstTrack && firstLeft - contentLeft > firstTrack) continue;
+
+        const unused = columnCount - used;
+        if (unused < 1 || unused > 2) continue;
+        // Check 1 owns anything at or above its own threshold.
+        if (unused >= Math.max(2, Math.ceil(columnCount * 0.2))) continue;
+
+        raggedRows++;
+        if (problems.length < 12) {
+          const lastRect = row[row.length - 1].getBoundingClientRect();
+          const gridRight = el.getBoundingClientRect().right - px(style.paddingRight) - px(style.borderRightWidth);
+          const shortfallPx = Math.round(gridRight - lastRect.right);
+          const proposal = `${spans.slice(0, -1).join(' + ')} + ${spans[spans.length - 1] + unused}`;
+          problems.push({
+            kind: 'grid_ragged',
+            message:
+              `A grid row uses ${used} of ${columnCount} columns (spans ${spans.join(' + ')}), so it ends ${unused} column${unused === 1 ? '' : 's'} short of the grid's right edge and reads as ragged against the rows above and below. ` +
+              `Make the spans total ${columnCount} — for example ${proposal} — or give the last column an explicit offset if the inset is intended.`,
+            evidence: `${row.length} items spanning ${spans.join('+')} = ${used} of ${columnCount} tracks; the row's right edge is ${shortfallPx}px inside the grid's`,
+            selector: cssPath(el),
+            ...authorOf(el),
+          });
+        }
+      }
+    }
+
+    /* ── 4. Content-hugging controls stretched by their parent ──────────── */
+
+    /**
+     * A Tag reading "New" rendered 208px wide — its max-inline-size — because
+     * the vertical Stack around it is a grid and a grid stretches its items.
+     * Six stories out of twenty-two, always a pill or button dropped straight
+     * into a stacking container, always the library's own default. Measured,
+     * not judged: the glyph box is 25px, the border box is 208px.
+     *
+     * Thresholds. The border box must be at least 1.3× the content box AND
+     * at least 48px wider: the factor keeps a generous but normal padding out
+     * of it (a 12-char tag at 1.46× was called stretched by a designer and
+     * is), the absolute floor keeps a 20px surplus on a short word out of it
+     * — three spacing steps of dead pill is what a screenshot shows and
+     * anything less is not visible. And the MECHANISM must be present: the
+     * width must equal what stretching hands out — the element's own
+     * max-width, or the parent's content width, or one of the parent's
+     * tracks — under a parent that stretches (grid; or column flex with
+     * align-items stretch/normal) with the element not opting out
+     * (justify-self/align-self, flex-grow, explicit width props).
+     */
+    for (const el of Array.from(root.querySelectorAll('*')) as HTMLElement[]) {
+      if (!isVisible(el) || !isHugControl(el)) continue;
+      const parent = el.parentElement;
+      if (!parent || parent === root) continue;
+      const ps = getComputedStyle(parent);
+      const cs = getComputedStyle(el);
+
+      const isGrid = ps.display === 'grid' || ps.display === 'inline-grid';
+      const isColumnFlex = (ps.display === 'flex' || ps.display === 'inline-flex') && /column/.test(ps.flexDirection);
+      if (!isGrid && !isColumnFlex) continue;
+      if (laidOutByLibrary(parent)) continue;
+      const parentStretches = isGrid
+        ? /^(normal|stretch)$/.test(ps.justifyItems)
+        : /^(normal|stretch)$/.test(ps.alignItems);
+      if (!parentStretches) continue;
+      const selfOptsOut = isGrid
+        ? !/^(auto|normal|stretch)$/.test(cs.justifySelf)
+        : !/^(auto|normal|stretch)$/.test(cs.alignSelf);
+      if (selfOptsOut) continue;
+      if (cs.position === 'absolute' || cs.position === 'fixed') continue;
+
+      const box = contentBox(el);
+      if (!box) { unmeasurableControls++; continue; }
+      if (box.lines !== 1) continue;
+      const rect = el.getBoundingClientRect();
+      const hug = box.width
+        + px(cs.paddingLeft) + px(cs.paddingRight)
+        + px(cs.borderLeftWidth) + px(cs.borderRightWidth);
+      if (!(rect.width >= hug * 1.3 && rect.width - hug >= 48)) continue;
+
+      const parentRect = parent.getBoundingClientRect();
+      const available = parentRect.width - px(ps.paddingLeft) - px(ps.paddingRight) - px(ps.borderLeftWidth) - px(ps.borderRightWidth);
+      // max-width is a content-box measure under box-sizing: content-box;
+      // the bounding rect is always the border box. Compare like with like.
+      const edges = px(cs.paddingLeft) + px(cs.paddingRight) + px(cs.borderLeftWidth) + px(cs.borderRightWidth);
+      const maxW = /px$/.test(cs.maxWidth) ? px(cs.maxWidth) + (cs.boxSizing === 'content-box' ? edges : 0) : NaN;
+      const tracks = isGrid ? trackList(ps) : [];
+      const explainedBy =
+        Math.abs(rect.width - maxW) <= 1 ? `its max-width (${Math.round(maxW)}px)` :
+        Math.abs(rect.width - available) <= 1 ? `the parent's full content width (${Math.round(available)}px)` :
+        tracks.some(t => Math.abs(rect.width - t) <= 1) ? `a ${Math.round(rect.width)}px grid track` :
+        null;
+      if (!explainedBy) continue;
+      if (explicitlySized(el)) continue;
+
+      stretchedControls++;
+      if (problems.length < 12) {
+        const containerDesc = isGrid ? `${ps.display} (justify-items: ${ps.justifyItems})` : `column flex (align-items: ${ps.alignItems})`;
+        problems.push({
+          kind: 'stretched_control',
+          message:
+            `${label(el)} is a content-hugging ${el.tagName === 'BUTTON' || el.getAttribute('role') === 'button' ? 'button' : 'tag'} rendered ${Math.round(rect.width)}px wide for ${Math.round(hug)}px of content, because its parent (a ${containerDesc}) stretches its children to ${explainedBy}. ` +
+            `Stop it stretching: wrap it in a plain <div> (or a <span> for inline placement) so it is no longer a direct grid/flex item, or set the parent's ${isGrid ? 'justify-items' : 'align-items'} to start, or set ${isGrid ? 'justify-self' : 'align-self'}: start on the element.`,
+          evidence: `content box ${Math.round(box.width)}px + padding ${Math.round(hug - box.width)}px = ${Math.round(hug)}px natural; rendered ${Math.round(rect.width)}px (${(rect.width / hug).toFixed(1)}×, ${Math.round(rect.width - hug)}px of empty pill); parent ${containerDesc}`,
+          selector: cssPath(el),
+          ...authorOf(el),
+        });
+      }
+    }
+
+    /* ── 5. Siblings far further apart than the gap their parent declares ── */
+
+    /**
+     * Two mechanisms, both measured as bounding-box distance against the
+     * parent's computed column-gap; anything else is the parent's own
+     * arithmetic and is not a finding.
+     *
+     * (a) A horizontal grid whose auto tracks were stretched to fill the
+     *     container, with each control at the START of its own track:
+     *     "Invite teammate" sits 598px from "Create report" under a declared
+     *     12px gap, at an x nobody chose. Five stories. The tell is that the
+     *     void lies INSIDE a track (the control is ≥48px narrower than its
+     *     track), which no one designs; a track someone sized is filled.
+     *
+     * (b) A flex row using space-around/space-evenly, or space-between with
+     *     three or more items, where every item is a small control. Two
+     *     controls pushed to opposite edges by space-between are an
+     *     anchored pair (Back … Next) and deliberately NOT reported; the
+     *     middle items of three, or all items under space-around, float at
+     *     positions the container computed rather than the author.
+     *
+     * Threshold for both: the void between neighbours must exceed the
+     * declared gap by at least 48px and be at least three times it — a 12px
+     * gap rendered as 24px is a rounding argument, rendered as 60px+ is a
+     * hole. Every child must be a hug-content control (or a wrapper of
+     * one): a title beside a button, or two text columns, is a layout, not
+     * a toolbar.
+     *
+     * (c) One sibling in a row carrying a one-sided margin the others lack,
+     *     so its content starts lower than its neighbour's: "First name" at
+     *     y=317 beside "Last name" at y=333, because one of the pair was
+     *     wrapped in `marginTop: 1rem`. Reported when the tops disagree by
+     *     ≥4px and every offset is exactly explained by a margin-top on the
+     *     cell or on its first child — anything not explained by a margin is
+     *     alignment the parent chose (center, baseline) and is left alone.
+     */
+    for (const el of Array.from(root.querySelectorAll('*')) as HTMLElement[]) {
+      const style = getComputedStyle(el);
+      if (!isVisible(el)) continue;
+      const isGrid = style.display === 'grid' || style.display === 'inline-grid';
+      const isRowFlex = (style.display === 'flex' || style.display === 'inline-flex') && !/column/.test(style.flexDirection);
+      if (!isGrid && !isRowFlex) continue;
+
+      const children = (Array.from(el.children) as HTMLElement[]).filter(isVisible).filter(c => {
+        const cs = getComputedStyle(c);
+        return cs.position !== 'absolute' && cs.position !== 'fixed';
+      });
+      if (children.length < 2 || children.length > 4) continue;
+      const rects = children.map(c => c.getBoundingClientRect());
+      // One visual row, left to right. Wrapped or stacked children are rows,
+      // and rows are check 2's problem.
+      const ordered = rects.every((r, i) => i === 0 || r.left >= rects[i - 1].right - 1);
+      if (!ordered) continue;
+      if (laidOutByLibrary(el)) continue;
+      const tracks = isGrid ? trackList(style) : [];
+
+      const gap = /px$/.test(style.columnGap) ? px(style.columnGap) : 0;
+      const containerRect = el.getBoundingClientRect();
+      const contentLeft = containerRect.left + px(style.paddingLeft) + px(style.borderLeftWidth);
+      const contentWidth = containerRect.width - px(style.paddingLeft) - px(style.paddingRight) - px(style.borderLeftWidth) - px(style.borderRightWidth);
+
+      /* (a) and (b): controls spread by the container's arithmetic. */
+      const controls = children.map(controlOf);
+      if (controls.every(Boolean) && (!isGrid || tracks.length === children.length)) {
+        let mechanism: string | null = null;
+        if (isGrid) {
+          // Track starts, from the resolved track list and gap.
+          let x = contentLeft;
+          const starts: number[] = [];
+          for (let i = 0; i < tracks.length; i++) { starts.push(x); x += tracks[i] + gap; }
+          const insideTrack = children.every((c, i) =>
+            Math.abs(rects[i].left - starts[i]) <= 2 && tracks[i] - rects[i].width >= 48);
+          const spreadsContainer = Math.abs(tracks.reduce((a, b) => a + b, 0) + gap * (tracks.length - 1) - contentWidth) <= 2;
+          if (insideTrack && spreadsContainer) {
+            mechanism = `${style.display} with ${tracks.length} auto-sized tracks stretched to fill the container (${tracks.map(t => Math.round(t)).join('/')}px), each control sitting at the start of its own track`;
+          }
+        } else {
+          const jc = style.justifyContent;
+          const small = rects.every(r => r.width <= contentWidth * 0.25);
+          if (small && (/^space-(around|evenly)$/.test(jc) || (jc === 'space-between' && children.length >= 3))) {
+            mechanism = `flex row with justify-content: ${jc}, which distributes the container's spare width between ${children.length} small controls`;
+          }
+        }
+        if (mechanism) {
+          const voids = rects.slice(1).map((r, i) => r.left - rects[i].right);
+          const worst = Math.max(...voids);
+          const worstIdx = voids.indexOf(worst);
+          if (worst - gap >= 48 && worst >= 3 * Math.max(gap, 1)) {
+            gapOutliers++;
+            if (problems.length < 12) {
+              const names = controls.map(c => label(c!));
+              problems.push({
+                kind: 'gap_outlier',
+                message:
+                  `${children.length} controls (${names.join(', ')}) are spread across the full width of their row instead of grouped: ${names[worstIdx + 1]} starts ${Math.round(worst)}px after ${names[worstIdx]} ends, although the declared gap is ${gap}px. ` +
+                  `The parent is a ${mechanism}. ` +
+                  `Group them: put the controls in a row that sizes to its content (display: flex with the gap, or ${isGrid ? 'inline-grid / grid-auto-columns: max-content' : 'justify-content: flex-start'}) or use the design system's button-group component${isGrid ? '' : ', and keep the spare width outside the group'}.`,
+                evidence: `voids between neighbours: ${voids.map(v => Math.round(v)).join('px, ')}px against a ${gap}px gap; container ${Math.round(contentWidth)}px wide, controls ${rects.map(r => Math.round(r.width)).join('/')}px`,
+                selector: cssPath(el),
+                ...authorOf(el),
+              });
+            }
+          }
+        }
+      }
+
+      /* (c): one-sided margin misaligning a row's cells. */
+      const aligned = isGrid
+        ? /^(normal|stretch|start|flex-start|self-start)$/.test(style.alignItems)
+        : /^(normal|stretch|flex-start|start)$/.test(style.alignItems);
+      if (!aligned) continue;
+      const misalignedBy = (items: HTMLElement[]): { offender: HTMLElement; margin: number; spread: number } | null => {
+        const boxes = items.map(c => {
+          const r = c.getBoundingClientRect();
+          const cs = getComputedStyle(c);
+          return { el: c, top: r.top, height: r.height, mt: px(cs.marginTop), mb: px(cs.marginBottom) };
+        });
+        const spread = Math.max(...boxes.map(b => b.top)) - Math.min(...boxes.map(b => b.top));
+        // 8px: one spacing step. Below that a margin is an optical nudge —
+        // a 1-4px shim that lines a glyph up with a cap height is a decision.
+        if (spread < 8) return null;
+        const base = Math.min(...boxes.map(b => b.top - b.mt));
+        // Every offset must be exactly a margin, or it is not this defect.
+        if (!boxes.every(b => Math.abs(b.top - b.mt - base) <= 2)) return null;
+        // ONE-sided. A heading's symmetric block margins (the UA default, or
+        // a type scale's rhythm) are not a shim somebody added to one cell.
+        const withMargin = boxes.filter(b => b.mt >= 8 && b.mb <= b.mt / 2);
+        const without = boxes.filter(b => b.mt < 8);
+        if (withMargin.length === 0 || without.length === 0) return null;
+        const offender = withMargin.sort((a, b) => b.mt - a.mt)[0];
+        // Twins only. A margin that drops a 20px icon to the first line of
+        // a 48px text block is optical alignment against a taller neighbour;
+        // a margin that drops one of two equal-height fields is the defect.
+        // Heights within a quarter of each other is "the same kind of thing".
+        const twin = without.some(b => Math.abs(b.height - offender.height) <= Math.max(b.height, offender.height) * 0.25);
+        if (!twin) return null;
+        return { offender: offender.el, margin: offender.mt, spread };
+      };
+      let hit = misalignedBy(children);
+      if (!hit) {
+        const firsts = children.map(c => (Array.from(c.children) as HTMLElement[]).find(isVisible) || null);
+        if (firsts.every(Boolean)) hit = misalignedBy(firsts as HTMLElement[]);
+      }
+      if (hit) {
+        gapOutliers++;
+        if (problems.length < 12) {
+          const idx = children.findIndex(c => c === hit!.offender || c.contains(hit!.offender));
+          const sibling = children[idx === 0 ? 1 : 0];
+          problems.push({
+            kind: 'gap_outlier',
+            message:
+              `${label(hit.offender)} carries margin-top: ${Math.round(hit.margin)}px that its sibling ${label(sibling)} in the same row does not, so the pair's content starts ${Math.round(hit.spread)}px apart vertically. ` +
+              `Remove the one-sided margin (or apply the same spacing to every cell in the row) and let the parent's gap set the spacing.`,
+            evidence: `row cells' content tops differ by ${Math.round(hit.spread)}px; the difference equals a ${Math.round(hit.margin)}px margin-top on one cell only`,
+            selector: cssPath(hit.offender),
+            ...authorOf(hit.offender),
+          });
+        }
+      }
+    }
+
     return {
-      metrics: { grids, underfilledRows, raggedGroups },
+      metrics: { grids, underfilledRows, raggedGroups, raggedRows, stretchedControls, gapOutliers, unmeasurableControls },
       problems,
     } as LayoutResult;
   }, options);

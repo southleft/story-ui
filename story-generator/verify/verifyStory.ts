@@ -528,13 +528,25 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
 
     const layout = await runLayoutProbe(render.page, { libraryComponents });
     coverage.layout = { ran: true };
+    /**
+     * Blockers: a row that does not fill its grid, a row that ends a column
+     * short, a pill stretched by its stack, a toolbar spread across the page.
+     * Each is the most visible defect a design system owner sees, each is
+     * arithmetic the probe measured, and each is repairable from the
+     * composition — a span, a wrapper, a container. Ragged left edges stay a
+     * warning: a few pixels is real but not worth a regeneration.
+     *
+     * A layout finding the probe attributes to the LIBRARY (the placement was
+     * made inside a design system component, not by the story) is reported
+     * at warning and never repaired, for the same reason as everywhere else:
+     * the only fix a model can make to the library's own markup is to stop
+     * using the component.
+     */
+    const BLOCKING_LAYOUT_KINDS = new Set(['grid_underfilled', 'grid_ragged', 'stretched_control', 'gap_outlier']);
     for (const p of layout.problems) {
       findings.push({
         id: `${p.kind}-${findings.length}`,
-        // Blocker: a composition that does not fill its grid is the most
-        // visible defect a design system owner sees, and it is repairable by
-        // changing numbers the story already wrote.
-        severity: p.kind === 'grid_underfilled' ? 'blocker' : 'warning',
+        severity: BLOCKING_LAYOUT_KINDS.has(p.kind) && !p.ownedByLibrary ? 'blocker' : 'warning',
         class: 'code',
         message: p.ownedByLibrary && p.owner
           ? `${p.message} — in <${p.owner}>, a design system component`
