@@ -1,3 +1,10 @@
+## [5.0.6](https://github.com/southleft/story-ui/compare/v5.0.5...v5.0.6) (2026-09-03)
+
+
+### Bug Fixes
+
+* an existing voice-canvas story is refreshed at server start ([9a50230](https://github.com/southleft/story-ui/commit/9a50230652a0ff8eb5073977344ce70dacc6ecd2))
+
 ## [5.0.5](https://github.com/southleft/story-ui/compare/v5.0.4...v5.0.5) (2026-09-03)
 
 
