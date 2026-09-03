@@ -53,6 +53,22 @@ export const Mount = () => {
     try { setTabRoute(sessionStorage.getItem(TAB_FLAG_KEY)); } catch { /* private mode */ }
   }, []);
 
+  /*
+    When the manager page exists, this sidebar entry IS a link to it. Landing
+    here, reading a toast, and clicking through was a detour to the real
+    workspace — and this page remounts on every generation, so it is the
+    worse place to work. Same-origin, same tab: the manager URL can be set
+    directly. The page still renders the workspace when there is no manager
+    page (the addon un-wired), or if the navigation was refused.
+  */
+  useEffect(() => {
+    if (!tabRoute) return;
+    try {
+      const target = `${window.location.origin}/?path=${tabRoute}`;
+      if (window.top && window.top.location.href !== target) window.top.location.href = target;
+    } catch { /* cross-origin host: fall through to the inline workspace */ }
+  }, [tabRoute]);
+
   if (!apiBase) return null;
 
   const openTab = (e) => {
@@ -74,6 +90,15 @@ export const Mount = () => {
     be read from the page, the OS preference otherwise. Pin it to "light" or
     "dark" for a project that wants the workspace fixed.
   */
+  if (tabRoute) {
+    return (
+      <p style={{ font: '14px system-ui, sans-serif', padding: 24 }}>
+        Opening the Story UI workspace… If nothing happens,{' '}
+        <a href={`/?path=${tabRoute}`} onClick={openTab}>open it here</a>.
+      </p>
+    );
+  }
+
   return (
     <>
       {tabRoute && (

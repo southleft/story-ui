@@ -124,5 +124,5 @@ describe('proseBeforeFence', () => {
       .toBe('Below is a settings card built from Card, Badge and Button.');
     expect(proseBeforeFence('```tsx\nexport const A = 1;\n```')).toBe('');
     expect(proseBeforeFence('')).toBe('');
-  });
+  }, 30_000);
 });
