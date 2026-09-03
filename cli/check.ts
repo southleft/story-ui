@@ -19,6 +19,7 @@ import { relativeImportResolves, localImportForComponents } from '../story-gener
 import { resolveHostTooling, canLaunchBrowser } from '../story-generator/verify/hostTooling.js';
 import { closeBrowserSession } from '../story-generator/verify/browserSession.js';
 import { describeLaunchFailure } from '../story-generator/verify/verifyStory.js';
+import { storybookWatcherAdvice, watchpackPolling, installedVersion, probeStorybookWatcher, removeStaleProbes, mainConfiguresPolling } from '../story-generator/verify/storybookWatcher.js';
 
 /** a < b for dotted versions; prerelease tags ignored. */
 import { semverLt } from '../story-generator/semver.js';
@@ -52,7 +53,7 @@ function readEnv(cwd: string): Record<string, string> {
   return out;
 }
 
-export async function runChecks(opts: { server?: string; cwd?: string } = {}): Promise<CheckReport> {
+export async function runChecks(opts: { server?: string; storybook?: string; cwd?: string } = {}): Promise<CheckReport> {
   const cwd = opts.cwd || process.cwd();
   const items: CheckItem[] = [];
   const summary: CheckReport['summary'] = { components: 0 };
@@ -192,18 +193,57 @@ export async function runChecks(opts: { server?: string; cwd?: string } = {}): P
     let sbVersion = '';
     try { sbVersion = JSON.parse(fs.readFileSync(path.join(cwd, 'node_modules', 'storybook', 'package.json'), 'utf8')).version || ''; } catch { /* not installed here */ }
     const major = Number(sbVersion.split('.')[0]);
+    // No 10.x range is named here: 10.1.2, 10.5.6, 10.5.10 and 10.6.0 (on
+    // Vite 7 and 8) all indexed a new file in ~1s in the same session that
+    // saw 10.5.6 index nothing for ten minutes. The watcher item below tells
+    // the two apart by trying, which a version number cannot.
     items.push({
       id: 'storybook-version',
       ok: sbVersion ? major >= 10 : null,
       detail: sbVersion
         ? (major >= 10
-            ? (semverLt(sbVersion, '10.5.10')
-                ? `Storybook ${sbVersion} — works, but 10.5.5–10.5.6 stopped indexing new stories after a while in testing (a restart fixes it); 10.5.10 did not`
-                : `Storybook ${sbVersion}`)
+            ? `Storybook ${sbVersion}`
             : `Storybook ${sbVersion} — new stories are not picked up live before 10; generated stories appear only after a restart`)
         : 'Storybook is not installed in this project',
       fix: sbVersion && major < 10 ? 'npx storybook@latest upgrade' : undefined,
     });
+  }
+
+  // Storybook's file watcher, live. Whether a new story reaches the index is
+  // a property of the OS's event stream at this moment (macOS drops it; see
+  // storybookWatcher.ts), so it is checked by writing a story and watching
+  // for it — when a Storybook can be reached. Without one, the assessment
+  // is static: platform and WATCHPACK_POLLING.
+  {
+    const generatedDir = path.resolve(cwd, config.generatedStoriesPath || './src/stories/generated/');
+    const env = { ...readEnv(cwd), ...process.env } as Record<string, string | undefined>;
+    const sbVersion = installedVersion(cwd, 'storybook');
+    const advice = storybookWatcherAdvice({ platform: process.platform, storybookVersion: sbVersion, polling: watchpackPolling(env.WATCHPACK_POLLING) || (mainConfiguresPolling(cwd) ? 1000 : false) });
+    const storybookUrl = opts.storybook || env.STORYBOOK_URL || (env.STORYBOOK_PORT ? `http://localhost:${env.STORYBOOK_PORT}` : undefined);
+    if (!storybookUrl || !sbVersion) {
+      items.push({
+        id: 'storybook-watcher', ok: null,
+        detail: `${advice.detail}${storybookUrl ? '' : ' — pass --storybook <url> (or set STORYBOOK_URL) with Storybook running to test the watcher live'}${advice.fix ? `; to rule it out: ${advice.fix}` : ''}`,
+        fix: advice.fix,
+      });
+    } else {
+      const stale = removeStaleProbes(generatedDir);
+      const probe = await probeStorybookWatcher({ storybookUrl, generatedDir });
+      const left = stale.length ? ` (removed ${stale.length} probe file${stale.length === 1 ? '' : 's'} an earlier check left behind)` : '';
+      if (probe.outcome === 'alive') {
+        items.push({ id: 'storybook-watcher', ok: true, detail: `Storybook at ${storybookUrl} indexed a new story in ${probe.ms}ms — its file watcher is alive${left}` });
+      } else if (probe.outcome === 'dead') {
+        items.push({
+          id: 'storybook-watcher', ok: false,
+          detail: `Storybook at ${storybookUrl} is running but its file watcher is not delivering events: a story written to ${path.relative(cwd, generatedDir)} was not indexed in ${Math.round(probe.ms / 1000)}s. Every generated story is invisible until Storybook restarts. ${advice.risk === 'fsevents' ? 'On macOS this is fs.watch\'s FSEvents stream (rooted at your home directory) having dropped events; it does not recover on its own' : advice.detail}${left}`,
+          fix: advice.risk === 'fsevents' ? `restart Storybook with ${advice.fix}` : 'restart Storybook',
+        });
+      } else if (probe.outcome === 'unreachable') {
+        items.push({ id: 'storybook-watcher', ok: null, detail: `no Storybook at ${storybookUrl} (${probe.error}) — start it to test its file watcher live. ${advice.detail}`, fix: advice.fix });
+      } else {
+        items.push({ id: 'storybook-watcher', ok: null, detail: `watcher probe skipped: ${probe.reason}. ${advice.detail}`, fix: advice.fix });
+      }
+    }
   }
 
   items.push({ id: 'generated-dir', ok: fs.existsSync(generatedDir), detail: fs.existsSync(generatedDir) ? `generated stories go to ${path.relative(cwd, generatedDir)}` : `${path.relative(cwd, generatedDir)} does not exist yet`, fix: fs.existsSync(generatedDir) ? undefined : `mkdir -p ${path.relative(cwd, generatedDir)}` });
@@ -300,7 +340,7 @@ export async function runChecks(opts: { server?: string; cwd?: string } = {}): P
   return { ok, items, summary };
 }
 
-export async function checkCommand(opts: { server?: string; json?: boolean } = {}): Promise<boolean> {
+export async function checkCommand(opts: { server?: string; storybook?: string; json?: boolean } = {}): Promise<boolean> {
   if (opts.json) {
     // Nothing but the report on stdout: the config loader and discovery log
     // freely, and a script parsing this must not have to skip lines.
@@ -308,12 +348,12 @@ export async function checkCommand(opts: { server?: string; json?: boolean } = {
     const saved = { log: console.log, info: console.info, warn: console.warn, debug: console.debug };
     console.log = () => {}; console.info = () => {}; console.warn = () => {}; console.debug = () => {};
     let report: CheckReport;
-    try { report = await runChecks({ server: opts.server }); }
+    try { report = await runChecks({ server: opts.server, storybook: opts.storybook }); }
     finally { Object.assign(console, saved); }
     console.log(JSON.stringify(report, null, 2));
     return report.ok;
   }
-  const report = await runChecks({ server: opts.server });
+  const report = await runChecks({ server: opts.server, storybook: opts.storybook });
   console.log(chalk.bold('\n🩺 Story UI check\n'));
   for (const i of report.items) {
     const mark = i.ok === true ? chalk.green('✔') : i.ok === false ? chalk.red('✖') : chalk.yellow('•');

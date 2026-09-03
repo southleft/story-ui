@@ -13,8 +13,8 @@
 
 import fs from 'fs';
 import path from 'path';
-import { semverLt } from '../semver.js';
 import { logger } from '../logger.js';
+import { storybookWatcherHint } from './storybookWatcher.js';
 import { resolveHostTooling, canLaunchBrowser } from './hostTooling.js';
 import { renderStory, waitForStoryIndexed, indexIsStale, type IndexLookup } from './renderHarness.js';
 import { runDomCensus } from './probes/domCensus.js';
@@ -110,18 +110,12 @@ const notVerified = (
  */
 
 /**
- * Storybook 10.5.5–10.5.6 stopped watching for new story files after a
- * while in testing; 10.5.10 did not. A "not indexed" result on one of those
- * versions is almost always that, so say so where the user is looking —
- * `story-ui check` already does, but nobody runs check when a story fails.
+ * A "not indexed" result on macOS is almost always Storybook's fs.watch
+ * stream having dropped the file (see storybookWatcher.ts — it is not a
+ * version), so say so where the user is looking: `story-ui check` proves it
+ * live, but nobody runs check when a story fails.
  */
-export function storybookWatcherHint(cwd: string = process.cwd()): string {
-  let version = '';
-  try { version = JSON.parse(fs.readFileSync(path.join(cwd, 'node_modules', 'storybook', 'package.json'), 'utf8')).version || ''; } catch { return ''; }
-  // Only the range that showed it: older majors fail the install check outright.
-  if (!version || semverLt(version, '10.5.0') || !semverLt(version, '10.5.10')) return '';
-  return ` Storybook ${version} is installed; 10.5.5–10.5.6 stopped watching for new files in testing and 10.5.10 did not — restart Storybook now, and upgrade to 10.5.10 or newer so this stops recurring.`;
-}
+export { storybookWatcherHint };
 
 export function classifyIndexMiss(
   storybookUrl: string,
