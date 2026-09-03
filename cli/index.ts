@@ -300,6 +300,7 @@ program
   .command('check')
   .description('Verify the installation: config, discovery, Storybook globs, addon wiring, provider key, server')
   .option('--server <url>', 'Story UI server to probe (default: from config port)')
+  .option('--storybook <url>', 'Running Storybook to test the file watcher against, live (default: STORYBOOK_URL or STORYBOOK_PORT)')
   .option('--json', 'Print the report as JSON')
   .action(async (options) => {
     const { checkCommand } = await import('./check.js');

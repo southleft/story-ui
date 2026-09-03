@@ -151,13 +151,18 @@ describe('storybook watcher hint', () => {
     }
     return dir;
   };
-  it('names the installed version and the fix on the affected range, and stays silent otherwise', () => {
-    expect(storybookWatcherHint(withVersion('10.5.6'))).toContain('Storybook 10.5.6 is installed');
-    expect(storybookWatcherHint(withVersion('10.5.6'))).toContain('10.5.10 or newer');
-    expect(storybookWatcherHint(withVersion('10.5.10'))).toBe('');
-    expect(storybookWatcherHint(withVersion('10.4.2'))).toBe('');
-    expect(storybookWatcherHint(withVersion('9.1.17'))).toBe('');
-    expect(storybookWatcherHint(withVersion('10.6.1'))).toBe('');
-    expect(storybookWatcherHint(withVersion(null))).toBe('');
+  // The hint is about the platform's watcher, not a version range: every
+  // 10.x tested indexed a new file in ~1s on the same project that lost
+  // every event for ten minutes on 10.5.6. The fix it names is polling.
+  it('names the mechanism and the polling fix on macOS without polling, and stays silent otherwise', () => {
+    for (const v of ['10.5.6', '10.5.10', '10.6.1', '10.4.2']) {
+      const hint = storybookWatcherHint(withVersion(v), {}, 'darwin');
+      expect(hint).toContain(`Storybook ${v} on macOS`);
+      expect(hint).toContain('WATCHPACK_POLLING=1000');
+      expect(hint).not.toContain('10.5.10 or newer');
+    }
+    expect(storybookWatcherHint(withVersion('10.5.6'), { WATCHPACK_POLLING: '1000' }, 'darwin')).toBe('');
+    expect(storybookWatcherHint(withVersion('10.5.6'), {}, 'linux')).toBe('');
+    expect(storybookWatcherHint(withVersion(null), {}, 'darwin')).toBe('');
   });
 });
