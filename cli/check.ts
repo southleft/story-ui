@@ -20,6 +20,13 @@ import { resolveHostTooling, canLaunchBrowser } from '../story-generator/verify/
 import { closeBrowserSession } from '../story-generator/verify/browserSession.js';
 import { describeLaunchFailure } from '../story-generator/verify/verifyStory.js';
 
+/** a < b for dotted versions; prerelease tags ignored. */
+export function semverLt(a: string, b: string): boolean {
+  const pa = a.split('-')[0].split('.').map(Number); const pb = b.split('-')[0].split('.').map(Number);
+  for (let i = 0; i < 3; i++) { const x = pa[i] || 0, y = pb[i] || 0; if (x !== y) return x < y; }
+  return false;
+}
+
 export interface CheckItem {
   id: string;
   ok: boolean | null;
@@ -192,7 +199,11 @@ export async function runChecks(opts: { server?: string; cwd?: string } = {}): P
       id: 'storybook-version',
       ok: sbVersion ? major >= 10 : null,
       detail: sbVersion
-        ? (major >= 10 ? `Storybook ${sbVersion}` : `Storybook ${sbVersion} — new stories are not picked up live before 10; generated stories appear only after a restart`)
+        ? (major >= 10
+            ? (semverLt(sbVersion, '10.5.10')
+                ? `Storybook ${sbVersion} — works, but 10.5.5–10.5.6 stopped indexing new stories after a while in testing (a restart fixes it); 10.5.10 did not`
+                : `Storybook ${sbVersion}`)
+            : `Storybook ${sbVersion} — new stories are not picked up live before 10; generated stories appear only after a restart`)
         : 'Storybook is not installed in this project',
       fix: sbVersion && major < 10 ? 'npx storybook@latest upgrade' : undefined,
     });

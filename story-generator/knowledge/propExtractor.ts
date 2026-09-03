@@ -1318,7 +1318,7 @@ function collectPropTypes(source: ts.SourceFile, out: Record<string, ComponentFa
  *    exported component rather than a `<Name>Props` convention; a path given
  *    as the package no longer reads node_modules.
  */
-const EXTRACTOR_SCHEMA = 5;
+const EXTRACTOR_SCHEMA = 6 // 6: OverridableStringUnion literals; caches written before it hid MUI's variant/color/size;
 
 /**
  * Keyed on version AND a content fingerprint (`knowledge/cacheKey`).

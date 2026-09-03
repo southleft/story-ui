@@ -664,6 +664,7 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
   if (filesToUpdate.length === 0) {
     wireStorybookEntries();
     console.log(chalk.green('\n✅ All files are already up to date!'));
+    console.log(chalk.gray('   If Storybook is running, restart it — and clear node_modules/.vite and node_modules/.cache/storybook first, so Vite does not keep two copies of the old bundle.'))
     result.success = result.errors.length === 0;
     return result;
   }
@@ -751,6 +752,7 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
 
   if (result.success && !options.dryRun) {
     console.log(chalk.green('\n✅ Story UI updated successfully!'));
+  console.log(chalk.gray('   Restart Storybook to pick this up. Clear node_modules/.vite and node_modules/.cache/storybook first — Vite keeps two copies of the old bundle otherwise ("Illegal invocation" in the preview).'));
     console.log(chalk.gray('   Restart Storybook to see the changes.'));
   }
 

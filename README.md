@@ -29,7 +29,7 @@ npm packages and local source. Other frameworks get the classic panel; see
 ## Requirements
 
 - Node 20 or newer.
-- Storybook 10 or newer. In testing, Storybook 9.1 did not refresh its story index when a new file was written, so a generated story never appeared without a restart; `check` reports the installed version.
+- Storybook 10 or newer; 10.5.10 or newer recommended. In testing, 9.1 did not refresh its story index when a new file was written, and 10.5.5–10.5.6 stopped refreshing it after a while (a restart fixes it); 10.5.10 kept up. `check` reports the installed version.
 - A React + TypeScript design system for the full workspace.
 - An API key for Anthropic, OpenAI or Google Gemini.
 - For verification: `playwright` installed in your project with a browser downloaded (`npx playwright install chromium`). `axe-core` is optional and enables the accessibility check.

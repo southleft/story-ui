@@ -266,7 +266,10 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
 
   // The story has to be in the index before it can be rendered by id. This also
   // separates "generated badly" from "Storybook never noticed the file".
-  const indexed = await waitForStoryIndexed(storybookUrl, storyIdPrefix, Math.min(10000, timeoutMs), 250, title);
+  // Storybook 10.5.10 indexes a new file reliably but not instantly: with a
+  // 10s wait, two of three stories were declared "index behind" and never
+  // verified, then appeared a moment later. 30s, bounded by the budget.
+  const indexed = await waitForStoryIndexed(storybookUrl, storyIdPrefix, Math.min(30000, timeoutMs), 250, title);
   if (!indexed.indexed || !indexed.storyId) {
     // Down, stale watcher, or not picked up yet? Reachability and the counts
     // answer it, and the three need different responses from whoever reads
