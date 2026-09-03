@@ -43,17 +43,23 @@ const HEADLINE_METRICS: Array<{ key: string; label: string }> = [
 
 export const VerificationBadge: React.FC<{ verification: VerificationResult }> = ({ verification }) => {
   const [open, setOpen] = useState(false);
-  const { outcome, reason, findings, metrics } = verification;
+  const { outcome, reason, metrics } = verification;
+  // A reopened chat restores the manifest's SUMMARY of a verification —
+  // counts, no findings list. Reading `.filter` off a missing array blanked
+  // the whole panel when a past story was opened.
+  const findings = Array.isArray(verification.findings) ? verification.findings : [];
 
   const blockers = findings.filter(f => f.severity === 'blocker');
   const warnings = findings.filter(f => f.severity === 'warning');
   const shown = [...blockers, ...warnings];
+  const blockerCount = blockers.length || Number(metrics?.blockers ?? 0) || 0;
+  const warningCount = warnings.length || Number(metrics?.warnings ?? 0) || 0;
 
   const summary = outcome === 'not_verified'
     ? reason || 'Verification could not run'
     : [
-        blockers.length ? `${blockers.length} blocking` : '',
-        warnings.length ? `${warnings.length} warning${warnings.length === 1 ? '' : 's'}` : '',
+        blockerCount ? `${blockerCount} blocking` : '',
+        warningCount ? `${warningCount} warning${warningCount === 1 ? '' : 's'}` : '',
       ].filter(Boolean).join(', ') || 'no issues found';
 
   const metricBits = metrics

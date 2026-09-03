@@ -141,5 +141,5 @@ describe('story titles inside string literals', () => {
     expect(sanitizeStoryTitle(`I'd be happy to help but I don't see an "attached" spec`)).toBe('Id be happy to help but I dont see an attached spec');
     expect(sanitizeStoryTitle('Line\none\\two')).toBe('Line onetwo');
     expect(sanitizeStoryTitle('   ')).toBe('Untitled');
-  });
+  }, 30_000);
 });

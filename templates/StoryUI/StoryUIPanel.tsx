@@ -609,6 +609,23 @@ async function detectStorybookMcp(): Promise<boolean> {
   }
 }
 
+/**
+ * The manifest keeps a SUMMARY of a verification (outcome, counts, which
+ * layers ran), not the findings list. Shape it like the live result so the
+ * badge can render it; restoring the summary as-is crashed the panel on the
+ * first reopened chat ("Cannot read properties of undefined (reading 'filter')").
+ */
+function verificationFromSummary(v: any): VerificationResult | undefined {
+  if (!v || typeof v !== 'object' || !v.outcome) return undefined;
+  if (Array.isArray(v.findings)) return v as VerificationResult;
+  const metrics: Record<string, number | string | boolean | string[]> = {};
+  for (const key of ['blockers', 'warnings', 'focusables', 'checksRun', 'checksTotal']) {
+    if (typeof v[key] === 'number') metrics[key] = v[key];
+  }
+  if (Array.isArray(v.checksNotRun)) metrics.checksNotRun = v.checksNotRun;
+  return { outcome: v.outcome, reason: typeof v.reason === 'string' ? v.reason : undefined, findings: [], metrics };
+}
+
 function loadStorybookMcpPref(): boolean {
   try {
     const stored = localStorage.getItem(STORYBOOK_MCP_PREF_KEY);
@@ -708,7 +725,7 @@ async function syncWithActualStories(): Promise<ChatSession[]> {
           // they existed only in the session that generated the story.
           lastMsg.storyEntryId = lastMsg.storyEntryId || (e.id ? String(e.id) : undefined);
           lastMsg.storyFileName = lastMsg.storyFileName || e.fileName || undefined;
-          lastMsg.verification = lastMsg.verification || (lastCompletion.verification as any) || undefined;
+          lastMsg.verification = lastMsg.verification || verificationFromSummary(lastCompletion.verification);
         }
         return {
           id: e.id ?? e.fileName.replace(/\.stories\.[a-z]+$/, ''),
@@ -1545,7 +1562,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                 restoredLast.generationTimeMs = lastCompletion.generationTimeMs || undefined;
                 restoredLast.storyEntryId = restoredLast.storyEntryId || (entry.id ? String(entry.id) : undefined);
                 restoredLast.storyFileName = restoredLast.storyFileName || entry.fileName || undefined;
-                restoredLast.verification = restoredLast.verification || (lastCompletion.verification as any) || undefined;
+                restoredLast.verification = restoredLast.verification || verificationFromSummary(lastCompletion.verification);
               }
               dispatch({ type: 'SET_CONVERSATION', payload: restored });
               dispatch({ type: 'SET_ACTIVE_CHAT', payload: { id: entry.fileName || entry.id, title: entry.title || pending.title || '' } });
