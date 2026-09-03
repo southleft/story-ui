@@ -1,3 +1,10 @@
+## [5.0.3](https://github.com/southleft/story-ui/compare/v5.0.2...v5.0.3) (2026-09-03)
+
+
+### Bug Fixes
+
+* canvas scope matches the catalog; panel waits for the server; deleted titles are free again ([6d1278d](https://github.com/southleft/story-ui/commit/6d1278d6f07bb53dd3a84d28289b5df18bc71e96))
+
 ## [5.0.2](https://github.com/southleft/story-ui/compare/v5.0.1...v5.0.2) (2026-09-03)
 
 
