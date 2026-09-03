@@ -290,9 +290,16 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
     // Down, stale watcher, or not picked up yet? Reachability and the counts
     // answer it, and the three need different responses from whoever reads
     // this. The counts are only worth asking for when the index answered.
-    const staleness = indexed.reachable && generatedDir
+    let staleness = indexed.reachable && generatedDir
       ? await indexIsStale(storybookUrl, generatedDir)
       : { stale: false, onDisk: 0, indexed: 0 };
+    if (staleness.stale && generatedDir) {
+      // Two stories written seconds apart put the count two behind for a
+      // moment and a live watcher was reported dead. Stale means it STAYS
+      // behind: ask again after the indexer has had time to catch up.
+      await new Promise(r => setTimeout(r, 4000));
+      staleness = await indexIsStale(storybookUrl, generatedDir);
+    }
     const miss = classifyIndexMiss(storybookUrl, indexed, staleness, storyIdPrefix);
     return notVerified(miss.reason, started, [miss.finding]);
   }
@@ -379,18 +386,19 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
      * rendered fine, so nothing else noticed; the bench saw them as console
      * errors on every page that showed the story's thumbnail.
      */
-    const reactWarning = /does not recognize the [`'"]?(\w+)[`'"]? prop|containing a "key" prop is being spread|Each child in a list should have a unique "key"|Invalid DOM property|Received `?(true|false)`? for a non-boolean attribute/;
+    const reactWarning = /does not recognize the [`'"]?(\w+)[`'"]? prop|Unknown event handler property [`'"]?(\w+)[`'"]?|containing a "key" prop is being spread|Each child in a list should have a unique "key"|Invalid DOM property|Received `?(true|false)`? for a non-boolean attribute/;
     const seenWarnings = new Set<string>();
     for (const line of render.consoleErrors) {
       const m = reactWarning.exec(line);
       if (!m) continue;
-      const key = (m[1] || m[0]).toLowerCase();
-      if (seenWarnings.has(key) || seenWarnings.size >= 3) continue;
+      const prop = m[1] || m[2];
+      const key = (prop || m[0]).toLowerCase();
+      if (seenWarnings.has(key) || seenWarnings.size >= 6) continue;
       seenWarnings.add(key);
       findings.push({
         id: `react-warning-${key.replace(/\W+/g, '-')}`, severity: 'warning', class: 'code',
-        message: m[1]
-          ? `React does not recognize the \`${m[1]}\` prop — it is reaching a DOM element, so the component ignores it`
+        message: prop
+          ? `React does not recognize the \`${prop}\` prop — it is reaching a DOM element, so the component ignores it (the prop does not exist on that component)`
           : 'React reported a rendering warning for this story',
         evidence: line.replace(/%s/g, m[1] || '').replace(/\s+/g, ' ').slice(0, 300),
         repairable: true,

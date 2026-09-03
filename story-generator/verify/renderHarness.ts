@@ -123,7 +123,23 @@ export async function renderStory(options: RenderOptions): Promise<RenderResult>
       } catch { /* a closed page */ }
     });
     page.on('console', (msg: any) => {
-      if (msg.type() === 'error') consoleErrors.push(msg.text());
+      if (msg.type() !== 'error') return;
+      // React logs with format strings: the text is "does not recognize the
+      // `%s` prop" and the prop name is an ARGUMENT. Recorded verbatim, no
+      // pattern could name the prop — nine invented props on one story went
+      // unflagged. Substitute the arguments the way the console would.
+      let text: string = msg.text();
+      try {
+        const args: any[] = msg.args?.() ?? [];
+        const values: string[] = [];
+        for (const a of args.slice(1)) {
+          const v = typeof a?.toString === 'function' ? String(a.toString()) : '';
+          values.push(v.replace(/^JSHandle@/, ''));
+        }
+        let i = 0;
+        text = text.replace(/%[sdifoOc]/g, () => (i < values.length ? values[i++] : ''));
+      } catch { /* keep the raw text */ }
+      consoleErrors.push(text);
     });
 
     const url = `${storybookUrl.replace(/\/+$/, '')}/iframe.html?id=${encodeURIComponent(storyId)}&viewMode=story`;

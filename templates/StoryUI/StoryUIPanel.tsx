@@ -636,13 +636,13 @@ async function detectStorybookMcp(): Promise<boolean> {
  */
 function verificationFromSummary(v: any): VerificationResult | undefined {
   if (!v || typeof v !== 'object' || !v.outcome) return undefined;
-  if (Array.isArray(v.findings)) return v as VerificationResult;
   const metrics: Record<string, number | string | boolean | string[]> = {};
   for (const key of ['blockers', 'warnings', 'focusables', 'checksRun', 'checksTotal']) {
     if (typeof v[key] === 'number') metrics[key] = v[key];
   }
   if (Array.isArray(v.checksNotRun)) metrics.checksNotRun = v.checksNotRun;
-  return { outcome: v.outcome, reason: typeof v.reason === 'string' ? v.reason : undefined, findings: [], metrics };
+  const findings = Array.isArray(v.findings) ? v.findings : [];
+  return { outcome: v.outcome, reason: typeof v.reason === 'string' ? v.reason : undefined, findings, metrics };
 }
 
 function loadStorybookMcpPref(): boolean {
@@ -1615,7 +1615,14 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
             }) as any;
             const conv = entry?.conversation ?? [];
             const last = conv[conv.length - 1];
-            if (entry && last?.role === 'ai') {
+            // The reply must be NEW: the server upserts the entry when the
+            // file lands, before the reply exists, and an update's entry
+            // already ends with the previous turn's reply — matching that
+            // restored the old two-message chat as if the edit had finished.
+            // The stash holds every prior turn plus this request, so the
+            // finished conversation is strictly longer.
+            const grewPastRequest = conv.length > pending.conversation.length;
+            if (entry && last?.role === 'ai' && grewPastRequest) {
               if (cancelled) return;
               finishRecovery();
               const restored: Message[] = conv.map((m: any) => ({ role: m.role, content: m.content, thumbnails: m.thumbnails }));

@@ -2384,6 +2384,14 @@ async function runStoryGenerationPipeline(
               ...(verification.reason ? { reason: verification.reason.slice(0, 300) } : {}),
               blockers: verification.findings.filter(f => f.severity === 'blocker').length,
               warnings: verification.findings.filter(f => f.severity === 'warning').length,
+              // The findings themselves, compact. The docs page reloads on
+              // every new story, and a panel rebuilt from counts alone could
+              // show "Issues · 3 blocking" with nothing to expand.
+              findings: verification.findings.slice(0, 12).map(f => ({
+                id: f.id, severity: f.severity, class: f.class, message: String(f.message).slice(0, 240),
+                ...(f.evidence ? { evidence: String(f.evidence).slice(0, 200) } : {}),
+                ...(f.repairable !== undefined ? { repairable: f.repairable } : {}),
+              })),
               // Whether the story loaded at all. The counts alone cannot say
               // so, and a card reopened in another browser needs to.
               ...(verification.findings.some(f => f.id === 'render-failed') ? { renderFailed: true } : {}),
@@ -3243,10 +3251,10 @@ export function cleanPromptForTitle(prompt: string): string {
     cleaned = cleaned.replace(regex, '');
   }
   return cleaned
-    .replace(/[^\w\s'"?!-]/g, ' ')
+    .replace(/[^\p{L}\p{N}_\s'"?!-]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-    .replace(/\b\w/g, c => c.toUpperCase())
+    .replace(/(^|\s)(\p{L})/gu, (_m, sp, ch) => sp + ch.toUpperCase())
     .slice(0, 60);
 }
 

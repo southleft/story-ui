@@ -47,3 +47,11 @@ describe('the artifact writer reports the bytes it wrote', () => {
     expect(plain.code).toBe('export default {};\n');
   });
 });
+
+describe('titles keep their letters', () => {
+  it('does not strip accented characters from a prompt-derived title', async () => {
+    const { cleanPromptForTitle } = await import('../mcp-server/routes/generationCore');
+    expect(cleanPromptForTitle('A Résumé card with name and skills')).toContain('Résumé');
+    expect(cleanPromptForTitle('Ünïcode Straße panel')).toContain('Straße');
+  });
+});
