@@ -3,6 +3,20 @@ import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
 import { isBlacklistedComponent, validateImports } from './componentBlacklist.js';
+import { resolveSpecifier, resolveOptionsFrom } from './knowledge/moduleResolution.js';
+
+/**
+ * A path deeper than the configured importPath is only wrong when it names
+ * nothing. Answered from disk (tsconfig paths, the declared componentsPath,
+ * node_modules) so a per-file import the catalog itself prescribed survives.
+ */
+function deepPathResolves(specifier: string, config: any): boolean {
+  try {
+    return resolveSpecifier(specifier, resolveOptionsFrom(config)).file !== null;
+  } catch {
+    return false;
+  }
+}
 
 export interface ValidationResult {
   isValid: boolean;
@@ -219,10 +233,20 @@ function performSemanticChecks(sourceFile: ts.SourceFile, config?: any): string[
         if (config && config.importPath && config.componentFramework !== 'web-components' && !scopeRootOnly) {
           const configuredPath = config.importPath;
 
-          // Check if LLM used a deep/incorrect path instead of the configured one
+          // Check if LLM used a deep/incorrect path instead of the configured one.
+          //
+          // Only when the deeper path names NOTHING. A local design system's
+          // catalog says, per component, "import from '@/components/alert/alert'"
+          // — a path the project declared and that resolves through its own
+          // tsconfig alias. Collapsing it onto the barrel is not a fix: the
+          // barrel does not export everything (college-town's leaves out
+          // data-table, date-picker and newsletter-signup), so the rewrite
+          // turned a correct story into one importing names that do not exist.
+          // Whether the path resolves is a fact on disk; it decides.
           if (importPath !== configuredPath &&
               (importPath.startsWith(configuredPath + '/') ||
-               importPath.includes('/' + configuredPath.split('/').pop() + '/'))) {
+               importPath.includes('/' + configuredPath.split('/').pop() + '/')) &&
+              !deepPathResolves(importPath, config)) {
             errors.push(
               `Import path error: Using "${importPath}" but the configured import path is "${configuredPath}". ` +
               `Change the import to: import { ComponentName } from '${configuredPath}';`
@@ -352,9 +376,11 @@ function attemptAutoFix(code: string, errors: string[], config?: any): string {
     fixedCode = fixMissingReactImport(fixedCode);
   }
 
-  // CRITICAL: Fix incorrect import paths
+  // CRITICAL: Fix incorrect import paths — only the ones that name nothing.
+  // A deep path that resolves was never an error (see performSemanticChecks)
+  // and is left exactly as the model wrote it.
   if (config?.importPath && errors.some(e => e.includes('Import path error'))) {
-    fixedCode = fixIncorrectImportPaths(fixedCode, config.importPath);
+    fixedCode = fixIncorrectImportPaths(fixedCode, config.importPath, spec => deepPathResolves(spec, config));
   }
 
   // First, check if the code appears to be truncated
@@ -711,7 +737,12 @@ function fixMissingReactImport(code: string): string {
  * Fixes incorrect import paths by replacing deep/wrong paths with the configured path
  * Catches LLM errors like: vuetify/components/lib/components/VAlert -> vuetify/components
  */
-function fixIncorrectImportPaths(code: string, correctImportPath: string): string {
+function fixIncorrectImportPaths(
+  code: string,
+  correctImportPath: string,
+  /** A deep path to leave alone because it resolves; nothing is kept by default. */
+  keep: (specifier: string) => boolean = () => false,
+): string {
   let fixedCode = code;
 
   // Match import statements and extract the path
@@ -726,7 +757,8 @@ function fixIncorrectImportPaths(code: string, correctImportPath: string): strin
     // e.g., vuetify/components/lib/components/VAlert should be vuetify/components
     if (importPath !== correctImportPath &&
         (importPath.startsWith(correctImportPath + '/') ||
-         importPath.includes('/' + correctImportPath.split('/').pop() + '/'))) {
+         importPath.includes('/' + correctImportPath.split('/').pop() + '/')) &&
+        !keep(importPath)) {
       // Replace the incorrect import with the correct one
       const incorrectImport = match[0];
       const correctedImport = `import {${components}} from '${correctImportPath}'`;
@@ -770,10 +802,14 @@ function fixIncorrectImportPaths(code: string, correctImportPath: string): strin
   );
 
   let wrongMatch;
+  const toRemove: string[] = [];
   while ((wrongMatch = wrongPathPattern.exec(fixedCode)) !== null) {
+    const specifier = wrongMatch[0].match(/from\s*['"]([^'"]+)['"]/)?.[1] ?? '';
+    if (keep(specifier)) continue;
     wrongPathImports.push(wrongMatch[1]);
-    fixedCode = fixedCode.replace(wrongMatch[0], '');
+    toRemove.push(wrongMatch[0]);
   }
+  for (const line of toRemove) fixedCode = fixedCode.replace(line, '');
 
   // If we found wrong imports, add a consolidated correct import
   if (wrongPathImports.length > 0) {

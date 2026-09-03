@@ -235,4 +235,27 @@ describe.runIf(tooling)('absent is not a pass', { retry: 2 }, () => {
     // this probe exists to find.
     expect(r.deadControls.length).toBe(1);
   });
+
+  it('presses like a pointer, so a control wired to mousedown is not faulted', async () => {
+    const page = await browser.newPage();
+    // Mantine's PasswordInput visibility toggle: aria-pressed, toggled on
+    // mousedown (and touch and Space) — deliberately never on click, so the
+    // input keeps focus. `el.click()` alone reported it dead on every form.
+    await page.setContent(
+      '<div id="storybook-root">' +
+      '<button id="reveal" aria-pressed="false" aria-label="Show password">eye</button>' +
+      '<button id="plain" aria-pressed="false" aria-label="Bold">B</button>' +
+      '<script>' +
+      'document.getElementById("reveal").addEventListener("mousedown", e => { e.preventDefault(); const b = e.currentTarget; b.setAttribute("aria-pressed", b.getAttribute("aria-pressed") === "true" ? "false" : "true"); });' +
+      'document.getElementById("plain").addEventListener("click", e => { const b = e.currentTarget; b.setAttribute("aria-pressed", b.getAttribute("aria-pressed") === "true" ? "false" : "true"); });' +
+      '</script>' +
+      '</div>'
+    );
+    const r = await runInteractionProbe(page);
+    await page.close();
+
+    expect(r.skipped).toBe(false);
+    expect(r.controlsTested).toBe(2);
+    expect(r.deadControls).toEqual([]);
+  });
 });

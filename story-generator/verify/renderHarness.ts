@@ -148,8 +148,20 @@ export async function renderStory(options: RenderOptions): Promise<RenderResult>
      *  - Nothing is preparing and nothing errored, and the root is still
      *    empty at the timeout: the story rendered nothing. Code failure.
      */
+    /**
+     * The preview reloads itself while a brand-new story is being verified.
+     *
+     * Vite serves the new file with a full reload of the preview iframe (the
+     * panel survives it via sessionStorage for the same reason), and a reload
+     * that lands between two evaluate calls surfaces as "Execution context
+     * was destroyed, most likely because of a navigation". Observed on a
+     * modal-dialog story one second into verification: correct code,
+     * reported as "could not render", and the user shown "not verified".
+     * A reload is not a verdict on the story, so the mount-and-settle phase
+     * is simply run again on the page that came back — twice at most.
+     */
+    const RELOADED = /Execution context was destroyed|because of a navigation|frame was detached/i;
     const prepareCapMs = Math.max(timeoutMs, PREPARING_CAP_MS);
-    const mountStarted = Date.now();
     const isMounted = () => {
       const root = document.querySelector('#storybook-root') || document.querySelector('#root');
       return !!root && root.childElementCount > 0;
@@ -165,40 +177,91 @@ export async function renderStory(options: RenderOptions): Promise<RenderResult>
           return { preparing, errored, errorText: errored ? (errorEl?.textContent || '').trim().slice(0, 500) : '' };
         });
         return r && typeof r === 'object' ? r : { preparing: false, errored: false, errorText: '' };
-      } catch {
+      } catch (error) {
+        if (RELOADED.test(error instanceof Error ? error.message : String(error))) throw error;
         return { preparing: false, errored: false, errorText: '' };
       }
     };
-    let mountState: 'mounted' | 'empty' | 'preparing' | 'errored' = 'empty';
-    let storybookError = '';
-    // First wait: the render timeout, as before.
-    try {
-      await page.waitForFunction(isMounted, { timeout: timeoutMs });
-      mountState = 'mounted';
-    } catch {
-      const state = await classify();
-      if (state.errored) {
-        mountState = 'errored'; storybookError = state.errorText;
-      } else if (state.preparing) {
-        // Storybook is still compiling. Wait it out to the cap, re-checking
-        // that it is still preparing rather than quietly empty.
-        const remaining = prepareCapMs - (Date.now() - mountStarted);
-        try {
-          await page.waitForFunction(isMounted, { timeout: Math.max(1000, remaining) });
-          mountState = 'mounted';
-        } catch {
-          const again = await classify();
-          if (again.errored) { mountState = 'errored'; storybookError = again.errorText; }
-          else mountState = again.preparing ? 'preparing' : 'empty';
+    // An object, not two `let`s: TypeScript narrows a `let` assigned inside
+    // a closure to its initial literal at the use site below.
+    const mount: { state: 'mounted' | 'empty' | 'preparing' | 'errored'; error: string } = { state: 'empty', error: '' };
+
+    const mountAndSettle = async () => {
+      const mountStarted = Date.now();
+      mount.state = 'empty';
+      mount.error = '';
+      // First wait: the render timeout, as before.
+      try {
+        await page.waitForFunction(isMounted, { timeout: timeoutMs });
+        mount.state = 'mounted';
+      } catch (error) {
+        if (RELOADED.test(error instanceof Error ? error.message : String(error))) throw error;
+        const state = await classify();
+        if (state.errored) {
+          mount.state = 'errored'; mount.error = state.errorText;
+        } else if (state.preparing) {
+          // Storybook is still compiling. Wait it out to the cap, re-checking
+          // that it is still preparing rather than quietly empty.
+          const remaining = prepareCapMs - (Date.now() - mountStarted);
+          try {
+            await page.waitForFunction(isMounted, { timeout: Math.max(1000, remaining) });
+            mount.state = 'mounted';
+          } catch (again_error) {
+            if (RELOADED.test(again_error instanceof Error ? again_error.message : String(again_error))) throw again_error;
+            const again = await classify();
+            if (again.errored) { mount.state = 'errored'; mount.error = again.errorText; }
+            else mount.state = again.preparing ? 'preparing' : 'empty';
+          }
+        } else {
+          mount.state = 'empty';
         }
-      } else {
-        mountState = 'empty';
+      }
+      if (mount.state !== 'mounted') return;
+
+      /**
+       * Wait for the DOM to STOP CHANGING, not merely to be non-empty.
+       *
+       * `childElementCount > 0` is the earliest signal that something mounted,
+       * and probing there measures a story mid-render. Carbon reported two
+       * accessibility blockers on correct code: a sort button whose text had not
+       * arrived yet ("Buttons must have discernible text" — it reads
+       * "Deployment" a moment later), and an overflow menu whose
+       * `aria-labelledby` pointed at a tooltip Carbon had not rendered yet (it
+       * resolves to "Options"). Both were false, and a verification system that
+       * fails correct work is worse than none.
+       *
+       * Two consecutive identical samples, then stop. Cheap, framework-agnostic,
+       * and bounded so a story with a live animation or a polling timer cannot
+       * hold verification open.
+       */
+      const settleDeadline = Date.now() + Math.min(3000, timeoutMs);
+      let previous = -1;
+      let stableReadings = 0;
+      while (Date.now() < settleDeadline && stableReadings < 2) {
+        const signature: number = await page.evaluate(
+          () => document.querySelectorAll('*').length + (document.body.innerText || '').length,
+        );
+        stableReadings = signature === previous ? stableReadings + 1 : 0;
+        previous = signature;
+        if (stableReadings < 2) await page.waitForTimeout(120);
+      }
+    };
+
+    for (let reloads = 0; ; reloads++) {
+      try {
+        await mountAndSettle();
+        break;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!RELOADED.test(message) || reloads >= 2) throw error;
+        logger.log(`🔁 The preview reloaded while ${storyId} was rendering (Vite picked up the new file); waiting for it again`);
+        try { await page.waitForLoadState('domcontentloaded', { timeout: timeoutMs }); } catch { /* the loop re-waits for the mount */ }
       }
     }
 
-    if (mountState !== 'mounted') {
+    if (mount.state !== 'mounted') {
       await dispose();
-      if (mountState === 'preparing') {
+      if (mount.state === 'preparing') {
         return {
           ok: false,
           reason: `Storybook was still preparing the story after ${Math.round(prepareCapMs / 1000)}s (a cold compile of new imports, or a stalled dev server)`,
@@ -209,8 +272,8 @@ export async function renderStory(options: RenderOptions): Promise<RenderResult>
       }
       return {
         ok: false,
-        reason: mountState === 'errored'
-          ? `Storybook showed an error while rendering the story: ${storybookError || 'no message'}`
+        reason: mount.state === 'errored'
+          ? `Storybook showed an error while rendering the story: ${mount.error || 'no message'}`
           : 'Story did not mount — #storybook-root stayed empty and Storybook was not preparing anything',
         failureClass: 'code',
         pageErrors, consoleErrors, isErrorPlaceholder: false,
@@ -218,33 +281,6 @@ export async function renderStory(options: RenderOptions): Promise<RenderResult>
       };
     }
 
-    /**
-     * Wait for the DOM to STOP CHANGING, not merely to be non-empty.
-     *
-     * `childElementCount > 0` is the earliest signal that something mounted,
-     * and probing there measures a story mid-render. Carbon reported two
-     * accessibility blockers on correct code: a sort button whose text had not
-     * arrived yet ("Buttons must have discernible text" — it reads
-     * "Deployment" a moment later), and an overflow menu whose
-     * `aria-labelledby` pointed at a tooltip Carbon had not rendered yet (it
-     * resolves to "Options"). Both were false, and a verification system that
-     * fails correct work is worse than none.
-     *
-     * Two consecutive identical samples, then stop. Cheap, framework-agnostic,
-     * and bounded so a story with a live animation or a polling timer cannot
-     * hold verification open.
-     */
-    const settleDeadline = Date.now() + Math.min(3000, timeoutMs);
-    let previous = -1;
-    let stableReadings = 0;
-    while (Date.now() < settleDeadline && stableReadings < 2) {
-      const signature: number = await page.evaluate(
-        () => document.querySelectorAll('*').length + (document.body.innerText || '').length,
-      );
-      stableReadings = signature === previous ? stableReadings + 1 : 0;
-      previous = signature;
-      if (stableReadings < 2) await page.waitForTimeout(120);
-    }
 
     const bodyText: string = await page.evaluate(() => document.body.innerText || '');
     const isErrorPlaceholder = ERROR_PLACEHOLDER_MARKERS.some(m => bodyText.includes(m));
