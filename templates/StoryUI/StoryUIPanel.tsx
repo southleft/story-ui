@@ -2850,8 +2850,15 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   // Explicit light/dark class: the CSS prefers-color-scheme fallback only
   // applies to .sui-root:not(.light), so a detected-light panel must carry
   // the .light class or a dark-mode OS forces dark variables anyway.
+  //
+  // `sb-unstyled` opts the whole panel out of Storybook's docs typography.
+  // Those rules are `:where(h2:not(.sb-unstyled, .sb-unstyled h2))` — zero
+  // specificity, injected after this stylesheet, so they beat any class of
+  // ours on a tie and painted every heading and paragraph in the Design
+  // Context and Voice Canvas tabs in the docs theme's fixed text colour:
+  // #2E3338 on a dark panel, 1.2:1.
   return (
-    <div className={`sui-root ${state.isDarkMode ? 'dark' : 'light'}`}>
+    <div className={`sui-root sb-unstyled ${state.isDarkMode ? 'dark' : 'light'}`}>
       {/* Sidebar */}
       <aside className={`sui-sidebar ${state.sidebarOpen ? '' : 'collapsed'}`} aria-label="Chat history">
         {state.sidebarOpen && (
