@@ -1,3 +1,15 @@
+# [5.4.0](https://github.com/southleft/story-ui/compare/v5.3.1...v5.4.0) (2026-09-03)
+
+
+### Bug Fixes
+
+* **ui:** design context does not count a README the generator never reads ([858075d](https://github.com/southleft/story-ui/commit/858075d843c6b3da91949c321e4ffdb7d4cbb4b0))
+
+
+### Features
+
+* **generator:** nothing broken ships — overflow probe, shippable critic, and a regeneration gate ([8305247](https://github.com/southleft/story-ui/commit/83052471903eae4235ed7ae7fad23f451133b7d8))
+
 ## [5.3.1](https://github.com/southleft/story-ui/compare/v5.3.0...v5.3.1) (2026-09-03)
 
 
