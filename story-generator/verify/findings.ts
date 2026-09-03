@@ -80,18 +80,20 @@ export interface LayerCoverage {
 export interface VerifyCoverage {
   census: LayerCoverage;
   layout: LayerCoverage;
+  /** Content escaping its box, clipped text, overlapping siblings, page overflow, empty boxes. */
+  overflow?: { ran: boolean; reason?: string };
   classes: LayerCoverage;
   interaction: LayerCoverage;
   a11y: LayerCoverage;
   visual: LayerCoverage;
 }
 
-export const LAYER_COUNT = 6;
+export const LAYER_COUNT = 7;
 
 /** How many layers ran, for the summary line and the badge. */
 export const coverageRatio = (c?: VerifyCoverage): { ran: number; total: number } => {
   if (!c) return { ran: 0, total: LAYER_COUNT };
-  const layers = [c.census, c.layout, c.classes, c.interaction, c.a11y, c.visual];
+  const layers = [c.census, c.layout, c.overflow ?? { ran: false, reason: 'overflow probe did not run' }, c.classes, c.interaction, c.a11y, c.visual];
   return { ran: layers.filter(l => l?.ran).length, total: LAYER_COUNT };
 };
 

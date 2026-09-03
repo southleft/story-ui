@@ -19,6 +19,7 @@ import { resolveHostTooling, canLaunchBrowser } from './hostTooling.js';
 import { renderStory, waitForStoryIndexed, indexIsStale, type IndexLookup } from './renderHarness.js';
 import { runDomCensus } from './probes/domCensus.js';
 import { runLayoutProbe } from './probes/layout.js';
+import { runOverflowProbe } from './probes/overflow.js';
 import { runClassEffectProbe } from './probes/classEffect.js';
 import { runInteractionProbe } from './probes/interaction.js';
 import { runVisualCritique, type CritiqueModel } from './probes/visualCritic.js';
@@ -563,6 +564,38 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
         repairable: !p.ownedByLibrary,
       });
     }
+    /**
+     * Looks broken, measured: content painting past its container, text cut
+     * off, siblings overlapping, a page wider than the viewport, a bordered
+     * box with nothing in it. A stat value "34,600 nm" wider than its tile
+     * went out as "Verified" before this ran. Every kind blocks when the
+     * story wrote it — a person would call each one broken on sight — and is
+     * repairable with the numbers and the fix in the message.
+     */
+    const overflow = await runOverflowProbe(render.page, { libraryComponents });
+    coverage.overflow = { ran: true };
+    for (const p of overflow.problems) {
+      // Content that does not fit its box is the STORY's to fix even when a
+      // library component drew the box: the story chose the value, the size
+      // and the column width. "34,600 nm" spilling out of a design system's
+      // stat tile is shortened, resized or given room by the composition,
+      // never by the library. The other kinds follow the usual attribution.
+      const storyCanFix = p.kind === 'content_escapes' || p.kind === 'text_clipped' || !p.ownedByLibrary;
+      findings.push({
+        id: `${p.kind}-${findings.length}`,
+        severity: storyCanFix ? 'blocker' : 'warning',
+        class: 'code',
+        message: p.ownedByLibrary && p.owner
+          ? `${p.message} — rendered by <${p.owner}>, a design system component${storyCanFix ? ': change what the story passes to it (a shorter value, a size prop, a wider column), not the component' : ''}`
+          : p.message,
+        evidence: p.evidence,
+        selector: p.selector,
+        repairable: storyCanFix,
+      });
+    }
+    logger.log(overflow.problems.length
+      ? `📐 Overflow: ${overflow.problems.length} finding(s) across ${overflow.metrics.boundaries} bounded containers — ${overflow.problems.map(p => p.kind).join(', ')}`
+      : `📐 Overflow: none across ${overflow.metrics.boundaries} bounded containers (${overflow.metrics.elements} elements)`);
     findings.push(...censusFindings(census.problems));
 
     // Accessibility. Only rules that indicate the GENERATOR produced wrong

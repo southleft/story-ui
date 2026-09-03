@@ -98,6 +98,8 @@ export interface ManifestEntry {
         warnings?: number;
         /** The badge's headline metric ("Verified in browser · 6 focusable"). */
         focusables?: number;
+        /** How many gate attempts the kept story took. */
+        attempts?: number;
         /** Compact findings, so a panel rebuilt after a reload can still expand the badge. */
         findings?: Array<{ id: string; severity: string; class?: string; message: string; evidence?: string; repairable?: boolean }>;
       };

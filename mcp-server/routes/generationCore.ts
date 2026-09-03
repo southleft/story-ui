@@ -131,6 +131,7 @@ import { isSafeStoryFileName,
 import { attemptVerificationRepair } from './verifyRepair.js';
 import type { VerifyReport, RepairSummary } from '../../story-generator/verify/findings.js';
 import { registerActiveGeneration, unregisterActiveGeneration, isGenerationCancelled, cancellationSignal } from './activeGenerations.js';
+import { gateVerdict, pickBest, gateMaxAttempts, gateFeedback, gateStatusLine, type GateVerdict } from '../../story-generator/verify/gate.js';
 
 // ============================================================
 // Public interface
@@ -168,6 +169,18 @@ export interface GenerationRequest {
    */
   storybookUrl?: string;
   voiceMode?: boolean;
+  /**
+   * Set by the shippable gate on a retry: what the browser measured on the
+   * previous attempt, as rules the next composition must satisfy.
+   */
+  gateFeedback?: string[];
+  /** Which attempt this is (1-based); recorded with the completion. */
+  gateAttempt?: number;
+  /**
+   * A retry writes the SAME story: same file, same title, same hash — never
+   * a "v2" beside the failed one.
+   */
+  regenerateOf?: { fileName: string; title: string; hash: string };
 }
 
 export interface GenerationEvents {
@@ -253,6 +266,10 @@ export interface GenerationOutcome {
    * Absent when verification could not run (no Playwright, no Storybook URL).
    */
   verification?: VerifyReport;
+  /** The generated stylesheet, when the model wrote one — so a kept attempt can be restored with it. */
+  stylesheet?: string;
+  /** What the shippable gate did: attempts spent, whether the kept attempt is shippable, and why. */
+  gate?: { attempts: number; bestAttempt: number; shippable: boolean; reason: string };
   /** Conversational, model-authored reply describing what was built. */
   chatSummary?: string;
   /** Short follow-up prompt ideas the user can click to refine. */
@@ -295,12 +312,90 @@ export async function runStoryGeneration(
   // Name the run to the client so Stop can address it.
   events.onStarted?.(activeKey);
   try {
-    return await runStoryGenerationPipeline(request, events, startedAt, activeKey);
+    return await runGatedGeneration(request, events, startedAt, activeKey);
   } finally {
     unregisterActiveGeneration(activeKey);
     // Verification and repair share one Chromium per run; it ends with the run.
     await closeBrowserSession().catch(() => undefined);
   }
+}
+
+/**
+ * The shippable gate around the pipeline.
+ *
+ * One pipeline run produces a story and a verdict. A story that rendered
+ * and has no blocker of its own ships. One that did not render, or that
+ * keeps a blocker after repair, is generated AGAIN from scratch with the
+ * browser's findings as instructions — the same file, title and id, so
+ * the user sees one story, not a failed one beside a retry — up to
+ * STORY_UI_GATE_ATTEMPTS (default 3). The best attempt is kept, and the
+ * reply says what happened: "verified clean on attempt 2", or what still
+ * stands. A story verification could not judge is reported as such and
+ * not retried; regeneration cannot fix a missing Storybook.
+ */
+async function runGatedGeneration(
+  request: GenerationRequest,
+  events: GenerationEvents,
+  startedAt: number,
+  activeKey: string,
+): Promise<GenerationOutcome> {
+  const maxAttempts = gateMaxAttempts();
+  const attempts: Array<{ result: GenerationOutcome; verdict: GateVerdict }> = [];
+  let req: GenerationRequest = request;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const attemptEvents: GenerationEvents = attempt === 1 ? events : {
+      ...events,
+      onStarted: undefined,
+      onProgress: (step, total, phase, message, details) =>
+        events.onProgress?.(step, total, phase, `Attempt ${attempt} of ${maxAttempts}: ${message}`, details),
+    };
+    const result = await runStoryGenerationPipeline(req, attemptEvents, startedAt, activeKey);
+    const verdict = gateVerdict(result.verification);
+    attempts.push({ result, verdict });
+    logger.log(verdict.shippable
+      ? `🚦 Gate: shippable on attempt ${attempt} of ${maxAttempts} (${verdict.reason})`
+      : `🚦 Gate: attempt ${attempt} of ${maxAttempts} not shippable — ${verdict.reason}${verdict.retryable && attempt < maxAttempts ? '; regenerating with the findings' : ''}`);
+    if (verdict.shippable || !verdict.retryable || result.isFallbackStory || attempt === maxAttempts) break;
+    if (isGenerationCancelled(activeKey)) break;
+    const hash = result.fileName.match(/-([a-f0-9]{8})(?:\.stories\.\w+)?$/)?.[1]
+      ?? crypto.createHash('sha1').update(result.fileName).digest('hex').slice(0, 8);
+    req = {
+      ...request,
+      gateFeedback: gateFeedback(verdict),
+      gateAttempt: attempt + 1,
+      regenerateOf: { fileName: result.fileName, title: result.title, hash },
+    };
+    events.onProgress?.(11, 12, 'gate_retry',
+      `Attempt ${attempt} failed verification (${verdict.reason.slice(0, 80)}) — generating again with the findings`);
+  }
+
+  const best = pickBest(attempts);
+  const bestIndex = attempts.indexOf(best) + 1;
+  const last = attempts[attempts.length - 1];
+  if (best !== last) {
+    // A later attempt overwrote the file; put the kept attempt back on disk.
+    try {
+      const cfg = loadUserConfig();
+      const dir = path.resolve(process.cwd(), cfg.generatedStoriesPath || './src/stories/generated/');
+      writeStoryArtifacts({ dir, fileName: best.result.fileName, code: best.result.code, css: best.result.stylesheet ?? null });
+      logger.log(`🚦 Gate: restored attempt ${bestIndex} to disk (attempt ${attempts.length} was worse)`);
+    } catch (err) {
+      logger.warn(`🚦 Gate: could not restore attempt ${bestIndex}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  const status = gateStatusLine(attempts.length, best.verdict, bestIndex);
+  const out: GenerationOutcome = {
+    ...best.result,
+    gate: { attempts: attempts.length, bestAttempt: bestIndex, shippable: best.verdict.shippable, reason: best.verdict.reason },
+  };
+  if (status) {
+    out.chatSummary = out.chatSummary ? `${status}\n\n${out.chatSummary}` : status;
+    if (!best.verdict.shippable) {
+      out.notice = [status, out.notice].filter(Boolean).join(' ');
+      if (!best.verdict.rendered) out.suggestions = ['Try again', ...(out.suggestions ?? []).filter(s => s !== 'Try again')].slice(0, 5);
+    }
+  }
+  return out;
 }
 
 async function runStoryGenerationPipeline(
@@ -935,8 +1030,16 @@ async function runStoryGenerationPipeline(
     hasContext: intent.promptAnalysis.hasConversationContext,
   });
 
+  /**
+   * A retry from the shippable gate carries what the browser measured on the
+   * previous attempt. Appended to the request, not the system prompt, so it
+   * reads as this request's requirement.
+   */
+  const promptForModel = request.gateFeedback?.length
+    ? `${prompt}\n\nTHE PREVIOUS ATTEMPT FAILED VERIFICATION. Rendered in a browser, it had these defects:\n${request.gateFeedback.map(f => `- ${f}`).join('\n')}\nProduce a composition that CANNOT have these defects: every value stays inside its container (a shorter value or the type scale's smaller step, never a hand-set size), paired fields align, every panel holds content, nothing overlaps, and nothing beyond the request is added.`
+    : prompt;
   let initialPrompt = await buildClaudePromptWithContext(
-    prompt, config, conversation, previousCode, components, {
+    promptForModel, config, conversation, previousCode, components, {
       framework: detectedFramework,
       visionMode: visionMode as VisionPromptType | undefined,
       designSystem,
@@ -1660,7 +1763,12 @@ async function runStoryGenerationPipeline(
   let finalFileName: string;
   let storyId: string;
 
-  if (isActualUpdate && (fileName || providedStoryId)) {
+  if (request.regenerateOf) {
+    // A gate retry: the failed attempt's identity, so the retry overwrites it.
+    hash = request.regenerateOf.hash;
+    finalFileName = request.regenerateOf.fileName;
+    storyId = `story-${hash}`;
+  } else if (isActualUpdate && (fileName || providedStoryId)) {
     if (providedStoryId) {
       storyId = providedStoryId;
       // The classic panel sends the FILE NAME as storyId. Hashing the prompt
@@ -1685,7 +1793,9 @@ async function runStoryGenerationPipeline(
   }
 
   const prettyPrompt = escapeTitleForTS(aiTitle);
-  const cleanTitle = sanitizeStoryTitle(isActualUpdate ? prettyPrompt : storyTracker.getNextVersionTitle(prettyPrompt));
+  const cleanTitle = request.regenerateOf
+    ? sanitizeStoryTitle(request.regenerateOf.title)
+    : sanitizeStoryTitle(isActualUpdate ? prettyPrompt : storyTracker.getNextVersionTitle(prettyPrompt));
   if (cleanTitle !== prettyPrompt) {
     logger.log(`📋 Title "${prettyPrompt}" already exists, using "${cleanTitle}" instead`);
   }
@@ -2517,6 +2627,7 @@ async function runStoryGenerationPipeline(
           ...(verification ? {
             verification: {
               outcome: verification.outcome,
+              attempts: request.gateAttempt ?? 1,
               ...(verification.reason ? { reason: verification.reason.slice(0, 300) } : {}),
               blockers: verification.findings.filter(f => f.severity === 'blocker').length,
               warnings: verification.findings.filter(f => f.severity === 'warning').length,
@@ -2594,6 +2705,7 @@ async function runStoryGenerationPipeline(
     storyId,
     outPath,
     code: fixedFileContents,
+    stylesheet: generatedStylesheet ?? undefined,
     isUpdate: isActualUpdate,
     analysis,
     validation: {
