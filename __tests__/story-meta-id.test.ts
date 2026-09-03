@@ -33,3 +33,17 @@ export default meta;`;
     expect(applyTitleAndId('const x = 1;', 'Card', 'card-1', 'Generated/')).toBe('const x = 1;');
   });
 }, 30_000);
+
+describe('the artifact writer reports the bytes it wrote', () => {
+  it('returns the code with the stylesheet import rewritten, so a later write can compare against disk', async () => {
+    const fs = await import('fs'); const os = await import('os'); const path = await import('path');
+    const { writeStoryArtifacts } = await import('../story-generator/storyArtifacts');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'artifacts-'));
+    const code = `import styles from './styles.module.css';\nexport default { title: 'X' };\n`;
+    const out = writeStoryArtifacts({ dir, fileName: 'x.stories.tsx', code, css: '.a { color: red; }' });
+    expect(out.code).toBe(fs.readFileSync(out.storyPath, 'utf-8'));
+    expect(out.code).not.toBe(code);
+    const plain = writeStoryArtifacts({ dir, fileName: 'y.stories.tsx', code: 'export default {};\n' });
+    expect(plain.code).toBe('export default {};\n');
+  });
+});

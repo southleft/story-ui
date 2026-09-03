@@ -1696,7 +1696,7 @@ async function runStoryGenerationPipeline(
         throw new FileChangedError();
       }
     }
-    const { storyPath } = writeStoryArtifacts({
+    const { storyPath, code: written } = writeStoryArtifacts({
       dir,
       fileName: finalFileName,
       code,
@@ -1705,7 +1705,10 @@ async function runStoryGenerationPipeline(
     // Collect stylesheets whose story was removed by any of the many delete
     // paths that know nothing about them.
     sweepOrphanedArtifacts(dir);
-    lastWritten = code;
+    // What is ON DISK, not what was passed in: with a stylesheet the writer
+    // rewrites the import first, and remembering the pre-rewrite bytes made
+    // the pipeline refuse its own repair as "changed by someone else".
+    lastWritten = written;
     return storyPath;
   };
 

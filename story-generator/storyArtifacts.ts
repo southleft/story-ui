@@ -75,6 +75,8 @@ export function stylesheetNameFor(storyFileName: string): string {
 export interface WrittenArtifacts {
   storyPath: string;
   stylesheetPath?: string;
+  /** The bytes actually written — the stylesheet import may have been rewritten. */
+  code: string;
 }
 
 /**
@@ -136,7 +138,7 @@ export function writeStoryArtifacts(args: {
     fs.writeFileSync(cssPath, body, 'utf-8');
     fs.writeFileSync(storyPath, code, 'utf-8');
     logger.log(`🎨 Wrote stylesheet ${cssName}`);
-    return { storyPath, stylesheetPath: cssPath };
+    return { storyPath, stylesheetPath: cssPath, code };
   }
 
   // No stylesheet this time. Remove a stale one from a previous revision of the
@@ -147,7 +149,7 @@ export function writeStoryArtifacts(args: {
   }
 
   fs.writeFileSync(storyPath, code, 'utf-8');
-  return { storyPath };
+  return { storyPath, code };
 }
 
 /** Only files we wrote carry the marker; never delete a hand-authored stylesheet. */
