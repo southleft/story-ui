@@ -108,8 +108,20 @@ const GEOMETRY_PROP = /^(sm|md|lg|xl|xxl|max|xs|span|offset|start|end|gap|column
 const LAYOUT_PROSE = /\b(column|columns|grid|breakpoint|gutter|span|spacing|width|row|layout)\b/i;
 import { enrichWithSourceFacts, withLocalPropFacts } from '../../story-generator/knowledge/sourceFacts.js';
 import { readStylingFacts, formatStylingGuidance, readDesignTokens } from '../../story-generator/knowledge/stylingFacts.js';
+import type { StylingFacts } from '../../story-generator/knowledge/stylingFacts.js';
+import {
+  deriveSpacingVocabulary, checkInlineSpacing, checkTokenTiers, formatSpacingErrors, formatTierErrors, repairSpacingNote,
+  type SpacingVocabulary,
+} from '../../story-generator/knowledge/spacingFacts.js';
+import {
+  deriveIconVocabulary, derivedIconPackages, checkIconImports, formatIconImportErrors,
+  type IconVocabulary,
+} from '../../story-generator/knowledge/iconFacts.js';
 import { inheritCompoundExamples } from '../../story-generator/knowledge/storybookCatalog.js';
 import { checkConformance, formatConformanceErrors } from '../../story-generator/knowledge/conformance.js';
+import {
+  checkPropConformance, formatPropConformanceErrors, summarisePropConformance, rewriteGlobalJsxNamespace,
+} from '../../story-generator/knowledge/propConformance.js';
 import { isSafeStoryFileName,
   writeStoryArtifacts,
   extractStylesheet,
@@ -325,6 +337,14 @@ async function runStoryGenerationPipeline(
    */
   let knownProps: Awaited<ReturnType<typeof extractProps>> = null;
   let knownTokens: Set<string> | null = null;
+  /**
+   * How this design system spaces things, derived once from the catalog and
+   * stylesheets: the prompt is written from it and the output is checked
+   * against it, so the two can never disagree.
+   */
+  let stylingFacts: StylingFacts | null = null;
+  let spacingVocab: SpacingVocabulary | null = null;
+  let iconVocab: IconVocabulary | null = null;
 
   const {
     prompt,
@@ -669,6 +689,37 @@ async function runStoryGenerationPipeline(
     // must not look like a library with no types.
     logger.warn(`⚠️ Component enrichment failed; the catalog carries names only: ${enrichError instanceof Error ? enrichError.message : String(enrichError)}`);
   }
+  // The spacing vocabulary: gap primitives and padding owners from the
+  // catalog (with the values their types declare), the spacing scale and
+  // colour tiers from the stylesheets, the utility steps from the team's own
+  // stories. The prompt's spacing rules are written from it; the validation
+  // loop judges the output against the same object.
+  try {
+    stylingFacts = readStylingFacts(process.cwd(), (config.generatedStoriesPath || '')
+      .replace(/^\.\//, '').replace(/\/+$/, '').split('/').pop() || 'generated',
+      config.importPath);
+    spacingVocab = deriveSpacingVocabulary({
+      components: components as any[], facts: knownProps, styling: stylingFacts, layoutRules: config.layoutRules,
+    });
+    logger.log(spacingVocab.hasScale
+      ? `📏 Spacing vocabulary: ${spacingVocab.source}${Object.keys(spacingVocab.aliasesOf).length ? `; ${Object.keys(spacingVocab.aliasesOf).length} primitive colour(s) with a semantic alias` : ''}`
+      : `📏 Spacing vocabulary: ${spacingVocab.source} — the prompt falls back to inline spacing examples and says so`);
+  } catch (spacingError) {
+    logger.warn(`⚠️ Could not derive the spacing vocabulary: ${spacingError instanceof Error ? spacingError.message : String(spacingError)} — prompt uses the inline fallback; spacing check will be skipped, not passed`);
+  }
+  // Icons and placeholder images: installed icon packages (the project's or
+  // the design system's own), the catalog's icon components and primitive,
+  // and its placeholder components. Named in the prompt, allowed by the
+  // isolation check, and import names verified against the package's exports.
+  try {
+    iconVocab = deriveIconVocabulary({
+      projectRoot: process.cwd(), importPath: config.importPath, configuredPackage: config.iconImports?.package, components: components as any[],
+    });
+    logger.log(`🖼️ Icon vocabulary: ${iconVocab.source}`);
+  } catch (iconError) {
+    logger.warn(`⚠️ Could not derive the icon vocabulary: ${iconError instanceof Error ? iconError.message : String(iconError)}`);
+  }
+
   events.onProgress?.(2, totalSteps, 'components_discovered',
     `Found ${components.length} components from ${config.importPath}`,
     { componentCount: components.length });
@@ -894,6 +945,9 @@ async function runStoryGenerationPipeline(
       selection,
       pins,
       storybookUrl: projectStorybookUrl || undefined,
+      spacing: spacingVocab,
+      styling: stylingFacts,
+      icons: iconVocab,
     }
   );
 
@@ -1330,11 +1384,36 @@ async function runStoryGenerationPipeline(
      */
     // JSX only: the checker walks JSX attributes, so on a Vue, Svelte, Angular
     // or Lit story it found nothing and looked like a pass.
+    if (detectedFramework === 'react') {
+      // `(): JSX.Element` is TS2503 under React 19 — deterministic, so fixed
+      // here rather than sent back to the model.
+      const jsxFix = rewriteGlobalJsxNamespace(aiText);
+      if (jsxFix.removed || jsxFix.qualified) {
+        logger.log(`🔧 JSX namespace: removed ${jsxFix.removed} \`: JSX.Element\` return annotation(s), qualified ${jsxFix.qualified} other JSX.* reference(s)`);
+        aiText = jsxFix.code;
+      }
+    }
     const conformanceErrors = detectedFramework === 'react'
       ? formatConformanceErrors(checkConformance(aiText, knownProps))
       : (logger.log(`📐 Conformance: not applicable to ${detectedFramework} (JSX-only check) — skipped, not passed`), []);
     if (conformanceErrors.length) {
       logger.log(`📐 Conformance: ${conformanceErrors.length} violation(s) of the catalog we supplied`);
+    }
+    /**
+     * Every prop must be one the receiving component declares.
+     *
+     * Judged against the attributes type the project's own TypeScript computes
+     * for the element — the ceiling, where the extracted catalog is a floor —
+     * and only where that set is closed. A component whose props are `any` or
+     * carry an index signature is skipped and named in the log, so absent and
+     * zero look different; see propConformance.ts.
+     */
+    if (detectedFramework === 'react') {
+      const propReport = checkPropConformance(aiText, {
+        storiesDir: path.resolve(process.cwd(), config.generatedStoriesPath || './src/stories/generated'),
+      });
+      logger.log(`🧷 Prop check: ${summarisePropConformance(propReport)}`);
+      conformanceErrors.push(...formatPropConformanceErrors(propReport));
     }
     // Every var(--x) must be a token the project declares. Skipped, and said
     // so, when the project declares none — absent and zero look different.
@@ -1351,6 +1430,47 @@ async function runStoryGenerationPipeline(
       // Say it ran: a silent pass is indistinguishable from a check that never
       // looked (the first CBDS re-run went to a stale server and looked the same).
       logger.log(`🎨 Token check: ${(aiText.match(/var\(\s*--/g) || []).length} var() use(s), all declared by the project (${knownTokens.size} tokens)`);
+    }
+
+    /**
+     * Inline spacing literals and primitive-for-semantic colours, judged
+     * against the same vocabulary the prompt was written from. Three states,
+     * each said out loud: not derived (skipped), derived with no scale
+     * (skipped — the fallback prompt allowed inline spacing), and checked.
+     */
+    if (!spacingVocab) {
+      logger.log('📏 Spacing check: vocabulary not derived — skipped, not passed');
+    } else if (!spacingVocab.hasScale) {
+      logger.log('📏 Spacing check: design system declares no gap primitive, no spacing tokens and no utility scale — skipped, not passed');
+    } else {
+      const spacingViolations = checkInlineSpacing(aiText, spacingVocab);
+      if (spacingViolations.length) {
+        logger.log(`📏 Spacing check: ${spacingViolations.length} inline spacing/typography literal(s): ${spacingViolations.slice(0, 6).map(v => `L${v.line} ${v.property}=${v.value}`).join(', ')}`);
+        conformanceErrors.push(...formatSpacingErrors(spacingViolations));
+      } else {
+        logger.log(`📏 Spacing check: 0 inline spacing literals (${spacingVocab.source})`);
+      }
+    }
+    if (spacingVocab && Object.keys(spacingVocab.aliasesOf).length) {
+      const tierViolations = checkTokenTiers(aiText, spacingVocab);
+      if (tierViolations.length) {
+        logger.log(`🎨 Token tiers: ${tierViolations.length} primitive colour(s) used where a semantic alias exists: ${tierViolations.slice(0, 6).map(v => `--${v.primitive}→--${v.aliases[0]}`).join(', ')}`);
+        conformanceErrors.push(...formatTierErrors(tierViolations));
+      } else {
+        logger.log(`🎨 Token tiers: no primitive colour used where an alias exists (${Object.keys(spacingVocab.aliasesOf).length} aliased primitives)`);
+      }
+    } else if (spacingVocab) {
+      logger.log('🎨 Token tiers: project declares no colour aliases — skipped, not passed');
+    }
+    // Names imported from a derived icon package must be names it exports.
+    if (iconVocab?.packages.some(p => p.exports.length)) {
+      const iconErrors = checkIconImports(aiText, iconVocab);
+      if (iconErrors.length) {
+        logger.log(`🖼️ Icon imports: ${iconErrors.length} name(s) the package does not export: ${iconErrors.slice(0, 6).map(v => v.name).join(', ')}`);
+        conformanceErrors.push(...formatIconImportErrors(iconErrors));
+      } else if (iconVocab.packages.some(p => new RegExp(`from\\s*['"]${p.name.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}`).test(aiText))) {
+        logger.log('🖼️ Icon imports: every imported icon name is exported by its package');
+      }
     }
 
     const importErrors = [
@@ -2018,16 +2138,30 @@ async function runStoryGenerationPipeline(
             `Verification found ${blockerCount} issue${blockerCount === 1 ? '' : 's'} — repairing`);
           try {
           const repairTarget = selection ? targetComponentFromSelection(selection) : null;
+          // A repair must not undo the spacing discipline: it gets the one-
+          // paragraph note, and a candidate that adds inline spacing literals
+          // or primitive-colour uses the original did not have is discarded.
+          const spacingNote = repairSpacingNote(spacingVocab);
+          const repairContext = [selection ? repairScopeNote(selection) : null, spacingNote].filter(Boolean).join('\n\n') || undefined;
+          const baselineSpacing = checkInlineSpacing(fixedFileContents, spacingVocab).length;
+          const baselineTiers = checkTokenTiers(fixedFileContents, spacingVocab).length;
           const repair = await attemptVerificationRepair({
             code: fixedFileContents,
             report: verification,
-            context: selection ? repairScopeNote(selection) : undefined,
+            context: repairContext,
             signal: verifyBudget.signal,
             deadline: verifyDeadline,
             staticallyValid: (candidate) => {
               const patternErrors = validateStory(candidate);
               const ast = validateStoryCode(candidate, finalFileName, config);
-              return patternErrors.length === 0 && ast.isValid;
+              if (patternErrors.length > 0 || !ast.isValid) return false;
+              const spacing = checkInlineSpacing(candidate, spacingVocab);
+              const tiers = checkTokenTiers(candidate, spacingVocab);
+              if (spacing.length > baselineSpacing || tiers.length > baselineTiers) {
+                logger.warn(`✂️ Repair rejected: it introduced ${Math.max(0, spacing.length - baselineSpacing)} inline spacing literal(s) and ${Math.max(0, tiers.length - baselineTiers)} primitive colour use(s) the story did not have (${[...spacing.slice(0, 3).map(v => `L${v.line} ${v.property}=${v.value}`), ...tiers.slice(0, 3).map(v => `L${v.line} --${v.primitive}`)].join(', ')})`);
+                return false;
+              }
+              return true;
             },
             callModel: async (prompt, currentCode) => {
               events.onLLMCall?.();
@@ -2630,6 +2764,12 @@ async function buildClaudePromptWithContext(
     pins?: PropPin[];
     /** Where this project's Storybook is served, so its own stories can be read. */
     storybookUrl?: string;
+    /** The derived spacing vocabulary; the adapter writes its spacing rules from it. */
+    spacing?: SpacingVocabulary | null;
+    /** The styling facts already read for the vocabulary, so they are not read twice. */
+    styling?: StylingFacts | null;
+    /** The derived icon/placeholder vocabulary. */
+    icons?: IconVocabulary | null;
   }
 ): Promise<string> {
   // What the previous code already uses must stay fully described, or an
@@ -2640,6 +2780,8 @@ async function buildClaudePromptWithContext(
   const frameworkOptions: StoryGenerationOptions = {
     framework: options.framework,
     catalogFocus: { prompt: userPrompt, mustInclude: usedBefore },
+    spacing: options.spacing ?? null,
+    icons: options.icons ?? null,
   };
   let prompt = await buildFrameworkAwarePrompt(userPrompt, config, components, frameworkOptions);
 
@@ -2740,7 +2882,7 @@ async function buildClaudePromptWithContext(
   // exactly where a hardcoded number marks a composition as foreign to the
   // design system that owns it.
   try {
-    const styling = readStylingFacts(process.cwd(), (config.generatedStoriesPath || '')
+    const styling = options.styling ?? readStylingFacts(process.cwd(), (config.generatedStoriesPath || '')
       .replace(/^\.\//, '').replace(/\/+$/, '').split('/').pop() || 'generated',
       config.importPath);
     const guidance = formatStylingGuidance(styling);
@@ -3642,6 +3784,9 @@ export function validateImportIsolation(
 
   allow(config.importPath);
   allow(config.iconImports?.package);
+  // An installed icon set — the project's dependency or the design system's
+  // own — is part of what the model was told to use (see iconFacts.ts).
+  for (const pkg of derivedIconPackages(process.cwd(), config.importPath, config.iconImports?.package)) allow(pkg.name);
   for (const extra of config.additionalImports || []) allow(extra.path);
   for (const extra of (config.allowedImports || [])) allow(extra);
   for (const pkg of FRAMEWORK_RUNTIME_ALLOWLIST[framework] || []) allowedRoots.add(pkg);

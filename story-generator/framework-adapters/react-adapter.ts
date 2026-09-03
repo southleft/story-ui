@@ -256,7 +256,7 @@ export const WithIcon: Story = {
 };
 \`\`\`
 
-${this.getCommonRules()}`;
+${this.getCommonRules(options)}`;
   }
 
   /**

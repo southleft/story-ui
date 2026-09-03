@@ -237,7 +237,7 @@ MATERIAL ICONS (CRITICAL - If using @angular/material):
 - For filled variants: favorite, star, check_circle
 - For outlined variants: favorite_border, star_border, check_circle_outline
 
-${this.getCommonRules()}`;
+${this.getCommonRules(options)}`;
   }
 
   generateExamples(config: StoryUIConfig): string {

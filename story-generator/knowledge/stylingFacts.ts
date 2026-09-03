@@ -52,6 +52,13 @@ export interface StylingIdiom {
   attributes: Array<{ name: string; uses: number }>;
   /** Files sampled, so a caller can judge how much to trust it. */
   sampled: number;
+  /**
+   * Spacing utility classes the team writes in `className`/`class`
+   * (`gap-4`, `space-y-2`, `p-6`, Vuetify's `pa-4`), most-used first. For a
+   * utility-styled project this IS the spacing scale: the team's own stories
+   * state which steps they use, and no token list would say it better.
+   */
+  spacingClasses?: Array<{ name: string; uses: number }>;
 }
 
 /**
@@ -81,7 +88,12 @@ export interface StylingFacts {
   idiom: StylingIdiom;
   /** Provenance of the token read. Present so zero and absent are separable. */
   sources: TokenSources;
+  /** The stylesheets read (project, then package), so a caller can look for what a design system states only as class names. */
+  stylesheetFiles?: string[];
 }
+
+/** Tailwind (`gap-4`, `space-y-2`, `p-6`) and Vuetify (`ga-4`, `pa-4`) spacing utilities. */
+const SPACING_UTILITY_CLASS = /^(?:gap|gap-[xy]|space-[xy]|p|px|py|pt|pb|pl|pr|ps|pe|m|mx|my|mt|mb|ml|mr|ms|me|ga|gr|gc|pa|ma)-(?:\d+(?:\.\d+)?|px)$/;
 
 /** Attributes that carry styling. Deliberately broad; frequency decides. */
 const STYLE_ATTRS = new Set([
@@ -447,6 +459,7 @@ export function readDesignTokens(projectRoot: string, importPath?: string): Toke
  */
 export function readStylingIdiom(projectRoot: string, generatedFragment = 'generated'): StylingIdiom {
   const counts = new Map<string, number>();
+  const utilityCounts = new Map<string, number>();
   let sampled = 0;
 
   const walk = (dir: string, depth = 0) => {
@@ -470,6 +483,17 @@ export function readStylingIdiom(projectRoot: string, generatedFragment = 'gener
         if (!STYLE_ATTRS.has(attr)) continue;
         counts.set(attr, (counts.get(attr) || 0) + 1);
       }
+      // The spacing steps the team actually writes, read from their class
+      // strings. Only the literal string parts are read; an expression is
+      // opaque and is skipped rather than guessed at.
+      for (const m of src.matchAll(/(?:className|class)\s*=\s*(?:"([^"]*)"|'([^']*)'|\{\s*(?:"([^"]*)"|'([^']*)'|`([^`]*)`)\s*\})/g)) {
+        const value = m[1] ?? m[2] ?? m[3] ?? m[4] ?? m[5] ?? '';
+        for (const cls of value.split(/\s+/)) {
+          const bare = cls.replace(/^[a-z-]+:/, '');
+          if (!SPACING_UTILITY_CLASS.test(bare)) continue;
+          utilityCounts.set(bare, (utilityCounts.get(bare) || 0) + 1);
+        }
+      }
     }
   };
   walk(path.join(projectRoot, 'src'));
@@ -477,8 +501,11 @@ export function readStylingIdiom(projectRoot: string, generatedFragment = 'gener
   const attributes = [...counts.entries()]
     .map(([name, uses]) => ({ name, uses }))
     .sort((a, b) => b.uses - a.uses);
+  const spacingClasses = [...utilityCounts.entries()]
+    .map(([name, uses]) => ({ name, uses }))
+    .sort((a, b) => b.uses - a.uses || a.name.localeCompare(b.name));
 
-  return { attributes, sampled };
+  return { attributes, sampled, ...(spacingClasses.length ? { spacingClasses } : {}) };
 }
 
 export function readStylingFacts(
@@ -502,6 +529,7 @@ export function readStylingFacts(
   return {
     tokens,
     idiom: readStylingIdiom(projectRoot, generatedFragment),
+    stylesheetFiles: [...projectFiles, ...packageFiles],
     sources: {
       projectFiles: projectFiles.length,
       packageFiles: packageFiles.length,
@@ -550,17 +578,48 @@ export function formatStylingGuidance(facts: StylingFacts, maxPerGroup = 24): st
 
   if (tokens.length) {
     lines.push('', 'Design tokens available in this project:');
+    let tiered = false;
     for (const group of tokens) {
       if (group.category === 'other') continue;
-      const shown = group.names.slice(0, maxPerGroup);
-      const more = group.names.length - shown.length;
+      /**
+       * Semantic before primitive, for colours.
+       *
+       * A token whose value is `var(--other)` is an alias — the name says
+       * what the colour is FOR, and only that tier is redeclared under a
+       * dark theme. Twelve of 22 Sail Shelf stories painted surfaces with
+       * `--ss-navy-50` while `--ss-color-background-brand-subtle` pointed at
+       * it; listed alphabetically the primitives came first and filled the
+       * cap. The tier is read from the value, not from any naming scheme.
+       */
+      const isAlias = (n: string) => /^var\(/.test((group.values?.[n] || '').trim());
+      const ordered = group.category === 'color'
+        ? [...group.names.filter(isAlias), ...group.names.filter(n => !isAlias(n))]
+        : group.names;
+      const semanticCount = group.category === 'color' ? group.names.filter(isAlias).length : 0;
+      const shown = ordered.slice(0, maxPerGroup);
+      const more = ordered.length - shown.length;
       // Scale tokens carry their value: `--font-size-1 (72px)` says which end
       // of the scale it is; a colour's hex says nothing the name does not.
       const withValue = (n: string) => {
         const v = group.category !== 'color' ? group.values?.[n] : undefined;
         return v && v.length <= 24 && !/^var\(/.test(v) ? `--${n} (${v})` : `--${n}`;
       };
-      lines.push(`- ${group.category}: ${shown.map(withValue).join(', ')}${more > 0 ? `, …${more} more` : ''}`);
+      if (semanticCount > 0 && semanticCount < group.names.length) {
+        tiered = true;
+        const semantic = shown.filter(isAlias);
+        const primitive = shown.filter(n => !isAlias(n));
+        lines.push(`- ${group.category} (semantic — use these): ${semantic.map(withValue).join(', ')}${semanticCount > semantic.length ? `, …${semanticCount - semantic.length} more` : ''}`);
+        if (primitive.length) lines.push(`- ${group.category} (primitive — only where no semantic token names the intent): ${primitive.map(withValue).join(', ')}${more > 0 ? `, …${more} more` : ''}`);
+      } else {
+        lines.push(`- ${group.category}: ${shown.map(withValue).join(', ')}${more > 0 ? `, …${more} more` : ''}`);
+      }
+    }
+    if (tiered) {
+      lines.push(
+        'A semantic token is an alias (its value is var(--primitive)); it is the tier that follows',
+        'the theme. A primitive is one mode only: where a semantic token points at it, use the',
+        'semantic one. Validation reports a primitive used where its alias exists.',
+      );
     }
   }
 

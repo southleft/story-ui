@@ -197,7 +197,7 @@ EVENT HANDLING:
 - Use @event or v-on:event syntax
 - Use action argTypes to log events in Storybook
 
-${this.getCommonRules()}`;
+${this.getCommonRules(options)}`;
   }
 
   generateExamples(config: StoryUIConfig): string {

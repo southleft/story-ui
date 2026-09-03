@@ -109,6 +109,16 @@ export interface StoryGenerationOptions {
    * entry (65k chars on Mantine, 97k on college-town).
    */
   catalogFocus?: CatalogFocus;
+  /**
+   * How this design system spaces things — its gap primitives, padding
+   * owners, spacing tokens and utility scale — derived from the catalog and
+   * stylesheets. The spacing rules in the prompt are written from it; without
+   * it (or when the system declares no scale) the inline examples are used and
+   * the prompt says so.
+   */
+  spacing?: import('../knowledge/spacingFacts.js').SpacingVocabulary | null;
+  /** Where icons and placeholder images come from in this project, derived from what is installed and catalogued. */
+  icons?: import('../knowledge/iconFacts.js').IconVocabulary | null;
 }
 
 export interface CatalogFocus {

@@ -231,7 +231,7 @@ SVELTE 5 TEMPLATE SYNTAX:
 - Classes: class="flex gap-2" (use Tailwind classes)
 - Snippets: {#snippet name(args)}...{/snippet}
 
-${this.getCommonRules()}`;
+${this.getCommonRules(options)}`;
   }
 
   generateExamples(config: StoryUIConfig): string {

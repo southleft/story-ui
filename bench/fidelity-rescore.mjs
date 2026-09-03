@@ -32,6 +32,17 @@ if (generic && summary?.generic?.catalog?.names?.length) {
   catalog = { source: g.source, names: new Set(g.names), importPaths: g.importPaths ? new Map(Object.entries(g.importPaths)) : null };
 }
 let tokens = null;
+// Icon packages the engine derives; recomputed from dist so a run scored
+// before the derivation existed is judged the same way as a new one.
+let icons = summary?.generic?.icons ?? null;
+if (generic) {
+  try {
+    const { pathToFileURL } = await import('node:url');
+    const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+    const { derivedIconPackages } = await import(pathToFileURL(path.join(root, 'dist', 'story-generator', 'knowledge', 'iconFacts.js')).href);
+    icons = { packages: derivedIconPackages(summary.opts.project, importPath).map(p => p.name) };
+  } catch (e) { console.error(`icons not recomputed: ${e.message}`); }
+}
 if (generic && summary?.opts?.project) {
   try {
     const { pathToFileURL } = await import('node:url');
@@ -62,7 +73,7 @@ for (const f of fs.readdirSync(dir).filter(f => f.endsWith('.json')).sort()) {
     const storedPins = st.score?.checks?.pins;
     const errorEvent = st.events?.find(e => e.type === 'error') || (st.transportError ? { data: { code: 'TRANSPORT', message: st.transportError } } : undefined);
     const stored = st.score?.checks || {};
-    st.score = scoreStep({ code: st.code, expect, events: st.events || [], completion: st.completion, errorEvent, importPath, previousCode: st.previousCode, divergence: st.divergence ?? undefined, pins: st.pins, generic, catalog, tokens });
+    st.score = scoreStep({ code: st.code, expect, events: st.events || [], completion: st.completion, errorEvent, importPath, previousCode: st.previousCode, divergence: st.divergence ?? undefined, pins: st.pins, generic, catalog, tokens, icons });
     // A generic check that could not be recomputed keeps the verdict the run
     // recorded; it was computed against the live server at the time.
     if (generic && !catalog && stored.catalog && stored.catalog.pass != null) st.score.checks.catalog = stored.catalog;

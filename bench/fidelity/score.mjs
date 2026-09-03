@@ -247,11 +247,18 @@ export function forbiddenPatterns(code, patterns = []) {
  *
  * Returns `pass: null` when there is no catalog to check against.
  */
-export function catalogConformance(code, { importPath, catalog, minDistinct = 3 }) {
+export function catalogConformance(code, { importPath, catalog, minDistinct = 3, iconPackages = [] }) {
   if (!catalog || !catalog.names || catalog.names.size === 0) {
     return { pass: null, reason: catalog?.reason || 'no component catalog available', source: catalog?.source ?? null };
   }
-  const imports = parseImports(code).filter(i => classifySource(i.source, importPath) === 'design-system');
+  // An installed icon set the engine derives (knowledge/iconFacts.ts) is offered
+  // to the model and allowed by isolation; its exports are icons, not catalog
+  // components, and are reported rather than judged. `@carbon/icons-react`
+  // shares a scope with `@carbon/react` and was failing every Carbon story.
+  const iconRoot = (source) => iconPackages.find(p => source === p || source.startsWith(p + '/'));
+  const allImports = parseImports(code);
+  const iconImports = allImports.filter(i => iconRoot(i.source)).flatMap(i => i.named.map(n => ({ name: n.exported, source: i.source })));
+  const imports = allImports.filter(i => !iconRoot(i.source) && classifySource(i.source, importPath) === 'design-system');
   const rows = catalog.importPaths || null;
   const specifierRows = rows ? [...rows.entries()] : [];
   const servedBy = (source) => specifierRows.filter(([, p]) => p && (source === p || source.startsWith(p + '/'))).map(([n]) => n);
@@ -291,6 +298,7 @@ export function catalogConformance(code, { importPath, catalog, minDistinct = 3 
   }
 
   const roots = new Set(jsxTags(code).map(t => t.root));
+  void iconImports;
   const used = [...new Set([...inCatalog.entries()].filter(([local]) => roots.has(local)).map(([, name]) => name))];
   const imported = [...new Set(inCatalog.values())];
 
@@ -306,6 +314,7 @@ export function catalogConformance(code, { importPath, catalog, minDistinct = 3 
     reason = `${unverifiable.length} design-system import(s) could not be verified (${unverifiable.map(u => u.reason).filter((v, i, a) => a.indexOf(v) === i).join('; ')}); only ${used.length} verified catalog component(s) used, floor ${minDistinct} undecidable`;
   }
   return {
+    iconImports,
     pass,
     ...(reason ? { reason } : {}),
     catalogSize: catalog.names.size,
@@ -478,7 +487,7 @@ export function completionCheck(completion, errorEvent) {
  * One step's scorecard. A step is a generation (new or follow-up) plus its
  * expectations; `previousCode` and `divergence` are present only for updates.
  */
-export function scoreStep({ code, expect = {}, events = [], completion, errorEvent, importPath, previousCode, divergence, pins, generic = false, catalog = null, tokens = null }) {
+export function scoreStep({ code, expect = {}, events = [], completion, errorEvent, importPath, previousCode, divergence, pins, generic = false, catalog = null, tokens = null, icons = null }) {
   const forbidden = expect.forbiddenPatterns || [];
   const hasNameExpectations = Boolean(expect.mustUseComponents?.length || expect.mustUseAnyOf?.length || expect.mustNotUseComponents?.length);
   const checks = {
@@ -496,7 +505,7 @@ export function scoreStep({ code, expect = {}, events = [], completion, errorEve
         mustNot: expect.mustNotUseComponents || [],
       }) : { pass: null, reason: 'no code returned' },
     catalog: !generic ? { pass: null, reason: 'not in --generic mode' }
-      : code ? catalogConformance(code, { importPath, catalog }) : { pass: null, reason: 'no code returned' },
+      : code ? catalogConformance(code, { importPath, catalog, iconPackages: icons?.packages || [] }) : { pass: null, reason: 'no code returned' },
     tokens: !generic ? { pass: null, reason: 'not in --generic mode' }
       : code ? tokenConformance(code, tokens || {}) : { pass: null, reason: 'no code returned' },
     forbidden: code ? forbiddenPatterns(code, forbidden) : { pass: null, reason: 'no code returned' },
