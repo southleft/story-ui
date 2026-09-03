@@ -21,11 +21,8 @@ import { closeBrowserSession } from '../story-generator/verify/browserSession.js
 import { describeLaunchFailure } from '../story-generator/verify/verifyStory.js';
 
 /** a < b for dotted versions; prerelease tags ignored. */
-export function semverLt(a: string, b: string): boolean {
-  const pa = a.split('-')[0].split('.').map(Number); const pb = b.split('-')[0].split('.').map(Number);
-  for (let i = 0; i < 3; i++) { const x = pa[i] || 0, y = pb[i] || 0; if (x !== y) return x < y; }
-  return false;
-}
+import { semverLt } from '../story-generator/semver.js';
+export { semverLt };
 
 export interface CheckItem {
   id: string;

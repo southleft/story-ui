@@ -6,6 +6,7 @@ import { unknownCanvasComponents, voiceCanvasStorySource } from '../mcp-server/r
 import { componentImportLines, jsxCodeToStory } from '../mcp-server/routes/canvasSave.js';
 import { importSpecifierFor, importHomeResolver } from '../story-generator/knowledge/importSpecifier.js';
 import { StoryTracker } from '../story-generator/storyTracker.js';
+import { storybookWatcherHint } from '../story-generator/verify/verifyStory.js';
 
 describe('canvas scope check', () => {
   const known = ['Button', 'Card', 'Text', 'Badge'];
@@ -131,5 +132,32 @@ describe('voice canvas scope', () => {
     const comps: any = [{ name: 'Button', filePath: '' }, { name: 'Text', filePath: '' }];
     expect(voiceCanvasStorySource(config, comps)).toBe(voiceCanvasStorySource(config, comps));
     expect(voiceCanvasStorySource(config, comps)).toContain('...pick(__sui0, ["Button","Text"], []),');
+  });
+});
+
+describe('canvas story stays out of the sidebar', () => {
+  it('tags the render surface !dev so it is loadable by id but not listed', () => {
+    const source = voiceCanvasStorySource({ importPath: '@mantine/core', generatedStoriesPath: './src/stories/generated/' } as any, [{ name: 'Button', filePath: '' }] as any);
+    expect(source).toContain("tags: ['voice-canvas-internal', '!dev']");
+  });
+});
+
+describe('storybook watcher hint', () => {
+  const withVersion = (version: string | null) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sbv-'));
+    if (version) {
+      fs.mkdirSync(path.join(dir, 'node_modules', 'storybook'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'node_modules', 'storybook', 'package.json'), JSON.stringify({ version }));
+    }
+    return dir;
+  };
+  it('names the installed version and the fix on the affected range, and stays silent otherwise', () => {
+    expect(storybookWatcherHint(withVersion('10.5.6'))).toContain('Storybook 10.5.6 is installed');
+    expect(storybookWatcherHint(withVersion('10.5.6'))).toContain('10.5.10 or newer');
+    expect(storybookWatcherHint(withVersion('10.5.10'))).toBe('');
+    expect(storybookWatcherHint(withVersion('10.4.2'))).toBe('');
+    expect(storybookWatcherHint(withVersion('9.1.17'))).toBe('');
+    expect(storybookWatcherHint(withVersion('10.6.1'))).toBe('');
+    expect(storybookWatcherHint(withVersion(null))).toBe('');
   });
 });
