@@ -50,6 +50,8 @@ interface DocFile {
   chars: number;
   overBudget: boolean;
   updatedAt: string;
+  /** A README: read by people, skipped by the loader, not counted. */
+  instructional?: boolean;
 }
 
 function listDocs(): DocFile[] {
@@ -66,6 +68,10 @@ function listDocs(): DocFile[] {
         name: f,
         chars,
         overBudget: chars > PER_FILE_CHAR_BUDGET,
+        // The loader skips READMEs (they instruct the author, not the model),
+        // so the panel must not count one toward the budget — the scaffold's
+        // README alone read as "2.0k / 24k used" of guidance that was never sent.
+        instructional: /^readme\.(md|mdx|txt)$/i.test(f),
         updatedAt: stat.mtime.toISOString(),
       };
     })
@@ -80,7 +86,7 @@ function listDocs(): DocFile[] {
 export function getDesignContext(_req: Request, res: Response): void {
   try {
     const files = listDocs();
-    const totalChars = files.reduce((sum, f) => sum + f.chars, 0);
+    const totalChars = files.reduce((sum, f) => sum + (f.instructional ? 0 : f.chars), 0);
     res.json({
       exists: fs.existsSync(docsDir()),
       dir: DOCS_DIRNAME,
