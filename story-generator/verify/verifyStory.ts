@@ -388,7 +388,7 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
      * rendered fine, so nothing else noticed; the bench saw them as console
      * errors on every page that showed the story's thumbnail.
      */
-    const reactWarning = /does not recognize the [`'"]?(\w+)[`'"]? prop|Unknown event handler property [`'"]?(\w+)[`'"]?|containing a "key" prop is being spread|Each child in a list should have a unique "key"|Invalid DOM property|Received `?(true|false)`? for a non-boolean attribute/;
+    const reactWarning = /does not recognize the [`'"]?(\w+)[`'"]? prop|Unknown event handler property [`'"]?(\w+)[`'"]?|containing a "key" prop is being spread|Each child in a list should have a unique "key"|Invalid DOM property|Received `?(true|false)`? for a non-boolean attribute|cannot be a descendant of|cannot appear as a child of|cannot contain a nested/;
     const seenWarnings = new Set<string>();
     for (const line of render.consoleErrors) {
       const m = reactWarning.exec(line);
@@ -401,7 +401,9 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
         id: `react-warning-${key.replace(/\W+/g, '-')}`, severity: 'warning', class: 'code',
         message: prop
           ? `React does not recognize the \`${prop}\` prop — it is reaching a DOM element, so the component ignores it (the prop does not exist on that component)`
-          : 'React reported a rendering warning for this story',
+          : /cannot be a descendant|cannot appear as a child|cannot contain a nested/.test(line)
+            ? `Invalid HTML nesting: ${line.replace(/\s+/g, ' ').replace(/^.*?(<\w+>[^.]*)/, '$1').slice(0, 140)}`
+            : 'React reported a rendering warning for this story',
         evidence: line.replace(/%s/g, m[1] || '').replace(/\s+/g, ' ').slice(0, 300),
         repairable: true,
       });
