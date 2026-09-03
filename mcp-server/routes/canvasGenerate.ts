@@ -135,7 +135,11 @@ const VOICE_CANVAS_TEMPLATE = `import React, { useState, useEffect } from 'react
 import { LiveProvider, LivePreview, LiveError } from 'react-live';
 import type { Meta, StoryObj } from '@storybook/react';
 
-const meta: Meta = { title: 'Generated/Voice Canvas', tags: ['voice-canvas-internal'] };
+// '!dev' keeps this out of the Storybook sidebar: it is the canvas's render
+// surface, not a generated story, and a sidebar entry that shows only
+// "Voice Canvas is ready" was a link that did nothing. It stays in the index,
+// so the panel's iframe can still load it by id.
+const meta: Meta = { title: 'Generated/Voice Canvas', tags: ['voice-canvas-internal', '!dev'] };
 export default meta;
 
 __STORY_UI_CATALOG_IMPORTS__

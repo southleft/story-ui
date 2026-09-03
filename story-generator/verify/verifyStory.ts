@@ -11,6 +11,9 @@
  *     measurements have to be trusted before they are allowed to spend tokens.
  */
 
+import fs from 'fs';
+import path from 'path';
+import { semverLt } from '../semver.js';
 import { logger } from '../logger.js';
 import { resolveHostTooling, canLaunchBrowser } from './hostTooling.js';
 import { renderStory, waitForStoryIndexed, indexIsStale, type IndexLookup } from './renderHarness.js';
@@ -105,6 +108,21 @@ const notVerified = (
  * the index" was also what a story indexed on :6103 got when verification
  * had been looking at :6006.
  */
+
+/**
+ * Storybook 10.5.5–10.5.6 stopped watching for new story files after a
+ * while in testing; 10.5.10 did not. A "not indexed" result on one of those
+ * versions is almost always that, so say so where the user is looking —
+ * `story-ui check` already does, but nobody runs check when a story fails.
+ */
+export function storybookWatcherHint(cwd: string = process.cwd()): string {
+  let version = '';
+  try { version = JSON.parse(fs.readFileSync(path.join(cwd, 'node_modules', 'storybook', 'package.json'), 'utf8')).version || ''; } catch { return ''; }
+  // Only the range that showed it: older majors fail the install check outright.
+  if (!version || semverLt(version, '10.5.0') || !semverLt(version, '10.5.10')) return '';
+  return ` Storybook ${version} is installed; 10.5.5–10.5.6 stopped watching for new files in testing and 10.5.10 did not — restart Storybook now, and upgrade to 10.5.10 or newer so this stops recurring.`;
+}
+
 export function classifyIndexMiss(
   storybookUrl: string,
   lookup: Pick<IndexLookup, 'reachable' | 'error'>,
@@ -126,7 +144,7 @@ export function classifyIndexMiss(
   }
   if (staleness.stale) {
     return {
-      reason: `Storybook's index at ${url} is behind the filesystem — its file watcher has stopped picking up changes. Restart Storybook to verify.`,
+      reason: `Storybook's index at ${url} is behind the filesystem — its file watcher has stopped picking up changes. Restart Storybook to verify.${storybookWatcherHint()}`,
       finding: {
         id: 'stale-index', severity: 'warning', class: 'infrastructure',
         message: 'Storybook\'s story index is stale — this is a dev-server problem, not a defect in the generated story',
@@ -136,7 +154,7 @@ export function classifyIndexMiss(
     };
   }
   return {
-    reason: `Story did not appear in the index at ${url} — it may not have been picked up yet`,
+    reason: `Story did not appear in the index at ${url} — it may not have been picked up yet${storybookWatcherHint() ? '.' + storybookWatcherHint() : ''}`,
     finding: {
       id: 'not-indexed', severity: 'warning', class: 'infrastructure',
       message: `Storybook at ${url} has not indexed the generated story`,
