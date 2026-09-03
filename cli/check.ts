@@ -19,7 +19,7 @@ import { relativeImportResolves, localImportForComponents } from '../story-gener
 import { resolveHostTooling, canLaunchBrowser } from '../story-generator/verify/hostTooling.js';
 import { closeBrowserSession } from '../story-generator/verify/browserSession.js';
 import { describeLaunchFailure } from '../story-generator/verify/verifyStory.js';
-import { storybookWatcherAdvice, watchpackPolling, installedVersion, probeStorybookWatcher, removeStaleProbes } from '../story-generator/verify/storybookWatcher.js';
+import { storybookWatcherAdvice, watchpackPolling, installedVersion, probeStorybookWatcher, removeStaleProbes, mainConfiguresPolling } from '../story-generator/verify/storybookWatcher.js';
 
 /** a < b for dotted versions; prerelease tags ignored. */
 import { semverLt } from '../story-generator/semver.js';
@@ -218,7 +218,7 @@ export async function runChecks(opts: { server?: string; storybook?: string; cwd
     const generatedDir = path.resolve(cwd, config.generatedStoriesPath || './src/stories/generated/');
     const env = { ...readEnv(cwd), ...process.env } as Record<string, string | undefined>;
     const sbVersion = installedVersion(cwd, 'storybook');
-    const advice = storybookWatcherAdvice({ platform: process.platform, storybookVersion: sbVersion, polling: watchpackPolling(env.WATCHPACK_POLLING) });
+    const advice = storybookWatcherAdvice({ platform: process.platform, storybookVersion: sbVersion, polling: watchpackPolling(env.WATCHPACK_POLLING) || (mainConfiguresPolling(cwd) ? 1000 : false) });
     const storybookUrl = opts.storybook || env.STORYBOOK_URL || (env.STORYBOOK_PORT ? `http://localhost:${env.STORYBOOK_PORT}` : undefined);
     if (!storybookUrl || !sbVersion) {
       items.push({

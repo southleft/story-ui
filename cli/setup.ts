@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { ensureWatcherPolling } from '../story-generator/verify/storybookWatcher.js';
 import path from 'path';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
@@ -2186,6 +2187,14 @@ export default registry;
 
     let mainContent = fs.readFileSync(actualMainPath, 'utf-8');
     let configUpdated = false;
+
+    // Keep Storybook's story-index watcher alive on macOS (storybookWatcher.ts).
+    const polled = ensureWatcherPolling(mainContent);
+    if (polled) {
+      mainContent = polled;
+      configUpdated = true;
+      console.log(chalk.green(`✅ Added WATCHPACK_POLLING to ${path.basename(actualMainPath)} — on macOS Storybook finds new stories by polling`));
+    }
 
     // Check if StoryUI config already exists
     if (mainContent.includes('@tpitre/story-ui') || mainContent.includes('StoryUIPanel')) {

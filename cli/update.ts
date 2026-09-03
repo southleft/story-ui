@@ -5,6 +5,7 @@ import chalk from 'chalk';
 import { fileURLToPath } from 'url';
 import inquirer from 'inquirer';
 import { createRequire } from 'module';
+import { ensureWatcherPolling } from '../story-generator/verify/storybookWatcher.js';
 import { ensureManagerAddonWiring, ensureStoriesGlobCoversMdx, missingReactStorybookDep, ensureManagerHeadPort, readConfiguredPort, ensureScriptPort, viteFinalConfigSnippet, insertConfigProperty, missingViteCjsIncludes } from './setup.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -578,6 +579,15 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
       const sbDir = path.join(process.cwd(), '.storybook');
       const mainPath = ['main.ts', 'main.mts', 'main.js', 'main.mjs', 'main.cjs']
         .map(f => path.join(sbDir, f)).find(f => fs.existsSync(f));
+      // Polling keeps the story-index watcher alive on macOS (storybookWatcher.ts);
+      // applies to webpack Storybooks too, which watch through watchpack as well.
+      if (mainPath) {
+        const polled = ensureWatcherPolling(fs.readFileSync(mainPath, 'utf8'));
+        if (polled) {
+          fs.writeFileSync(mainPath, polled);
+          console.log(chalk.green(`   ✅ Added WATCHPACK_POLLING to .storybook/${path.basename(mainPath)} — on macOS Storybook finds new stories by polling (restart it)`));
+        }
+      }
       if (mainPath && !/webpack/i.test(fs.readFileSync(mainPath, 'utf8'))) {
         const mainContent = fs.readFileSync(mainPath, 'utf8');
         if (!mainContent.includes('viteFinal')) {

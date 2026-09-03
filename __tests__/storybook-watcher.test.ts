@@ -18,6 +18,7 @@ import path from 'path';
 import {
   installedVersion, watchpackPolling, storybookWatcherAdvice, storybookWatcherHint,
   probeStorybookWatcher, removeStaleProbes, POLLING_FIX,
+  ensureWatcherPolling, mainConfiguresPolling, WATCHER_POLLING_MARKER,
 } from '../story-generator/verify/storybookWatcher.js';
 
 const project = (storybookVersion: string | null) => {
@@ -162,5 +163,41 @@ describe('removeStaleProbes', () => {
     expect(removeStaleProbes(generatedDir)).toEqual(['__story-ui-watcher-probe-dead0.stories.ts']);
     expect(fs.readdirSync(generatedDir)).toEqual(['real-card.stories.tsx']);
     expect(removeStaleProbes(path.join(generatedDir, 'missing'))).toEqual([]);
+  });
+});
+
+describe('polling preamble in .storybook/main', () => {
+  const main = `import type { StorybookConfig } from '@storybook/react-vite';
+import {
+  mergeConfig,
+} from 'vite';
+
+const config: StorybookConfig = {
+  stories: ['../src/**/*.stories.tsx'],
+};
+export default config;
+`;
+  it('goes after the last import, once, and only on macOS at runtime', () => {
+    const out = ensureWatcherPolling(main)!;
+    expect(out).not.toBeNull();
+    const at = out.indexOf(WATCHER_POLLING_MARKER);
+    expect(at).toBeGreaterThan(out.indexOf("from 'vite';"));
+    expect(at).toBeLessThan(out.indexOf('const config'));
+    expect(out).toContain("if (process.platform === 'darwin' && !process.env.WATCHPACK_POLLING) process.env.WATCHPACK_POLLING = '1000';");
+    expect(ensureWatcherPolling(out)).toBeNull();
+    expect(ensureWatcherPolling("process.env.WATCHPACK_POLLING = '500';\n" + main)).toBeNull();
+  });
+
+  it('goes first in a file without imports', () => {
+    const out = ensureWatcherPolling("module.exports = { stories: [] };\n")!;
+    expect(out.startsWith('// ' + WATCHER_POLLING_MARKER)).toBe(true);
+  });
+
+  it('is read back from the project', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sbmain-'));
+    fs.mkdirSync(path.join(dir, '.storybook'));
+    expect(mainConfiguresPolling(dir)).toBe(false);
+    fs.writeFileSync(path.join(dir, '.storybook', 'main.ts'), ensureWatcherPolling(main)!);
+    expect(mainConfiguresPolling(dir)).toBe(true);
   });
 });

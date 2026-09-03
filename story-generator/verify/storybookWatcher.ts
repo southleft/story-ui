@@ -65,7 +65,55 @@ export function watchpackPolling(value: string | undefined): number | boolean {
   return true;
 }
 
-export const POLLING_FIX = 'WATCHPACK_POLLING=1000 npm run storybook';
+export const POLLING_FIX = 'npx story-ui update (adds WATCHPACK_POLLING to .storybook/main), or start with WATCHPACK_POLLING=1000 npm run storybook';
+
+/** Marks the polling preamble `init`/`update` write into .storybook/main. */
+export const WATCHER_POLLING_MARKER = 'Story UI: keep the story-index watcher alive';
+
+/**
+ * The preamble. Evaluated when Storybook loads its main config, in the same
+ * process and before watchpack creates a single watcher, so the variable is
+ * in place for it — the same effect as the env var, without anyone having
+ * to know it exists. macOS only: the drop is FSEvents'; elsewhere fs.watch
+ * is fine and polling would only cost CPU.
+ */
+export function watcherPollingSnippet(): string {
+  return `// ${WATCHER_POLLING_MARKER}. On macOS, Storybook's story-index watcher (watchpack over
+// fs.watch) shares one FSEvents stream rooted at your home directory, and a burst of file
+// activity anywhere under it drops events silently — a new story then never appears until
+// Storybook restarts. Polling stats the directories instead, so nothing FSEvents does can
+// reach it. Remove this if you set WATCHPACK_POLLING yourself.
+if (process.platform === 'darwin' && !process.env.WATCHPACK_POLLING) process.env.WATCHPACK_POLLING = '1000';
+`;
+}
+
+const IMPORT_RE = /^[ \t]*import\s+(?:type\s+)?(?:[^'";]*?\s+from\s+)?['"][^'"]+['"];?[ \t]*$/gm;
+
+/**
+ * Insert the preamble after the last import (imports are hoisted, so a
+ * statement before them would still run after them — placing it after keeps
+ * the file reading in execution order). Null when it is already there.
+ */
+export function ensureWatcherPolling(mainContent: string): string | null {
+  if (mainContent.includes(WATCHER_POLLING_MARKER) || /WATCHPACK_POLLING/.test(mainContent)) return null;
+  let lastImportEnd = 0;
+  for (const m of mainContent.matchAll(IMPORT_RE)) lastImportEnd = m.index + m[0].length;
+  const snippet = watcherPollingSnippet();
+  if (lastImportEnd === 0) return `${snippet}\n${mainContent}`;
+  const rest = mainContent.slice(lastImportEnd).replace(/^\n+/, '\n');
+  return `${mainContent.slice(0, lastImportEnd)}\n\n${snippet}${rest}`;
+}
+
+/** Does this project's .storybook/main already set polling? */
+export function mainConfiguresPolling(cwd: string): boolean {
+  for (const name of ['main.ts', 'main.mts', 'main.tsx', 'main.js', 'main.mjs', 'main.cjs']) {
+    try {
+      const content = fs.readFileSync(path.join(cwd, '.storybook', name), 'utf8');
+      return content.includes(WATCHER_POLLING_MARKER) || /WATCHPACK_POLLING\s*=/.test(content);
+    } catch { /* try the next name */ }
+  }
+  return false;
+}
 
 export function storybookWatcherAdvice(input: {
   platform: NodeJS.Platform;
@@ -106,9 +154,10 @@ export function storybookWatcherHint(
   platform: NodeJS.Platform = process.platform,
 ): string {
   const version = installedVersion(cwd, 'storybook');
-  const advice = storybookWatcherAdvice({ platform, storybookVersion: version, polling: watchpackPolling(env.WATCHPACK_POLLING) });
+  const polling = watchpackPolling(env.WATCHPACK_POLLING) || (mainConfiguresPolling(cwd) ? 1000 : false);
+  const advice = storybookWatcherAdvice({ platform, storybookVersion: version, polling });
   if (advice.risk !== 'fsevents') return '';
-  return ` Storybook ${version} on macOS watches with fs.watch through one FSEvents stream rooted at your home directory; a burst of file activity anywhere under it drops events silently and the watcher does not recover. Restart Storybook — with WATCHPACK_POLLING=1000 (polling) so this cannot recur.`;
+  return ` Storybook ${version} on macOS watches with fs.watch through one FSEvents stream rooted at your home directory; a burst of file activity anywhere under it drops events silently and the watcher does not recover. Restart Storybook with WATCHPACK_POLLING=1000 (polling, immune to this), and run npx story-ui update so it polls from then on.`;
 }
 
 export type WatcherProbeOutcome =
