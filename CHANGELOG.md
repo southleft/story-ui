@@ -1,3 +1,10 @@
+## [5.3.1](https://github.com/southleft/story-ui/compare/v5.3.0...v5.3.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* **generator:** open unions stay open; findings attributed by nearest owner; atomic story writes ([5de72c9](https://github.com/southleft/story-ui/commit/5de72c9e628d9a6e9ee1a1033caa4aa5f15f0dc4))
+
 # [5.3.0](https://github.com/southleft/story-ui/compare/v5.2.0...v5.3.0) (2026-09-03)
 
 
