@@ -14,9 +14,11 @@ export interface StoryMapping {
 
 export class StoryTracker {
   private mappingFile: string;
+  private storiesDir: string;
   private mappings: Map<string, StoryMapping>;
 
   constructor(config: StoryUIConfig) {
+    this.storiesDir = config.generatedStoriesPath;
     this.mappingFile = path.join(path.dirname(config.generatedStoriesPath), '.story-mappings.json');
     this.mappings = new Map();
     this.loadMappings();
@@ -211,6 +213,10 @@ export class StoryTracker {
     if (!baseTitle || typeof baseTitle !== 'string') {
       return baseTitle;
     }
+    // A deleted story's title is free again. Nothing removed mappings when a
+    // story was deleted, so "Profile Card" kept climbing to v5 through five
+    // deletions — the mapping file remembered stories that no longer existed.
+    this.cleanupOrphaned(this.storiesDir);
 
     const normalizedBase = baseTitle.toLowerCase().trim();
 

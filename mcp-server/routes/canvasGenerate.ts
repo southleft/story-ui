@@ -23,13 +23,59 @@ import { promisify } from 'util';
 const execAsync = promisify(exec);
 import { loadUserConfig } from '../../story-generator/configLoader.js';
 import { EnhancedComponentDiscovery } from '../../story-generator/enhancedComponentDiscovery.js';
+import type { DiscoveredComponent } from '../../story-generator/componentDiscovery.js';
+import type { StoryUIConfig } from '../../story-ui.config.js';
+import { importSpecifierFor } from '../../story-generator/knowledge/importSpecifier.js';
 import { buildFrameworkAwarePrompt } from '../../story-generator/promptGenerator.js';
 import { chatCompletionDetailed, chatCompletionStream } from '../../story-generator/llm-providers/story-llm-service.js';
 import { logger } from '../../story-generator/logger.js';
 
 // ── Component discovery cache ─────────────────────────────────
-let _componentCache: { components: any[]; timestamp: number } | null = null;
+let _componentCache: { components: DiscoveredComponent[]; timestamp: number } | null = null;
 const COMPONENT_CACHE_TTL = 300_000; // 5 minutes
+
+/** The design-system catalog the canvas draws from, shared with canvas save. */
+export async function getCanvasComponents(config: StoryUIConfig): Promise<DiscoveredComponent[]> {
+  const now = Date.now();
+  if (_componentCache && now - _componentCache.timestamp < COMPONENT_CACHE_TTL) {
+    return _componentCache.components;
+  }
+  const discovery = new EnhancedComponentDiscovery(config);
+  const components = await discovery.discoverAll();
+  _componentCache = { components, timestamp: now };
+  return components;
+}
+
+// ── Scope check ───────────────────────────────────────────────
+
+/**
+ * JSX tags the canvas uses that neither the design system nor the code itself
+ * defines. The canvas scope is exactly the design-system module plus React,
+ * so any other capitalised tag is a ReferenceError at render — observed as
+ * `BrandBadge is not defined`, painted red where the preview should be, and
+ * then saved as a story importing `BrandBadge` from a package that has no
+ * such export. The sanitizer only ever looked for dangerous APIs; nothing
+ * asked whether the components exist.
+ */
+export function unknownCanvasComponents(code: string, known: Iterable<string>): string[] {
+  const available = new Set(known);
+  for (const m of code.matchAll(/\b(?:const|let|var|function|class)\s+([A-Z][A-Za-z0-9_]*)/g)) available.add(m[1]);
+  for (const m of code.matchAll(/\bimport\s+(?:\{([^}]*)\}|([A-Z][A-Za-z0-9_]*))/g)) {
+    for (const n of (m[1] ?? m[2] ?? '').split(',')) {
+      const local = n.trim().split(/\s+as\s+/).pop()?.trim();
+      if (local) available.add(local);
+    }
+  }
+  for (const builtin of ['React', 'Fragment', 'Canvas', 'Suspense', 'Profiler', 'StrictMode']) available.add(builtin);
+  const unknown = new Set<string>();
+  for (const m of code.matchAll(/<([A-Z][A-Za-z0-9_]*)(?:\.[A-Za-z0-9_]+)*[\s/>]/g)) {
+    if (!available.has(m[1])) unknown.add(m[1]);
+  }
+  return [...unknown];
+}
+
+const describeUnknown = (names: string[], importPath: string): string =>
+  `${names.join(', ')} ${names.length === 1 ? 'is not a component' : 'are not components'} in ${importPath || 'your design system'}.`;
 
 // ── Constants ─────────────────────────────────────────────────
 export const VOICE_CANVAS_STORY_ID = 'generated-voice-canvas--default';
@@ -92,9 +138,12 @@ import type { Meta, StoryObj } from '@storybook/react';
 const meta: Meta = { title: 'Generated/Voice Canvas', tags: ['voice-canvas-internal'] };
 export default meta;
 
+__STORY_UI_CATALOG_IMPORTS__
+
 // Design system components set by .storybook/preview.tsx via:
 //   (window as any).__STORY_UI_DESIGN_SYSTEM__ = YourDesignSystemModule;
-// Works with any React component library (Mantine, Chakra, MUI, shadcn, etc.)
+// Optional: the catalog above already covers every discovered component;
+// this hook adds anything discovery does not know, and wins on a name clash.
 const designSystem = (window as any).__STORY_UI_DESIGN_SYSTEM__ || {};
 
 // Module-level scope — created once, never recreated, so react-live
@@ -108,6 +157,7 @@ const scope = {
   useRef: React.useRef,
   useReducer: React.useReducer,
   useContext: React.useContext,
+  ...catalog,
   ...designSystem,
 };
 
@@ -213,35 +263,67 @@ export class ReactLiveMissingError extends Error {
  * Write the static voice-canvas story template if it doesn't exist yet.
  * Subsequent calls are no-ops — the file never changes after initial creation.
  */
-export function ensureVoiceCanvasStory(storiesDir: string): void {
-  /**
-   * Only when the project can actually compile it.
-   *
-   * This template imports `react-live`. Writing it into a project that does
-   * not have that dependency breaks the whole Storybook with a Vite overlay —
-   * not just this story — because the dev server fails to resolve the import
-   * and stops rendering anything. Observed on a Carbon project: every
-   * generated story was fine, and the workspace was unusable.
-   *
-   * The existing guard checked the FRAMEWORK, which answers a different
-   * question. React projects that have never installed react-live are the
-   * common case, not the exception, so the guard passed exactly where it
-   * needed to fail. Ask for the dependency itself.
-   */
-  if (!reactLiveIsInstalled()) {
-    logger.log('[canvas-generate] Skipping voice-canvas template — react-live is not installed in this project');
-    return;
-  }
-
+export function ensureVoiceCanvasStory(storiesDir: string, source: string): void {
   const resolvedDir = path.resolve(process.cwd(), storiesDir);
   if (!fs.existsSync(resolvedDir)) {
     fs.mkdirSync(resolvedDir, { recursive: true });
   }
   const filePath = path.resolve(resolvedDir, VOICE_CANVAS_STORY_FILE);
-  if (!fs.existsSync(filePath)) {
-    fs.writeFileSync(filePath, VOICE_CANVAS_TEMPLATE, 'utf-8');
-    logger.log('[canvas-generate] Created voice-canvas story template');
+  // Rewritten whenever the catalog changes, so a component added to the
+  // project is in scope on the next command — not on the next fresh install.
+  let current: string | null = null;
+  try { current = fs.readFileSync(filePath, 'utf-8'); } catch { /* absent */ }
+  if (current === source) return;
+  fs.writeFileSync(filePath, source, 'utf-8');
+  logger.log(`[canvas-generate] ${current === null ? 'Created' : 'Updated'} voice-canvas story (${source.split('\n').length} lines)`);
+}
+
+/**
+ * The voice-canvas story, with the catalog in scope.
+ *
+ * The scope used to be whatever `.storybook/preview.tsx` put on
+ * `window.__STORY_UI_DESIGN_SYSTEM__` — the npm module and nothing else —
+ * while the prompt offered every discovered component, local ones included.
+ * A project's own `BrandBadge` was in the catalog, chosen by the model, and
+ * a ReferenceError on the canvas. Now the story imports each discovered
+ * component from where the project says it lives (the same rule the prompt
+ * and the story pipeline use), so what the model is offered is what renders.
+ *
+ * Namespace imports, not named ones: a name discovery got wrong would make a
+ * named import fail at build time and take the whole canvas with it. Through
+ * a namespace a missing export is simply absent from scope, and the scope
+ * check names it.
+ */
+export function voiceCanvasStorySource(config: StoryUIConfig, components: DiscoveredComponent[]): string {
+  const byModule = new Map<string, { named: string[]; defaults: string[] }>();
+  const seen = new Set<string>();
+  for (const component of components) {
+    if (!/^[A-Z][A-Za-z0-9_]*$/.test(component.name) || seen.has(component.name)) continue;
+    if (/\.(vue|svelte)$/.test(component.filePath || '')) continue;
+    const specifier = importSpecifierFor(component, config);
+    if ((component as any).__importPathUnknown === true) continue;
+    if (!specifier || specifier === 'unknown' || /['"\\\n\r]/.test(specifier)) continue;
+    seen.add(component.name);
+    const group = byModule.get(specifier) ?? { named: [], defaults: [] };
+    ((component as any).__defaultExport === true ? group.defaults : group.named).push(component.name);
+    byModule.set(specifier, group);
   }
+  const modules = [...byModule.entries()];
+  const imports = modules.map(([specifier], i) => `import * as __sui${i} from '${specifier}';`);
+  const picks = modules.map(([, g], i) => `  ...pick(__sui${i}, ${JSON.stringify(g.named)}, ${JSON.stringify(g.defaults)}),`);
+  const block = [
+    '// The component catalog, imported from where the project says each one',
+    '// lives — generated from discovery by Story UI; edits are overwritten.',
+    ...imports,
+    'const pick = (ns: Record<string, unknown>, named: string[], defaults: string[]): Record<string, unknown> => ({',
+    '  ...Object.fromEntries(named.filter(n => ns[n] !== undefined).map(n => [n, ns[n]])),',
+    "  ...Object.fromEntries(defaults.filter(() => ns.default !== undefined).map(n => [n, ns.default])),",
+    '});',
+    'const catalog: Record<string, unknown> = {',
+    ...picks,
+    '};',
+  ].join('\n');
+  return VOICE_CANVAS_TEMPLATE.replace('__STORY_UI_CATALOG_IMPORTS__', block);
 }
 
 // ── Code extraction ───────────────────────────────────────────
@@ -376,6 +458,35 @@ export function sanitizeCanvasCode(code: string): string {
   return sanitized;
 }
 
+/**
+ * One correction round when the canvas names components that do not exist —
+ * the same shape as the story pipeline's healing loop, with the catalog as
+ * the instruction. Returns the code and whatever is STILL unknown; the caller
+ * refuses to ship a canvas that will not render rather than let react-live
+ * report the ReferenceError.
+ */
+async function healUnknownComponents(
+  code: string,
+  rawResponse: string,
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+  known: string[],
+  importPath: string,
+  llm: { provider: any; model: any },
+): Promise<{ code: string; unknown: string[] }> {
+  const unknown = unknownCanvasComponents(code, known);
+  if (unknown.length === 0 || known.length === 0) return { code, unknown: [] };
+  logger.warn(`[canvas-generate] Unknown components ${unknown.join(', ')} — asking for a correction`);
+  const correction = `${describeUnknown(unknown, importPath)} The canvas can only use the components listed ` +
+    `in "Available Components" above, plus plain HTML elements. Rewrite the canvas without ${unknown.join(', ')}: ` +
+    `build the same thing from components that exist. Return the complete corrected code only.`;
+  const retry = await chatCompletionDetailed(
+    [...messages, { role: 'assistant', content: rawResponse }, { role: 'user', content: correction }],
+    { provider: llm.provider, model: llm.model, maxTokens: 4096, temperature: 0.3 },
+  );
+  const healed = sanitizeCanvasCode(extractCanvasCode(retry.content));
+  return { code: healed, unknown: unknownCanvasComponents(healed, known) };
+}
+
 // ── Handler ───────────────────────────────────────────────────
 
 export async function canvasGenerateHandler(req: Request, res: Response) {
@@ -424,21 +535,14 @@ export async function canvasGenerateHandler(req: Request, res: Response) {
         error: `Voice Canvas is only available for React-based Storybook projects. Current framework: ${config.componentFramework}`,
       });
     }
-    let components: any[];
-    const now = Date.now();
-    if (_componentCache && now - _componentCache.timestamp < COMPONENT_CACHE_TTL) {
-      components = _componentCache.components;
-    } else {
-      const discovery = new EnhancedComponentDiscovery(config);
-      components = await discovery.discoverAll();
-      _componentCache = { components, timestamp: now };
-    }
+    const components = await getCanvasComponents(config);
 
     // Build the system prompt through the SAME adapter-driven pipeline as
     // standard generation (component reference, docs, considerations, custom
     // local components) — the canvas suffix then overrides the output format.
     const baseSystemPrompt = await buildFrameworkAwarePrompt(prompt, config, components, { framework: 'react' });
     const systemPrompt = baseSystemPrompt + '\n' + CANVAS_MODE_SUFFIX;
+    const knownNames = components.map(c => c.name);
 
     // Build the user message — include current canvas code for edit requests
     let userMessage = prompt;
@@ -466,7 +570,7 @@ export async function canvasGenerateHandler(req: Request, res: Response) {
       throw err;
     }
     const storiesDir = config.generatedStoriesPath || './src/stories/generated/';
-    ensureVoiceCanvasStory(storiesDir);
+    ensureVoiceCanvasStory(storiesDir, voiceCanvasStorySource(config, components));
 
     // Streaming mode: emit raw LLM text deltas over SSE so the canvas can show
     // the code being written in real time, then a final `complete` event with
@@ -491,7 +595,13 @@ export async function canvasGenerateHandler(req: Request, res: Response) {
         }
 
         const rawCode = extractCanvasCode(fullResponse);
-        const result = sanitizeCanvasCode(rawCode);
+        const healed = await healUnknownComponents(sanitizeCanvasCode(rawCode), fullResponse, messages, knownNames, config.importPath || '', { provider, model });
+        if (healed.unknown.length > 0) {
+          res.write(`event: error\ndata: ${JSON.stringify({ error: `${describeUnknown(healed.unknown, config.importPath || '')} Try naming a component that exists, or describe the element instead.`, code: 'UNKNOWN_COMPONENTS', components: healed.unknown })}\n\n`);
+          res.end();
+          return;
+        }
+        const result = healed.code;
         logger.log(`[canvas-generate] Streamed ${result.split('\n').length} lines for: "${prompt.slice(0, 60)}"`);
         res.write(`event: complete\ndata: ${JSON.stringify({ canvasCode: result, storyId: VOICE_CANVAS_STORY_ID })}\n\n`);
       } catch (streamError) {
@@ -520,7 +630,15 @@ export async function canvasGenerateHandler(req: Request, res: Response) {
     // injection, prototype pollution, etc.) before the code reaches the
     // client where react-live would execute it as arbitrary JS.
     const rawCode = extractCanvasCode(response.content);
-    const result = sanitizeCanvasCode(rawCode);
+    const healed = await healUnknownComponents(sanitizeCanvasCode(rawCode), response.content, messages, knownNames, config.importPath || '', { provider, model });
+    if (healed.unknown.length > 0) {
+      return res.status(422).json({
+        error: `${describeUnknown(healed.unknown, config.importPath || '')} Try naming a component that exists, or describe the element instead.`,
+        code: 'UNKNOWN_COMPONENTS',
+        components: healed.unknown,
+      });
+    }
+    const result = healed.code;
 
     logger.log(`[canvas-generate] Generated ${result.split('\n').length} lines for: "${prompt.slice(0, 60)}"`);
 
