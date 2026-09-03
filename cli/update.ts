@@ -663,6 +663,12 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
 
   if (filesToUpdate.length === 0) {
     wireStorybookEntries();
+    // The version stamp records which release the project was last brought
+    // up to, and a project whose files were already current never got it —
+    // a 5.0.0 project kept reading `_storyUIVersion: '4.17.0'`.
+    if (!options.dryRun && installation.configPath) {
+      updateConfigVersion(installation.configPath, result.newVersion);
+    }
     console.log(chalk.green('\n✅ All files are already up to date!'));
     console.log(chalk.gray('   If Storybook is running, restart it — and clear node_modules/.vite and node_modules/.cache/storybook first, so Vite does not keep two copies of the old bundle.'))
     result.success = result.errors.length === 0;

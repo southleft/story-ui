@@ -1513,8 +1513,15 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
       return;
     }
 
-    const MAX_RECOVERY_MS = 4 * 60_000;
-    if (!pending.startedAt || Date.now() - pending.startedAt > MAX_RECOVERY_MS) {
+    // The base window alone decided this once, and it was wrong: a generation
+    // with a self-healing pass ran 4m12s, the stash was discarded as stale on
+    // the next remount, and the panel came back empty while the server was
+    // still working. Now the server's own in-flight list extends the wait
+    // (see poll below); the hard ceiling is the only unconditional cutoff.
+    const RECOVERY_WINDOW_MS = 4 * 60_000;
+    const RECOVERY_HARD_CEILING_MS = 15 * 60_000;
+    const ACTIVE_GRACE_MS = 15_000;
+    if (!pending.startedAt || Date.now() - pending.startedAt > RECOVERY_HARD_CEILING_MS) {
       try { sessionStorage.removeItem(PENDING_GEN_KEY); } catch {}
       return;
     }
@@ -1537,16 +1544,27 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     };
 
     const poll = async () => {
-      const deadline = pending.startedAt + MAX_RECOVERY_MS;
-      while (!cancelled && Date.now() < deadline) {
+      const baseDeadline = pending.startedAt + RECOVERY_WINDOW_MS;
+      const hardDeadline = pending.startedAt + RECOVERY_HARD_CEILING_MS;
+      // Only a write newer than this request is this request's result: an
+      // update's entry already exists with an older reply, and matching it
+      // restored the previous turn as if the new one had finished.
+      const earliest = pending.startedAt - 2_000;
+      // Whether the server has /story-ui/active-generations. A 404 turns the
+      // extension off; the base window alone decides, exactly as before.
+      let activeSupported = true;
+      let lastActiveMatchAt = 0;
+      while (!cancelled && Date.now() < hardDeadline) {
         try {
           const res = await apiFetch(MANIFEST_API());
           if (res.ok) {
             const data = await res.json();
             const entries: Record<string, any> = data.stories ?? {};
             const entry = Object.values(entries).find((e: any) => {
-              if (pending.fileName && e.fileName === pending.fileName) return true;
-              return e.metadata?.prompt === pending.userInput;
+              const matches = pending.fileName ? e.fileName === pending.fileName : e.metadata?.prompt === pending.userInput;
+              if (!matches) return false;
+              const updated = Date.parse(e.updatedAt || '');
+              return Number.isNaN(updated) || updated >= earliest;
             }) as any;
             const conv = entry?.conversation ?? [];
             const last = conv[conv.length - 1];
@@ -1578,6 +1596,30 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
             }
           }
         } catch { /* server busy — keep polling */ }
+
+        if (activeSupported && !cancelled) {
+          try {
+            const res = await apiFetch(`${getApiBase()}/story-ui/active-generations`);
+            if (res.status === 404) {
+              activeSupported = false;
+            } else if (res.ok) {
+              const active: Array<{ prompt: string; fileName: string | null }> = (await res.json())?.active ?? [];
+              const match = active.some(a =>
+                a?.prompt === pending.userInput && (!pending.fileName || a.fileName === pending.fileName),
+              );
+              if (match) lastActiveMatchAt = Date.now();
+            }
+          } catch { /* a blip says nothing either way; decide on what we last knew */ }
+        }
+
+        const now = Date.now();
+        if (now >= baseDeadline) {
+          if (!activeSupported) break;
+          // The manifest write lands just before the server drops the entry,
+          // so a short grace after the last sighting lets the next poll see it.
+          const stillWorking = lastActiveMatchAt > 0 && now - lastActiveMatchAt < ACTIVE_GRACE_MS;
+          if (!stillWorking) break;
+        }
         await new Promise(resolve => setTimeout(resolve, 3000));
       }
       if (!cancelled) finishRecovery();

@@ -15,6 +15,8 @@ import path from 'path';
 import { loadUserConfig } from '../../story-generator/configLoader.js';
 import { logger } from '../../story-generator/logger.js';
 import { getManifestManager } from '../../story-generator/manifestManager.js';
+import { importHomeResolver, type ImportHome } from '../../story-generator/knowledge/importSpecifier.js';
+import { getCanvasComponents } from './canvasGenerate.js';
 
 interface ComponentNodeInput {
   id?: string;
@@ -145,13 +147,49 @@ ${jsx}
 `;
 }
 
+/**
+ * One import line per module, from what discovery knows about each
+ * component. A name discovery does not know falls back to the base path:
+ * the canvas rendered it, so the design-system scope had it, and the base
+ * path is the only module that scope is built from. That fallback used to be
+ * the whole rule, which imported a local design system's components from a
+ * barrel that did not export them.
+ */
+export function componentImportLines(
+  names: string[],
+  importPath: string,
+  resolveImport?: (name: string) => ImportHome | undefined,
+): string[] {
+  const named = new Map<string, string[]>();
+  const defaults: Array<{ name: string; specifier: string }> = [];
+  for (const name of names) {
+    const home = resolveImport?.(name);
+    const specifier = home?.specifier || importPath;
+    if (!specifier) continue;
+    if (home?.defaultExport) {
+      defaults.push({ name, specifier });
+    } else {
+      named.set(specifier, [...(named.get(specifier) ?? []), name]);
+    }
+  }
+  const lines: string[] = [];
+  for (const [specifier, list] of named) lines.push(`import { ${list.join(', ')} } from '${specifier}';`);
+  for (const { name, specifier } of defaults) lines.push(`import ${name} from '${specifier}';`);
+  return lines;
+}
+
 // ── JSX save (react-live canvas) ─────────────────────────────
 
 /**
  * Convert a react-live canvas component (JSX string) to a proper .stories.tsx file.
  * The input is in the format: `const Canvas = () => { ... }; render(<Canvas />);`
  */
-export function jsxCodeToStory(jsxCode: string, title: string, importPath: string): string {
+export function jsxCodeToStory(
+  jsxCode: string,
+  title: string,
+  importPath: string,
+  resolveImport?: (name: string) => ImportHome | undefined,
+): string {
   // Remove the render(<Canvas />) call at the end
   let cleanCode = jsxCode.replace(/\nrender\s*\(<Canvas\s*\/>\);?\s*$/, '').trim();
 
@@ -177,9 +215,7 @@ export function jsxCodeToStory(jsxCode: string, title: string, importPath: strin
   const needsReactImport = /\bReact\./.test(cleanCode);
 
   const lines: string[] = [];
-  if (sortedComponents.length > 0 && importPath) {
-    lines.push(`import { ${sortedComponents.join(', ')} } from '${importPath}';`);
-  }
+  lines.push(...componentImportLines(sortedComponents, importPath, resolveImport));
   if (needsReactImport) {
     lines.push(`import React${usedHooks.length > 0 ? `, { ${usedHooks.join(', ')} }` : ''} from 'react';`);
   } else if (usedHooks.length > 0) {
@@ -257,7 +293,13 @@ export async function canvasSaveHandler(req: Request, res: Response) {
 
     if (jsxCode && typeof jsxCode === 'string' && jsxCode.trim()) {
       // New path: save from react-live canvas JSX
-      code = jsxCodeToStory(jsxCode, title, importPath);
+      let resolveImport: ((name: string) => ImportHome | undefined) | undefined;
+      try {
+        resolveImport = importHomeResolver(await getCanvasComponents(config), config);
+      } catch (err) {
+        logger.warn(`[canvas-save] Discovery unavailable; importing from ${importPath}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      code = jsxCodeToStory(jsxCode, title, importPath, resolveImport);
     } else if (tree?.root && Array.isArray(tree.root)) {
       // Legacy path: save from JSON component tree
       const framework = config.componentFramework || 'react';

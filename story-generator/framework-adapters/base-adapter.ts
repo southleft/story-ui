@@ -11,12 +11,11 @@ import {
   StoryFramework,
   FrameworkAdapter,
   StoryGenerationOptions, CatalogFocus } from './types.js';
-import * as fs from 'fs';
-import * as nodePath from 'path';
 import { StoryUIConfig } from '../../story-ui.config.js';
 import { DiscoveredComponent } from '../componentDiscovery.js';
 import { logger } from '../logger.js';
 import { saysMoreThanName } from '../knowledge/descriptionQuality.js';
+import { importSpecifierFor, localImportSpecifier } from '../knowledge/importSpecifier.js';
 
 /**
  * Abstract Base Framework Adapter
@@ -213,22 +212,14 @@ export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
   }
 
   /**
-   * Relative import path for components discovered from local project files
-   * (custom, non-npm component libraries). Null for npm package components.
+   * The relative import path for a component discovered from local source.
+   * Null for npm package components. See knowledge/importSpecifier.ts.
    */
   protected getLocalImportPath(
     component: DiscoveredComponent,
     config: StoryUIConfig
   ): string | null {
-    const filePath = component.filePath;
-    if (!filePath || filePath.includes('node_modules')) return null;
-    if (!nodePath.isAbsolute(filePath) || !fs.existsSync(filePath)) return null;
-
-    const generatedDir = nodePath.resolve(process.cwd(), config.generatedStoriesPath || './src/stories/generated/');
-    let relative = nodePath.relative(generatedDir, filePath).split(nodePath.sep).join('/');
-    relative = relative.replace(/\.(tsx|jsx|ts|js|vue|svelte)$/, '');
-    if (!relative.startsWith('.')) relative = './' + relative;
-    return relative;
+    return localImportSpecifier(component, config);
   }
 
   /**
@@ -332,71 +323,14 @@ export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
   }
 
   /**
-   * Get the import path for a component
+   * The module a story imports a component from — the project's own answer,
+   * shared with every other writer of import lines (knowledge/importSpecifier.ts).
    */
   protected getImportPath(
     component: DiscoveredComponent,
     config: StoryUIConfig
   ): string {
-    // What the PROJECT says, before anything we infer.
-    //
-    // story-ui.config.js can declare each component with its real import
-    // specifier, and college-town does exactly that for 22 components —
-    // `CardHeader -> '@/components/card/card'` — under a comment reading
-    // "REQUIRED for proper story generation". Nothing read it. The convention
-    // guess below produced `@/components/card-header` instead, which is not a
-    // module, so 41% of that project's generated imports 404'd and roughly
-    // three quarters of its stories rendered blank.
-    //
-    // A declared path is a fact about the codebase. An inferred one is a guess
-    // about its conventions. The fact wins.
-    const declared = (config.components || []).find(c => c.name === component.name);
-    if (declared?.importPath) {
-      return declared.importPath;
-    }
-
-    // Use component's __componentPath if available
-    if (component.__componentPath) {
-      return component.__componentPath;
-    }
-
-    // Custom in-project components (discovered from local source files, not an
-    // npm package) must be imported via their real relative path from the
-    // generated-stories directory — never via the library import path.
-    const localPath = this.getLocalImportPath(component, config);
-    if (localPath) {
-      return localPath;
-    }
-
-    /**
-     * The package a component was actually discovered in.
-     *
-     * For a per-component-package design system the kebab guess below invents
-     * a package: `Layer`, re-exported from @atlaskit/popper, became
-     * `@atlaskit/layer`, which is not installed. Discovery already recorded
-     * where it found the component, and that is the answer.
-     */
-    const discoveredIn = (component as any).source;
-    if (discoveredIn?.type === 'npm' && discoveredIn.path && discoveredIn.path !== config.importPath) {
-      return discoveredIn.path;
-    }
-
-    const basePath = config.importPath || 'unknown';
-
-    /**
-     * No formula. This used to kebab-case the component name onto the base
-     * path for `importStyle: 'individual'` (`AlertDialog` → `alert-dialog`),
-     * which is one library's convention and wrong for the next. Every
-     * individual-import library this tool has met declares its paths: in
-     * `config.components[].importPath`, in discovery's `source.path`, or as a
-     * local file the relative-path branch above already resolved. When none
-     * of those exist the honest answer is the base path with a note, not a
-     * guess that fails at build time.
-     */
-    if (config.importStyle === 'individual') {
-      (component as any).__importPathUnknown = true;
-    }
-    return basePath;
+    return importSpecifierFor(component, config);
   }
 
   /**
