@@ -1696,7 +1696,7 @@ async function runStoryGenerationPipeline(
         throw new FileChangedError();
       }
     }
-    const { storyPath } = writeStoryArtifacts({
+    const { storyPath, code: written } = writeStoryArtifacts({
       dir,
       fileName: finalFileName,
       code,
@@ -1705,7 +1705,10 @@ async function runStoryGenerationPipeline(
     // Collect stylesheets whose story was removed by any of the many delete
     // paths that know nothing about them.
     sweepOrphanedArtifacts(dir);
-    lastWritten = code;
+    // What is ON DISK, not what was passed in: with a stylesheet the writer
+    // rewrites the import first, and remembering the pre-rewrite bytes made
+    // the pipeline refuse its own repair as "changed by someone else".
+    lastWritten = written;
     return storyPath;
   };
 
@@ -1956,6 +1959,7 @@ async function runStoryGenerationPipeline(
           storybookUrl: verifyUrl,
           storyIdPrefix: storyIdSlug,
           title: cleanTitle,
+          fileName: finalFileName,
           projectRoot: process.cwd(),
           libraryComponents,
           generatedDir,
@@ -2122,6 +2126,7 @@ async function runStoryGenerationPipeline(
                 storybookUrl: verifyUrl,
                 storyIdPrefix: storyIdSlug,
                 title: cleanTitle,
+                fileName: finalFileName,
                 projectRoot: process.cwd(),
                 libraryComponents,
                 generatedDir,
@@ -2381,6 +2386,14 @@ async function runStoryGenerationPipeline(
               ...(verification.reason ? { reason: verification.reason.slice(0, 300) } : {}),
               blockers: verification.findings.filter(f => f.severity === 'blocker').length,
               warnings: verification.findings.filter(f => f.severity === 'warning').length,
+              // The findings themselves, compact. The docs page reloads on
+              // every new story, and a panel rebuilt from counts alone could
+              // show "Issues · 3 blocking" with nothing to expand.
+              findings: verification.findings.slice(0, 12).map(f => ({
+                id: f.id, severity: f.severity, class: f.class, message: String(f.message).slice(0, 240),
+                ...(f.evidence ? { evidence: String(f.evidence).slice(0, 200) } : {}),
+                ...(f.repairable !== undefined ? { repairable: f.repairable } : {}),
+              })),
               // Whether the story loaded at all. The counts alone cannot say
               // so, and a card reopened in another browser needs to.
               ...(verification.findings.some(f => f.id === 'render-failed') ? { renderFailed: true } : {}),
@@ -3182,51 +3195,41 @@ export function alignStorybookTypesImport(code: string, storybookFramework?: str
   });
 }
 
-/** Inject storyPrefix into the title and a unique id after it. */
-function applyTitleAndId(code: string, cleanTitle: string, storyIdSlug: string, storyPrefix: string): string {
-  let fixed = code;
+/**
+ * Inject storyPrefix into the title and a unique id after it.
+ *
+ * Everything happens INSIDE the meta object. The first version searched the
+ * whole file for `title:` and `id:` — and a kanban story whose column data
+ * began `{ id: 'todo', title: 'To do' }` matched there first: the injector
+ * decided the story already had an id, wrote none, Storybook derived one
+ * from the title, and the next update could not find the story by id.
+ */
+export function applyTitleAndId(code: string, cleanTitle: string, storyIdSlug: string, storyPrefix: string): string {
   // The title lands inside a string literal. A model refusal became the
   // title "I'd be happy to help…", the apostrophe closed the literal, and the
   // syntax error took every story out of Storybook's index.
   const safeTitle = sanitizeStoryTitle(cleanTitle);
   const titleToUse = safeTitle.startsWith(storyPrefix) ? safeTitle : storyPrefix + safeTitle;
 
-  // Pattern 1: CSF format - const meta = { title: "..." }
-  fixed = fixed.replace(
-    /(const\s+meta\s*(?::\s*\w+(?:<[^>]+>)?)?\s*=\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
-    (_m, p1, _old, p3) => p1 + titleToUse + p3
-  );
+  // Where the meta object starts: CSF `const meta = {`, `export default {`,
+  // or Svelte's `defineMeta({`. Nothing before it is touched.
+  const metaStart = code.search(/const\s+meta\s*(?::\s*\w+(?:<[^>]+>)?)?\s*=\s*\{|export\s+default\s*\{|defineMeta\s*\(\s*\{/);
+  if (metaStart < 0) return code;
+  const head = code.slice(0, metaStart);
+  let meta = code.slice(metaStart);
 
-  // Pattern 2: export default { title: "..." }
-  if (!fixed.includes(storyPrefix)) {
-    fixed = fixed.replace(
-      /(export\s+default\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
-      (_m, p1, _old, p3) => p1 + titleToUse + p3
-    );
-  }
+  meta = meta.replace(/(title:\s*["'])([^"']+)(["'])/, (_m, p1, _old, p3) => p1 + titleToUse + p3);
 
-  // Pattern 3: Svelte native format - defineMeta({ title: "..." })
-  if (!fixed.includes(storyPrefix)) {
-    fixed = fixed.replace(
-      /(defineMeta\s*\(\s*\{[\s\S]*?title:\s*["'])([^"']+)(["'])/,
-      (_m, p1, _old, p3) => p1 + titleToUse + p3
-    );
-  }
-
-  // Unique story id after the title line. Anchor on the *title line* rather
-  // than a bare includes("id:") check, which any `id:` in the user's JSX trips.
-  // Skip for Svelte defineMeta: addon-svelte-csf's indexer derives IDs from the
-  // title and ignores a custom `id`, so injecting one desyncs index vs runtime
-  // ("Couldn't find story matching id ... after importing a CSF file").
-  const isDefineMetaFormat = fixed.includes('defineMeta');
-  const hasMetaId = /title:\s*["'][^"']+["'],\s*\n\s*id:/.test(fixed);
+  // Skip the id for Svelte defineMeta: addon-svelte-csf's indexer derives IDs
+  // from the title and ignores a custom `id`, so injecting one desyncs index
+  // vs runtime ("Couldn't find story matching id ... after importing a CSF file").
+  const isDefineMetaFormat = meta.startsWith('defineMeta');
+  const hasMetaId = /^\s*id:\s*['"]/m.test(meta.slice(0, meta.indexOf('title:')))
+    || /title:\s*["'][^"']+["'],\s*\n\s*id:/.test(meta);
   if (!hasMetaId && !isDefineMetaFormat) {
-    fixed = fixed.replace(
-      /(title:\s*["'][^"']+["'])(,?\s*\n)/,
-      `$1,\n  id: '${storyIdSlug}'$2`
-    );
+    meta = meta.replace(/(title:\s*["'][^"']+["'])(,?\s*\n)/, `$1,\n  id: '${storyIdSlug}'$2`);
   }
-  return fixed;
+  return head + meta;
 }
 
 export function cleanPromptForTitle(prompt: string): string {
@@ -3250,10 +3253,10 @@ export function cleanPromptForTitle(prompt: string): string {
     cleaned = cleaned.replace(regex, '');
   }
   return cleaned
-    .replace(/[^\w\s'"?!-]/g, ' ')
+    .replace(/[^\p{L}\p{N}_\s'"?!-]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-    .replace(/\b\w/g, c => c.toUpperCase())
+    .replace(/(^|\s)(\p{L})/gu, (_m, sp, ch) => sp + ch.toUpperCase())
     .slice(0, 60);
 }
 

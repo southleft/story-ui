@@ -995,9 +995,18 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
    * recovered conversation must not be clobbered by an older stashed request.
    */
   const editRequestHandled = useRef(false);
+  /**
+   * Set by New before the sessions have loaded. The reopen below runs once,
+   * AFTER they load; a New clicked before that left the stored key in place
+   * (the clearing effect only fires for a story that was open here), so the
+   * reopen then put the previous story back and the prompt typed into a
+   * fresh composer became an edit of it.
+   */
+  const userWentHome = useRef(false);
   useEffect(() => {
     if (!sessionsLoaded || recovering || editRequestHandled.current) return;
     editRequestHandled.current = true;
+    if (userWentHome.current) return;
     const request = takeEditRequest();
     if (request) {
       const session = byStoryId(request.componentId);
@@ -1509,6 +1518,8 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
 
   /** Back to Home. Shared by New and by Delete. */
   const goHome = useCallback(() => {
+    userWentHome.current = true;
+    try { sessionStorage.removeItem(ACTIVE_KEY); } catch { /* private mode */ }
     setTurns([]);
     setActiveStory(null);
     setActiveFile(null);

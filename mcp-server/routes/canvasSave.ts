@@ -17,6 +17,7 @@ import { logger } from '../../story-generator/logger.js';
 import { getManifestManager } from '../../story-generator/manifestManager.js';
 import { importHomeResolver, type ImportHome } from '../../story-generator/knowledge/importSpecifier.js';
 import { getCanvasComponents } from './canvasGenerate.js';
+import { alignStorybookTypesImport } from './generationCore.js';
 
 interface ComponentNodeInput {
   id?: string;
@@ -299,7 +300,7 @@ export async function canvasSaveHandler(req: Request, res: Response) {
       } catch (err) {
         logger.warn(`[canvas-save] Discovery unavailable; importing from ${importPath}: ${err instanceof Error ? err.message : String(err)}`);
       }
-      code = jsxCodeToStory(jsxCode, title, importPath, resolveImport);
+      code = alignStorybookTypesImport(jsxCodeToStory(jsxCode, title, importPath, resolveImport), config.storybookFramework);
     } else if (tree?.root && Array.isArray(tree.root)) {
       // Legacy path: save from JSON component tree
       const framework = config.componentFramework || 'react';

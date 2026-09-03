@@ -490,3 +490,110 @@ function spliceAttribute(
     : element.tagName.getEnd();
   return code.slice(0, anchor) + ' ' + text + code.slice(anchor);
 }
+
+/**
+ * The default export's object literal (`meta`), unwrapped through
+ * `as`/`satisfies`, whether written inline or through `export default meta`.
+ */
+function metaObject(source: ts.SourceFile): ts.ObjectLiteralExpression | null {
+  const unwrap = (e: ts.Expression): ts.Expression => {
+    let init = e;
+    while (ts.isAsExpression(init) || ts.isSatisfiesExpression(init) || ts.isParenthesizedExpression(init)) init = init.expression;
+    return init;
+  };
+  let defaultName: string | null = null;
+  for (const stmt of source.statements) {
+    if (!ts.isExportAssignment(stmt) || stmt.isExportEquals) continue;
+    const e = unwrap(stmt.expression);
+    if (ts.isObjectLiteralExpression(e)) return e;
+    if (ts.isIdentifier(e)) defaultName = e.text;
+  }
+  if (!defaultName) return null;
+  for (const stmt of source.statements) {
+    if (!ts.isVariableStatement(stmt)) continue;
+    for (const decl of stmt.declarationList.declarations) {
+      if (ts.isIdentifier(decl.name) && decl.name.text === defaultName && decl.initializer) {
+        const init = unwrap(decl.initializer);
+        if (ts.isObjectLiteralExpression(init)) return init;
+      }
+    }
+  }
+  return null;
+}
+
+/** The initializer of `name:` on an object literal, when it is written plainly. */
+function propertyOf(obj: ts.ObjectLiteralExpression, name: string): ts.Expression | null {
+  for (const p of obj.properties) {
+    if (ts.isPropertyAssignment(p) && p.name && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) && p.name.text === name) {
+      return p.initializer;
+    }
+  }
+  return null;
+}
+
+/**
+ * The component the file's default export names: `component: TextInput`.
+ *
+ * A CSF story with no `render` is rendered by Storybook as exactly this
+ * component with the story's `args` — so the file DOES state the element
+ * the user clicked, just not as a JSX tag. Measured live on a generated
+ * Mantine story (`component: TextInput`, `args: {...}`, a `<Box>` decorator
+ * and no render): counting JSX alone made the decorator's Box the only
+ * candidate "present", and a click on the text input was resolved — and
+ * edited — as `Box #2`.
+ *
+ * Null when the default export names no component, or names it through an
+ * expression this reader does not follow. Absent must not look like a name.
+ */
+export function metaComponent(code: string): string | null {
+  const source = ts.createSourceFile('story.tsx', code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const meta = metaObject(source);
+  if (!meta) return null;
+  const init = propertyOf(meta, 'component');
+  if (!init) return null;
+  if (ts.isIdentifier(init) || ts.isPropertyAccessExpression(init)) return init.getText(source);
+  return null;
+}
+
+/**
+ * The args an args-rendered story passes to `meta.component`: `meta.args`
+ * merged with the story export's own `args`, later keys winning, exactly as
+ * Storybook merges them. Values come back as SOURCE text, like `readProps`,
+ * so the panel shows the same thing for both story shapes.
+ *
+ * Without `storyExport`, a file with several stories contributes only
+ * `meta.args` — the story shown is unknown, and showing one story's values
+ * for another would be a guess presented as a reading.
+ */
+export function readStoryArgs(code: string, storyExport?: string): Record<string, string> {
+  const source = ts.createSourceFile('story.tsx', code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const out: Record<string, string> = {};
+  const collect = (obj: ts.ObjectLiteralExpression | null) => {
+    if (!obj) return;
+    const args = propertyOf(obj, 'args');
+    if (!args || !ts.isObjectLiteralExpression(args)) return;
+    for (const p of args.properties) {
+      if (!ts.isPropertyAssignment(p) || !p.name || !(ts.isIdentifier(p.name) || ts.isStringLiteral(p.name))) continue;
+      const v = p.initializer;
+      out[p.name.text] = ts.isStringLiteral(v) || ts.isNoSubstitutionTemplateLiteral(v) ? v.text : v.getText(source);
+    }
+  };
+  collect(metaObject(source));
+
+  const stories: Array<{ name: string; obj: ts.ObjectLiteralExpression }> = [];
+  for (const stmt of source.statements) {
+    if (!ts.isVariableStatement(stmt)) continue;
+    if (!stmt.modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword)) continue;
+    for (const decl of stmt.declarationList.declarations) {
+      if (!ts.isIdentifier(decl.name) || !decl.initializer) continue;
+      let init: ts.Expression = decl.initializer;
+      while (ts.isAsExpression(init) || ts.isSatisfiesExpression(init) || ts.isParenthesizedExpression(init)) init = init.expression;
+      if (ts.isObjectLiteralExpression(init)) stories.push({ name: decl.name.text, obj: init });
+    }
+  }
+  const story = storyExport
+    ? stories.find(s => s.name === storyExport)
+    : (stories.length === 1 ? stories[0] : undefined);
+  collect(story?.obj ?? null);
+  return out;
+}

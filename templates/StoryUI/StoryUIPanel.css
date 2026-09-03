@@ -1469,6 +1469,48 @@
   flex-wrap: wrap;
 }
 
+/* Reference documents attached to the next message: one chip per file. */
+.sui-doc-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: 2px 0;
+}
+
+.sui-doc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 6px 3px 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 4px;
+  background: hsl(var(--secondary));
+  color: hsl(var(--foreground));
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.sui-doc-chip-size {
+  color: hsl(var(--muted-foreground));
+}
+
+.sui-doc-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+}
+
+.sui-doc-chip-remove:hover {
+  color: hsl(var(--foreground));
+  background: hsl(var(--muted));
+}
+
 .sui-image-preview-label {
   display: flex;
   align-items: center;

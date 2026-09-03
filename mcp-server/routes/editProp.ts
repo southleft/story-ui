@@ -21,7 +21,7 @@
 import type { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
-import { editProp, readProps, occurrencesInSource, occurrencesWithinOwner, topLevelDeclarations, STORYBOOK_RENDER_WRAPPERS } from '../../story-generator/editing/propEditor.js';
+import { editProp, readProps, readStoryArgs, metaComponent, occurrencesInSource, occurrencesWithinOwner, topLevelDeclarations, STORYBOOK_RENDER_WRAPPERS } from '../../story-generator/editing/propEditor.js';
 import { extractProps, extractPropsForPackages, type PropFact, type ComponentFacts } from '../../story-generator/knowledge/propExtractor.js';
 import { mergePropFactsFromSource, readSourceFacts } from '../../story-generator/knowledge/sourceFacts.js';
 import { EnhancedComponentDiscovery } from '../../story-generator/enhancedComponentDiscovery.js';
@@ -170,7 +170,20 @@ export function resolveComponentInSource(
    * hiddenFrom/visibleFrom for a button. Prefer any candidate that is not a
    * generic wrapper when one appears in the file.
    */
-  const present = ordered.filter(name => name && occurrencesInSource(source, name) > 0);
+  /**
+   * "Appears in the file" includes the component the default export NAMES.
+   * A CSF story with no `render` is rendered as `meta.component` with its
+   * `args`, so the element the user clicked is stated by the file without
+   * any JSX tag. Measured live on a generated Mantine story (`component:
+   * TextInput`, args, a `<Box>` decorator, no render): the fiber chain
+   * [Box, Input, InputWrapper, InputBase, TextInput, …] found only the
+   * decorator's Box among JSX elements, and the click on the text input was
+   * resolved — and edited — as `Box #2`. The identical chain on a sibling
+   * story that writes `<TextInput>` in a render resolved correctly, which is
+   * what isolates the cause to the story shape rather than the ordering.
+   */
+  const named = metaComponent(source);
+  const present = ordered.filter(name => name && (occurrencesInSource(source, name) > 0 || name === named));
   const local = topLevelDeclarations(source);
   return present.find(name => !GENERIC_WRAPPERS.has(name) && !local.has(name))
     ?? present.find(name => !GENERIC_WRAPPERS.has(name))
@@ -375,8 +388,15 @@ export async function editablePropsHandler(req: Request, res: Response): Promise
      * what is displayed and what will be changed cannot disagree.
      */
     const occurrenceRaw = String(req.query.occurrence || '').trim();
+    // An args-rendered story (`component: X`, no render) states X's current
+    // values in `args`, not on a JSX element — see resolveComponentInSource.
+    const argsRendered = !!storySource
+      && occurrencesInSource(storySource, resolved) === 0
+      && metaComponent(storySource) === resolved;
     const currentValues = storySource
-      ? readProps(storySource, resolved, occurrenceRaw === '' ? 0 : Number(occurrenceRaw) || 0)
+      ? (argsRendered
+          ? readStoryArgs(storySource)
+          : readProps(storySource, resolved, occurrenceRaw === '' ? 0 : Number(occurrenceRaw) || 0))
       : null;
 
     const { facts, props: propFacts, sources } = await resolveComponentKnowledge(config, resolved);
@@ -526,6 +546,22 @@ export async function editPropHandler(req: Request, res: Response): Promise<void
      * alike: ambiguity is answered with a 409 carrying the count.
      */
     const total = occurrencesInSource(before, resolved);
+    /**
+     * Resolved to the component the default export names, which the file
+     * renders through `args` rather than a JSX tag. The editor rewrites JSX
+     * attributes, so there is nothing for it to edit here — and before the
+     * resolution above learned to see `meta.component`, this click went to
+     * the decorator's `<Box>` instead and reported success. A refusal that
+     * says why beats an edit to the wrong element.
+     */
+    if (total === 0 && metaComponent(before) === resolved) {
+      res.status(409).json({
+        error: `<${resolved}> is rendered from this story's meta.component with args, not written as a JSX element, and direct editing of args is not supported yet — describe the change in the chat instead.`,
+        code: 'ARGS_RENDERED',
+        occurrencesInSource: 0,
+      });
+      return;
+    }
     const hasOccurrence = occurrence !== undefined && occurrence !== null && occurrence !== '';
     const requested = hasOccurrence ? Number(occurrence) : undefined;
     if (requested !== undefined && !Number.isInteger(requested)) {

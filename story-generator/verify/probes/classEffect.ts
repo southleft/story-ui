@@ -178,8 +178,19 @@ export async function runClassEffectProbe(
     const candidates = new Map<string, { count: number; sample: string; owner?: string }>();
     const undefinedPerFamily = new Map<string, number>();
     for (const el of Array.from(root.querySelectorAll('[class]')) as HTMLElement[]) {
-      for (const c of Array.from(el.classList)) {
+      // Mantine 7+ puts a semantic `mantine-Button-root` beside the hashed
+      // `m_77c9d27d` its rules actually target; reporting the semantic name
+      // produced eight to ten "not defined" warnings per story that meant
+      // nothing. An undefined class whose element is already styled by a
+      // class from ANOTHER family is that shape — a marker, not a miss. A
+      // typo beside a styled class of the SAME family (`card-borderd` next to
+      // `card`, `cds--btn-bordered` next to `cds--btn`) is still reported:
+      // that is a modifier that should have matched and did not.
+      const classes = Array.from(el.classList);
+      const styledFamilies = new Set(classes.filter(c => defined.has(c)).map(familyOf));
+      for (const c of classes) {
         if (defined.has(c) || looksGenerated(c) || c.length < 3) continue;
+        if (styledFamilies.size > 0 && !styledFamilies.has(familyOf(c))) continue;
         const prior = candidates.get(c);
         if (prior) { prior.count++; continue; }
         candidates.set(c, { count: 1, sample: el.tagName.toLowerCase(), owner: ownerOf(el) || undefined });

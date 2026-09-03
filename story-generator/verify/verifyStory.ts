@@ -27,6 +27,8 @@ import type { Finding, VerifyReport, VerifyCoverage } from './findings.js';
 import { blockers, summarize, coverageRatio, missingLayers } from './findings.js';
 
 export interface VerifyStoryOptions {
+  /** The story's file name, so an index match by title is confined to this file. */
+  fileName?: string;
   /** Base Storybook URL, e.g. http://localhost:6101 */
   storybookUrl?: string;
   /** Story id prefix derived from the generated title, e.g. "generated-menu-bar". */
@@ -281,14 +283,25 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
   // Storybook 10.5.10 indexes a new file reliably but not instantly: with a
   // 10s wait, two of three stories were declared "index behind" and never
   // verified, then appeared a moment later. 30s, bounded by the budget.
-  const indexed = await waitForStoryIndexed(storybookUrl, storyIdPrefix, Math.min(30000, timeoutMs), 250, title);
+  // 60s, not 30: with several Storybooks rebuilding their indexes on one
+  // machine, a story the harness later found within a minute was reported
+  // "not in the index" at thirty seconds. A live watcher (polling) still
+  // answers in about a second; the cap only matters when it is busy.
+  const indexed = await waitForStoryIndexed(storybookUrl, storyIdPrefix, Math.min(60000, timeoutMs), 250, title, options.fileName);
   if (!indexed.indexed || !indexed.storyId) {
     // Down, stale watcher, or not picked up yet? Reachability and the counts
     // answer it, and the three need different responses from whoever reads
     // this. The counts are only worth asking for when the index answered.
-    const staleness = indexed.reachable && generatedDir
+    let staleness = indexed.reachable && generatedDir
       ? await indexIsStale(storybookUrl, generatedDir)
       : { stale: false, onDisk: 0, indexed: 0 };
+    if (staleness.stale && generatedDir) {
+      // Two stories written seconds apart put the count two behind for a
+      // moment and a live watcher was reported dead. Stale means it STAYS
+      // behind: ask again after the indexer has had time to catch up.
+      await new Promise(r => setTimeout(r, 4000));
+      staleness = await indexIsStale(storybookUrl, generatedDir);
+    }
     const miss = classifyIndexMiss(storybookUrl, indexed, staleness, storyIdPrefix);
     return notVerified(miss.reason, started, [miss.finding]);
   }
@@ -375,19 +388,22 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
      * rendered fine, so nothing else noticed; the bench saw them as console
      * errors on every page that showed the story's thumbnail.
      */
-    const reactWarning = /does not recognize the [`'"]?(\w+)[`'"]? prop|containing a "key" prop is being spread|Each child in a list should have a unique "key"|Invalid DOM property|Received `?(true|false)`? for a non-boolean attribute/;
+    const reactWarning = /does not recognize the [`'"]?(\w+)[`'"]? prop|Unknown event handler property [`'"]?(\w+)[`'"]?|containing a "key" prop is being spread|Each child in a list should have a unique "key"|Invalid DOM property|Received `?(true|false)`? for a non-boolean attribute|cannot be a descendant of|cannot appear as a child of|cannot contain a nested/;
     const seenWarnings = new Set<string>();
     for (const line of render.consoleErrors) {
       const m = reactWarning.exec(line);
       if (!m) continue;
-      const key = (m[1] || m[0]).toLowerCase();
-      if (seenWarnings.has(key) || seenWarnings.size >= 3) continue;
+      const prop = m[1] || m[2];
+      const key = (prop || m[0]).toLowerCase();
+      if (seenWarnings.has(key) || seenWarnings.size >= 6) continue;
       seenWarnings.add(key);
       findings.push({
         id: `react-warning-${key.replace(/\W+/g, '-')}`, severity: 'warning', class: 'code',
-        message: m[1]
-          ? `React does not recognize the \`${m[1]}\` prop — it is reaching a DOM element, so the component ignores it`
-          : 'React reported a rendering warning for this story',
+        message: prop
+          ? `React does not recognize the \`${prop}\` prop — it is reaching a DOM element, so the component ignores it (the prop does not exist on that component)`
+          : /cannot be a descendant|cannot appear as a child|cannot contain a nested/.test(line)
+            ? `Invalid HTML nesting: ${line.replace(/\s+/g, ' ').replace(/^.*?(<\w+>[^.]*)/, '$1').slice(0, 140)}`
+            : 'React reported a rendering warning for this story',
         evidence: line.replace(/%s/g, m[1] || '').replace(/\s+/g, ' ').slice(0, 300),
         repairable: true,
       });
@@ -514,13 +530,25 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
 
     const layout = await runLayoutProbe(render.page, { libraryComponents });
     coverage.layout = { ran: true };
+    /**
+     * Blockers: a row that does not fill its grid, a row that ends a column
+     * short, a pill stretched by its stack, a toolbar spread across the page.
+     * Each is the most visible defect a design system owner sees, each is
+     * arithmetic the probe measured, and each is repairable from the
+     * composition — a span, a wrapper, a container. Ragged left edges stay a
+     * warning: a few pixels is real but not worth a regeneration.
+     *
+     * A layout finding the probe attributes to the LIBRARY (the placement was
+     * made inside a design system component, not by the story) is reported
+     * at warning and never repaired, for the same reason as everywhere else:
+     * the only fix a model can make to the library's own markup is to stop
+     * using the component.
+     */
+    const BLOCKING_LAYOUT_KINDS = new Set(['grid_underfilled', 'grid_ragged', 'stretched_control', 'gap_outlier']);
     for (const p of layout.problems) {
       findings.push({
         id: `${p.kind}-${findings.length}`,
-        // Blocker: a composition that does not fill its grid is the most
-        // visible defect a design system owner sees, and it is repairable by
-        // changing numbers the story already wrote.
-        severity: p.kind === 'grid_underfilled' ? 'blocker' : 'warning',
+        severity: BLOCKING_LAYOUT_KINDS.has(p.kind) && !p.ownedByLibrary ? 'blocker' : 'warning',
         class: 'code',
         message: p.ownedByLibrary && p.owner
           ? `${p.message} — in <${p.owner}>, a design system component`

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import inquirer from 'inquirer';
 import { createRequire } from 'module';
 import { ensureWatcherPolling } from '../story-generator/verify/storybookWatcher.js';
+import { mergeEnv } from './envFile.js';
 import { ensureManagerAddonWiring, ensureStoriesGlobCoversMdx, missingReactStorybookDep, ensureManagerHeadPort, readConfiguredPort, ensureScriptPort, viteFinalConfigSnippet, insertConfigProperty, missingViteCjsIncludes } from './setup.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -77,6 +78,11 @@ const MANAGED_FILES = [
     source: 'templates/StoryUI/VerificationBadge.tsx',
     target: 'src/stories/StoryUI/VerificationBadge.tsx',
     description: 'Verification result badge'
+  },
+  {
+    source: 'templates/StoryUI/fileAttachments.ts',
+    target: 'src/stories/StoryUI/fileAttachments.ts',
+    description: 'Attachment classification shared with the workspace'
   },
   {
     source: 'templates/StoryUI/HandoffDialog.tsx',
@@ -655,6 +661,24 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
       } catch (headError: any) {
         result.errors.push(`manager-head.html: ${headError.message}`);
       }
+      // The docs-page panel reads ONLY .env (VITE_STORY_UI_PORT through Vite).
+      // With the port only in the script, the panel fell back to 4001 — on one
+      // machine that was a DIFFERENT project's server, shown as "Connected",
+      // and a generation wrote into that project. When the script is the
+      // source, .env gets the line.
+      if (configured.source !== '.env VITE_STORY_UI_PORT') {
+        try {
+          const envPath = path.join(process.cwd(), '.env');
+          const existing = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : null;
+          const merged = mergeEnv(existing, [{ key: 'VITE_STORY_UI_PORT', value: String(configured.port), comment: 'Story UI server port (the panel reads this)' }]);
+          if (merged.appended.length || merged.replaced.length) {
+            fs.writeFileSync(envPath, merged.content);
+            console.log(chalk.green(`   ✅ Wrote VITE_STORY_UI_PORT=${configured.port} to .env — the panel connects to the same server as the script (restart Storybook)`));
+          }
+        } catch (envError: any) {
+          result.errors.push(`.env VITE_STORY_UI_PORT: ${envError.message}`);
+        }
+      }
       // The third place the port lives. When .env is the source, the script
       // follows it; when the script itself was the source there is nothing
       // to reconcile.
@@ -668,6 +692,26 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
       }
     } else {
       console.log(chalk.yellow('   ⚠️  No port in .env (VITE_STORY_UI_PORT) or the story-ui script — .storybook/manager-head.html was not written'));
+    }
+  }
+
+  /**
+   * Files an older Story UI installed that this one no longer ships. Left
+   * behind, they still compile as part of the host project: a stale
+   * voice/canvas/componentRegistry.ts broke Sail Shelf's own `npm run
+   * typecheck` (TS1127). Only paths Story UI itself wrote are removed.
+   */
+  if (!options.dryRun && installation.storyUIDir) {
+    for (const retired of ['voice/canvas']) {
+      const full = path.join(installation.storyUIDir, retired);
+      if (fs.existsSync(full)) {
+        try {
+          fs.rmSync(full, { recursive: true, force: true });
+          console.log(chalk.green(`   ✅ Removed ${path.relative(process.cwd(), full)} — an older Story UI wrote it and this version does not ship it`));
+        } catch (rmError: any) {
+          result.errors.push(`retired ${retired}: ${rmError.message}`);
+        }
+      }
     }
   }
 

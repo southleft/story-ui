@@ -11,6 +11,7 @@ import './StoryUIPanel.css';
 import { VoiceControls } from './voice/VoiceControls';
 import { VoiceCanvas, type VoiceCanvasHandle } from './voice/VoiceCanvas';
 import { DesignContextPanel } from './DesignContextPanel';
+import { ACCEPT, partitionFiles, processDocumentFiles, toPayload, formatBytes, type AttachedDocument } from './fileAttachments';
 import { VerificationBadge } from './VerificationBadge';
 import { HandoffDialog } from './HandoffDialog';
 import type { VoiceCommand } from './voice/types';
@@ -50,6 +51,8 @@ interface Message {
   isStreaming?: boolean;
   streamingData?: StreamingState;
   attachedImages?: AttachedImage[];
+  /** Names of the documents (Markdown, CSV, JSON, text, PDF) sent with this message. */
+  documents?: string[];
   /**
    * Persisted thumbnails for images attached to this message. attachedImages
    * holds File objects and blob: URLs, neither of which survives being written
@@ -257,11 +260,13 @@ interface PanelState {
   activeTitle: string;
   input: string;
   attachedImages: AttachedImage[];
+  /** Reference documents for the next message — the same pipeline the workspace uses. */
+  attachedDocs: AttachedDocument[];
   selectedStoryIds: Set<string>;
   availableProviders: ProviderInfo[];
   selectedProvider: string;
   selectedModel: string;
-  connectionStatus: { connected: boolean; error?: string };
+  connectionStatus: { connected: boolean; error?: string; project?: string };
   streamingState: StreamingState | null;
   error: string | null;
   considerations: string;
@@ -286,6 +291,8 @@ type PanelAction =
   | { type: 'SET_INPUT'; payload: string }
   | { type: 'SET_ATTACHED_IMAGES'; payload: AttachedImage[] }
   | { type: 'ADD_ATTACHED_IMAGE'; payload: AttachedImage }
+  | { type: 'ADD_ATTACHED_DOCS'; payload: AttachedDocument[] }
+  | { type: 'REMOVE_ATTACHED_DOC'; payload: string }
   | { type: 'REMOVE_ATTACHED_IMAGE'; payload: string }
   | { type: 'CLEAR_ATTACHED_IMAGES' }
   | { type: 'SET_SELECTED_STORY_IDS'; payload: Set<string> }
@@ -293,7 +300,7 @@ type PanelAction =
   | { type: 'SET_PROVIDERS'; payload: ProviderInfo[] }
   | { type: 'SET_SELECTED_PROVIDER'; payload: string }
   | { type: 'SET_SELECTED_MODEL'; payload: string }
-  | { type: 'SET_CONNECTION_STATUS'; payload: { connected: boolean; error?: string } }
+  | { type: 'SET_CONNECTION_STATUS'; payload: { connected: boolean; error?: string; project?: string } }
   | { type: 'SET_STREAMING_STATE'; payload: StreamingState | null }
   | { type: 'UPDATE_STREAMING_STATE'; payload: Partial<StreamingState> }
   | { type: 'SET_ERROR'; payload: string | null }
@@ -316,6 +323,7 @@ const initialState: PanelState = {
   activeTitle: '',
   input: '',
   attachedImages: [],
+  attachedDocs: [],
   selectedStoryIds: new Set(),
   availableProviders: [],
   selectedProvider: '',
@@ -374,8 +382,12 @@ function panelReducer(state: PanelState, action: PanelAction): PanelState {
         ...state,
         attachedImages: state.attachedImages.filter(img => img.id !== action.payload),
       };
+    case 'ADD_ATTACHED_DOCS':
+      return { ...state, attachedDocs: [...state.attachedDocs, ...action.payload] };
+    case 'REMOVE_ATTACHED_DOC':
+      return { ...state, attachedDocs: state.attachedDocs.filter(d => d.id !== action.payload) };
     case 'CLEAR_ATTACHED_IMAGES':
-      return { ...state, attachedImages: [] };
+      return { ...state, attachedImages: [], attachedDocs: [] };
     case 'SET_SELECTED_STORY_IDS':
       return { ...state, selectedStoryIds: action.payload };
     case 'TOGGLE_STORY_SELECTION': {
@@ -426,6 +438,14 @@ const CHAT_STORAGE_KEY = 'story-ui-chats';
 const PROVIDER_PREFS_KEY = 'story-ui-provider-prefs';
 // In-flight generation stash — survives preview-iframe reloads (sessionStorage)
 const PENDING_GEN_KEY = 'story-ui-pending-generation';
+/**
+ * The open chat, across a remount. The repair pass rewrites the story file
+ * AFTER the stream has ended and the pending stash is gone; Vite reloads the
+ * docs page for that write, and the panel came back on the welcome screen
+ * with the finished conversation one click away (seen on 3 of 10 react-
+ * mantine generations). Cleared by New, never on mount.
+ */
+const ACTIVE_CHAT_KEY = 'story-ui-active-chat';
 const MAX_IMAGES = 4;
 const MAX_IMAGE_SIZE_MB = 20;
 // Vision models downsample anything larger than ~1568px on the long edge, so
@@ -624,13 +644,13 @@ async function detectStorybookMcp(): Promise<boolean> {
  */
 function verificationFromSummary(v: any): VerificationResult | undefined {
   if (!v || typeof v !== 'object' || !v.outcome) return undefined;
-  if (Array.isArray(v.findings)) return v as VerificationResult;
   const metrics: Record<string, number | string | boolean | string[]> = {};
   for (const key of ['blockers', 'warnings', 'focusables', 'checksRun', 'checksTotal']) {
     if (typeof v[key] === 'number') metrics[key] = v[key];
   }
   if (Array.isArray(v.checksNotRun)) metrics.checksNotRun = v.checksNotRun;
-  return { outcome: v.outcome, reason: typeof v.reason === 'string' ? v.reason : undefined, findings: [], metrics };
+  const findings = Array.isArray(v.findings) ? v.findings : [];
+  return { outcome: v.outcome, reason: typeof v.reason === 'string' ? v.reason : undefined, findings, metrics };
 }
 
 function loadStorybookMcpPref(): boolean {
@@ -651,10 +671,16 @@ function saveStorybookMcpPref(enabled: boolean): void {
   }
 }
 
-async function testMCPConnection(): Promise<{ connected: boolean; error?: string }> {
+async function testMCPConnection(): Promise<{ connected: boolean; error?: string; project?: string }> {
   try {
     const response = await apiFetch(PROVIDERS_API(), { method: 'GET' });
-    if (response.ok) return { connected: true };
+    if (response.ok) {
+      // Which project answered. A server on the default port can belong to a
+      // different project; the gear menu names it so that is visible.
+      let project: string | undefined;
+      try { project = (await response.json())?.project || undefined; } catch { /* older server */ }
+      return { connected: true, project };
+    }
     return { connected: false, error: `Server returned ${response.status}` };
   } catch (e) {
     return { connected: false, error: 'Cannot connect to MCP server' };
@@ -950,6 +976,8 @@ function formatTime(timestamp: number): string {
 function getModelDisplayName(model: string): string {
   const displayNames: Record<string, string> = {
     // Claude
+    'claude-fable-5-1': 'Claude Fable 5.1',
+    'claude-opus-5': 'Claude Opus 5',
     'claude-opus-4-8': 'Claude Opus 4.8',
     'claude-sonnet-5': 'Claude Sonnet 5',
     'claude-haiku-4-5': 'Claude Haiku 4.5',
@@ -963,13 +991,21 @@ function getModelDisplayName(model: string): string {
     'gemini-3.1-flash-lite': 'Gemini 3.1 Flash-Lite',
   };
   if (displayNames[model]) return displayNames[model];
-  // Fallback: turn an unknown ID into a readable label instead of raw ID,
-  // e.g. "claude-sonnet-4-6" -> "Claude Sonnet 4 6".
-  return model
-    .split(/[-_.]/)
-    .filter(Boolean)
-    .map(part => (/^\d/.test(part) ? part : part.charAt(0).toUpperCase() + part.slice(1)))
-    .join(' ');
+  // Fallback for an id the table does not know: "claude-fable-5-1" reads as
+  // "Claude Fable 5.1", "gpt-5-6-sol" as "GPT-5.6 Sol" — consecutive number
+  // segments are one version, a date suffix is dropped, and family acronyms
+  // keep their case. The old split-and-title-case gave "Claude Fable 5 1".
+  const ACRONYMS: Record<string, string> = { gpt: 'GPT', o1: 'o1', o3: 'o3', o4: 'o4' };
+  const parts = model.split(/[-_]/).filter(Boolean).filter(p => !/^\d{8}$/.test(p));
+  const out: string[] = [];
+  for (const part of parts) {
+    const numeric = /^\d+(\.\d+)?$/.test(part);
+    const prev = out[out.length - 1];
+    if (numeric && prev !== undefined && /^\d+(\.\d+)*$/.test(prev)) out[out.length - 1] = `${prev}.${part}`;
+    else if (numeric && prev !== undefined && ACRONYMS[prev.toLowerCase()]) out[out.length - 1] = `${prev}-${part}`;
+    else out.push(ACRONYMS[part.toLowerCase()] ?? (numeric ? part : part.charAt(0).toUpperCase() + part.slice(1)));
+  }
+  return out.join(' ');
 }
 
 // ============================================
@@ -997,6 +1033,12 @@ const Icons = {
   x: (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="m6 6 12 12M18 6 6 18" />
+    </svg>
+  ),
+  file: ( /* a page with a folded corner */
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 3.5h8l4.5 4.5v12.5h-12.5z" />
+      <path d="M14 3.5v4.5h4.5" />
     </svg>
   ),
   image: ( /* geometry from Storybook PhotoIcon: frame + dot + mountain */
@@ -1587,7 +1629,14 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
             }) as any;
             const conv = entry?.conversation ?? [];
             const last = conv[conv.length - 1];
-            if (entry && last?.role === 'ai') {
+            // The reply must be NEW: the server upserts the entry when the
+            // file lands, before the reply exists, and an update's entry
+            // already ends with the previous turn's reply — matching that
+            // restored the old two-message chat as if the edit had finished.
+            // The stash holds every prior turn plus this request, so the
+            // finished conversation is strictly longer.
+            const grewPastRequest = conv.length > pending.conversation.length;
+            if (entry && last?.role === 'ai' && grewPastRequest) {
               if (cancelled) return;
               finishRecovery();
               const restored: Message[] = conv.map((m: any) => ({ role: m.role, content: m.content, thumbnails: m.thumbnails }));
@@ -1602,7 +1651,11 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                 restoredLast.verification = restoredLast.verification || verificationFromSummary(lastCompletion.verification);
               }
               dispatch({ type: 'SET_CONVERSATION', payload: restored });
-              dispatch({ type: 'SET_ACTIVE_CHAT', payload: { id: entry.fileName || entry.id, title: entry.title || pending.title || '' } });
+              // Sessions are keyed by the file stem (what /story-ui/stories
+              // returns), not the manifest id and not the fileName. The wrong
+              // key here made the next message a NEW story instead of an update,
+              // and dropped the panel to the welcome screen after a reload.
+              dispatch({ type: 'SET_ACTIVE_CHAT', payload: { id: entry.fileName ? entry.fileName.replace(/\.stories\.[a-z]+$/, '') : entry.id, title: entry.title || pending.title || '' } });
               try {
                 const sessions = await syncWithActualStories();
                 if (!cancelled) dispatch({ type: 'SET_RECENT_CHATS', payload: sessions });
@@ -2026,15 +2079,21 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   };
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
+    const selected = e.target.files;
+    if (!selected) return;
     const errors: string[] = [];
+    // Images go through the vision path; Markdown, CSV, JSON, text and PDF
+    // travel as reference documents (the "+" used to refuse them as "Not an
+    // image file", so a spec attached to a prompt was never read).
+    const { images: files, documents: docFiles, rejected } = partitionFiles(Array.from(selected));
+    for (const f of rejected) errors.push(`${f.name}: not a supported file (images, PDF, Markdown, CSV, JSON or text)`);
+    if (docFiles.length) {
+      const { documents, errors: docErrors } = await processDocumentFiles(docFiles);
+      if (documents.length) dispatch({ type: 'ADD_ATTACHED_DOCS', payload: documents });
+      errors.push(...docErrors);
+    }
     for (let i = 0; i < files.length && (state.attachedImages.length + i) < MAX_IMAGES; i++) {
       const file = files[i];
-      if (!file.type.startsWith('image/')) {
-        errors.push(`${file.name}: Not an image file`);
-        continue;
-      }
       if (file.size > MAX_IMAGE_SIZE_MB * 1024 * 1024) {
         errors.push(`${file.name}: File too large (max ${MAX_IMAGE_SIZE_MB}MB)`);
         continue;
@@ -2412,7 +2471,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
   // without round-tripping through the (possibly stale) input state.
   const handleSend = async (e?: React.FormEvent, overrideInput?: string) => {
     if (e) e.preventDefault();
-    if (!overrideInput && !state.input.trim() && state.attachedImages.length === 0) return;
+    if (!overrideInput && !state.input.trim() && state.attachedImages.length === 0 && state.attachedDocs.length === 0) return;
     // Default prompt for a bare image upload. Phrased as a composition on
     // purpose: "a component" biased the model toward extracting one card out
     // of a full-page screenshot.
@@ -2431,10 +2490,12 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     }
     const imagesToSend = [...state.attachedImages];
     const hasImages = imagesToSend.length > 0;
+    const docsToSend = [...state.attachedDocs];
     const userMessage: Message = {
       role: 'user',
       content: userInput,
       attachedImages: hasImages ? imagesToSend : undefined,
+      documents: docsToSend.length ? docsToSend.map(d => d.name) : undefined,
       // Kept separately so the reference image is still visible after the chat
       // is reloaded from storage.
       thumbnails: hasImages
@@ -2485,6 +2546,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
           images: hasImages
             ? imagesToSend.map(img => ({ type: 'base64' as const, data: img.base64, mediaType: img.mediaType }))
             : undefined,
+          files: docsToSend.length ? docsToSend.map(toPayload) : undefined,
           visionMode: hasImages ? 'screenshot_to_story' : undefined,
           provider: state.selectedProvider || undefined,
           model: state.selectedModel || undefined,
@@ -2619,6 +2681,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
               images: hasImages
                 ? imagesToSend.map(img => ({ type: 'base64' as const, data: img.base64, mediaType: img.mediaType }))
                 : undefined,
+              files: docsToSend.length ? docsToSend.map(toPayload) : undefined,
               visionMode: hasImages ? 'screenshot_to_story' : undefined,
               provider: state.selectedProvider || undefined,
               model: state.selectedModel || undefined,
@@ -2682,7 +2745,30 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     }
   };
 
+  // Remember the open chat; reopen it after a remount that nothing else
+  // (a pending generation, an edit request) is already handling.
+  useEffect(() => {
+    try {
+      if (state.activeChatId) sessionStorage.setItem(ACTIVE_CHAT_KEY, state.activeChatId);
+    } catch { /* private mode */ }
+  }, [state.activeChatId]);
+  const reopenedRef = useRef(false);
+  useEffect(() => {
+    if (reopenedRef.current || state.recentChats.length === 0 || state.activeChatId || state.loading) return;
+    reopenedRef.current = true;
+    let stored: string | null = null;
+    try {
+      if (sessionStorage.getItem(PENDING_GEN_KEY) || sessionStorage.getItem('story-ui-edit-request')) return;
+      stored = sessionStorage.getItem(ACTIVE_CHAT_KEY);
+    } catch { return; }
+    if (!stored) return;
+    const chat = state.recentChats.find(c => c.id === stored);
+    if (chat) handleSelectChat(chat);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.recentChats, state.activeChatId, state.loading]);
+
   const handleNewChat = () => {
+    try { sessionStorage.removeItem(ACTIVE_CHAT_KEY); } catch { /* private mode */ }
     dispatch({ type: 'NEW_CHAT' });
     // When on Voice Canvas, also clear the canvas state (abort generation,
     // reset code, blank the iframe, clear conversation history)
@@ -3179,7 +3265,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
               {openMenu === 'gear' && (
                 <div className="sui-menu sui-menu--right" role="menu" aria-label="Settings">
                   <div className="sui-menu-row" role="presentation">
-                    <span>Server</span>
+                    <span>Server{state.connectionStatus.project ? ` · ${state.connectionStatus.project}` : ''}</span>
                     <span className="sui-menu-row-value">{connected ? getConnectionDisplayText() : (state.connectionStatus.error || 'Not connected')}</span>
                   </div>
                   {/* Storybook MCP toggle — only when the addon is detected */}
@@ -3565,7 +3651,17 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
             attach, voice, model chip, and the round send at the right. */}
         <div className="sui-composer-area">
           <form onSubmit={handleSend} className="sui-composer">
-            <input ref={fileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={handleFileSelect} />
+            <input ref={fileInputRef} type="file" accept={ACCEPT} multiple style={{ display: 'none' }} onChange={handleFileSelect} />
+            {state.attachedDocs.length > 0 && (
+              <div className="sui-doc-chips" aria-label="Attached documents">
+                {state.attachedDocs.map(d => (
+                  <span key={d.id} className="sui-doc-chip">
+                    {Icons.file} {d.name} <span className="sui-doc-chip-size">{formatBytes(d.size)}</span>
+                    <button type="button" className="sui-doc-chip-remove" onClick={() => dispatch({ type: 'REMOVE_ATTACHED_DOC', payload: d.id })} aria-label={`Remove ${d.name}`}>{Icons.x}</button>
+                  </span>
+                ))}
+              </div>
+            )}
             {state.attachedImages.length > 0 && (
               <div className="sui-image-previews">
                 <span className="sui-image-preview-label">{Icons.image} {state.attachedImages.length} image{state.attachedImages.length > 1 ? 's' : ''}</span>
@@ -3587,7 +3683,7 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                 // Submit on Enter, newline on Shift+Enter
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
-                  if (!state.loading && (state.input.trim() || state.attachedImages.length > 0)) {
+                  if (!state.loading && (state.input.trim() || state.attachedImages.length > 0 || state.attachedDocs.length > 0)) {
                     handleSend(e as unknown as React.FormEvent);
                   }
                 }

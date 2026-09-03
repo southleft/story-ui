@@ -121,8 +121,9 @@ describe('updateCommand', () => {
     await updateCommand({ force: true, backup: false });
 
     for (const spec of siblings) {
-      const onDisk = path.join(root, 'src', 'stories', 'StoryUI', `${spec}.tsx`);
-      expect(fs.existsSync(onDisk), `update did not deliver ${spec}.tsx, which StoryUIPanel.tsx imports`).toBe(true);
+      // A sibling is a .tsx component or a .ts module (fileAttachments).
+      const delivered = ['.tsx', '.ts'].some(ext => fs.existsSync(path.join(root, 'src', 'stories', 'StoryUI', `${spec}${ext}`)));
+      expect(delivered, `update did not deliver ${spec}.ts(x), which StoryUIPanel.tsx imports`).toBe(true);
     }
   });
 });

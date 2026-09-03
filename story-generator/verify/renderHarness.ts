@@ -123,7 +123,23 @@ export async function renderStory(options: RenderOptions): Promise<RenderResult>
       } catch { /* a closed page */ }
     });
     page.on('console', (msg: any) => {
-      if (msg.type() === 'error') consoleErrors.push(msg.text());
+      if (msg.type() !== 'error') return;
+      // React logs with format strings: the text is "does not recognize the
+      // `%s` prop" and the prop name is an ARGUMENT. Recorded verbatim, no
+      // pattern could name the prop — nine invented props on one story went
+      // unflagged. Substitute the arguments the way the console would.
+      let text: string = msg.text();
+      try {
+        const args: any[] = msg.args?.() ?? [];
+        const values: string[] = [];
+        for (const a of args.slice(1)) {
+          const v = typeof a?.toString === 'function' ? String(a.toString()) : '';
+          values.push(v.replace(/^JSHandle@/, ''));
+        }
+        let i = 0;
+        text = text.replace(/%[sdifoOc]/g, () => (i < values.length ? values[i++] : ''));
+      } catch { /* keep the raw text */ }
+      consoleErrors.push(text);
     });
 
     const url = `${storybookUrl.replace(/\/+$/, '')}/iframe.html?id=${encodeURIComponent(storyId)}&viewMode=story`;
@@ -247,9 +263,22 @@ export async function renderStory(options: RenderOptions): Promise<RenderResult>
       }
     };
 
+    // A root that is empty with nothing preparing and nothing errored, on a
+    // story that entered the index moments ago, is the index running ahead of
+    // Storybook's story module: the same story mounts on the next load.
+    // Observed three times on react-mantine — a correct file reported
+    // "rendered nothing" and rewritten by a repair. One reload, then the
+    // verdict stands.
+    let emptyRetried = false;
     for (let reloads = 0; ; reloads++) {
       try {
         await mountAndSettle();
+        if (mount.state === 'empty' && !emptyRetried) {
+          emptyRetried = true;
+          logger.log(`🔁 ${storyId} mounted nothing on first load; reloading once before calling it a render failure`);
+          try { await page.reload({ waitUntil: 'domcontentloaded', timeout: timeoutMs }); } catch { /* the loop re-waits */ }
+          continue;
+        }
         break;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -374,20 +403,14 @@ export async function waitForStoryIndexed(
   storyIdPrefix: string,
   timeoutMs = 10000,
   intervalMs = 250,
-  /**
-   * The story's title, which is authoritative when the id is not.
-   *
-   * Generated stories only sometimes declare an explicit `id:` in their meta.
-   * When they don't, Storybook derives the id from the title instead, so a file
-   * written as `notification-settings-panel-addff419.stories.tsx` indexes as
-   * `generated-notification-settings-panel`. Matching the filename slug alone
-   * then never resolves, and verification reported `not_verified` for stories
-   * that had rendered perfectly well.
-   *
-   * This mirrors waitForStory in templates/StoryUIV2/useGeneration.ts, where the
-   * same mismatch left the canvas empty. Both resolvers have to agree.
-   */
   title?: string,
+  /**
+   * The story's file name. When given, a title match must come from THIS
+   * file: on react-mantine the title fallback matched an older story with
+   * the same title, and the workspace previewed that one until the new id
+   * was indexed.
+   */
+  fileName?: string,
 ): Promise<IndexLookup> {
   const deadline = Date.now() + timeoutMs;
   const base = storybookUrl.replace(/\/+$/, '');
@@ -428,10 +451,13 @@ export async function waitForStoryIndexed(
         // Last resort: the entry's own title, which no id-derivation rule can
         // distort.
         if (title) {
+          const fromThisFile = (id: string) =>
+            !fileName || (typeof entries[id].importPath === 'string' && entries[id].importPath.endsWith(`/${fileName}`));
           const byTitle = ids.find(
             id => entries[id].type === 'story' &&
               typeof entries[id].title === 'string' &&
-              entries[id].title.replace(/^Generated\//, '').toLowerCase() === title.toLowerCase(),
+              entries[id].title.replace(/^Generated\//, '').toLowerCase() === title.toLowerCase() &&
+              fromThisFile(id),
           );
           if (byTitle) return { indexed: true, storyId: byTitle, reachable: true };
         }
