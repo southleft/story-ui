@@ -17,6 +17,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   componentFromMarkup,
+  componentTypeName,
   describeTarget,
   orderSourceCandidates,
   targetLabel,
@@ -243,6 +244,64 @@ describe('orderSourceCandidates', () => {
     expect(ordered.indexOf('Card.Footer')).toBe(ordered.indexOf('CardFooter') + 1);
   });
 
+  it('puts a local forwardRef component ahead of the internal it delegates to (Sail Shelf Input)', () => {
+    // MEASURED 2026-09-03 on a local design system (Sail Shelf, Storybook
+    // 10, story email-address-input-b9320548): `Input` is
+    // `forwardRef(function Input …)` and renders `<FormField>` (same host
+    // depth — FormField's <div> is the one Input produces). Once the chain
+    // NAMES the forwardRef entry, the owner sink puts Input first. Before
+    // componentTypeName, the entry was dropped (see the next test).
+    expect(orderSourceCandidates([
+      { name: 'FormField', owner: 'Input', hostDepth: 2 },
+      { name: 'Input', owner: 'EmailFieldDemo', hostDepth: 2 },
+      { name: 'EmailFieldDemo', owner: 'hookified', hostDepth: 4 },
+      { name: 'hookified', owner: 'unboundStoryFn', hostDepth: 5 },
+      { name: 'unboundStoryFn', owner: null, hostDepth: 6 },
+      { name: 'ErrorBoundary', owner: null, hostDepth: 6 },
+    ])).toEqual(['Input', 'FormField', 'EmailFieldDemo', 'hookified', 'unboundStoryFn', 'ErrorBoundary']);
+  });
+
+  it('cannot recover a component the chain never named — the fix is upstream, in componentTypeName', () => {
+    // The chain the OLD extractor produced for the same click: Input absent
+    // (a forwardRef object has no `name`), and FormField's owner walk hopped
+    // through the nameless fiber to the story's wrapper. The request went out
+    // as candidates=FormField,EmailFieldDemo,… and the server resolved the
+    // story-local EmailFieldDemo, which declares no props. Pinned so nobody
+    // tries to fix it by reordering: the order is right for what it was told.
+    expect(orderSourceCandidates([
+      { name: 'FormField', owner: 'EmailFieldDemo', hostDepth: 2 },
+      { name: 'EmailFieldDemo', owner: 'hookified', hostDepth: 4 },
+      { name: 'hookified', owner: 'unboundStoryFn', hostDepth: 5 },
+    ])[0]).toBe('FormField');
+  });
+
+  it('keeps TextInput within the sent window of the measured Mantine 8 TextInput chain', () => {
+    // MEASURED 2026-09-03 on react-mantine (Mantine 8, story
+    // email-address-input-a7831315, click on the <input>). Mantine's Input
+    // renders its <input> inside its own wrapper div (hostDepth 1 vs 2) and
+    // InputBase composes Input inside InputWrapper (owns two entries), so
+    // both stops fire and nothing reorders — in fiber terms this is exactly
+    // what a page composing content looks like, and the FILE settles it
+    // (see resolveComponentInSource). What the browser owes the server is
+    // that the authored name survives the 8-candidate window with its
+    // dotted compounds interleaved.
+    const ordered = orderSourceCandidates([
+      { name: 'Box', owner: 'Input', hostDepth: 1 },
+      { name: 'Input', owner: 'InputBase', hostDepth: 2 },
+      { name: 'InputWrapper', owner: 'InputBase', hostDepth: 3 },
+      { name: 'InputBase', owner: 'TextInput', hostDepth: 3 },
+      { name: 'TextInput', owner: 'hookified', hostDepth: 3 },
+      { name: 'hookified', owner: 'unboundStoryFn', hostDepth: 3 },
+      { name: 'MantineThemeProvider', owner: 'MantineProvider', hostDepth: 4 },
+      { name: 'MantineProvider', owner: 'unboundStoryFn', hostDepth: 4 },
+      { name: 'unboundStoryFn', owner: null, hostDepth: 4 },
+      { name: 'ErrorBoundary', owner: null, hostDepth: 4 },
+    ]);
+    expect(ordered.slice(0, 8)).toEqual(
+      ['Box', 'Input', 'InputWrapper', 'Input.Wrapper', 'InputBase', 'Input.Base', 'TextInput', 'hookified'],
+    );
+  });
+
   it('terminates on an ownership cycle', () => {
     expect(() => orderSourceCandidates([
       { name: 'A', owner: 'B' },
@@ -253,6 +312,49 @@ describe('orderSourceCandidates', () => {
   it('handles empty and single-entry chains', () => {
     expect(orderSourceCandidates([])).toEqual([]);
     expect(orderSourceCandidates([{ name: 'Button', owner: 'PricingPage' }])).toEqual(['Button']);
+  });
+});
+
+describe('componentTypeName', () => {
+  /**
+   * Fiber `type` shapes as React builds them — a forwardRef is an OBJECT
+   * `{ $$typeof, render }`, a memo is `{ $$typeof, type }` — measured live
+   * on Sail Shelf (`type.render.name === 'Input'`, no displayName) and on
+   * Mantine (`type.displayName === '@mantine/core/Box'`).
+   */
+  const FORWARD_REF = Symbol.for('react.forward_ref');
+  const MEMO = Symbol.for('react.memo');
+
+  it('names a forwardRef by the function inside it', () => {
+    const t = { $$typeof: FORWARD_REF, render: function Input() { return null; } };
+    expect(componentTypeName(t)).toBe('Input');
+  });
+
+  it('prefers a displayName the library set, cleaned to its last path segment', () => {
+    const t = { $$typeof: FORWARD_REF, displayName: '@mantine/core/Box', render: function Box() { return null; } };
+    expect(componentTypeName(t)).toBe('Box');
+    expect(componentTypeName(Object.assign(function Title() {}, { displayName: '@mantine/core/Title' }))).toBe('Title');
+  });
+
+  it('unwraps memo(forwardRef(fn))', () => {
+    const t = { $$typeof: MEMO, type: { $$typeof: FORWARD_REF, render: function Card() { return null; } } };
+    expect(componentTypeName(t)).toBe('Card');
+  });
+
+  it('names a plain function component', () => {
+    expect(componentTypeName(function FormField() { return null; })).toBe('FormField');
+  });
+
+  it('returns null — not a wrapper label — for anything nameless', () => {
+    // `forwardRef((props, ref) => …)`: the arrow is an ARGUMENT, so it has no
+    // inferred name. (Writing `render: () => null` in a literal here would
+    // name it "render" — JavaScript's own inference, not React's.)
+    const nameless = [() => null][0];
+    expect(nameless.name).toBe('');
+    expect(componentTypeName({ $$typeof: FORWARD_REF, render: nameless })).toBeNull();
+    expect(componentTypeName('div')).toBeNull();
+    expect(componentTypeName(null)).toBeNull();
+    expect(componentTypeName({ $$typeof: Symbol.for('react.context') })).toBeNull();
   });
 });
 

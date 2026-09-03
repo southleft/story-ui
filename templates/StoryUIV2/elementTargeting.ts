@@ -393,6 +393,43 @@ export function isAuthoredListKey(key: unknown): boolean {
   return !s.startsWith('.') || s.startsWith('.$');
 }
 
+/**
+ * The name a fiber's `type` carries, or null when it carries none.
+ *
+ * A plain component is a function and names itself. `React.forwardRef` and
+ * `React.memo` do NOT return a function — they return a wrapper OBJECT
+ * (`{ $$typeof, render }` / `{ $$typeof, type }`) whose only name is on the
+ * function inside, unless the library set `displayName` on the wrapper.
+ * Mantine does; a local design system written as
+ * `forwardRef(function Input(...) {...})` does not.
+ *
+ * Measured live on such a system: the clicked `<Input>` was fiber tag 11
+ * with `type.render.name === 'Input'` and nothing else, so `displayName ||
+ * name` read `undefined || undefined` on the object and the chain DROPPED
+ * the one component the story had written. Worse, the owner walk hopped
+ * through the nameless Input to the story's wrapper, so its internal
+ * `FormField` reported the wrapper as its author and the server resolved a
+ * story-local component with no props. Unwrapping the object is React's own
+ * data, not a heuristic — the render function is the component.
+ *
+ * `@mantine/core/Title` -> `Title`: the last path segment is what a JSX tag
+ * looks like. Pure and exported so the rule is testable without a browser;
+ * its SOURCE is passed into the extractor below like the other shared rules.
+ */
+export function componentTypeName(t: unknown, depth = 0): string | null {
+  if (!t || typeof t === 'string' || depth > 4) return null;
+  const clean = (n: unknown): string | null => (n ? String(n).replace(/^.*\//, '') : null);
+  const o = t as { displayName?: unknown; name?: unknown; render?: unknown; type?: unknown };
+  if (typeof t === 'function') return clean(o.displayName) || clean(o.name);
+  if (typeof t === 'object') {
+    return clean(o.displayName)
+      || componentTypeName(o.render, depth + 1)   // forwardRef
+      || componentTypeName(o.type, depth + 1)     // memo
+      || null;
+  }
+  return null;
+}
+
 /** Render a target as the sentence the model actually receives. */
 /**
  * Only used by the class-name FALLBACK, where the token is not self-describing.
@@ -435,7 +472,7 @@ export function targetLabel(t: ElementTarget): string {
  * because the preview is a separate document with its own module graph — the
  * workspace's bundle does not exist in there.
  */
-export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFromMarkupSrc: string, orderCandidatesSrc: string, authoredKeySrc: string): any {
+export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFromMarkupSrc: string, orderCandidatesSrc: string, authoredKeySrc: string, typeNameSrc: string): any {
   const componentFrom = eval(`(${componentFromMarkupSrc})`);
   // The owner-sort rule, shared with the workspace bundle so the unit tests
   // and the preview document run the SAME code. See orderSourceCandidates.
@@ -443,6 +480,12 @@ export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFro
   // Authored-key vs Children-key rule, shared the same way. See
   // isAuthoredListKey.
   const authoredListKey = eval(`(${authoredKeySrc})`);
+  // The ONE way a fiber type is named, shared the same way — it unwraps
+  // forwardRef/memo objects to the function inside. Two private copies of
+  // this rule diverged once: the chain builder's copy read `displayName ||
+  // name` on the wrapper object and silently dropped every local forwardRef
+  // component. See componentTypeName.
+  const typeName: (t: any) => string | null = eval(`(${typeNameSrc})`);
 
   /**
    * The component that React says produced this node.
@@ -459,17 +502,6 @@ export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFro
       k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$'));
     if (!key) return null;
 
-    // Wrapper objects (forwardRef, memo) carry the real component inside.
-    const nameOf = (t: any): string | null => {
-      if (!t) return null;
-      if (typeof t === 'string') return null;
-      if (typeof t === 'function') return t.displayName || t.name || null;
-      if (typeof t === 'object') return t.displayName || nameOf(t.render) || nameOf(t.type) || null;
-      return null;
-    };
-    // `@mantine/core/Title` -> `Title`. Keep the last segment: that is what a
-    // JSX tag looks like.
-    const clean = (n: string | null) => (n ? n.replace(/^.*\//, '') : n);
     // Structural plumbing, not something a user points at or a source names.
     const NOISE = /^(Box|Provider|Fragment|ForwardRef|Memo|Unknown|Anonymous|Slot|_c\d*)$/;
 
@@ -478,7 +510,7 @@ export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFro
 
     const run: string[] = [];
     while (f && typeof f.type !== 'string') {
-      const n = clean(nameOf(f.type));
+      const n = typeName(f.type);
       if (n) run.push(n);
       f = f.return;
     }
@@ -491,7 +523,7 @@ export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFro
     let guard = 0;
     while (!meaningful.length && g && guard++ < 12) {
       if (typeof g.type !== 'string') {
-        const n = clean(nameOf(g.type));
+        const n = typeName(g.type);
         if (n && !NOISE.test(n)) meaningful = [n];
       }
       g = g.return;
@@ -502,7 +534,7 @@ export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFro
     let guard2 = 0;
     while (h && ancestors.length < 3 && guard2++ < 40) {
       if (typeof h.type !== 'string') {
-        const n = clean(nameOf(h.type));
+        const n = typeName(h.type);
         if (n && !NOISE.test(n) && n !== meaningful[meaningful.length - 1] && ancestors.indexOf(n) === -1) {
           ancestors.push(n);
         }
@@ -596,11 +628,10 @@ export const EXTRACTOR_SOURCE = `(${function extractTarget(el: any, componentFro
    */
   const ANON = /^(Fragment|ForwardRef|Memo|Anonymous|Slot|Provider|_c\d*)$/;
 
-  const fiberTypeName = (t: any): string | null => {
-    if (!t || typeof t === 'string') return null;
-    const n = t.displayName || t.name || null;
-    return n ? String(n).replace(/^.*\//, '') : null;
-  };
+  // forwardRef/memo wrappers are objects whose name lives on the function
+  // inside — see componentTypeName. Reading `displayName || name` on the
+  // wrapper dropped a local design system's `<Input>` from the chain.
+  const fiberTypeName = typeName;
 
   /**
    * The nearest NAMED component that authored this fiber's element.
@@ -870,6 +901,7 @@ export function describeElement(doc: Document, el: Element): ElementTarget {
     componentFromMarkup.toString(),
     orderSourceCandidates.toString(),
     isAuthoredListKey.toString(),
+    componentTypeName.toString(),
   );
 }
 
