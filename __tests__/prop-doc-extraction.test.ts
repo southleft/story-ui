@@ -438,3 +438,32 @@ export interface FancyButtonProps {
     expect(prop('variant')?.optionsOpen).toBeUndefined();
   });
 });
+
+describe('open unions stay open', () => {
+  it('marks a prop whose union admits any string as open, even inside OverridableStringUnion', async () => {
+    const root = make('@acme/open', {
+      'typography.d.ts': `
+import { OverridableStringUnion } from '@mui/types';
+export interface TypographyOwnProps {
+  /** The colour. */
+  color?: OverridableStringUnion<'primary' | 'secondary' | 'error' | (string & {}), TypographyPropsColorOverrides>;
+  /** The variant. */
+  variant?: 'body1' | 'body2' | 'h1';
+  /** Alignment. */
+  align?: 'left' | 'center' | string;
+}
+export interface TypographyPropsColorOverrides {}
+export interface TypographyProps extends TypographyOwnProps {}
+export declare const Typography: (props: TypographyProps) => JSX.Element;
+`,
+    });
+    const out: any = await extractProps('@acme/open', root, { force: true });
+    const props = (out.components?.Typography ?? out.Typography)?.props ?? [];
+    const by = (n: string) => props.find(p => p.name === n)!;
+    expect(by('color').options).toEqual(expect.arrayContaining(['primary', 'secondary', 'error']));
+    expect(by('color').optionsOpen).toBe(true);
+    expect(by('align').optionsOpen).toBe(true);
+    expect(by('variant').options).toEqual(['body1', 'body2', 'h1']);
+    expect(by('variant').optionsOpen).toBeFalsy();
+  });
+});

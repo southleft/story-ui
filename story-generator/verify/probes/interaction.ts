@@ -190,12 +190,33 @@ export async function runInteractionProbe(
         const NOISE = /^(Fragment|ForwardRef|Memo|Unknown|Anonymous|Slot|Provider|_c\d*)$/;
         let f: any = node[key];
         let guard = 0;
-        while (f && guard++ < 40) {
+        while (f && guard++ < 200) {
           if (typeof f.type !== 'string' && f.type) {
             const n = (nm(f.type) || '').replace(/^.*\//, '');
             if (n && !NOISE.test(n)) return n;
           }
           f = f.return;
+        }
+        // Nothing named on this element's own fiber path (a star inside a
+        // Rating, a ripple span): the nearest ancestor that IS attributable
+        // decides. An unknown owner blocks, and both Mantine's and MUI's
+        // Rating markup blocked correct stories for want of a name.
+        let up: any = (node as Element).parentElement;
+        let hops = 0;
+        while (up && hops++ < 12) {
+          const k = Object.keys(up).find((x: string) => x.startsWith('__reactFiber$') || x.startsWith('__reactInternalInstance$'));
+          if (k) {
+            let g: any = up[k];
+            let inner = 0;
+            while (g && inner++ < 200) {
+              if (typeof g.type !== 'string' && g.type) {
+                const n = (nm(g.type) || '').replace(/^.*\//, '');
+                if (n && !NOISE.test(n)) return n;
+              }
+              g = g.return;
+            }
+          }
+          up = up.parentElement;
         }
         return null;
       };

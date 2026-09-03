@@ -31,6 +31,8 @@ export interface A11yViolation {
   nodeCount: number;
   /** First offending element, as a selector. */
   selector?: string;
+  /** The component that wrote the first offending element (React fiber owner), when known. */
+  owner?: string | null;
   /** axe's own failure summary for the first node. */
   detail?: string;
 }
@@ -215,6 +217,47 @@ export async function runA11yProbe(page: any, tooling: HostTooling): Promise<A11
           region: { enabled: false },
         },
       });
+      // Who wrote the offending element: the same fiber-owner rule the other
+      // probes use, with the nearest attributable ancestor as fallback. A
+      // Mantine Rating star (`svg.m_5662a89a`, a hashed class no selector
+      // pattern can recognise) blocked a correct story for 1.30:1 contrast on
+      // the library's own empty-star glyph.
+      const ownerOf = (node: any): string | null => {
+        const nm = (t: any): string | null => {
+          if (!t) return null;
+          if (typeof t === 'string') return null;
+          if (typeof t === 'function') return t.displayName || t.name || null;
+          if (typeof t === 'object') return t.displayName || nm(t.render) || nm(t.type) || null;
+          return null;
+        };
+        const NOISE = /^(Fragment|ForwardRef|Memo|Unknown|Anonymous|Slot|Provider|_c\d*)$/;
+        const walk = (el: any): string | null => {
+          const key = Object.keys(el).find((k: string) => k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$'));
+          if (!key) return null;
+          let f: any = el[key];
+          let guard = 0;
+          while (f && guard++ < 200) {
+            if (typeof f.type !== 'string' && f.type) {
+              const n = (nm(f.type) || '').replace(/^.*\//, '');
+              if (n && !NOISE.test(n)) return n;
+            }
+            f = f.return;
+          }
+          return null;
+        };
+        let el: any = node;
+        let hops = 0;
+        while (el && hops++ < 12) {
+          const n = walk(el);
+          if (n) return n;
+          el = el.parentElement;
+        }
+        return null;
+      };
+      const ownerFor = (selector: string | undefined): string | null => {
+        if (!selector) return null;
+        try { const el = document.querySelector(selector); return el ? ownerOf(el) : null; } catch { return null; }
+      };
       return {
         violations: (results.violations || []).map((v: any) => ({
           id: v.id,
@@ -223,6 +266,7 @@ export async function runA11yProbe(page: any, tooling: HostTooling): Promise<A11
           nodeCount: (v.nodes || []).length,
           selector: v.nodes?.[0]?.target?.[0],
           detail: v.nodes?.[0]?.failureSummary,
+          owner: ownerFor(v.nodes?.[0]?.target?.[0]),
         })),
         passCount: (results.passes || []).length,
       };

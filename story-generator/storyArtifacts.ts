@@ -107,6 +107,20 @@ export function rewriteStylesheetImport(code: string, target: string): string {
  * The model cannot know the hashed filename, so it is told to import
  * `./styles.module.css`; that import is rewritten here to the real sibling.
  */
+/**
+ * Write through a temporary name and rename into place. Storybook's indexer
+ * reacts to the CREATE event and can read the file before its bytes are all
+ * there; a story it parsed half-written stays out of the index until that
+ * file changes again — two stories in the confirmation run were served by
+ * Vite yet absent from the index fifteen minutes later. A rename is atomic:
+ * the watcher sees a complete file or nothing.
+ */
+function writeAtomically(target: string, content: string): void {
+  const tmp = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.tmp`);
+  fs.writeFileSync(tmp, content, 'utf-8');
+  fs.renameSync(tmp, target);
+}
+
 export function writeStoryArtifacts(args: {
   dir: string;
   fileName: string;
@@ -136,7 +150,7 @@ export function writeStoryArtifacts(args: {
       ? css.trim()
       : `${GENERATED_CSS_MARKER}\n${css.trim()}\n`;
     fs.writeFileSync(cssPath, body, 'utf-8');
-    fs.writeFileSync(storyPath, code, 'utf-8');
+    writeAtomically(storyPath, code);
     logger.log(`🎨 Wrote stylesheet ${cssName}`);
     return { storyPath, stylesheetPath: cssPath, code };
   }
@@ -148,7 +162,7 @@ export function writeStoryArtifacts(args: {
     try { fs.unlinkSync(staleCss); } catch { /* best effort */ }
   }
 
-  fs.writeFileSync(storyPath, code, 'utf-8');
+  writeAtomically(storyPath, code);
   return { storyPath, code };
 }
 

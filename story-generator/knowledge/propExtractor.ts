@@ -118,6 +118,20 @@ export interface ExtractedProps {
 /** Long unions and generics hurt more than they help inside a prompt. */
 const MAX_TYPE_TEXT = 80;
 
+/**
+ * Does this type admit any string? `(string & {})` — the widen-proof idiom —
+ * or a bare `string` arm makes the literal options a hint, not a closed set.
+ * MUI's Typography `color` is `OverridableStringUnion<'primary' | … |
+ * (string & {}), Overrides>`; judging `color="text.secondary"` against the
+ * literals rejected correct code on every MUI prompt.
+ */
+export function typeAdmitsAnyString(node: ts.TypeNode | undefined): boolean {
+  if (!node) return false;
+  let text = '';
+  try { text = node.getText(); } catch { text = ''; }
+  return /\bstring\s*&\s*\{\s*\}|(^|[|<(,\s])string\s*($|[|>),\s])/.test(text);
+}
+
 export function shortType(node: ts.TypeNode | undefined, source: ts.SourceFile): string | undefined {
   if (!node) return undefined;
   const text = node.getText(source).replace(/\s+/g, ' ').trim();
@@ -398,6 +412,7 @@ function collectFromFile(
       if (!/^[a-zA-Z_$][\w$]*$/.test(name)) continue;
       if (name.startsWith('_')) continue;
       const opts = literalOptions(member.type);
+      const open = typeAdmitsAnyString(member.type);
       found.push({
         name,
         type: shortType(member.type, source),
@@ -405,7 +420,7 @@ function collectFromFile(
         ...readDoc(member, source),
         // Deduped and capped: a handful of variants is a control, forty is a
         // list nobody scrolls.
-        ...(opts.length > 1 && opts.length <= 24 ? { options: [...new Set(opts)] } : {}),
+        ...(opts.length > 1 && opts.length <= 24 ? { options: [...new Set(opts)], ...(open ? { optionsOpen: true } : {}) } : {}),
       });
     }
     return found;
@@ -644,7 +659,7 @@ function collectFromFile(
           type: shortType(member.type, source),
           required: !member.questionToken,
           ...readDoc(member, source),
-          ...(opts.length > 1 && opts.length <= 24 ? { options: [...new Set(opts)] } : {}),
+          ...(opts.length > 1 && opts.length <= 24 ? { options: [...new Set(opts)], ...(typeAdmitsAnyString(member.type) ? { optionsOpen: true } : {}) } : {}),
         });
       }
 
@@ -1318,7 +1333,7 @@ function collectPropTypes(source: ts.SourceFile, out: Record<string, ComponentFa
  *    exported component rather than a `<Name>Props` convention; a path given
  *    as the package no longer reads node_modules.
  */
-const EXTRACTOR_SCHEMA = 6 // 6: OverridableStringUnion literals; caches written before it hid MUI's variant/color/size;
+const EXTRACTOR_SCHEMA = 7 // 7: optionsOpen from the member's own type text; 6: OverridableStringUnion literals; caches written before it hid MUI's variant/color/size;
 
 /**
  * Keyed on version AND a content fingerprint (`knowledge/cacheKey`).
