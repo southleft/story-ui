@@ -330,6 +330,21 @@ export function voiceCanvasStorySource(config: StoryUIConfig, components: Discov
   return VOICE_CANVAS_TEMPLATE.replace('__STORY_UI_CATALOG_IMPORTS__', block);
 }
 
+/**
+ * Refresh an EXISTING voice-canvas story at server start. Never creates one
+ * (that would put a story into every sidebar uninvited); only brings a file
+ * a previous version wrote up to the current template and catalog, so an
+ * upgrade takes effect on restart rather than on the next canvas command.
+ */
+export async function refreshVoiceCanvasStory(config: StoryUIConfig): Promise<boolean> {
+  const storiesDir = config.generatedStoriesPath || './src/stories/generated/';
+  const filePath = path.resolve(process.cwd(), storiesDir, VOICE_CANVAS_STORY_FILE);
+  if (!fs.existsSync(filePath)) return false;
+  const components = await getCanvasComponents(config);
+  ensureVoiceCanvasStory(storiesDir, voiceCanvasStorySource(config, components));
+  return true;
+}
+
 // ── Code extraction ───────────────────────────────────────────
 
 /**
