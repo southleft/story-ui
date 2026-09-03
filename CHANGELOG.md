@@ -1,3 +1,10 @@
+## [5.0.5](https://github.com/southleft/story-ui/compare/v5.0.4...v5.0.5) (2026-09-03)
+
+
+### Bug Fixes
+
+* voice canvas story stays out of the Storybook sidebar; index misses name the Storybook version ([17c56ed](https://github.com/southleft/story-ui/commit/17c56edaa533e1fcd557084f0d6118397f257a6a))
+
 ## [5.0.4](https://github.com/southleft/story-ui/compare/v5.0.3...v5.0.4) (2026-09-03)
 
 
