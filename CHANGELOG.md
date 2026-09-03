@@ -1,3 +1,11 @@
+## [5.0.7](https://github.com/southleft/story-ui/compare/v5.0.6...v5.0.7) (2026-09-03)
+
+
+### Bug Fixes
+
+* **check:** prove Storybook's file watcher live; drop the 10.5.x version rule ([a39d477](https://github.com/southleft/story-ui/commit/a39d477d3c19773bb0dbee3508ed351faa428dca))
+* **cli:** init and update make Storybook's index watcher poll on macOS; check proves it live ([a46c1d5](https://github.com/southleft/story-ui/commit/a46c1d57260b0aa66c00a3f45d4f939362622ab8))
+
 ## [5.0.6](https://github.com/southleft/story-ui/compare/v5.0.5...v5.0.6) (2026-09-03)
 
 
