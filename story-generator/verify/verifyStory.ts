@@ -27,6 +27,8 @@ import type { Finding, VerifyReport, VerifyCoverage } from './findings.js';
 import { blockers, summarize, coverageRatio, missingLayers } from './findings.js';
 
 export interface VerifyStoryOptions {
+  /** The story's file name, so an index match by title is confined to this file. */
+  fileName?: string;
   /** Base Storybook URL, e.g. http://localhost:6101 */
   storybookUrl?: string;
   /** Story id prefix derived from the generated title, e.g. "generated-menu-bar". */
@@ -285,7 +287,7 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
   // machine, a story the harness later found within a minute was reported
   // "not in the index" at thirty seconds. A live watcher (polling) still
   // answers in about a second; the cap only matters when it is busy.
-  const indexed = await waitForStoryIndexed(storybookUrl, storyIdPrefix, Math.min(60000, timeoutMs), 250, title);
+  const indexed = await waitForStoryIndexed(storybookUrl, storyIdPrefix, Math.min(60000, timeoutMs), 250, title, options.fileName);
   if (!indexed.indexed || !indexed.storyId) {
     // Down, stale watcher, or not picked up yet? Reachability and the counts
     // answer it, and the three need different responses from whoever reads

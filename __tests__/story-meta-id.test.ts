@@ -55,3 +55,25 @@ describe('titles keep their letters', () => {
     expect(cleanPromptForTitle('Ünïcode Straße panel')).toContain('Straße');
   });
 });
+
+describe('index lookup by title is confined to the story file', () => {
+  it('ignores an older story with the same title in another file', async () => {
+    const { waitForStoryIndexed } = await import('../story-generator/verify/renderHarness');
+    const entries = {
+      'old-card--default': { type: 'story', title: 'Generated/Card with Button', importPath: './src/stories/generated/card-with-button-1111.stories.tsx' },
+      'card-with-button-v3-2222--default': { type: 'story', title: 'Generated/Card with Button', importPath: './src/stories/generated/card-with-button-2222.stories.tsx' },
+    };
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ entries }) })) as any;
+    try {
+      const r = await waitForStoryIndexed('http://x', 'no-such-prefix', 300, 50, 'Card with Button', 'card-with-button-2222.stories.tsx');
+      expect(r).toMatchObject({ indexed: true, storyId: 'card-with-button-v3-2222--default' });
+      const none = await waitForStoryIndexed('http://x', 'no-such-prefix', 300, 50, 'Card with Button', 'card-with-button-3333.stories.tsx');
+      expect(none.indexed).toBe(false);
+      const any = await waitForStoryIndexed('http://x', 'no-such-prefix', 300, 50, 'Card with Button');
+      expect(any).toMatchObject({ indexed: true, storyId: 'old-card--default' });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});

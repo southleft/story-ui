@@ -438,6 +438,14 @@ const CHAT_STORAGE_KEY = 'story-ui-chats';
 const PROVIDER_PREFS_KEY = 'story-ui-provider-prefs';
 // In-flight generation stash — survives preview-iframe reloads (sessionStorage)
 const PENDING_GEN_KEY = 'story-ui-pending-generation';
+/**
+ * The open chat, across a remount. The repair pass rewrites the story file
+ * AFTER the stream has ended and the pending stash is gone; Vite reloads the
+ * docs page for that write, and the panel came back on the welcome screen
+ * with the finished conversation one click away (seen on 3 of 10 react-
+ * mantine generations). Cleared by New, never on mount.
+ */
+const ACTIVE_CHAT_KEY = 'story-ui-active-chat';
 const MAX_IMAGES = 4;
 const MAX_IMAGE_SIZE_MB = 20;
 // Vision models downsample anything larger than ~1568px on the long edge, so
@@ -2731,7 +2739,30 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
     }
   };
 
+  // Remember the open chat; reopen it after a remount that nothing else
+  // (a pending generation, an edit request) is already handling.
+  useEffect(() => {
+    try {
+      if (state.activeChatId) sessionStorage.setItem(ACTIVE_CHAT_KEY, state.activeChatId);
+    } catch { /* private mode */ }
+  }, [state.activeChatId]);
+  const reopenedRef = useRef(false);
+  useEffect(() => {
+    if (reopenedRef.current || state.recentChats.length === 0 || state.activeChatId || state.loading) return;
+    reopenedRef.current = true;
+    let stored: string | null = null;
+    try {
+      if (sessionStorage.getItem(PENDING_GEN_KEY) || sessionStorage.getItem('story-ui-edit-request')) return;
+      stored = sessionStorage.getItem(ACTIVE_CHAT_KEY);
+    } catch { return; }
+    if (!stored) return;
+    const chat = state.recentChats.find(c => c.id === stored);
+    if (chat) handleSelectChat(chat);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.recentChats, state.activeChatId, state.loading]);
+
   const handleNewChat = () => {
+    try { sessionStorage.removeItem(ACTIVE_CHAT_KEY); } catch { /* private mode */ }
     dispatch({ type: 'NEW_CHAT' });
     // When on Voice Canvas, also clear the canvas state (abort generation,
     // reset code, blank the iframe, clear conversation history)
