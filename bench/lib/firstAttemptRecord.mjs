@@ -61,6 +61,18 @@ const ERROR_CLASSES = [
  * carried on the validation event so an unrecognised message still lands
  * somewhere true rather than in a catch-all that hides what it is.
  */
+/**
+ * The kind of a finding, from its id.
+ *
+ * Findings carry no separate kind field: the id is `<kind>-<index>` (
+ * `fake-field-3`, `library-unstyled-class-1`), so the trailing index is what
+ * separates two instances of one kind. Grouping by the raw id counts every
+ * occurrence as its own category and tells the reader nothing.
+ */
+function findingKind(f) {
+  return String(f?.id ?? 'unnamed').replace(/-\d+$/, '');
+}
+
 export function classifyValidationError(message, bucket = null) {
   const text = String(message ?? '');
   for (const [re, cls] of ERROR_CLASSES) if (re.test(text)) return cls;
@@ -299,12 +311,12 @@ export function buildRecord({ prompt, events, durationMs, env, transportError = 
        * a server log beside the results. The kind is what the taxonomy is
        * built from, so record it here where the analysis actually happens.
        */
-      findingsByKind: countBy(completion?.verification?.findings ?? [], f => f.kind || f.type || 'unnamed'),
+      findingsByKind: countBy(completion?.verification?.findings ?? [], findingKind),
       /** One example message per kind, capped, so a kind can be recognised. */
       findingExamples: Object.fromEntries(
         Object.entries(
           (completion?.verification?.findings ?? []).reduce((acc, f) => {
-            const k = f.kind || f.type || 'unnamed';
+            const k = findingKind(f);
             if (!acc[k]) acc[k] = String(f.message ?? '').slice(0, 160);
             return acc;
           }, {}),
