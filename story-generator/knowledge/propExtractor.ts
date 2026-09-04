@@ -26,6 +26,10 @@
  */
 
 import ts from 'typescript';
+import { readAngularDeclarations } from './angularInputs.js';
+
+/** Angular's compiler-emitted declaration types; see knowledge/angularInputs.ts. */
+const ANGULAR_DECLARATION = /ɵɵ(Component|Directive)Declaration/;
 import fs from 'fs';
 import path from 'path';
 import { contentFingerprint, knowledgeCacheFile, pruneStaleKnowledge } from './cacheKey.js';
@@ -375,7 +379,17 @@ function collectFromFile(
     // `Prop`, not `Props`: a type named `AvatarPropTypes` contains no "Props"
     // substring, so the file declaring it was skipped entirely and the
     // component that pointed at it resolved to nothing.
-    if (!text.includes('Prop') && !text.includes('Variant')) {
+    /**
+     * Angular says neither word.
+     *
+     * Its declarations are named `ɵɵComponentDeclaration` and the inputs live
+     * in that type's arguments, so a file declaring a whole component library
+     * can contain no "Prop" and no "Variant" anywhere. Measured: this filter
+     * skipped 98 of Angular Material's 102 declaration files, which is why
+     * that library reported props for 10 of 309 components after its inputs
+     * became readable — the reader was never reached.
+     */
+    if (!text.includes('Prop') && !text.includes('Variant') && !ANGULAR_DECLARATION.test(text)) {
       // A theme file often mentions neither word, yet holds exactly the
       // aliases other files' props point into (`type ThemeSize = 'xs' | …`).
       // Skipping it whole silently emptied the registry, and cross-file
@@ -747,6 +761,34 @@ function collectFromFile(
         : { name: componentName, props: [], variants: values };
     }
   });
+
+  /**
+   * Angular declares its inputs where nothing above looks.
+   *
+   * The resolution bench measured Angular Material at 0 of 309 components with
+   * known props, against 78-100% everywhere else — the catalog offered the
+   * model 309 bare names, which is the condition under which a composition
+   * invents attributes. The facts were never missing: Angular's compiler
+   * writes each input, its template name and whether it is required into the
+   * type of a static member on the class. This reads that, and takes each
+   * input's type and prose from the class member behind it.
+   *
+   * It costs one AST walk on every file and yields nothing for React, Vue,
+   * Svelte or Lit, which declare no such member.
+   */
+  for (const component of readAngularDeclarations(source)) {
+    if (!component.inputs.length) continue;
+    const props: PropFact[] = component.inputs.map(input => ({
+      name: input.output ? `(${input.name})` : input.name,
+      required: input.required,
+      ...(input.type ? { type: input.type } : {}),
+      ...(input.doc ? { doc: input.doc } : {}),
+    }));
+    const prior = out[component.name];
+    out[component.name] = prior
+      ? { ...prior, props: mergeProps(prior.props, props) }
+      : { name: component.name, props };
+  }
 }
 
 /**
