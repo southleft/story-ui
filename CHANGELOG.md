@@ -1,3 +1,10 @@
+## [5.7.3](https://github.com/southleft/story-ui/compare/v5.7.2...v5.7.3) (2026-09-04)
+
+
+### Bug Fixes
+
+* **generator:** give the model the row to copy, not a rule to apply ([07ec2e8](https://github.com/southleft/story-ui/commit/07ec2e80d2757478a52cd1e83eb43e7725bc7900))
+
 ## [5.7.2](https://github.com/southleft/story-ui/compare/v5.7.1...v5.7.2) (2026-09-04)
 
 
