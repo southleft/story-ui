@@ -1,3 +1,10 @@
+## [5.8.3](https://github.com/southleft/story-ui/compare/v5.8.2...v5.8.3) (2026-09-04)
+
+
+### Bug Fixes
+
+* **generator:** mark a library-owned class warning as library-owned ([739bbae](https://github.com/southleft/story-ui/commit/739bbaead6cd5c7351c4f2ab21942a6fc573cd63))
+
 ## [5.8.2](https://github.com/southleft/story-ui/compare/v5.8.1...v5.8.2) (2026-09-04)
 
 
