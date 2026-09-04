@@ -1,3 +1,10 @@
+# [5.7.0](https://github.com/southleft/story-ui/compare/v5.6.5...v5.7.0) (2026-09-04)
+
+
+### Features
+
+* **generator:** read what a container does to its children from the stylesheet ([d3e14fa](https://github.com/southleft/story-ui/commit/d3e14fa36f6b48c2d011705574564cd103f9e36c))
+
 ## [5.6.5](https://github.com/southleft/story-ui/compare/v5.6.4...v5.6.5) (2026-09-04)
 
 
