@@ -107,7 +107,7 @@ import { saysMoreThanName } from '../../story-generator/knowledge/descriptionQua
 const GEOMETRY_PROP = /^(sm|md|lg|xl|xxl|max|xs|span|offset|start|end|gap|columns|narrow|condensed|fullWidth|orientation)$/;
 const LAYOUT_PROSE = /\b(column|columns|grid|breakpoint|gutter|span|spacing|width|row|layout)\b/i;
 import { enrichWithSourceFacts, withLocalPropFacts } from '../../story-generator/knowledge/sourceFacts.js';
-import { readStylingFacts, formatStylingGuidance, readDesignTokens, readLayoutBehaviour, formatLayoutBehaviour } from '../../story-generator/knowledge/stylingFacts.js';
+import { readStylingFacts, formatStylingGuidance, readDesignTokens, readLayoutBehaviour, formatLayoutBehaviour, layoutComponentsFrom } from '../../story-generator/knowledge/stylingFacts.js';
 import { fixStretchedControlRows } from '../../story-generator/knowledge/stretchFix.js';
 import type { LayoutBehaviour } from '../../story-generator/knowledge/stylingFacts.js';
 import type { StylingFacts } from '../../story-generator/knowledge/stylingFacts.js';
@@ -806,12 +806,11 @@ async function runStoryGenerationPipeline(
      * from its own stylesheet. Used twice: stated in the prompt, and applied
      * as a deterministic edit after generation (knowledge/stretchFix.ts).
      */
-    layoutBehaviours = readLayoutBehaviour(stylingFacts.stylesheetFiles, (components as any[]).map((c: any) => ({
-      name: c.name,
-      propValues: (c.propTypes || []).flatMap((p: any) => p.options || []),
-      propTypes: (c.propTypes || []).map((p: any) => p.type || ''),
-      props: (c.propTypes || []).map((p: any) => ({ name: p.name, values: p.options, type: p.type })),
-    }))).behaviours;
+    const derivedLayout = readLayoutBehaviour(
+      stylingFacts.stylesheetFiles, layoutComponentsFrom(components as any[], knownProps),
+    );
+    layoutBehaviours = derivedLayout.behaviours;
+    logger.log(`📦 Container behaviour: ${layoutBehaviours.filter(b => b.stretchesChildren).map(b => b.component).join(', ') || 'none'} stretch their children — ${derivedLayout.source}`);
     logger.log(spacingVocab.hasScale
       ? `📏 Spacing vocabulary: ${spacingVocab.source}${Object.keys(spacingVocab.aliasesOf).length ? `; ${Object.keys(spacingVocab.aliasesOf).length} primitive colour(s) with a semantic alias` : ''}`
       : `📏 Spacing vocabulary: ${spacingVocab.source} — the prompt falls back to inline spacing examples and says so`);
@@ -1067,6 +1066,7 @@ async function runStoryGenerationPipeline(
       spacing: spacingVocab,
       styling: stylingFacts,
       icons: iconVocab,
+      layout: layoutBehaviours,
     }
   );
 
@@ -1880,7 +1880,7 @@ async function runStoryGenerationPipeline(
         } else if (held.skipped.length) {
           logger.log(`↔️ Stretch fix: left ${held.skipped.length} row(s) alone — ${held.skipped.map(sk => `L${sk.line} ${sk.reason}`).join('; ')}`);
         } else {
-          logger.log(`↔️ Stretch fix: ran, ${held.source}`);
+          logger.log(`↔️ Stretch fix: ${held.ran ? 'ran, ' : ''}${held.source}`);
         }
       }
     }
@@ -2977,6 +2977,16 @@ async function buildClaudePromptWithContext(
     styling?: StylingFacts | null;
     /** The derived icon/placeholder vocabulary. */
     icons?: IconVocabulary | null;
+    /**
+     * Container behaviour derived from the project's stylesheet.
+     *
+     * Passed in rather than derived here. Both this prompt section and the
+     * deterministic stretch pass need it, they each built the catalog for it
+     * separately, and they drifted: one found Carbon's Stack and the other
+     * found only Grid, so the pass had no row to place and did nothing for a
+     * whole run without saying so.
+     */
+    layout?: LayoutBehaviour[];
   }
 ): Promise<string> {
   // What the previous code already uses must stay fully described, or an
@@ -3121,22 +3131,16 @@ async function buildClaudePromptWithContext(
      * directly in a Stack comes out full width. That is a fact in a file we
      * already read, not a convention to be assumed.
      */
-    const layout = readLayoutBehaviour(styling.stylesheetFiles, (components || []).map((c: any) => ({
-      name: c.name,
-      propValues: (c.propTypes || []).flatMap((p: any) => p.options || []),
-      propTypes: (c.propTypes || []).map((p: any) => p.type || ''),
-      // With the prop that declares a variant value, the derived advice can be
-      // written back as JSX the model can copy verbatim.
-      props: (c.propTypes || []).map((p: any) => ({ name: p.name, values: p.options, type: p.type })),
-    })));
-    const layoutSection = formatLayoutBehaviour(layout);
+    const layout = options.layout
+      ? { behaviours: options.layout, source: `${options.layout.length} rule(s) derived for this project` }
+      : readLayoutBehaviour(styling.stylesheetFiles, layoutComponentsFrom((components || []) as any[]));
+    const layoutSection = formatLayoutBehaviour(layout as any);
     if (layoutSection) {
-      logger.log(`📦 Container behaviour: ${layout.behaviours.filter(b => b.stretchesChildren).length} stretching container(s) — ${layout.source}`);
       prompt = injectBeforeUserRequest(prompt, layoutSection);
     } else {
       // Zero matched and nothing read must not read alike: a hashed-class
       // design system (CSS modules) legitimately matches nothing.
-      logger.log(`📦 No container behaviour derived: ${layout.source}`);
+      logger.log(`📦 No container behaviour stated in the prompt: ${layout.source}`);
     }
   } catch (error) {
     logger.log(`⚠️ Could not read styling facts: ${error}`);

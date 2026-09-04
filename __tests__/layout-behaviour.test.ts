@@ -18,7 +18,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { readLayoutBehaviour, formatLayoutBehaviour } from '../story-generator/knowledge/stylingFacts.js';
+import { readLayoutBehaviour, formatLayoutBehaviour, layoutComponentsFrom } from '../story-generator/knowledge/stylingFacts.js';
 
 let dir: string;
 let sheet: string;
@@ -117,5 +117,32 @@ describe('readLayoutBehaviour', () => {
     // with the prop the component itself declares.
     expect(text).toContain('COPY THIS for any row of controls inside <Stack>');
     expect(text).toContain(`<Stack orientation="horizontal" style={{ justifySelf: 'start' }}>`);
+  });
+});
+
+describe('layoutComponentsFrom', () => {
+  it('takes a prop\'s declared values from the catalog OR the extracted facts', () => {
+    // The regression this exists to stop: two callers built this list
+    // separately, one from a field that was populated and one from a field
+    // that was not, so the same project derived Stack in the prompt and only
+    // Grid in the pipeline — and the deterministic pass silently had nothing
+    // to place for a whole run.
+    const fromCatalog = layoutComponentsFrom(
+      [{ name: 'Stack', propTypes: [{ name: 'orientation', type: "'horizontal' | 'vertical'" }] }],
+    );
+    expect(fromCatalog[0].props?.[0]).toMatchObject({ name: 'orientation' });
+    expect(fromCatalog[0].propTypes).toContain("'horizontal' | 'vertical'");
+
+    const fromFacts = layoutComponentsFrom(
+      [{ name: 'Stack' }],
+      { components: { Stack: { props: [{ name: 'orientation', options: ['horizontal', 'vertical'] }] } } },
+    );
+    expect(fromFacts[0].propValues).toEqual(['horizontal', 'vertical']);
+
+    // Either source alone is enough to derive the horizontal row.
+    for (const catalog of [fromCatalog, fromFacts]) {
+      const out = readLayoutBehaviour([sheet], catalog);
+      expect(out.behaviours.map(b => b.className)).toContain('cds--stack-horizontal');
+    }
   });
 });
