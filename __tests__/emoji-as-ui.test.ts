@@ -60,11 +60,21 @@ describe('no false positives on ordinary code', () => {
     expect(emojiUsedAsUi('        <Categories size={20} />')).toBeNull();
   });
 
-  it('ignores a checkmark glyph used as list decoration in text', () => {
-    // A bare ✓ is a dingbat rather than an emoji presentation, and pricing
-    // tables legitimately use it. Flagging it would be noise.
-    const flagged = emojiUsedAsUi('        <span>✓</span>');
-    // Documented either way: assert the behaviour is deliberate, not accidental.
-    expect(typeof flagged === 'string' || flagged === null).toBe(true);
+  it('catches every glyph the prompt forbids, not just the four in the emoji ranges', () => {
+    // The prompt names these twelve characters as never being an icon. Before
+    // this, the detector could see four of them: the arrows, ×, ⋯, • and ▸ sit
+    // in blocks the emoji ranges do not cover, so the rule was stated to the
+    // model and enforced for a third of what it names.
+    for (const glyph of ['⋯', '×', '✓', '↑', '↓', '→', '←', '☰', '•', '★', '▸', '✕']) {
+      expect(emojiUsedAsUi(`        <span>${glyph}</span>`)).toBe(glyph);
+    }
+  });
+
+  it('leaves the same characters alone inside prose', () => {
+    // The rule is "a LONE glyph is an icon" — a multiplication sign between two
+    // numbers, or a bullet in a sentence, is content and none of our business.
+    expect(emojiUsedAsUi('        <span>3 × 4 grid</span>')).toBeNull();
+    expect(emojiUsedAsUi("        { label: 'Sort ascending' },")).toBeNull();
+    expect(emojiUsedAsUi('        <Text>Step 1 → Step 2</Text>')).toBeNull();
   });
 });

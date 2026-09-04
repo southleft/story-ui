@@ -110,7 +110,7 @@ import { enrichWithSourceFacts, withLocalPropFacts } from '../../story-generator
 import { readStylingFacts, formatStylingGuidance, readDesignTokens } from '../../story-generator/knowledge/stylingFacts.js';
 import type { StylingFacts } from '../../story-generator/knowledge/stylingFacts.js';
 import {
-  deriveSpacingVocabulary, checkInlineSpacing, checkTokenTiers, formatSpacingErrors, formatTierErrors, repairSpacingNote,
+  deriveSpacingVocabulary, checkInlineSpacing, checkTokenTiers, checkRawColors, formatSpacingErrors, formatTierErrors, formatColorErrors, repairSpacingNote,
   type SpacingVocabulary,
 } from '../../story-generator/knowledge/spacingFacts.js';
 import {
@@ -1562,8 +1562,15 @@ async function runStoryGenerationPipeline(
       } else {
         logger.log(`🎨 Token tiers: no primitive colour used where an alias exists (${Object.keys(spacingVocab.aliasesOf).length} aliased primitives)`);
       }
+      const colorViolations = checkRawColors(aiText, spacingVocab);
+      if (colorViolations.length) {
+        logger.log(`🎨 Colour literals: ${colorViolations.length} inline hex/rgb value(s): ${colorViolations.slice(0, 6).map(v => `L${v.line} ${v.property}=${v.value}`).join(', ')}`);
+        conformanceErrors.push(...formatColorErrors(colorViolations));
+      } else {
+        logger.log('🎨 Colour literals: none inline (the project declares colour tokens)');
+      }
     } else if (spacingVocab) {
-      logger.log('🎨 Token tiers: project declares no colour aliases — skipped, not passed');
+      logger.log('🎨 Token tiers and colour literals: project declares no colour tokens — skipped, not passed');
     }
     // Names imported from a derived icon package must be names it exports.
     if (iconVocab?.packages.some(p => p.exports.length)) {

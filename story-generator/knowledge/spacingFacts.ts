@@ -666,10 +666,18 @@ const TYPO_KEY = /^(font-?size|font-?weight|line-?height)$/i;
 
 interface StyleBody { kind: 'object' | 'string'; body: string; line: number }
 
-/** Every inline style attribute: a JSX object (`style={{…}}`) or a template string (`style="…"`). */
+/**
+ * Every inline style attribute: a JSX object (`style={{…}}`) or a template
+ * string (`style="…"`).
+ *
+ * `sx` is included because it is the same thing under another name. MUI's `sx`
+ * takes the identical declaration object, and the review of the MUI battery
+ * found raw pixel padding inside `sx` on stories this check reported as clean —
+ * the literal was there, the scanner was looking for a different attribute.
+ */
 function styleBodies(code: string): StyleBody[] {
   const out: StyleBody[] = [];
-  const re = /\bstyle\s*=\s*(\{\{|"|')/g;
+  const re = /\b(?:style|sx)\s*=\s*(\{\{|"|')/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(code))) {
     const start = m.index + m[0].length;
@@ -779,6 +787,44 @@ export function checkInlineSpacing(code: string, vocab: SpacingVocabulary | null
   return out;
 }
 
+export interface ColorViolation {
+  line: number;
+  property: string;
+  value: string;
+  message: string;
+}
+
+/** A colour written as a literal rather than taken from the project's tokens. */
+const COLOR_KEY = /(color|background|border|outline|fill|stroke|shadow)/i;
+const COLOR_LITERAL = /(#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?)\s*\()/;
+
+/**
+ * Hex and rgb() colour literals in an inline style, on a project that declares
+ * colour tokens of its own.
+ *
+ * The gate is the project's own token declarations: with none, a literal is
+ * the only way to write a colour and flagging it would be noise. With them, a
+ * literal is a colour that will not follow the theme — it stays the same in
+ * dark mode while everything around it moves. The battery found colour to be
+ * the strongest dimension on three of four systems precisely because the model
+ * uses tokens; this catches the remaining case and says which token to use.
+ */
+export function checkRawColors(code: string, vocab: SpacingVocabulary | null | undefined): ColorViolation[] {
+  if (!vocab || !Object.keys(vocab.aliasesOf).length) return [];
+  const out: ColorViolation[] = [];
+  const suggestions = Object.values(vocab.aliasesOf).flat().slice(0, 3);
+  for (const st of styleBodies(code)) {
+    for (const d of declarationsOf(st)) {
+      if (!COLOR_KEY.test(d.key) || !COLOR_LITERAL.test(d.value)) continue;
+      out.push({
+        line: st.line, property: d.key, value: d.value,
+        message: `inline ${d.key}: "${d.value}" is a literal colour in a design system that declares colour tokens — use one of its tokens (e.g. ${suggestions.map(a => `var(--${a})`).join(', ')}) so it follows the theme.`,
+      });
+    }
+  }
+  return out;
+}
+
 export interface TierViolation {
   line: number;
   primitive: string;
@@ -833,6 +879,10 @@ export function repairSpacingNote(vocab: SpacingVocabulary | null | undefined): 
 
 export function formatSpacingErrors(v: SpacingViolation[]): string[] {
   return v.map(x => `Line ${x.line}: ${x.message}`);
+}
+
+export function formatColorErrors(violations: ColorViolation[]): string[] {
+  return violations.map(v => `Line ${v.line}: ${v.message}`);
 }
 
 export function formatTierErrors(v: TierViolation[]): string[] {
