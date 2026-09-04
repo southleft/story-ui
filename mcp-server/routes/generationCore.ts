@@ -2316,6 +2316,16 @@ async function runStoryGenerationPipeline(
             code: fixedFileContents,
             report: verification,
             context: repairContext,
+            /**
+             * Two, because the alternative to a second repair is a full
+             * regeneration and the prices are not close. Measured on one
+             * Carbon story that spent three gate attempts: each regeneration
+             * cost 80-103s of model time, each repair 11-16s. The loop already
+             * stops the moment a repair fails to reduce blockers, so a second
+             * attempt costs nothing when the first one did not help, and
+             * finishes the job — without regenerating — when it did.
+             */
+            maxAttempts: 2,
             signal: verifyBudget.signal,
             deadline: verifyDeadline,
             staticallyValid: (candidate) => {
@@ -2459,6 +2469,12 @@ async function runStoryGenerationPipeline(
                     : '🔧 Repair changed only comments or formatting — the served module cannot differ, so nothing to wait for');
                 } else {
                   const recompile = await waitForRecompile(verifyUrl, relModule, before);
+                  if (recompile.live) {
+                    // The latency distribution is the reason the timeout is
+                    // what it is; keep measuring it so a future change to
+                    // either number is made on evidence.
+                    logger.log(`🔁 Dev server served the repaired module after ${(recompile.waitedMs / 1000).toFixed(1)}s`);
+                  }
                   if (!recompile.live) {
                     // Say WHICH failure this is. They read identically in a
                     // render and were logged identically, which sent one
