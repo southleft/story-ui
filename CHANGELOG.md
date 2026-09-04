@@ -1,3 +1,10 @@
+# [5.10.0](https://github.com/southleft/story-ui/compare/v5.9.2...v5.10.0) (2026-09-04)
+
+
+### Features
+
+* **generator:** show the prop a library says carries CSS ([2a50f02](https://github.com/southleft/story-ui/commit/2a50f025453ef3636404f3047235003b71e66d1b))
+
 ## [5.9.2](https://github.com/southleft/story-ui/compare/v5.9.1...v5.9.2) (2026-09-04)
 
 
