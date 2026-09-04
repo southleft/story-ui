@@ -330,6 +330,14 @@ export async function buildFrameworkAwarePrompt(
     // demands operability; this one bounds what is built, so the two cannot
     // be confused.
     '- Completeness means BEHAVIOUR, not scope: what the story does include must be fully operable, with real state and handlers. It does not mean adding more.',
+    // Measured with bench/firstAttempt.mjs on Carbon: EVERY first-round
+    // validation failure was a prop the library does not declare
+    // (`ariaLabel` where it takes `aria-label`, `label` on a row that takes
+    // none) or a value outside a prop's union. The catalog already lists the
+    // props; what it never said is that anything else is rejected, so the
+    // model had no reason not to guess. A retry costs a full model call.
+    '- Use only the props this catalog lists for a component. A prop the component does not declare is REJECTED before the story is saved and the whole generation is retried — so do not invent one, do not guess a camelCase spelling of an HTML attribute (`aria-label` is written exactly that way, never `ariaLabel`), and do not carry a prop over from a different library. If the prop you want is not listed, use one that is, or leave it out.',
+    '- The same applies to a prop\'s VALUE: when the catalog shows a prop\'s accepted values, use one of them exactly. A value outside that set is rejected the same way.',
     '- Build what was asked for, and what that plainly requires — nothing else. A request for a navigation bar is a navigation bar, not a page built around one. Do not add regions, panels or features the request did not ask for (a search field, a filter bar, a notification centre, an activity feed, a toast system). When a request is broad ("a dashboard"), build the parts it names or plainly implies and make those excellent, rather than adding others to look thorough.',
     // Verification blocks on this and the prompt never mentioned it, so the
     // model was being failed for a rule it was never given. Measured on one
