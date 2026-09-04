@@ -42,6 +42,12 @@ export type ExportKind =
   | 'namespace'
   /** A React context: it has a Provider, and is not written as an element. */
   | 'context'
+  /**
+   * A value that cannot be written as an element at all — it has no call and
+   * no construct signature. A version string, a token map, a hook's return
+   * type. Offering one as a component invites `<CLIENT_VERSION />`.
+   */
+  | 'value'
   /** Nothing resolved: a type-only export, or a value with no JSX signature. */
   | 'unknown';
 
@@ -258,16 +264,19 @@ function literalValues(type: ts.Type): string[] | undefined {
  * the model something it cannot write.
  */
 function classifyValue(
-  name: string, checker: ts.TypeChecker, source: ts.SourceFile,
+  tagName: ts.JsxTagNameExpression, checker: ts.TypeChecker,
 ): { kind: ExportKind; members?: string[] } {
-  let symbol: ts.Symbol | undefined;
-  const find = (node: ts.Node): void => {
-    if (ts.isPropertyAccessExpression(node) && node.name.text === name) {
-      symbol = checker.getSymbolAtLocation(node) ?? symbol;
-    }
-    ts.forEachChild(node, find);
-  };
-  find(source);
+  /**
+   * The symbol comes from the probe's own tag node.
+   *
+   * An earlier version searched the file for a property access of the same
+   * name, which a JSX tag is not in this position — so every non-component
+   * resolved to `unknown` and the classification never ran at all.
+   */
+  let symbol = checker.getSymbolAtLocation(tagName);
+  if (symbol && symbol.flags & ts.SymbolFlags.Alias) {
+    try { symbol = checker.getAliasedSymbol(symbol); } catch { /* keep it */ }
+  }
   if (!symbol) return { kind: 'unknown' };
   const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0];
   if (!declaration) return { kind: 'unknown' };
@@ -278,7 +287,19 @@ function classifyValue(
     return { kind: 'context' };
   }
   const members = props.filter(p => /^[A-Z]/.test(p.name)).map(p => p.name);
-  return members.length >= 2 ? { kind: 'namespace', members } : { kind: 'unknown' };
+  if (members.length >= 2) return { kind: 'namespace', members };
+  /**
+   * Nothing callable, nothing constructable: it cannot be an element under any
+   * JSX rule. Said positively, because "we could not resolve it" and "it is
+   * not a component" are different facts and only the second is safe to act
+   * on. A component whose props resolve to `any` stays `unknown` and keeps its
+   * place in the catalog.
+   */
+  if (!checker.getSignaturesOfType(type, ts.SignatureKind.Call).length
+      && !checker.getSignaturesOfType(type, ts.SignatureKind.Construct).length) {
+    return { kind: 'value' };
+  }
+  return { kind: 'unknown' };
 }
 
 /**
@@ -327,6 +348,8 @@ export function resolvePropsWithChecker(opts: {
 
   /** Everything resolved per component, before the base is subtracted. */
   const resolved = new Map<string, { symbols: Map<string, ts.Symbol>; open: boolean }>();
+  /** The probe tag for each export, so a non-component can be classified from it. */
+  const tagNames = new Map<string, ts.JsxTagNameExpression>();
   /**
    * Every attribute React's own types give any intrinsic element.
    *
@@ -372,6 +395,7 @@ export function resolvePropsWithChecker(opts: {
         }
       }
       resolved.set(tag, { symbols, open });
+      tagNames.set(tag, node.tagName);
     }
     ts.forEachChild(node, visit);
   };
@@ -415,7 +439,8 @@ export function resolvePropsWithChecker(opts: {
     let kind: ExportKind = verdict === 'unknown' ? 'unknown' : 'component';
     let members: string[] | undefined;
     if (verdict === 'unknown') {
-      const shape = classifyValue(name, checker, source);
+      const tagNode = tagNames.get(name);
+      const shape = tagNode ? classifyValue(tagNode, checker) : { kind: 'unknown' as ExportKind, members: undefined };
       kind = shape.kind;
       members = shape.members;
     }

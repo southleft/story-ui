@@ -128,6 +128,13 @@ export interface ComponentFacts {
    * a true instruction.
    */
   namespaceMembers?: string[];
+  /**
+   * The compiler resolved this export and it cannot be written as an element:
+   * no call signature, no construct signature. A version constant, a token
+   * map. Recorded so a catalog can stop offering it as a component — the model
+   * cannot know from a bare name that `<CLIENT_VERSION />` is impossible.
+   */
+  notAComponent?: boolean;
 }
 
 export interface ExtractedProps {
@@ -1657,6 +1664,15 @@ async function readOnePackage(
             added++;
           }
         }
+        // Exports that cannot be elements at all.
+        let values = 0;
+        for (const component of checked.components) {
+          if (component.kind !== 'value') continue;
+          const prior = components[component.name];
+          if (prior && prior.props.length) continue;
+          components[component.name] = { ...(prior ?? { name: component.name, props: [] }), notAComponent: true };
+          values++;
+        }
         // A namespace is not a component; say what to write instead.
         let namespaces = 0;
         for (const component of checked.components) {
@@ -1683,7 +1699,7 @@ async function readOnePackage(
         }
         logger.log(
           `🧠 Type resolution for ${pkgName}: ${checked.components.length} export(s) probed in ${(checked.ms / 1000).toFixed(1)}s — ` +
-          `${added} component(s) that had no props now have them, ${filled} extended, ${baseOnly} take only this library's shared styling surface, ${namespaces} are namespaces whose members are the components` +
+          `${added} component(s) that had no props now have them, ${filled} extended, ${baseOnly} take only this library's shared styling surface, ${namespaces} are namespaces whose members are the components, ${values} cannot be written as an element at all` +
           `${checked.baseProps.length ? `; ${checked.baseProps.length} prop(s) shared by nearly every component treated as this library's base` : '; no shared base found, so nothing was subtracted'}`,
         );
       }
