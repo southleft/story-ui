@@ -187,7 +187,17 @@ async function main() {
   const project = projectArg
     ? (path.isAbsolute(projectArg) ? projectArg : path.resolve(PROJECTS_ROOT, projectArg))
     : null;
-  const timeoutMs = Number(arg('timeout', '600')) * 1000;
+  /**
+   * The per-prompt cap.
+   *
+   * It was 600s, and each of the two 20-prompt Carbon runs lost a different
+   * complex prompt to it. Not counting those as passes is right; losing them
+   * is still a measurement that taught nothing, and a complex prompt that
+   * spends three gate attempts legitimately runs past ten minutes. 900s clears
+   * the longest completed run seen (590s) with room, and a run that hits even
+   * this is reported as incomplete exactly as before.
+   */
+  const timeoutMs = Number(arg('timeout', '900')) * 1000;
   const keep = flag('keep');
 
   const only = arg('only', '');
