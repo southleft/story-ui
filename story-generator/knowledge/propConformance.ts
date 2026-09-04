@@ -47,6 +47,17 @@ export interface PropViolation {
   line: number;
   /** The declared prop this one most resembles, when anything does. */
   suggestion?: string;
+  /**
+   * A style-carrying prop this component DOES declare (`sx`, `css`, `style`).
+   *
+   * Present so a caller can move a CSS-named prop into it deterministically.
+   * MUI removed `alignItems` and `justifyContent` from Stack's own props in
+   * v6 — they belong in `sx` — and a twenty-prompt MUI run produced 28 of its
+   * 29 first-round validation errors as exactly those two attributes, in half
+   * the prompts. Naming the carrier here is what lets that be a move rather
+   * than a retry.
+   */
+  styleCarrier?: string;
   /** A message that names the fix, not just the fault. */
   message: string;
 }
@@ -442,8 +453,9 @@ export function checkPropConformance(code: string, opts: PropConformanceOptions)
     const own = [...resolved.names].filter(n => !intrinsic.generic.has(n));
     const suggestion = nearestProp(name, own, resolved.names);
     if (!viaCast) {
+      const styleCarrier = ['sx', 'css', 'style'].find(c => resolved.names.has(c));
       report.violations.push({
-        kind: 'unknown_prop', component: tag, prop: name, line: lineOf(node), suggestion,
+        kind: 'unknown_prop', component: tag, prop: name, line: lineOf(node), suggestion, styleCarrier,
         message: `<${tag} ${name}> is not a prop this component declares`
           + (suggestion ? ` — did you mean \`${suggestion}\`?` : '.')
           + ` ${describe(tag, resolved.names, suggestion)}.`,
