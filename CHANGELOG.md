@@ -1,3 +1,16 @@
+## [5.9.1](https://github.com/southleft/story-ui/compare/v5.9.0...v5.9.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* **generator:** publish the removal of the post-generation edits ([cff47f4](https://github.com/southleft/story-ui/commit/cff47f46644110fdae52254ee65a993f3c5d93e1))
+
+
+### Reverts
+
+* **generator:** drop the CSS prop move, which was shaped by one library ([845ff52](https://github.com/southleft/story-ui/commit/845ff52302e63169949d7d652afde559fd149dad))
+* **generator:** stop editing the model's layout after it generates ([0e78d28](https://github.com/southleft/story-ui/commit/0e78d2889ec05e6ad0e46c4608019c608a73ede7))
+
 # [5.9.0](https://github.com/southleft/story-ui/compare/v5.8.4...v5.9.0) (2026-09-04)
 
 
