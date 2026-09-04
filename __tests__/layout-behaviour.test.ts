@@ -44,7 +44,8 @@ beforeAll(() => {
 afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
 
 const carbon = [
-  { name: 'Stack', propTypes: ["'horizontal' | 'vertical'", 'string'] },
+  { name: 'Stack', propTypes: ["'horizontal' | 'vertical'", 'string'],
+    props: [{ name: 'orientation', type: "'horizontal' | 'vertical'" }, { name: 'gap', type: 'string' }] },
   { name: 'Grid', propTypes: ['boolean'] },
   { name: 'Modal', propTypes: ['boolean'] },
   { name: 'Toggletip', propTypes: ['boolean'] },
@@ -109,5 +110,12 @@ describe('readLayoutBehaviour', () => {
     // exactly this, and the first version of this text recommended it.
     expect(text).toContain('Wrapping them in a row is NOT enough');
     expect(text).toContain("justifySelf: 'start'");
+    // The rule alone was measured and was not enough: the model added the
+    // stretch refusal only after the probe reported the defect, on three
+    // prompts, every run. It copies examples more reliably than it applies
+    // conditional prose, so the row it should copy carries the fix, written
+    // with the prop the component itself declares.
+    expect(text).toContain('COPY THIS for any row of controls inside <Stack>');
+    expect(text).toContain(`<Stack orientation="horizontal" style={{ justifySelf: 'start' }}>`);
   });
 });
