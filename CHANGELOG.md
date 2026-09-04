@@ -1,3 +1,10 @@
+## [5.5.1](https://github.com/southleft/story-ui/compare/v5.5.0...v5.5.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* **cli:** the preview root fills the canvas, so a story's width never follows its content ([29f8ec5](https://github.com/southleft/story-ui/commit/29f8ec58ccda9ef2e57238b816e02869032ffd33))
+
 # [5.5.0](https://github.com/southleft/story-ui/compare/v5.4.2...v5.5.0) (2026-09-04)
 
 
