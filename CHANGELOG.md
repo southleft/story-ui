@@ -1,3 +1,10 @@
+# [5.15.0](https://github.com/southleft/story-ui/compare/v5.14.1...v5.15.0) (2026-09-04)
+
+
+### Features
+
+* **cli:** check that Storybook can load a new story, not only index it ([c293d75](https://github.com/southleft/story-ui/commit/c293d75c8cbe4c3f7220b9bc2af68331aeb3f823))
+
 ## [5.14.1](https://github.com/southleft/story-ui/compare/v5.14.0...v5.14.1) (2026-09-04)
 
 
