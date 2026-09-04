@@ -645,3 +645,197 @@ export function formatStylingGuidance(facts: StylingFacts, maxPerGroup = 24): st
 
   return lines.join('\n');
 }
+
+/* ------------------------------------------------------------------ */
+/* Layout behaviour a design system states in its own stylesheet        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What a container component does to its children, read from the CSS.
+ *
+ * The measured failure: three of six non-clean stories in the Carbon bench
+ * were a control stretched by its parent — two buttons pulled to opposite ends
+ * of a row, a tag rendered 121px wide. The prompt already carried a rule about
+ * it, phrased generically ("a vertical stack stretches its children"), which
+ * is an inference from convention: true for Carbon, unsourced, and exactly the
+ * failure mode this project keeps finding. The fact is not a convention. It is
+ * one declaration in a file the token reader already opens:
+ *
+ *     .cds--stack-vertical { display: grid; grid-auto-flow: row; }
+ *
+ * A grid with no `justify-items` stretches every item to its column, so a
+ * Button placed directly in a Stack fills the Stack. That is derivable, and
+ * once derived it can be stated per component with the class it came from.
+ */
+export interface LayoutBehaviour {
+  /** The catalog component this rule was matched to. */
+  component: string;
+  /** The class selector the rule was read from, for the prompt to cite. */
+  className: string;
+  display: string;
+  autoFlow?: string;
+  templateColumns?: string;
+  flexDirection?: string;
+  /** Children are stretched across the container's inline axis by default. */
+  stretchesChildren: boolean;
+}
+
+export interface LayoutBehaviourResult {
+  behaviours: LayoutBehaviour[];
+  /** Components asked about, and how many matched — so absent and zero differ. */
+  askedAbout: number;
+  /** Single-class layout rules found in the stylesheets at all. */
+  rulesSeen: number;
+  /** One line for the log. */
+  source: string;
+}
+
+const LAYOUT_DECL = /(display|grid-auto-flow|grid-template-columns|flex-direction|align-items|justify-items|justify-content)\s*:\s*([^;{}]+)/g;
+/** A selector naming exactly one class and nothing else: `.cds--stack-vertical`. */
+const SINGLE_CLASS = /^\.([A-Za-z_][\w-]*)$/;
+
+/** The word segments of a class name, for whole-segment matching against a component name. */
+function classSegments(className: string): string[] {
+  return className
+    .split(/[^A-Za-z0-9]+|(?<=[a-z0-9])(?=[A-Z])/)
+    .filter(Boolean)
+    .map(s => s.toLowerCase());
+}
+
+/**
+ * Layout rules the stylesheet states for the catalog's own components.
+ *
+ * The component-to-class link is a HYPOTHESIS checked against the file, never
+ * an assumption: a class is accepted only when one of its own word segments is
+ * exactly the component's name and the rule it carries actually declares a
+ * layout property. Nothing is emitted for a component with no such rule, and
+ * the result reports how many were asked about, so a design system whose
+ * classes are hashed (CSS modules) reads as "none matched" rather than as
+ * "nothing to say".
+ */
+export interface LayoutComponent {
+  name: string;
+  /** String values this component's own props accept, e.g. vertical/horizontal. */
+  propValues?: string[];
+  /**
+   * Raw declared prop types, because that is where the values usually are.
+   * Carbon's Stack carries `orientation?: 'horizontal' | 'vertical'` as a type
+   * string with no separate options list, and reading only the options list
+   * dropped the one component this whole derivation exists to describe.
+   */
+  propTypes?: string[];
+}
+
+/** The quoted literals of a union type: `'horizontal' | 'vertical'` -> both. */
+function literalsOfType(type: string): string[] {
+  return [...type.matchAll(/['"]([A-Za-z][\w-]*)['"]/g)].map(m => m[1].toLowerCase());
+}
+
+export function readLayoutBehaviour(
+  stylesheetFiles: string[] | undefined,
+  components: Array<LayoutComponent | string>,
+  limitPerComponent = 2,
+): LayoutBehaviourResult {
+  const files = stylesheetFiles || [];
+  const wanted = new Map<string, string>();
+  const valuesOf = new Map<string, Set<string>>();
+  for (const c of components) {
+    const name = typeof c === 'string' ? c : c.name;
+    wanted.set(name.toLowerCase(), name);
+    const declared = typeof c === 'string'
+      ? []
+      : [...(c.propValues || []).map(v => v.toLowerCase()), ...(c.propTypes || []).flatMap(literalsOfType)];
+    valuesOf.set(name, new Set(declared));
+  }
+  const componentNames = components.map(c => (typeof c === 'string' ? c : c.name));
+  const behaviours: LayoutBehaviour[] = [];
+  const perComponent = new Map<string, number>();
+  let rulesSeen = 0;
+
+  for (const file of files) {
+    let css: string;
+    try { css = fs.readFileSync(file, 'utf8'); } catch { continue; }
+    // Rule bodies, unanchored: a minified sheet is one line.
+    for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const selector = m[1].trim();
+      const body = m[2];
+      if (!/display\s*:/.test(body) && !/grid-auto-flow\s*:/.test(body)) continue;
+      const single = SINGLE_CLASS.exec(selector);
+      if (!single) continue;
+      const decls: Record<string, string> = {};
+      for (const d of body.matchAll(LAYOUT_DECL)) decls[d[1]] = d[2].trim();
+      const display = decls.display || '';
+      if (!/^(inline-)?(grid|flex)$/.test(display)) continue;
+      rulesSeen++;
+      const className = single[1];
+      /**
+       * A BEM element class (`cds--toggle__appearance`) names a node INSIDE the
+       * component, not the element the story puts children into, so advice
+       * derived from it would be about markup the author never writes. The
+       * double underscore says so in the class's own grammar.
+       */
+      if (className.includes('__')) continue;
+      const segments = classSegments(className);
+      const at = segments.findIndex(seg => wanted.has(seg));
+      if (at < 0) continue;
+      const hit = wanted.get(segments[at])!;
+      /**
+       * The class must be the component's own root, and the check for that is
+       * the component's own prop values: `.cds--stack-vertical` is Stack with
+       * `orientation="vertical"`, a value Stack declares, while
+       * `.cds--modal-container` and `.cds--toggletip-content` are inner nodes
+       * whose trailing segment matches nothing the component accepts. Without
+       * this the reader emitted confident advice about placing buttons inside a
+       * Toggletip's content box.
+       */
+      const trailing = segments.slice(at + 1);
+      const legal = valuesOf.get(hit)!;
+      if (trailing.length && !trailing.every(seg => legal.has(seg))) continue;
+      const seen = perComponent.get(hit) || 0;
+      if (seen >= limitPerComponent) continue;
+      perComponent.set(hit, seen + 1);
+      const isGrid = /grid$/.test(display);
+      const autoFlow = decls['grid-auto-flow'];
+      // A grid item with no justify-items stretches across its column; a flex
+      // item with no align-items stretches across the cross axis. Either way a
+      // hug-content control placed directly inside comes out full width when
+      // the flow runs down the block axis.
+      const alongBlock = isGrid ? (!autoFlow || /row/.test(autoFlow)) : /column/.test(decls['flex-direction'] || '');
+      const stretchesChildren = alongBlock
+        && (isGrid ? !decls['justify-items'] || decls['justify-items'] === 'stretch'
+                   : !decls['align-items'] || decls['align-items'] === 'stretch');
+      behaviours.push({
+        component: hit,
+        className,
+        display,
+        autoFlow,
+        templateColumns: decls['grid-template-columns'],
+        flexDirection: decls['flex-direction'],
+        stretchesChildren,
+      });
+    }
+  }
+
+  const source = files.length === 0
+    ? 'no stylesheet was read, so no layout behaviour could be derived'
+    : `${behaviours.length} rule(s) matched ${perComponent.size} of ${componentNames.length} catalog component(s) across ${rulesSeen} single-class layout rule(s) in ${files.length} stylesheet(s)`;
+  return { behaviours, askedAbout: componentNames.length, rulesSeen, source };
+}
+
+/** The prompt lines for what the stylesheet says these containers do. */
+export function formatLayoutBehaviour(result: LayoutBehaviourResult): string {
+  const stretching = result.behaviours.filter(b => b.stretchesChildren);
+  if (!stretching.length) return '';
+  const lines = ['WHAT THESE CONTAINERS DO TO THEIR CHILDREN (read from this project\'s own stylesheet):'];
+  const seen = new Set<string>();
+  for (const b of stretching) {
+    if (seen.has(b.component)) continue;
+    seen.add(b.component);
+    lines.push(
+      `- <${b.component}> renders \`display: ${b.display}\`${b.autoFlow ? `, \`grid-auto-flow: ${b.autoFlow}\`` : ''} (.${b.className}) and sets no ` +
+      `${/grid$/.test(b.display) ? 'justify-items' : 'align-items'}, so EVERY direct child stretches to its full width. ` +
+      `A button, tag, badge or chip placed directly inside comes out full width. Put such controls in a row that sizes to its content instead.`,
+    );
+  }
+  return lines.join('\n');
+}

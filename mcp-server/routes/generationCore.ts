@@ -107,7 +107,7 @@ import { saysMoreThanName } from '../../story-generator/knowledge/descriptionQua
 const GEOMETRY_PROP = /^(sm|md|lg|xl|xxl|max|xs|span|offset|start|end|gap|columns|narrow|condensed|fullWidth|orientation)$/;
 const LAYOUT_PROSE = /\b(column|columns|grid|breakpoint|gutter|span|spacing|width|row|layout)\b/i;
 import { enrichWithSourceFacts, withLocalPropFacts } from '../../story-generator/knowledge/sourceFacts.js';
-import { readStylingFacts, formatStylingGuidance, readDesignTokens } from '../../story-generator/knowledge/stylingFacts.js';
+import { readStylingFacts, formatStylingGuidance, readDesignTokens, readLayoutBehaviour, formatLayoutBehaviour } from '../../story-generator/knowledge/stylingFacts.js';
 import type { StylingFacts } from '../../story-generator/knowledge/stylingFacts.js';
 import {
   deriveSpacingVocabulary, checkInlineSpacing, checkTokenTiers, checkRawColors, formatSpacingErrors, formatTierErrors, formatColorErrors, repairSpacingNote,
@@ -3042,6 +3042,28 @@ async function buildClaudePromptWithContext(
           ? `🎨 No styling guidance: examined NO stylesheets (${config.importPath ?? 'no importPath'} declares none and the project has none) — tokens unknown, not zero`
           : `🎨 No styling guidance: examined ${src.projectFiles} project + ${src.packageFiles} package file(s) (${src.declaredFiles} declared) and found ${src.tokens} token(s)`,
       );
+    }
+    /**
+     * What the design system's own stylesheet says its containers do to their
+     * children — the third of six non-clean stories in the Carbon bench, and
+     * the one the prompt could only assert generically. `.cds--stack-vertical`
+     * declares `display: grid` with no `justify-items`, so a Button placed
+     * directly in a Stack comes out full width. That is a fact in a file we
+     * already read, not a convention to be assumed.
+     */
+    const layout = readLayoutBehaviour(styling.stylesheetFiles, (components || []).map((c: any) => ({
+      name: c.name,
+      propValues: (c.propTypes || []).flatMap((p: any) => p.options || []),
+      propTypes: (c.propTypes || []).map((p: any) => p.type || ''),
+    })));
+    const layoutSection = formatLayoutBehaviour(layout);
+    if (layoutSection) {
+      logger.log(`📦 Container behaviour: ${layout.behaviours.filter(b => b.stretchesChildren).length} stretching container(s) — ${layout.source}`);
+      prompt = injectBeforeUserRequest(prompt, layoutSection);
+    } else {
+      // Zero matched and nothing read must not read alike: a hashed-class
+      // design system (CSS modules) legitimately matches nothing.
+      logger.log(`📦 No container behaviour derived: ${layout.source}`);
     }
   } catch (error) {
     logger.log(`⚠️ Could not read styling facts: ${error}`);
