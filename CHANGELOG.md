@@ -1,3 +1,10 @@
+## [5.12.1](https://github.com/southleft/story-ui/compare/v5.12.0...v5.12.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* **generator:** say the catalog describes the version installed here ([1e8e776](https://github.com/southleft/story-ui/commit/1e8e776f190544495c6deff65739b4b0a4a200a1))
+
 # [5.12.0](https://github.com/southleft/story-ui/compare/v5.11.0...v5.12.0) (2026-09-04)
 
 
