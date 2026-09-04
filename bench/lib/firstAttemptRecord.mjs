@@ -312,6 +312,15 @@ export function buildRecord({ prompt, events, durationMs, env, transportError = 
        * built from, so record it here where the analysis actually happens.
        */
       findingsByKind: countBy(completion?.verification?.findings ?? [], findingKind),
+      /**
+       * Whether every finding that stood belonged to the design system rather
+       * than the story. Carbon's own <Form> writes a class its stylesheet does
+       * not define, and that warning appeared in 7 of 12 dirty stories in one
+       * run — so part of "not clean" was measuring Carbon, not the generator.
+       * Reported alongside, never instead: the bar itself does not move.
+       */
+      onlyLibraryFindings: (completion?.verification?.findings ?? []).length > 0
+        && (completion?.verification?.findings ?? []).every(f => findingKind(f).startsWith('library-')),
       /** One example message per kind, capped, so a kind can be recognised. */
       findingExamples: Object.fromEntries(
         Object.entries(
@@ -372,8 +381,15 @@ export function summarise(records) {
     const seen = new Set((r.validation.rounds.find(x => x.round === 1)?.errors ?? []).map(e => e.class));
     for (const c of seen) promptsWithClass[c] = (promptsWithClass[c] ?? 0) + 1;
   }
+  /**
+   * Dirty runs whose only surviving findings belong to the design system.
+   * Reported beside the headline, never folded into it: the bar stays where it
+   * is, and the reader can see how much of "not clean" was the library's own
+   * markup rather than the generator's output.
+   */
+  const libraryOnly = records.filter(r => r.firstAttemptClean === false && r.verification?.onlyLibraryFindings).length;
   return {
-    total, clean, dirty, unknown, judged,
+    total, clean, dirty, unknown, judged, libraryOnly,
     percent: judged ? Math.round((clean / judged) * 1000) / 10 : null,
     medianModelCalls: median(records.map(r => r.modelCalls)),
     medianSeconds: median(records.map(r => r.seconds)),
@@ -428,6 +444,9 @@ export function formatSummary(s) {
   const lines = [headline(s)];
   if (s.unknown > 0) {
     lines.push(`${s.unknown} run(s) NOT JUDGED — verification or validation could not report. Not counted as clean and not counted as dirty.`);
+  }
+  if (s.libraryOnly > 0) {
+    lines.push(`of the ${s.dirty} dirty, ${s.libraryOnly} carried ONLY findings owned by the design system (its own markup, never repairable from a composition).`);
   }
   lines.push(`self-healed: ${s.selfHealed} · verification repair ran: ${s.repairRan} (improved ${s.repairImproved}) · gate regenerated: ${s.gateRegenerated}`);
   if (s.validationClasses.length === 0) {
