@@ -1,3 +1,10 @@
+# [5.5.0](https://github.com/southleft/story-ui/compare/v5.4.2...v5.5.0) (2026-09-04)
+
+
+### Features
+
+* **generator:** controls that share a row must share a centre, a height, and their labels ([8ff75f4](https://github.com/southleft/story-ui/commit/8ff75f444556d3e5992ea7210cd1cddd1d120bbc))
+
 ## [5.4.2](https://github.com/southleft/story-ui/compare/v5.4.1...v5.4.2) (2026-09-04)
 
 
