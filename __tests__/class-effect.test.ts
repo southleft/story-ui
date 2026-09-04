@@ -27,7 +27,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 
-import { resolveHostTooling } from '../story-generator/verify/hostTooling.js';
+import { testHostTooling } from './helpers/hostProject.js';
 import { acquireBrowser, closeBrowserSession } from '../story-generator/verify/browserSession.js';
 import { runClassEffectProbe } from '../story-generator/verify/probes/classEffect.js';
 
@@ -35,7 +35,7 @@ import { runClassEffectProbe } from '../story-generator/verify/probes/classEffec
  * A real browser, resolved from a host project the same way the pipeline does.
  * When none is available these tests are skipped rather than silently passing.
  */
-const tooling = resolveHostTooling('/Users/tjpitre/Sites/test-storybooks/react-mantine');
+const tooling = testHostTooling();
 let browser: any;
 
 beforeAll(async () => {

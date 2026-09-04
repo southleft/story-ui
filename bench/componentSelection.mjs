@@ -26,6 +26,7 @@
 import { extractProps } from '../dist/story-generator/knowledge/propExtractor.js';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 const args = process.argv.slice(2);
 const arg = (n, d) => { const i = args.indexOf(`--${n}`); return i >= 0 && args[i + 1] ? args[i + 1] : d; };
@@ -50,12 +51,22 @@ const SUITE = arg('suite', null);
  * one project while resolving imports against another produced a bench that
  * measured neither.
  */
+/**
+ * Where the Storybook fixtures live. They are separate checkouts, so only
+ * their LOCATION is configurable; which suites exist stays in git. Override
+ * with STORY_UI_TEST_PROJECTS, or name any project with --project.
+ */
+const PROJECTS_ROOT = process.env.STORY_UI_TEST_PROJECTS
+  ? path.resolve(process.env.STORY_UI_TEST_PROJECTS)
+  : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'test-storybooks');
+const project = (dir) => path.resolve(PROJECTS_ROOT, dir);
+
 const SUITE_CONFIG = {
-  mantine: { project: '/Users/tjpitre/Sites/test-storybooks/react-mantine', importPath: '@mantine/core', mcp: 'http://localhost:4101' },
-  ct: { project: '/Users/tjpitre/Sites/college-town', importPath: '@/components', mcp: 'http://localhost:4106' },
-  mui: { project: '/Users/tjpitre/Sites/test-storybooks/mui-material', importPath: '@mui/material', mcp: 'http://localhost:4107' },
-  atlaskit: { project: '/Users/tjpitre/Sites/test-storybooks/atlaskit', importPath: '@atlaskit', mcp: 'http://localhost:4108' },
-  carbon: { project: '/Users/tjpitre/Sites/test-storybooks/carbon', importPath: '@carbon/react', mcp: 'http://localhost:4109' },
+  mantine: { project: project('react-mantine'), importPath: '@mantine/core', mcp: 'http://localhost:4101' },
+  ct: { project: project('../college-town'), importPath: '@/components', mcp: 'http://localhost:4106' },
+  mui: { project: project('mui-material'), importPath: '@mui/material', mcp: 'http://localhost:4107' },
+  atlaskit: { project: project('atlaskit'), importPath: '@atlaskit', mcp: 'http://localhost:4108' },
+  carbon: { project: project('carbon'), importPath: '@carbon/react', mcp: 'http://localhost:4109' },
 };
 
 const suiteDefaults = SUITE_CONFIG[SUITE] || SUITE_CONFIG.mantine;
@@ -81,7 +92,7 @@ const IMPORT_PATH = arg('import', suiteDefaults.importPath);
  * primitives when it does not know the library ships one.
  *
  *   node bench/componentSelection.mjs --suite ct --mcp http://localhost:4106 \
- *     --project /Users/tjpitre/Sites/college-town --import '@/components'
+ *     --project ../college-town --import '@/components'
  */
 const CT_CASES = [
   {

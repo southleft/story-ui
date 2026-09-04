@@ -8,10 +8,18 @@
 
 set -e
 
-# Configuration
-STORY_UI_DIR="/Users/tjpitre/Sites/story-ui"
-TEST_STORYBOOKS_DIR="/Users/tjpitre/Sites/test-storybooks"
+# Configuration. The repository is found from this script's own location, and
+# the Storybook fixtures are a sibling checkout by convention — override with
+# STORY_UI_TEST_PROJECTS. Neither is a path to one person's machine.
+STORY_UI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TEST_STORYBOOKS_DIR="${STORY_UI_TEST_PROJECTS:-$(cd "$STORY_UI_DIR/.." && pwd)/test-storybooks}"
 DEFAULT_TEST_ENV="react-mantine"
+
+if [ ! -d "$TEST_STORYBOOKS_DIR" ]; then
+    echo "No Storybook fixtures at $TEST_STORYBOOKS_DIR."
+    echo "Set STORY_UI_TEST_PROJECTS to the directory holding your test Storybooks."
+    exit 1
+fi
 
 # Color output
 RED='\033[0;31m'

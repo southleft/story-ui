@@ -3,12 +3,12 @@
  * repair pass that could fix nothing.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { resolveHostTooling } from '../story-generator/verify/hostTooling.js';
+import { testHostTooling } from './helpers/hostProject.js';
 import { acquireBrowser, closeBrowserSession } from '../story-generator/verify/browserSession.js';
 import { runInteractionProbe } from '../story-generator/verify/probes/interaction.js';
 import { runDomCensus } from '../story-generator/verify/probes/domCensus.js';
 
-const tooling = resolveHostTooling('/Users/tjpitre/Sites/test-storybooks/react-mantine');
+const tooling = testHostTooling();
 let browser: any;
 beforeAll(async () => { if (tooling) browser = await acquireBrowser(tooling).catch(() => undefined); }, 60_000);
 afterAll(async () => { await closeBrowserSession(); });

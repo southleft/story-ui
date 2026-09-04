@@ -30,50 +30,65 @@
 
 import fs from 'fs';
 import path from 'path';
-import { pathToFileURL } from 'url';
+import { pathToFileURL, fileURLToPath } from 'url';
 
 const args = process.argv.slice(2);
 const arg = (n, d) => { const i = args.indexOf(`--${n}`); return i >= 0 && args[i + 1] ? args[i + 1] : d; };
 const flag = (n) => args.includes(`--${n}`);
 
-const DIST = '/Users/tjpitre/Sites/story-ui/dist';
+/**
+ * The build this bench measures: this repository's own dist, found from the
+ * script's location. It used to be an absolute path to one machine.
+ */
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const DIST = path.join(REPO, 'dist');
+
+/**
+ * Where the Storybook fixtures live. They are separate checkouts, not part of
+ * this repository, so only their LOCATION is configurable — the list below,
+ * which is the set of environments Story UI claims to support, stays in git.
+ */
+const PROJECTS_ROOT = process.env.STORY_UI_TEST_PROJECTS
+  ? path.resolve(process.env.STORY_UI_TEST_PROJECTS)
+  : path.resolve(REPO, '..', 'test-storybooks');
+const project = (dir) => path.resolve(PROJECTS_ROOT, dir);
 
 /** Every environment we claim to support, so a change is measured against all. */
 const ENVIRONMENTS = [
-  { name: 'react-mantine (npm barrel)', project: '/Users/tjpitre/Sites/test-storybooks/react-mantine', storybook: 'http://localhost:6101' },
-  { name: 'college-town (Radix+Tailwind, local)', project: '/Users/tjpitre/Sites/college-town', storybook: 'http://localhost:6006' },
-  { name: 'mui-material (subpath npm)', project: '/Users/tjpitre/Sites/test-storybooks/mui-material', storybook: 'http://localhost:6107' },
-  { name: 'atlaskit (package-per-component)', project: '/Users/tjpitre/Sites/test-storybooks/atlaskit', storybook: 'http://localhost:6108' },
-  { name: 'carbon (IBM, barrel + SCSS)', project: '/Users/tjpitre/Sites/test-storybooks/carbon', storybook: 'http://localhost:6109' },
+  { name: 'react-mantine (npm barrel)', project: project('react-mantine'), storybook: 'http://localhost:6101' },
+  { name: 'college-town (Radix+Tailwind, local)', project: project('../college-town'), storybook: 'http://localhost:6006' },
+  { name: 'mui-material (subpath npm)', project: project('mui-material'), storybook: 'http://localhost:6107' },
+  { name: 'atlaskit (package-per-component)', project: project('atlaskit'), storybook: 'http://localhost:6108' },
+  { name: 'carbon (IBM, barrel + SCSS)', project: project('carbon'), storybook: 'http://localhost:6109' },
   // Federated barrel: declares nothing, re-exports its whole API from 58
   // sibling packages. Measured by nobody until it was added here, and it was
   // the only architecture reporting props for 0 of 233 components.
-  { name: 'fluent (federated barrel)', project: '/Users/tjpitre/Sites/test-storybooks/fluent', storybook: 'http://localhost:6110' },
+  { name: 'fluent (federated barrel)', project: project('fluent'), storybook: 'http://localhost:6110' },
   // Published June 2026, after every current model's training cutoff — the only
   // environment here that cannot be answered from memory instead of knowledge.
-  { name: 'astryx (Meta, StyleX)', project: '/Users/tjpitre/Sites/test-storybooks/astryx', storybook: 'http://localhost:6111' },
+  { name: 'astryx (Meta, StyleX)', project: project('astryx'), storybook: 'http://localhost:6111' },
   // Namespace-only exports: `import { Menu }` then `<Menu.Root>`. 29 of its 40
   // top-level exports are namespaces, and they were invisible — a shape
   // carrying roughly 10% of the React component-library market by installs.
-  { name: 'base-ui (namespace exports)', project: '/Users/tjpitre/Sites/test-storybooks/base-ui', storybook: 'http://localhost:6112' },
+  { name: 'base-ui (namespace exports)', project: project('base-ui'), storybook: 'http://localhost:6112' },
   // Federated NAMESPACE barrel — the composition of two architectures, and the
   // single largest package in the ecosystem at 42.4M installs/month. Every one
   // of its 55 siblings arrives as `import * as x` + `export { x as Name }`,
   // which needs federation to reach props AND namespaces to know the members
   // are `Dialog.Root`. Either half alone yields nothing usable.
-  { name: 'radix-ui (federated namespace)', project: '/Users/tjpitre/Sites/test-storybooks/radix', storybook: 'http://localhost:6113' },
+  { name: 'radix-ui (federated namespace)', project: project('radix'), storybook: 'http://localhost:6113' },
   // Ships BOTH surfaces for the same components — flat `DialogRoot` and
   // namespace `Dialog.Root` — and states nearly every prop through an inherited
   // generic, which is the deepest heritage chain measured anywhere.
-  { name: 'chakra-v3 (dual surface)', project: '/Users/tjpitre/Sites/test-storybooks/chakra', storybook: 'http://localhost:6114' },
+  { name: 'chakra-v3 (dual surface)', project: project('chakra'), storybook: 'http://localhost:6114' },
   // The four non-React frameworks CLAUDE.md claims support for. Until they
   // were listed here their numbers were assumed, not measured — and the bench
   // instantiated ReactAdapter for every environment regardless of the
   // configured componentFramework, so it could not have measured them anyway.
-  { name: 'vue-vuetify (Vue 3)', project: '/Users/tjpitre/Sites/test-storybooks/vue-vuetify', storybook: 'http://localhost:6103' },
-  { name: 'angular-material (Angular)', project: '/Users/tjpitre/Sites/test-storybooks/angular-material', storybook: 'http://localhost:6102' },
-  { name: 'svelte-flowbite (Svelte 5)', project: '/Users/tjpitre/Sites/test-storybooks/svelte-flowbite', storybook: 'http://localhost:6104' },
-  { name: 'web-components-shoelace (Lit)', project: '/Users/tjpitre/Sites/test-storybooks/web-components-shoelace', storybook: 'http://localhost:6105' },
+  { name: 'vue-vuetify (Vue 3)', project: project('vue-vuetify'), storybook: 'http://localhost:6103' },
+  { name: 'angular-material (Angular)', project: project('angular-material'), storybook: 'http://localhost:6102' },
+  { name: 'svelte-flowbite (Svelte 5)', project: project('svelte-flowbite'), storybook: 'http://localhost:6104' },
+  { name: 'web-components-shoelace (Lit)', project: project('web-components-shoelace'), storybook: 'http://localhost:6105' },
 ];
 
 /**
