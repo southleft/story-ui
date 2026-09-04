@@ -109,7 +109,6 @@ const LAYOUT_PROSE = /\b(column|columns|grid|breakpoint|gutter|span|spacing|widt
 import { enrichWithSourceFacts, withLocalPropFacts } from '../../story-generator/knowledge/sourceFacts.js';
 import { readStylingFacts, formatStylingGuidance, readDesignTokens, readLayoutBehaviour, formatLayoutBehaviour, layoutComponentsFrom } from '../../story-generator/knowledge/stylingFacts.js';
 import { fixStretchedControlRows } from '../../story-generator/knowledge/stretchFix.js';
-import { moveCssPropsIntoCarrier } from '../../story-generator/knowledge/cssPropMove.js';
 import type { LayoutBehaviour } from '../../story-generator/knowledge/stylingFacts.js';
 import type { StylingFacts } from '../../story-generator/knowledge/stylingFacts.js';
 import {
@@ -1555,22 +1554,7 @@ async function runStoryGenerationPipeline(
         storiesDir: path.resolve(process.cwd(), config.generatedStoriesPath || './src/stories/generated'),
       });
       logger.log(`🧷 Prop check: ${summarisePropConformance(propReport)}`);
-      /**
-       * A CSS-named prop the component does not declare goes into the style
-       * prop it does declare, rather than back to the model.
-       *
-       * Measured on a twenty-prompt MUI run: 28 of 29 first-round validation
-       * errors were <Stack alignItems> and <Stack justifyContent>, in half the
-       * prompts. MUI moved both into `sx` in v6. The checker had already
-       * worked out both halves — undeclared, and which carrier exists — so
-       * every one of those retries was paying a model to perform a move.
-       */
-      const carried = moveCssPropsIntoCarrier(aiText, propReport.violations);
-      if (carried.moved.length) {
-        aiText = carried.code;
-        logger.log(`🧷 Moved ${carried.moved.length} CSS prop(s) into the component's own style prop: ${carried.moved.map(m => `<${m.component} ${m.prop}> → ${m.carrier}`).join(', ')}`);
-      }
-      conformanceErrors.push(...formatPropConformanceErrors({ ...propReport, violations: carried.remaining }));
+      conformanceErrors.push(...formatPropConformanceErrors(propReport));
     }
     // Every var(--x) must be a token the project declares. Skipped, and said
     // so, when the project declares none — absent and zero look different.
