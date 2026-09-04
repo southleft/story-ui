@@ -30,6 +30,25 @@ export interface ValidationError {
  */
 const EMOJI = /[\u{1F300}-\u{1FAFF}\u{1F000}-\u{1F2FF}\u{2300}-\u{23FF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}\u{20E3}]/u;
 
+/**
+ * The other half of the same defect: a plain text glyph used as an icon.
+ *
+ * The prompt names these characters explicitly — "A text glyph (⋯ × ✓ ↑ ↓ → ←
+ * ☰ • ★ ▸ ✕) is NEVER an icon" — and the detector could only see four of the
+ * twelve. ✓ ☰ ★ ✕ fall inside the emoji ranges above; the arrows (U+2190–21FF),
+ * × (U+00D7), ⋯ (U+22EF), • (U+2022) and ▸ (U+25B8, Geometric Shapes) do not.
+ * So a rule stated to the model was unenforced for two thirds of the characters
+ * it names, which is the worst of both: the model is told, nothing checks.
+ *
+ * These are the same test as an emoji, and the same fix, so they go through the
+ * same code path: a LONE glyph is an icon, a glyph inside a sentence is prose
+ * (3 × 4 stays 3 × 4).
+ */
+const TEXT_GLYPH = /[\u{00D7}\u{00F7}\u{2022}\u{2023}\u{2026}\u{2190}-\u{21FF}\u{22EF}\u{25A0}-\u{25FF}]/u;
+
+/** Either kind of stand-in, in one class, for the shared "lone glyph" test. */
+const GLYPH = new RegExp(`(?:${EMOJI.source}|${TEXT_GLYPH.source})`, 'u');
+
 export function emojiUsedAsUi(line: string): string | null {
   // A JSX text node or a string literal holding ONLY emoji and whitespace.
   const candidates = [
@@ -38,13 +57,13 @@ export function emojiUsedAsUi(line: string): string | null {
   ];
   for (const m of candidates) {
     const raw = m[1];
-    if (!EMOJI.test(raw)) continue;
+    if (!GLYPH.test(raw)) continue;
     // Strip emoji, variation selectors and whitespace; anything left is prose.
     const remainder = raw
-      .replace(new RegExp(EMOJI.source, 'gu'), '')
+      .replace(new RegExp(GLYPH.source, 'gu'), '')
       .replace(/[\s‍]/g, '');
     if (remainder.length === 0) {
-      const found = raw.match(new RegExp(EMOJI.source, 'u'));
+      const found = raw.match(new RegExp(GLYPH.source, 'u'));
       return found ? found[0] : null;
     }
   }
@@ -90,9 +109,9 @@ export function validateStory(storyContent: string): ValidationError[] {
     if (emoji) {
       errors.push({
         message:
-          `Emoji "${emoji}" is being used as a UI element. Never use emoji as iconography, status ` +
+          `"${emoji}" is being used as a UI element. Never use an emoji or a text glyph as iconography, status ` +
           `indicators, bullets or decoration — use the design system's own icon set, or omit the icon ` +
-          `entirely if it has none. Emoji inside a sentence of body copy is fine; a lone emoji standing ` +
+          `entirely if it has none. A glyph inside a sentence of body copy is fine; a lone one standing ` +
           `in for an icon is not.`,
         line: index + 1,
       });

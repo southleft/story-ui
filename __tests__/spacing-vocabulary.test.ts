@@ -13,7 +13,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import {
-  deriveSpacingVocabulary, formatSpacingRules, checkInlineSpacing, checkTokenTiers,
+  deriveSpacingVocabulary, formatSpacingRules, checkInlineSpacing, checkTokenTiers, checkRawColors,
   spacingScaleFrom, aliasesFrom, exampleElement,
 } from '../story-generator/knowledge/spacingFacts.js';
 import { readStylingIdiom, formatStylingGuidance } from '../story-generator/knowledge/stylingFacts.js';
@@ -228,6 +228,46 @@ describe('checkInlineSpacing', () => {
     const none = deriveSpacingVocabulary({ components: [] });
     expect(none.hasScale).toBe(false);
     expect(checkInlineSpacing('<div style={{ padding: "24px" }} />', none)).toEqual([]);
+  });
+
+  it('reads sx, which is the same declaration object under another name', () => {
+    // The MUI review found raw pixel padding inside sx on stories this check
+    // reported clean: the literal was there, the scanner looked for `style`.
+    const out = checkInlineSpacing('<Box sx={{ padding: "24px", mt: 2 }} />', carbon);
+    expect(out.map(v => `${v.property}=${v.value}`)).toEqual(['padding=24px']);
+  });
+});
+
+describe('checkRawColors', () => {
+  const tiered = deriveSpacingVocabulary({
+    components: [],
+    styling: styling([{
+      category: 'color',
+      names: ['ss-navy-50', 'ss-color-surface'],
+      values: { 'ss-navy-50': '#F2F5F9', 'ss-color-surface': 'var(--ss-navy-50)' },
+    }]),
+  });
+
+  it('flags a literal colour and names a token to use instead', () => {
+    const out = checkRawColors('<div style={{ color: "#0B1F3A", padding: "8px" }} />', tiered);
+    expect(out).toHaveLength(1);
+    expect(out[0].property).toBe('color');
+    expect(out[0].message).toContain('var(--ss-color-surface)');
+    // rgb() and sx are the same defect.
+    expect(checkRawColors('<Box sx={{ backgroundColor: "rgba(0,0,0,.5)" }} />', tiered)).toHaveLength(1);
+  });
+
+  it('leaves tokens and non-colour properties alone', () => {
+    expect(checkRawColors('<div style={{ color: "var(--ss-color-surface)" }} />', tiered)).toEqual([]);
+    expect(checkRawColors('<div style={{ padding: "24px" }} />', tiered)).toEqual([]);
+  });
+
+  it('is absent, not zero, on a project that declares no colour tokens', () => {
+    // With no token system a literal is the only way to write a colour, so
+    // flagging it would be noise — and silence here must mean "not checked".
+    const none = deriveSpacingVocabulary({ components: [] });
+    expect(Object.keys(none.aliasesOf)).toHaveLength(0);
+    expect(checkRawColors('<div style={{ color: "#fff" }} />', none)).toEqual([]);
   });
 });
 
