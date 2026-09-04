@@ -30,6 +30,9 @@ import { readAngularDeclarations } from './angularInputs.js';
 import { readVueDeclarations } from './vueProps.js';
 import { resolvePropsWithChecker } from './checkerProps.js';
 
+/** Above this many resolved props, a component is one that spreads a styling surface. */
+const SUBSTANTIAL_TOTAL = 50;
+
 /** Does this package declare React — the framework whose components a JSX probe can resolve? */
 function declaresReact(root: string): boolean {
   try {
@@ -104,6 +107,27 @@ export interface ComponentFacts {
   variants?: string[];
   /** Prose from the component's own declaration, when it says anything. */
   doc?: string;
+  /**
+   * The compiler resolved this component and it declares nothing beyond the
+   * styling surface its library gives every component.
+   *
+   * Recorded because an empty prop list would otherwise mean two opposite
+   * things — "we could not read this component" and "this component adds
+   * nothing to read" — and a catalog cannot tell a reader which. Chakra's Box,
+   * Text and Span are the second kind: they take that library's style props
+   * and nothing else, which is a fact worth stating rather than a gap.
+   */
+  sharedBaseOnly?: boolean;
+  /**
+   * This export is a namespace whose members are the components.
+   *
+   * A modern library ships compound components as `Accordion.Root`,
+   * `Accordion.Item`. Discovery admits the namespace itself as a component,
+   * and a catalog that lists it with no props invites `<Accordion>` — which
+   * the library cannot render. Naming the members turns a false component into
+   * a true instruction.
+   */
+  namespaceMembers?: string[];
 }
 
 export interface ExtractedProps {
@@ -1633,9 +1657,33 @@ async function readOnePackage(
             added++;
           }
         }
+        // A namespace is not a component; say what to write instead.
+        let namespaces = 0;
+        for (const component of checked.components) {
+          if (component.kind !== 'namespace' || !component.members?.length) continue;
+          const prior = components[component.name];
+          if (prior && prior.props.length) continue;
+          components[component.name] = {
+            ...(prior ?? { name: component.name, props: [] }),
+            namespaceMembers: component.members,
+          };
+          namespaces++;
+        }
+        // Resolved, closed, and nothing of its own: a fact, not a gap.
+        let baseOnly = 0;
+        for (const component of checked.components) {
+          // `open` counts too: a component whose props type admits extra keys
+          // still resolved a definite styling surface, and reporting it as
+          // unknown was the same conflation this comment block exists to stop.
+          if (component.own.length || component.verdict === 'unknown' || component.total <= SUBSTANTIAL_TOTAL) continue;
+          const prior = components[component.name];
+          if (prior && prior.props.length) continue;
+          components[component.name] = { ...(prior ?? { name: component.name, props: [] }), sharedBaseOnly: true };
+          baseOnly++;
+        }
         logger.log(
           `🧠 Type resolution for ${pkgName}: ${checked.components.length} export(s) probed in ${(checked.ms / 1000).toFixed(1)}s — ` +
-          `${added} component(s) that had no props now have them, ${filled} extended` +
+          `${added} component(s) that had no props now have them, ${filled} extended, ${baseOnly} take only this library's shared styling surface, ${namespaces} are namespaces whose members are the components` +
           `${checked.baseProps.length ? `; ${checked.baseProps.length} prop(s) shared by nearly every component treated as this library's base` : '; no shared base found, so nothing was subtracted'}`,
         );
       }

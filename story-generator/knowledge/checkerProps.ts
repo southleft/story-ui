@@ -35,8 +35,30 @@ import ts from 'typescript';
 import path from 'path';
 import type { PropFact } from './propExtractor.js';
 
+export type ExportKind =
+  /** A component: a JSX probe resolved a definite attribute set. */
+  | 'component'
+  /** An object whose members are components — `Accordion.Root`, `Accordion.Item`. */
+  | 'namespace'
+  /** A React context: it has a Provider, and is not written as an element. */
+  | 'context'
+  /** Nothing resolved: a type-only export, or a value with no JSX signature. */
+  | 'unknown';
+
 export interface ResolvedComponent {
   name: string;
+  /**
+   * What this export actually is.
+   *
+   * Offering a namespace or a context to a model as though it were a component
+   * is worse than saying nothing: it produces `<Accordion>` where the library
+   * requires `<Accordion.Root>`, and the story renders wrong or not at all.
+   * Both are recognised by their SHAPE — a namespace's members are themselves
+   * components, a context has React's Provider — never by their names.
+   */
+  kind: ExportKind;
+  /** For a namespace, the members that are components. */
+  members?: string[];
   /** What this component adds beyond the library's shared base. */
   own: PropFact[];
   /** Everything the compiler resolved, including the shared base. */
@@ -78,6 +100,30 @@ const BASE_SHARE = 0.9;
  * base comes out empty, which is the bug this constant exists to avoid.
  */
 const SUBSTANTIAL = 50;
+
+/**
+ * A library-wide base is only meaningful with a population to average over.
+ *
+ * A package-per-component library ships two to five closely related components
+ * per package, and they legitimately share their whole API — so "carried by
+ * nearly every component here" removed the very props that ARE the component.
+ * Measured: Atlassian's Button came back with one own prop, `overlay`, having
+ * lost appearance, spacing and the rest to a base computed over four
+ * components. Below this count, no library base is inferred.
+ */
+const MIN_POPULATION = 8;
+
+/**
+ * The intrinsic DOM attributes, always subtracted.
+ *
+ * A React component that spreads the rest of its props onto an element
+ * resolves to every attribute that element accepts. Those belong to React and
+ * the DOM, not to the design system, and they are the same for every library —
+ * so they come out regardless of how many components the package has. Read
+ * from the project's own React types by probing plain elements, never from a
+ * list written here.
+ */
+
 
 function compilerOptionsFor(dir: string): ts.CompilerOptions {
   const defaults: ts.CompilerOptions = {
@@ -123,6 +169,44 @@ function programOver(code: string, virtualFile: string, options: ts.CompilerOpti
   return ts.createProgram([virtualFile], options, host);
 }
 
+/**
+ * The name a default export carries in its own declaration.
+ *
+ * A package-per-component library exports its component as the default, and a
+ * default export cannot be probed through a namespace — `<L.default />` is not
+ * JSX. It appears in the module's exports as `default`, so its real name has
+ * to come from what it is aliased to. Without this, every component in such a
+ * library resolved to nothing: measured on one, Button and Tag among them.
+ */
+function defaultExportName(checker: ts.TypeChecker, moduleSymbol: ts.Symbol): string | null {
+  const def = checker.getExportsOfModule(moduleSymbol).find(s => s.name === 'default');
+  if (!def) return null;
+  /**
+   * Follow the whole chain. A package-per-component library re-exports its
+   * default through two or three barrels, and stopping at the first hop leaves
+   * a symbol still called `default` — which is how Atlassian's Tag resolved to
+   * nothing while SimpleTag and RemovableTag beside it resolved fine.
+   */
+  let symbol: ts.Symbol = def;
+  for (let hop = 0; hop < 8 && symbol.flags & ts.SymbolFlags.Alias; hop++) {
+    try {
+      const next = checker.getAliasedSymbol(symbol);
+      if (!next || next === symbol) break;
+      symbol = next;
+    } catch { break; }
+  }
+  let name = symbol.getName();
+  if (name === 'default' || !/^[A-Z][\w$]*$/.test(name)) {
+    // `const Tag = …; export default Tag` — the value's own declaration names it.
+    const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0];
+    const declared = declaration && (ts.isVariableDeclaration(declaration) || ts.isFunctionDeclaration(declaration)
+      || ts.isClassDeclaration(declaration)) && declaration.name && ts.isIdentifier(declaration.name)
+      ? declaration.name.text : null;
+    if (declared) name = declared;
+  }
+  return name && /^[A-Z][\w$]*$/.test(name) ? name : null;
+}
+
 /** The module's own exported names, as the compiler resolves them. */
 function exportedNames(code: string, virtual: string, options: ts.CompilerOptions): string[] {
   const program = programOver(code, virtual, options);
@@ -138,7 +222,9 @@ function exportedNames(code: string, virtual: string, options: ts.CompilerOption
   };
   visit(source);
   if (!moduleSymbol) return [];
-  return checker.getExportsOfModule(moduleSymbol).map(s => s.name);
+  const names = checker.getExportsOfModule(moduleSymbol).map(s => s.name);
+  const fallback = defaultExportName(checker, moduleSymbol);
+  return fallback ? [...names, `default:${fallback}`] : names;
 }
 
 /** First sentence of a symbol's documentation, when it has one. */
@@ -159,6 +245,40 @@ function literalValues(type: ts.Type): string[] | undefined {
     else return undefined;
   }
   return out.length > 1 && out.length <= 24 ? out : undefined;
+}
+
+
+/**
+ * What an export that is not usable as an element actually is.
+ *
+ * Read from the value's own shape: a React context carries a Provider, and a
+ * compound-component namespace carries capitalised members that are themselves
+ * usable as elements. Both are common in modern libraries and both are
+ * routinely admitted as components by name-based discovery, which then offers
+ * the model something it cannot write.
+ */
+function classifyValue(
+  name: string, checker: ts.TypeChecker, source: ts.SourceFile,
+): { kind: ExportKind; members?: string[] } {
+  let symbol: ts.Symbol | undefined;
+  const find = (node: ts.Node): void => {
+    if (ts.isPropertyAccessExpression(node) && node.name.text === name) {
+      symbol = checker.getSymbolAtLocation(node) ?? symbol;
+    }
+    ts.forEachChild(node, find);
+  };
+  find(source);
+  if (!symbol) return { kind: 'unknown' };
+  const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0];
+  if (!declaration) return { kind: 'unknown' };
+  const type = checker.getTypeOfSymbolAtLocation(symbol, declaration);
+  const props = checker.getPropertiesOfType(type);
+  const names = new Set(props.map(p => p.name));
+  if (names.has('Provider') && (names.has('Consumer') || names.has('displayName'))) {
+    return { kind: 'context' };
+  }
+  const members = props.filter(p => /^[A-Z]/.test(p.name)).map(p => p.name);
+  return members.length >= 2 ? { kind: 'namespace', members } : { kind: 'unknown' };
 }
 
 /**
@@ -188,12 +308,15 @@ export function resolvePropsWithChecker(opts: {
   } catch (error) {
     return { components: [], baseProps: [], ran: false, ms: Date.now() - started, reason: `module could not be resolved: ${error instanceof Error ? error.message : String(error)}` };
   }
-  const probes = names.filter(n => /^[A-Z]/.test(n)).slice(0, opts.limit ?? 1200);
-  if (!probes.length) {
+  const defaultMarker = names.find(n => n.startsWith('default:'));
+  const defaultName = defaultMarker ? defaultMarker.slice('default:'.length) : null;
+  const probes = names.filter(n => /^[A-Z]/.test(n)).slice(0, opts.limit ?? 2500);
+  if (!probes.length && !defaultName) {
     return { components: [], baseProps: [], ran: false, ms: Date.now() - started, reason: `no capitalised exports resolved from ${opts.importPath}` };
   }
 
   const code = `import * as L from '${spec}';\n`
+    + (defaultName ? `import __D from '${spec}';\nexport const __d = <__D />;\n` : '')
     + probes.map((n, i) => `export const __p${i} = <L.${n} />;`).join('\n') + '\n';
   const program = programOver(code, virtual, options);
   const checker = program.getTypeChecker();
@@ -204,9 +327,41 @@ export function resolvePropsWithChecker(opts: {
 
   /** Everything resolved per component, before the base is subtracted. */
   const resolved = new Map<string, { symbols: Map<string, ts.Symbol>; open: boolean }>();
+  /**
+   * Every attribute React's own types give any intrinsic element.
+   *
+   * A component that spreads its rest props onto an element resolves to all of
+   * them, and they belong to React and the DOM rather than to the design
+   * system — the same set for every library. Taken from the project's own React
+   * types, never from a list written here. Where a library really does declare
+   * one of them (a checkbox's `checked`), the syntactic pass has already read
+   * it from that library's declaration and the merge keeps it.
+   */
+  const intrinsic = new Set<string>();
+  /**
+   * WHERE React's attributes are declared, not what they are called.
+   *
+   * Subtracting by name lost props a design system genuinely owns: a
+   * checkbox's `checked`, an accordion item's `value`, a link's `href` are all
+   * DOM attribute names and all real parts of a component's API. The
+   * distinction is not in the name, it is in the declaration — React's
+   * attributes are declared in React's own type files, a library's in its own.
+   * The compiler knows both, so the files that declare intrinsic attributes
+   * are collected here and a prop is dropped only when its declaration lives
+   * in one of them.
+   */
+  const reactTypeFiles = new Set<string>();
+  for (const symbol of checker.getJsxIntrinsicTagNamesAt(source)) {
+    const type = checker.getTypeOfSymbolAtLocation(symbol, source);
+    for (const p of checker.getPropertiesOfType(type)) {
+      intrinsic.add(p.name);
+      for (const d of p.declarations ?? []) reactTypeFiles.add(d.getSourceFile().fileName);
+    }
+  }
   const visit = (node: ts.Node): void => {
     if (ts.isJsxSelfClosingElement(node)) {
-      const tag = node.tagName.getText(source).replace(/^L\./, '');
+      const raw = node.tagName.getText(source);
+      const tag = raw === '__D' && defaultName ? defaultName : raw.replace(/^L\./, '');
       const type = checker.getContextualType(node.attributes);
       const symbols = new Map<string, ts.Symbol>();
       let open = false;
@@ -226,14 +381,21 @@ export function resolvePropsWithChecker(opts: {
   const substantial = [...resolved.values()].filter(r => r.symbols.size > SUBSTANTIAL);
   const frequency = new Map<string, number>();
   for (const r of substantial) for (const name of r.symbols.keys()) frequency.set(name, (frequency.get(name) ?? 0) + 1);
-  const baseProps = substantial.length >= 3
+  const baseProps = substantial.length >= MIN_POPULATION
     ? [...frequency.entries()].filter(([, n]) => n >= substantial.length * BASE_SHARE).map(([n]) => n)
     : [];
   const base = new Set(baseProps);
+  /** A prop whose only declaration sits in a file that declares DOM attributes. */
+  const isDomAttribute = (symbol: ts.Symbol): boolean => {
+    const declarations = symbol.declarations ?? [];
+    if (!declarations.length) return false;
+    return declarations.every(d => reactTypeFiles.has(d.getSourceFile().fileName));
+  };
 
   const components: ResolvedComponent[] = [];
   for (const [name, r] of resolved) {
-    const ownNames = [...r.symbols.keys()].filter(n => !base.has(n) && !UNIVERSAL.has(n));
+    const ownNames = [...r.symbols.keys()].filter(n =>
+      !base.has(n) && !UNIVERSAL.has(n) && !isDomAttribute(r.symbols.get(n)!));
     const own: PropFact[] = ownNames.map(propName => {
       const symbol = r.symbols.get(propName)!;
       const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0];
@@ -249,11 +411,21 @@ export function resolvePropsWithChecker(opts: {
         ...(doc ? { doc } : {}),
       };
     });
+    const verdict = r.symbols.size <= 1 ? 'unknown' : r.open ? 'open' : 'closed';
+    let kind: ExportKind = verdict === 'unknown' ? 'unknown' : 'component';
+    let members: string[] | undefined;
+    if (verdict === 'unknown') {
+      const shape = classifyValue(name, checker, source);
+      kind = shape.kind;
+      members = shape.members;
+    }
     components.push({
       name,
+      kind,
+      ...(members?.length ? { members } : {}),
       own,
       total: r.symbols.size,
-      verdict: r.symbols.size <= 1 ? 'unknown' : r.open ? 'open' : 'closed',
+      verdict,
     });
   }
 

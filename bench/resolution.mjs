@@ -417,6 +417,8 @@ async function measure(env) {
    */
   let docedProps = 0, totalProps = 0, deprecatedProps = 0, defaultedProps = 0;
 
+  /** Kept for the counts below, which run outside this block. */
+  let extractedFacts = null;
   try {
     const { extractProps, extractPropsForPackages, rankProps } = await import(pathToFileURL(`${DIST}/story-generator/knowledge/propExtractor.js`).href);
     // Same package selection as the pipeline: a design system spread over many
@@ -425,6 +427,7 @@ async function measure(env) {
     const extracted = homes.length > 1
       ? await extractPropsForPackages([config.importPath, ...homes], env.project)
       : await extractProps(config.importPath, env.project);
+    extractedFacts = extracted;
     if (extracted) {
       for (const component of components) {
         const facts = extracted.components[component.name];
@@ -544,7 +547,26 @@ async function measure(env) {
     else if (verdict === 'runtime-only') runtimeOnlyExport.push(`${name} -> ${spec}`);
   }
 
-  const withProps = components.filter(c => (c.props || []).length > 0).length;
+  /**
+   * A component that declares nothing beyond its library's shared styling
+   * surface is KNOWN, not unknown: the compiler resolved it and there was
+   * nothing of its own to report. Counting it as a gap made one library look
+   * 40 points worse than it is.
+   */
+  const knownByBase = new Set(
+    Object.entries(extractedFacts?.components || {})
+      .filter(([, f]) => (f.sharedBaseOnly || f.namespaceMembers?.length) && !(f.props || []).length)
+      .map(([name]) => name),
+  );
+  const withProps = components.filter(c => (c.props || []).length > 0 || knownByBase.has(c.name)).length;
+  /**
+   * WHICH components we know nothing about, not just how many.
+   *
+   * A percentage cannot tell a real gap from a denominator full of things that
+   * are not components — namespace objects, type exports, modules — and the two
+   * call for opposite fixes. Named here so the next reader can tell them apart.
+   */
+  const noProps = components.filter(c => (c.props || []).length === 0 && !knownByBase.has(c.name)).map(c => c.name);
   /**
    * A description counts only if it says something the component's NAME does
    * not — the same predicate the pipeline uses to decide whether to REPLACE a
@@ -572,6 +594,7 @@ async function measure(env) {
     uncheckedExport,
     runtimeOnlyExport,
     knowProps: withProps,
+    noProps,
     totalProps, docedProps, deprecatedProps, defaultedProps,
     knowDescription: withDesc,
     knowExamples: withExamples,
@@ -594,6 +617,9 @@ function report(r) {
     : `  named export present       : ${checked - r.missingExport.length}/${checked}  ${pct(checked - r.missingExport.length, checked)}` +
       (r.uncheckedExport.length ? `  (${r.uncheckedExport.length} NOT CHECKED — no readable package entry)` : ''));
   console.log(`  props known                : ${r.knowProps}/${r.components}  ${pct(r.knowProps, r.components)}`);
+  if (r.noProps?.length) {
+    console.log(`    no props known for ${r.noProps.length}: ${r.noProps.slice(0, 14).join(', ')}${r.noProps.length > 14 ? ' …' : ''}`);
+  }
   console.log(`  real description known     : ${r.knowDescription}/${r.components}  ${pct(r.knowDescription, r.components)}`);
   // Held, not shipped: see the note in generationCore's enrichment block.
   console.log(`  prop descriptions known    : ${r.docedProps}/${r.totalProps}  ${pct(r.docedProps, r.totalProps)}  (knowledge only, not in catalog)`);
