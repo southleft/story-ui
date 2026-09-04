@@ -177,6 +177,21 @@ export async function renderStory(options: RenderOptions): Promise<RenderResult>
      * is simply run again on the page that came back — twice at most.
      */
     const RELOADED = /Execution context was destroyed|because of a navigation|frame was detached/i;
+
+    /**
+     * Storybook failing to LOAD the story is not the story failing to render.
+     *
+     * `importers[path] is not a function` is Storybook's own story-store
+     * asking its importer map for a module the preview bundle does not have
+     * yet — the index knows about a file Vite has not served. Measured on
+     * react-mantine: a correct dashboard was blamed for it, sent through a
+     * repair that could not help, and then regenerated from scratch, three
+     * minutes for a file that was fine. The same is true of a dynamic import
+     * that failed to fetch and of Storybook not finding a story it just
+     * indexed. None of them are defects a model can fix, and charging them to
+     * the code makes the tool look broken while it rewrites correct work.
+     */
+    const STORYBOOK_LOADER_ERROR = /importers\[|Couldn't find story matching|Failed to fetch dynamically imported module|Unable to load story|error loading dynamically imported module/i;
     const prepareCapMs = Math.max(timeoutMs, PREPARING_CAP_MS);
     const isMounted = () => {
       const root = document.querySelector('#storybook-root') || document.querySelector('#root');
@@ -270,12 +285,20 @@ export async function renderStory(options: RenderOptions): Promise<RenderResult>
     // "rendered nothing" and rewritten by a repair. One reload, then the
     // verdict stands.
     let emptyRetried = false;
+    let loaderRetried = false;
     for (let reloads = 0; ; reloads++) {
       try {
         await mountAndSettle();
         if (mount.state === 'empty' && !emptyRetried) {
           emptyRetried = true;
           logger.log(`🔁 ${storyId} mounted nothing on first load; reloading once before calling it a render failure`);
+          try { await page.reload({ waitUntil: 'domcontentloaded', timeout: timeoutMs }); } catch { /* the loop re-waits */ }
+          continue;
+        }
+        // The module map catches up on the next load far more often than not.
+        if (mount.state === 'errored' && STORYBOOK_LOADER_ERROR.test(mount.error) && !loaderRetried) {
+          loaderRetried = true;
+          logger.log(`🔁 Storybook could not load ${storyId}'s module on first try (${mount.error.slice(0, 80)}); reloading once`);
           try { await page.reload({ waitUntil: 'domcontentloaded', timeout: timeoutMs }); } catch { /* the loop re-waits */ }
           continue;
         }
@@ -299,12 +322,19 @@ export async function renderStory(options: RenderOptions): Promise<RenderResult>
           dispose: async () => {}, navMs: Date.now() - started,
         };
       }
+      const loaderFailure = mount.state === 'errored' && STORYBOOK_LOADER_ERROR.test(mount.error);
+      const reason = loaderFailure
+        ? `Storybook could not load the story's module: ${mount.error}. Its index names the file but the preview bundle has not served it — restart Storybook if this persists. The story's code was never executed, so nothing about it was measured.`
+        : mount.state === 'errored'
+          ? `Storybook showed an error while rendering the story: ${mount.error || 'no message'}`
+          : 'Story did not mount — #storybook-root stayed empty and Storybook was not preparing anything';
+      // Always say WHY in the log. "Story failed to render in the browser"
+      // with the cause only inside a finding made every diagnosis a guess.
+      logger.warn(`⚠️ ${storyId} did not render: ${reason.slice(0, 220)}`);
       return {
         ok: false,
-        reason: mount.state === 'errored'
-          ? `Storybook showed an error while rendering the story: ${mount.error || 'no message'}`
-          : 'Story did not mount — #storybook-root stayed empty and Storybook was not preparing anything',
-        failureClass: 'code',
+        reason,
+        failureClass: loaderFailure ? 'infrastructure' : 'code',
         pageErrors, consoleErrors, isErrorPlaceholder: false,
         dispose: async () => {}, navMs: Date.now() - started,
       };

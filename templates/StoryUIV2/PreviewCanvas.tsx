@@ -24,7 +24,7 @@ import { CursorIcon, MaximizeIcon, MinimizeIcon } from './icons';
 import type { LiveCode } from './useGeneration';
 import type { LineDiff } from './lineDiff';
 import { useFrameRenderStatus } from './useFrameRenderStatus';
-import { DEFAULT_REASON } from './renderFailure';
+import { DEFAULT_REASON, isLoaderFailure } from './renderFailure';
 
 /** What the stage shows in place of the frame, when anything. */
 export type CanvasView = 'preview' | 'code' | 'changes';
@@ -491,9 +491,15 @@ export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>
           // is one click away for whoever wants the stack.
           <Flex direction="column" align="center" gap="3" className="suiw-render-failed" role="status" aria-live="polite">
             <Flex direction="column" align="center" gap="1">
-              <Text size="3" weight="medium">This story does not render</Text>
+              <Text size="3" weight="medium">
+                {isLoaderFailure(renderFailedReason) ? 'Storybook could not load this story' : 'This story does not render'}
+              </Text>
               <Text as="div" size="1" color="gray" align="center" className="suiw-render-failed-reason">
-                {renderFailedReason}
+                {isLoaderFailure(renderFailedReason)
+                  // Blaming the composition for Storybook's module map being
+                  // behind sends people to read code that is very likely fine.
+                  ? 'Its index has the file but the preview has not served it yet, so the story never ran. Retry, and restart Storybook if it keeps happening.'
+                  : renderFailedReason}
               </Text>
             </Flex>
             <Flex gap="3" align="center">
