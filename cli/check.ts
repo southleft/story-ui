@@ -21,6 +21,9 @@ import { closeBrowserSession } from '../story-generator/verify/browserSession.js
 import { describeLaunchFailure } from '../story-generator/verify/verifyStory.js';
 import { storybookWatcherAdvice, watchpackPolling, installedVersion, probeStorybookWatcher, removeStaleProbes, pollingIsConfigured } from '../story-generator/verify/storybookWatcher.js';
 
+/** Storybook's own words when it cannot load a story's module. */
+const LOADER_ERROR = /importers\[|Couldn't find story matching|Failed to fetch dynamically imported module|Unable to load story|error loading dynamically imported module/i;
+
 /** a < b for dotted versions; prerelease tags ignored. */
 import { semverLt } from '../story-generator/semver.js';
 export { semverLt };
@@ -228,10 +231,48 @@ export async function runChecks(opts: { server?: string; storybook?: string; cwd
       });
     } else {
       const stale = removeStaleProbes(generatedDir);
-      const probe = await probeStorybookWatcher({ storybookUrl, generatedDir });
+      /**
+       * Indexing is not loading, and only one of them was ever checked.
+       *
+       * Storybook 10.1.x indexes a story written after startup and then cannot
+       * load it — `importers[path] is not a function` — so a project passes
+       * every preflight and renders nothing. Measured on that version: three
+       * generations in a row reported "not verified" for a reason this check
+       * had already had the chance to name. When the project has Playwright,
+       * the probe story is opened before it is removed.
+       */
+      const tooling = resolveHostTooling(cwd);
+      const verifyLoads = tooling?.playwright
+        ? async (storyId: string) => {
+            const browser = await tooling.playwright.chromium.launch();
+            try {
+              const page = await browser.newPage();
+              const errors: string[] = [];
+              page.on('pageerror', (e: Error) => errors.push(e.message));
+              page.on('console', (m: { type(): string; text(): string }) => {
+                if (m.type() === 'error') errors.push(m.text());
+              });
+              await page.goto(`${storybookUrl.replace(/\/+$/, '')}/iframe.html?id=${encodeURIComponent(storyId)}&viewMode=story`, {
+                waitUntil: 'domcontentloaded', timeout: 20000,
+              });
+              await page.waitForTimeout(2500);
+              const loaderError = errors.find(e => LOADER_ERROR.test(e));
+              return loaderError ? { ok: false, error: loaderError } : { ok: true };
+            } finally {
+              await browser.close().catch(() => {});
+            }
+          }
+        : undefined;
+      const probe = await probeStorybookWatcher({ storybookUrl, generatedDir, verifyLoads });
       const left = stale.length ? ` (removed ${stale.length} probe file${stale.length === 1 ? '' : 's'} an earlier check left behind)` : '';
-      if (probe.outcome === 'alive') {
-        items.push({ id: 'storybook-watcher', ok: true, detail: `Storybook at ${storybookUrl} indexed a new story in ${probe.ms}ms — its file watcher is alive${left}` });
+      if (probe.outcome === 'alive' && probe.loads && !probe.loads.ok) {
+        items.push({
+          id: 'storybook-watcher', ok: false,
+          detail: `Storybook at ${storybookUrl} indexed a new story in ${probe.ms}ms but could not LOAD it: ${probe.loads.error}. Every generated story will be written correctly and fail to render${left}`,
+          fix: `restart Storybook; if it recurs for each new story, upgrade Storybook (10.1.x drops files created after startup from its module map — 10.5.x does not)`,
+        });
+      } else if (probe.outcome === 'alive') {
+        items.push({ id: 'storybook-watcher', ok: true, detail: `Storybook at ${storybookUrl} indexed a new story in ${probe.ms}ms${probe.loads?.ok ? ' and loaded it in a browser' : ''} — its file watcher is alive${left}` });
       } else if (probe.outcome === 'dead') {
         items.push({
           id: 'storybook-watcher', ok: false,
