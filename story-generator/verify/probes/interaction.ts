@@ -47,6 +47,27 @@ export interface FlowBreakingOverlay {
   ownedByLibrary?: boolean;
 }
 
+/**
+ * A control whose use resized the whole composition.
+ *
+ * Switching a tab must not change how wide the page is. It does whenever the
+ * composition's root takes its width from its CONTENT rather than from the
+ * space it was given — a flex item that shrink-wraps, an inline-block, a
+ * fit-content width. Measured on a contractor dashboard: 980px on the
+ * Projects tab, 1040px on Contractors, so the whole card jumped on every
+ * click. The host can cause it too (a preview stylesheet that centres the
+ * story), which is exactly why the STORY has to declare a width it controls.
+ */
+export interface Reflow {
+  label: string;
+  descriptor: string;
+  /** Composition width before and after using the control. */
+  before: number;
+  after: number;
+  /** Body width change over the same click, so a scrollbar is not a finding. */
+  hostDelta: number;
+}
+
 export interface InteractionResult {
   /** Controls clicked; 0 means there was nothing to test, not that all passed. */
   controlsTested: number;
@@ -69,6 +90,8 @@ export interface InteractionResult {
   buttonsPresent: number;
   deadControls: DeadControl[];
   flowBreakingOverlays: FlowBreakingOverlay[];
+  /** Controls whose use changed the width of the whole composition. */
+  reflows: Reflow[];
   /** True when the probe declined to run; findings are then meaningless. */
   skipped: boolean;
   skipReason?: string;
@@ -126,7 +149,7 @@ export async function runInteractionProbe(
           if (el.matches('[aria-pressed], [aria-haspopup], [aria-expanded]')) return false;
           const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0;
         }).length,
-        deadControls: [], flowBreakingOverlays: [],
+        deadControls: [], flowBreakingOverlays: [], reflows: [],
         skipped: false,
       };
 
@@ -295,12 +318,51 @@ export async function runInteractionProbe(
       const toggles = allToggles.slice(0, opts.maxControls);
       result.controlsSkippedByCap = Math.max(0, allToggles.length - toggles.length);
 
+      /**
+       * The composition's own width: the outermost element the STORY rendered,
+       * not Storybook's root, so a host that stretches its root is still
+       * measured honestly. Body width rides along so a scrollbar appearing —
+       * which moves everything — cannot be mistaken for a reflow.
+       */
+      const compositionRoot = (): HTMLElement | null => {
+        const host = (document.querySelector('#storybook-root') || document.querySelector('#root')) as HTMLElement | null;
+        if (!host) return null;
+        const child = Array.from(host.children).find(c => {
+          const r = c.getBoundingClientRect();
+          return r.width > 0 && r.height > 0;
+        }) as HTMLElement | undefined;
+        return child ?? host;
+      };
+      const widths = (): { story: number; host: number } => {
+        const el = compositionRoot();
+        return {
+          story: el ? el.getBoundingClientRect().width : 0,
+          host: document.body.getBoundingClientRect().width,
+        };
+      };
+      // Below this, sub-pixel layout and a focus ring account for the change.
+      const REFLOW_PX = 8;
+
       for (const el of toggles) {
         const before = toggleState(el);
+        const sizeBefore = widths();
         try { press(el as HTMLElement); } catch { continue; }
         await sleep(120);
         const after = toggleState(el);
         result.controlsTested++;
+
+        const sizeAfter = widths();
+        const hostDelta = sizeAfter.host - sizeBefore.host;
+        const storyDelta = sizeAfter.story - sizeBefore.story;
+        if (Math.abs(storyDelta - hostDelta) > REFLOW_PX && result.reflows.length < 4) {
+          result.reflows.push({
+            label: nameOf(el),
+            descriptor: `${el.tagName.toLowerCase()}${el.getAttribute('role') ? `[role=${el.getAttribute('role')}]` : ''}`,
+            before: Math.round(sizeBefore.story),
+            after: Math.round(sizeAfter.story),
+            hostDelta: Math.round(hostDelta),
+          });
+        }
 
         if (before === after) {
           result.deadControls.push({
@@ -314,6 +376,48 @@ export async function runInteractionProbe(
         } else {
           // Put it back. The story may be screenshotted after this.
           try { press(el as HTMLElement); await sleep(60); } catch { /* best effort */ }
+        }
+      }
+
+      /* ── 1b. Tabs and segmented views: does the page keep its width? ────── */
+
+      /**
+       * Switching a tab is the case people actually hit, and no toggle test
+       * reaches it: a tab has `aria-selected`, not a checked state, so the
+       * loop above never clicks one. Clicking a tab is safe — it swaps a
+       * panel, it does not submit or navigate — and it is the cheapest way to
+       * prove the composition keeps its width when its content changes.
+       *
+       * Only the width is judged here. Whether the panel actually changed is
+       * the census's business, and calling a tab "dead" for lacking a checked
+       * state is how a false blocker gets born.
+       */
+      const tabs = queryAll('[role="tab"]')
+        .filter(el => {
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0 && el.getAttribute('aria-selected') !== 'true' && !(el as HTMLButtonElement).disabled;
+        })
+        .slice(0, 4);
+
+      for (const el of tabs) {
+        // A tab's own text is its name. nameOf prefers a sibling label, which
+        // is right for a switch and wrong here: the parent is the tablist, so
+        // every tab came back named "ProjectsContractorsToday's checklist".
+        const tabLabel = (el.getAttribute('aria-label') || el.textContent || '(unnamed tab)').replace(/\s+/g, ' ').trim().slice(0, 60);
+        const sizeBefore = widths();
+        try { press(el as HTMLElement); } catch { continue; }
+        await sleep(160);
+        const sizeAfter = widths();
+        const hostDelta = sizeAfter.host - sizeBefore.host;
+        const storyDelta = sizeAfter.story - sizeBefore.story;
+        if (Math.abs(storyDelta - hostDelta) > REFLOW_PX && result.reflows.length < 4) {
+          result.reflows.push({
+            label: tabLabel,
+            descriptor: `${el.tagName.toLowerCase()}[role=tab]`,
+            before: Math.round(sizeBefore.story),
+            after: Math.round(sizeAfter.story),
+            hostDelta: Math.round(hostDelta),
+          });
         }
       }
 

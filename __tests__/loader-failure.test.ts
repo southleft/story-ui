@@ -50,3 +50,14 @@ describe('Storybook failing to load a story is not the story failing', () => {
     expect(gateVerdict(codeFailure).retryable).toBe(true);
   });
 });
+
+describe('a composition must not resize when it is used', () => {
+  it('states the rule for compositions and exempts single specimens', async () => {
+    const { formatSpacingRules } = await import('../story-generator/knowledge/spacingFacts');
+    const vocab: any = { primitives: [], tokens: [], utilities: null, typography: [], colourTiers: null };
+    const text = formatSpacingRules(vocab, 'jsx', {});
+    expect(text).toContain('width from the SPACE IT IS GIVEN');
+    expect(text).toContain('switching a tab visibly resizes');
+    expect(text).toContain('should NOT be stretched');
+  });
+});

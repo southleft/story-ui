@@ -596,6 +596,27 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
     logger.log(overflow.problems.length
       ? `📐 Overflow: ${overflow.problems.length} finding(s) across ${overflow.metrics.boundaries} bounded containers — ${overflow.problems.map(p => p.kind).join(', ')}`
       : `📐 Overflow: none across ${overflow.metrics.boundaries} bounded containers (${overflow.metrics.elements} elements)`);
+    /**
+     * A composition that resizes when you use it.
+     *
+     * Switching a tab changed the dashboard's width from 980px to 1040px,
+     * because its root took its width from its content. The host can cause
+     * this (a preview stylesheet that centres the story) or the story can,
+     * and either way the story is what can defend itself by declaring a
+     * width. Blocking, because a page that jumps under the cursor is exactly
+     * the "looks broken" the user sees.
+     */
+    for (const r of interaction.reflows ?? []) {
+      findings.push({
+        id: `reflow-${findings.length}`,
+        severity: 'blocker',
+        class: 'code',
+        message: `Using "${r.label}" changes the width of the whole composition (${r.before}px → ${r.after}px), so the page jumps when it is used — the layout takes its width from its content. Give the composition's outermost element a width it controls (fill the space it is given, with a max-width if it should not run too wide) so switching content cannot resize it.`,
+        evidence: `${r.descriptor} "${r.label}": composition ${r.before}px → ${r.after}px while the viewport changed by ${r.hostDelta}px`,
+        repairable: true,
+      });
+    }
+
     findings.push(...censusFindings(census.problems));
 
     // Accessibility. Only rules that indicate the GENERATOR produced wrong
