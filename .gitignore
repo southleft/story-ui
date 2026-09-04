@@ -113,3 +113,14 @@ ENTERPRISE_READINESS_REPORT.md
 
 # fidelity bench output
 bench/results/
+
+# Debug artefacts: browser accessibility-tree dumps saved while investigating
+# a story, and backups written by `story-ui update` / editor tooling.
+steps-*.yaml
+*-snapshot.md
+*.doctor-backup
+*.backup-*
+
+# Screenshots dropped at the repository root. Documentation images belong in
+# docs/images/ and are committed from there.
+/*.png
