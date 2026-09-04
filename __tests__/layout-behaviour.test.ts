@@ -104,5 +104,10 @@ describe('readLayoutBehaviour', () => {
     expect(text).toContain('.cds--stack-vertical');
     expect(text).toContain('display: grid');
     expect(text).toContain('EVERY direct child stretches');
+    // The second-order case: wrapping the controls in a row does not help,
+    // because the row is a direct child too. Three measured failures were
+    // exactly this, and the first version of this text recommended it.
+    expect(text).toContain('Wrapping them in a row is NOT enough');
+    expect(text).toContain("justifySelf: 'start'");
   });
 });
