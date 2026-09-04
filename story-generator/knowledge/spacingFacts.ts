@@ -562,6 +562,16 @@ export function formatSpacingRules(
   lines.push('3. BUTTONS & ACTION ROWS: a row primitive with a small gap; actions sit in the same parent');
   lines.push('   stack as the fields, so the space above them is that stack\'s gap, not a marginTop.');
   lines.push(`   Pattern: ${rowExample}`);
+  // The measured first-attempt failure on Carbon, twice out of three: a
+  // Cancel/Save pair placed in a container that hands each button a share of
+  // the spare width, leaving a 300px void between two buttons. Rule 3 named
+  // the right container and never ruled out the wrong one, so this states the
+  // prohibition in the same words the layout probe uses when it catches it.
+  lines.push('   The row must SIZE TO ITS CONTENT. Never let a container distribute its spare width');
+  lines.push('   between the buttons — no space-between/space-around/space-evenly on a row of two or');
+  lines.push('   three controls, and no grid whose auto tracks stretch to fill the container. Both put');
+  lines.push('   a void between Cancel and Save; the gap between them is the container\'s gap and');
+  lines.push('   nothing else. Spare width belongs OUTSIDE the group, not inside it.');
   if (recipe) {
     lines.push('4. MULTI-COLUMN LAYOUT: this catalog has no grid component, so use this recipe with the');
     lines.push('   spacing scale — minmax(0, 1fr) and border-box keep every column the same width:');

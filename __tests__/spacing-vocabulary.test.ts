@@ -70,6 +70,12 @@ describe('deriveSpacingVocabulary', () => {
     expect(rules).toContain('<Stack gap=');
     expect(rules).toContain('a step from the spacing scale');
     expect(rules).not.toContain('padding: "24px"');
+    // The action row must be ruled out as well as ruled in: two of three
+    // first-attempt failures measured on Carbon were a Cancel/Save pair in a
+    // container that handed each button a share of the spare width.
+    expect(rules).toContain('SIZE TO ITS CONTENT');
+    expect(rules).toContain('space-between/space-around/space-evenly');
+    expect(rules).toContain('Spare width belongs OUTSIDE the group');
   });
 
   it('reads the spacing scale from tokens whose name says spacing AND whose value is a length, sorted by size', () => {
