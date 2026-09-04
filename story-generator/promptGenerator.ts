@@ -319,7 +319,18 @@ export async function buildFrameworkAwarePrompt(
     // with zero inputs, zero links and no interactive states.
     '- The story MUST be operable, not a mockup: anything a user would click, type into, toggle or select MUST be the real interactive component from the design system, with real state and real handlers',
     '- NEVER render a visual stand-in for an interactive element (no text styled to look like an input, no bare icon standing in for a button, no static row standing in for tabs or a menu)',
-    '- Prefer completeness of behavior over brevity — these stories are lifted directly into product code',
+    // "Prefer completeness of behavior over brevity" sat here, and it was
+    // read as licence to build MORE: a request for a navigation bar came back
+    // as a 327-line page with a hero and a feature grid. Measured across four
+    // design systems, invented scope was the single largest preventable
+    // defect class (41 findings, all four libraries) — instructed by this
+    // prompt, not invented by the model.
+    //
+    // Completeness and scope are different axes. The rule above already
+    // demands operability; this one bounds what is built, so the two cannot
+    // be confused.
+    '- Completeness means BEHAVIOUR, not scope: what the story does include must be fully operable, with real state and handlers. It does not mean adding more.',
+    '- Build what was asked for, and what that plainly requires — nothing else. A request for a navigation bar is a navigation bar, not a page built around one. Do not add regions, panels or features the request did not ask for (a search field, a filter bar, a notification centre, an activity feed, a toast system). When a request is broad ("a dashboard"), build the parts it names or plainly implies and make those excellent, rather than adding others to look thorough.',
     // Verification blocks on this and the prompt never mentioned it, so the
     // model was being failed for a rule it was never given. Measured on one
     // loan-calculator generation: 7 blockers, 5 of them icon-only controls
