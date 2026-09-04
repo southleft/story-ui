@@ -7,6 +7,7 @@ import inquirer from 'inquirer';
 import { createRequire } from 'module';
 import { ensureWatcherPolling } from '../story-generator/verify/storybookWatcher.js';
 import { mergeEnv } from './envFile.js';
+import { ensurePreviewRootCss } from './setup.js';
 import { ensureManagerAddonWiring, ensureStoriesGlobCoversMdx, missingReactStorybookDep, ensureManagerHeadPort, readConfiguredPort, ensureScriptPort, viteFinalConfigSnippet, insertConfigProperty, missingViteCjsIncludes } from './setup.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -654,6 +655,10 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
     const configured = readConfiguredPort(process.cwd());
     if (configured) {
       try {
+        const previewRoot = ensurePreviewRootCss(process.cwd());
+        if (previewRoot.action !== 'unchanged') {
+          console.log(chalk.green(`   ✅ ${previewRoot.action === 'created' ? 'Created' : 'Updated'} .storybook/preview-head.html — the preview root fills the canvas, so a story's width never follows its content (restart Storybook)`));
+        }
         const head = ensureManagerHeadPort(process.cwd(), configured.port);
         if (head.action !== 'unchanged') {
           console.log(chalk.green(`   ✅ ${head.action === 'created' ? 'Created' : 'Updated'} .storybook/manager-head.html — the workspace page talks to port ${configured.port} (from ${configured.source})`));

@@ -66,6 +66,16 @@ export interface Reflow {
   after: number;
   /** Body width change over the same click, so a scrollbar is not a finding. */
   hostDelta: number;
+  /**
+   * The HOST makes the story shrink-wrap: Storybook's root is a flex or grid
+   * ITEM whose cross-axis sizing hugs its content, which happens when a
+   * project's preview stylesheet centres the body. Then the width follows the
+   * content no matter what the story does, and the fix is one line of CSS in
+   * the preview — not a change to the composition. Story UI writes that line
+   * into .storybook/preview-head.html; a project that predates it has not got
+   * it yet.
+   */
+  hostShrinkWraps: boolean;
 }
 
 export interface InteractionResult {
@@ -343,6 +353,26 @@ export async function runInteractionProbe(
       // Below this, sub-pixel layout and a focus ring account for the change.
       const REFLOW_PX = 8;
 
+      /** Does the HOST force the story to hug its content? */
+      const hostShrinkWraps = (() => {
+        const host = (document.querySelector('#storybook-root') || document.querySelector('#root')) as HTMLElement | null;
+        const parent = host?.parentElement;
+        if (!host || !parent) return false;
+        const ps = getComputedStyle(parent);
+        const hs = getComputedStyle(host);
+        if (hs.width && hs.width.endsWith('%')) return false;
+        const flex = ps.display.includes('flex');
+        const grid = ps.display.includes('grid');
+        if (!flex && !grid) return false;
+        // Cross-axis sizing that hugs: anything but stretch/normal.
+        const cross = flex && ps.flexDirection.startsWith('column') ? ps.alignItems : (grid ? ps.justifyItems : ps.alignItems);
+        const hugs = /center|start|end|flex-start|flex-end/.test(cross);
+        // Proof rather than inference: the root is narrower than the space it has.
+        const room = parent.getBoundingClientRect().width;
+        const used = host.getBoundingClientRect().width;
+        return hugs && used < room - 24;
+      })();
+
       for (const el of toggles) {
         const before = toggleState(el);
         const sizeBefore = widths();
@@ -361,6 +391,7 @@ export async function runInteractionProbe(
             before: Math.round(sizeBefore.story),
             after: Math.round(sizeAfter.story),
             hostDelta: Math.round(hostDelta),
+            hostShrinkWraps,
           });
         }
 
@@ -417,6 +448,68 @@ export async function runInteractionProbe(
             before: Math.round(sizeBefore.story),
             after: Math.round(sizeAfter.story),
             hostDelta: Math.round(hostDelta),
+            hostShrinkWraps,
+          });
+        }
+      }
+
+      /* ── 1c. Filters: does choosing a value keep the page the same width? ── */
+
+      /**
+       * The trigger people actually hit. A status filter narrowing a table
+       * from six rows to two measured 917px → 884px on a generated dashboard,
+       * and neither the toggle loop nor the tab pass reaches a select: one has
+       * no checked state, the other is not a tab. Filtering legitimately
+       * changes a page's HEIGHT; it must never change its WIDTH.
+       *
+       * Two shapes, because design systems ship both: a native <select>,
+       * changed through the DOM so no menu has to open, and the listbox
+       * pattern, where the trigger is pressed and an option chosen.
+       */
+      const filters = queryAll('select, [role="combobox"]')
+        .filter(el => {
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0 && !(el as HTMLSelectElement).disabled;
+        })
+        .slice(0, 3);
+
+      for (const el of filters) {
+        const filterLabel = nameOf(el).slice(0, 40);
+        const sizeBefore = widths();
+        let changed = false;
+
+        if (el.tagName === 'SELECT') {
+          const select = el as HTMLSelectElement;
+          if (select.options.length > 1) {
+            const next = (select.selectedIndex + 1) % select.options.length;
+            select.selectedIndex = next;
+            select.dispatchEvent(new Event('input', { bubbles: true }));
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+            changed = true;
+          }
+        } else {
+          try {
+            press(el as HTMLElement);
+            await sleep(220);
+            const option = Array.from(document.querySelectorAll('[role="option"]'))
+              .find(o => o.getAttribute('aria-selected') !== 'true' && (o as HTMLElement).offsetParent !== null) as HTMLElement | undefined;
+            if (option) { press(option); changed = true; }
+          } catch { /* a trigger that refuses to open tells us nothing */ }
+        }
+        if (!changed) continue;
+        await sleep(320);   // let the filtered content settle
+
+        const sizeAfter = widths();
+        const hostDelta = sizeAfter.host - sizeBefore.host;
+        const storyDelta = sizeAfter.story - sizeBefore.story;
+        if (Math.abs(storyDelta - hostDelta) > REFLOW_PX && result.reflows.length < 4) {
+          result.reflows.push({
+            label: filterLabel,
+            descriptor: `${el.tagName.toLowerCase()}${el.getAttribute('role') ? `[role=${el.getAttribute('role')}]` : ''}`,
+            before: Math.round(sizeBefore.story),
+            after: Math.round(sizeAfter.story),
+            hostDelta: Math.round(hostDelta),
+            hostShrinkWraps,
           });
         }
       }

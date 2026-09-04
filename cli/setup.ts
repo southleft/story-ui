@@ -541,6 +541,55 @@ export function ensureManagerHeadPort(
   return { path: file, action: existing === null ? 'created' : 'updated' };
 }
 
+/** Marks the block Story UI owns inside .storybook/preview-head.html. */
+export const PREVIEW_ROOT_MARKER = 'Story UI: the preview root fills the canvas';
+
+/**
+ * The preview root fills the canvas.
+ *
+ * Storybook's own default is a block-level `#storybook-root`, which fills the
+ * width it is given. A project stylesheet that makes the body a centred flex
+ * column turns that root into a flex ITEM, which shrink-wraps to its content
+ * — so the page's width becomes "however wide the current content happens to
+ * be", and filtering a table or switching a tab visibly resizes the whole
+ * composition. Measured on a generated dashboard: choosing a status filter
+ * took it from 917px to 884px; with this rule, 1568px either way.
+ *
+ * This restores Storybook's default rather than imposing a new one, and it is
+ * scoped away from `layout: 'centered'`, where shrink-wrapping is the whole
+ * point of the setting. Nothing here constrains what a story may look like:
+ * a story that wants to be 400px wide still is.
+ */
+export function previewRootCss(): string {
+  return `<style>
+  /* ${PREVIEW_ROOT_MARKER}, so a story's width never follows its content.
+     Storybook's default #storybook-root is block-level and fills its parent;
+     a preview stylesheet that centres the body turns it into a shrink-to-fit
+     flex item, and the page then resizes whenever its content changes.
+     Not applied to layout: 'centered', where hugging the content is intended. */
+  body:not(.sb-main-centered) #storybook-root { width: 100%; }
+</style>`;
+}
+
+/**
+ * Append Story UI's preview-root rule, once. An existing preview-head.html is
+ * kept exactly as it is and the block is added after it: the file usually
+ * belongs to the project, and the rest of it is none of our business.
+ */
+export function ensurePreviewRootCss(
+  cwd: string,
+): { path: string; action: 'created' | 'appended' | 'unchanged' } {
+  const file = path.join(cwd, '.storybook', 'preview-head.html');
+  const existing = fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : null;
+  if (existing !== null && existing.includes(PREVIEW_ROOT_MARKER)) {
+    return { path: file, action: 'unchanged' };
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const body = existing === null ? `${previewRootCss()}\n` : `${existing.replace(/\s*$/, '')}\n\n${previewRootCss()}\n`;
+  fs.writeFileSync(file, body);
+  return { path: file, action: existing === null ? 'created' : 'appended' };
+}
+
 /**
  * The port init configured, read back from what init wrote: `.env`'s
  * VITE_STORY_UI_PORT first, then the `--port` in the package.json `story-ui`
@@ -2445,6 +2494,17 @@ export default registry;
     if (head.action !== 'unchanged') {
       console.log(chalk.green(`✅ ${head.action === 'created' ? 'Created' : 'Updated'} .storybook/manager-head.html — the workspace page will talk to port ${chosenPort}`));
     }
+  }
+
+  // The preview root fills the canvas: Storybook's own default, restored so a
+  // story's width can never follow its content. See ensurePreviewRootCss.
+  try {
+    const previewRoot = ensurePreviewRootCss(process.cwd());
+    if (previewRoot.action !== 'unchanged') {
+      console.log(chalk.green(`✅ ${previewRoot.action === 'created' ? 'Created' : 'Updated'} .storybook/preview-head.html — the preview root fills the canvas`));
+    }
+  } catch (previewError: any) {
+    console.warn(chalk.yellow(`⚠️  Could not write .storybook/preview-head.html: ${previewError.message}`));
   }
 
   // Add .env to .gitignore if not already there

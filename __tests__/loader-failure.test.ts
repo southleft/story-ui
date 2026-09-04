@@ -52,12 +52,40 @@ describe('Storybook failing to load a story is not the story failing', () => {
 });
 
 describe('a composition must not resize when it is used', () => {
-  it('states the rule for compositions and exempts single specimens', async () => {
+  it('leaves the width to the author and forbids only content-dependent width', async () => {
     const { formatSpacingRules } = await import('../story-generator/knowledge/spacingFacts');
     const vocab: any = { primitives: [], tokens: [], utilities: null, typography: [], colourTiers: null };
     const text = formatSpacingRules(vocab, 'jsx', {});
-    expect(text).toContain('width from the SPACE IT IS GIVEN');
-    expect(text).toContain('switching a tab visibly resizes');
-    expect(text).toContain('should NOT be stretched');
+    // The width is the author's choice; only the dependence on content is a rule.
+    expect(text).toContain('Choose the width the request calls for');
+    expect(text).toContain('must not depend on');
+    expect(text).not.toContain('must take its width from the SPACE IT IS GIVEN');
+  });
+});
+
+describe('the preview root fills the canvas', () => {
+  it('appends the rule once, keeps the project\'s own CSS, and spares centered layouts', async () => {
+    const fs = await import('fs'); const os = await import('os'); const path = await import('path');
+    const { ensurePreviewRootCss, PREVIEW_ROOT_MARKER } = await import('../cli/setup');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'preview-'));
+    fs.mkdirSync(path.join(dir, '.storybook'));
+    const theirs = '<style>\n  body.sb-main-padded { display: flex !important; align-items: center !important; }\n</style>\n';
+    fs.writeFileSync(path.join(dir, '.storybook', 'preview-head.html'), theirs);
+
+    const first = ensurePreviewRootCss(dir);
+    expect(first.action).toBe('appended');
+    const after = fs.readFileSync(path.join(dir, '.storybook', 'preview-head.html'), 'utf8');
+    expect(after).toContain('body.sb-main-padded { display: flex');           // theirs survives
+    expect(after).toContain('body:not(.sb-main-centered) #storybook-root { width: 100%; }');
+    expect(after).toContain(PREVIEW_ROOT_MARKER);
+
+    // Idempotent: running update again changes nothing.
+    expect(ensurePreviewRootCss(dir).action).toBe('unchanged');
+    expect(fs.readFileSync(path.join(dir, '.storybook', 'preview-head.html'), 'utf8')).toBe(after);
+
+    // A project with no preview-head gets one.
+    const fresh = fs.mkdtempSync(path.join(os.tmpdir(), 'preview2-'));
+    fs.mkdirSync(path.join(fresh, '.storybook'));
+    expect(ensurePreviewRootCss(fresh).action).toBe('created');
   });
 });
