@@ -1,3 +1,10 @@
+## [5.8.2](https://github.com/southleft/story-ui/compare/v5.8.1...v5.8.2) (2026-09-04)
+
+
+### Bug Fixes
+
+* **generator:** derive container behaviour once, for both things that need it ([ac52a53](https://github.com/southleft/story-ui/commit/ac52a533a3c2101638b5f042bd4f645184e61af9))
+
 ## [5.8.1](https://github.com/southleft/story-ui/compare/v5.8.0...v5.8.1) (2026-09-04)
 
 
