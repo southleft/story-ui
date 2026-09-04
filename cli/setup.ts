@@ -1,5 +1,5 @@
 import fs from 'fs';
-import { ensureWatcherPolling } from '../story-generator/verify/storybookWatcher.js';
+import { ensureWatcherLauncher, WATCHER_LAUNCHER_FILE } from '../story-generator/verify/storybookWatcher.js';
 import path from 'path';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
@@ -2239,12 +2239,14 @@ export default registry;
     let configUpdated = false;
 
     // Keep Storybook's story-index watcher alive on macOS (storybookWatcher.ts).
-    const polled = ensureWatcherPolling(mainContent);
-    if (polled) {
-      mainContent = polled;
-      configUpdated = true;
-      console.log(chalk.green(`✅ Added WATCHPACK_POLLING to ${path.basename(actualMainPath)} — on macOS Storybook finds new stories by polling`));
+    // The variable has to be set before Node loads Storybook, so this installs a
+    // launcher and points the storybook script at it — a line in this config file
+    // runs after watchpack has already read the variable.
+    const launcher = ensureWatcherLauncher(process.cwd());
+    if (launcher.file !== 'unchanged' || launcher.scripts.length) {
+      console.log(chalk.green(`✅ Storybook starts through .storybook/${WATCHER_LAUNCHER_FILE}${launcher.scripts.length ? ` (${launcher.scripts.join(', ')})` : ''} — on macOS it finds new stories by polling`));
     }
+    if (launcher.note) console.log(chalk.yellow(`⚠️  ${launcher.note}`));
 
     // Check if StoryUI config already exists
     if (mainContent.includes('@tpitre/story-ui') || mainContent.includes('StoryUIPanel')) {

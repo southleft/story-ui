@@ -309,7 +309,15 @@ export async function buildFrameworkAwarePrompt(
     '- ALWAYS use the exact import path shown in parentheses after each component',
     '- NEVER use main package imports when specific subpath imports are shown',
     '- Do NOT import story exports - these are NOT real components',
-    '- All images MUST have a src attribute with placeholder URLs (use https://picsum.photos/)',
+    // This line used to read "All images MUST have a src attribute with
+    // placeholder URLs (use https://picsum.photos/)". The same prompt already
+    // carries IMAGE RULES derived from the project (knowledge/iconFacts.ts),
+    // which say the opposite for a placeholder: render the design system's own
+    // skeleton or an inline SVG data URI, NEVER a remote URL. Two rules in one
+    // prompt, one of them near the end where adherence is highest — so every
+    // placeholder came back as a network request to picsum.photos, which is a
+    // grey box in a screenshot and a broken image with no network.
+    '- Every image MUST have a src attribute. Which KIND of src is decided by the IMAGE RULES section above, not by preference: a placeholder is the design system\'s own placeholder component or an inline SVG data URI, and a remote photo URL is only for an image the request actually asks to be a photograph.',
     '- MUST use ES modules syntax: "export default meta;" NOT "module.exports = meta;"',
     '- The file MUST have a default export for the meta object',
     // Previously: "Keep the story concise and focused - avoid overly complex

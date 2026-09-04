@@ -115,5 +115,13 @@ describe('the prompt bounds scope instead of encouraging it', () => {
     expect(text).toContain('REJECTED before the story is saved');
     expect(text).toContain('never `ariaLabel`');
     expect(text).toContain("prop's VALUE");
+
+    // One prompt used to carry two image rules: the derived IMAGE RULES said a
+    // placeholder is never a remote URL, and the reminder block said every image
+    // uses picsum.photos. The reminder won, being later in the prompt.
+    expect(text).not.toContain('use https://picsum.photos/)');
+    expect(text).toContain('decided by the IMAGE RULES section');
+    // And the adapter's own card example no longer teaches a remote placeholder.
+    expect(text).not.toMatch(/src=["']https:\/\/picsum/);
   });
 });

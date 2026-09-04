@@ -301,7 +301,7 @@ ${this.getCommonRules(options)}`;
 </Story>
 
 <Story name="With Image">
-  <Card class="max-w-sm" img="https://picsum.photos/400/200">
+  <Card class="max-w-sm" img="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='400' height='200'><rect width='100%' height='100%' fill='%23e5e7eb'/></svg>">
     <h5 class="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">Image Card</h5>
     <p class="font-normal text-gray-700 dark:text-gray-400">Card with an image header.</p>
     <Button>Read More</Button>
@@ -309,7 +309,7 @@ ${this.getCommonRules(options)}`;
 </Story>
 
 <Story name="Horizontal">
-  <Card class="max-w-xl" horizontal img="https://picsum.photos/200/200">
+  <Card class="max-w-xl" horizontal img="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><rect width='100%' height='100%' fill='%23e5e7eb'/></svg>">
     <h5 class="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">Horizontal</h5>
     <p class="font-normal text-gray-700 dark:text-gray-400">Horizontal card layout.</p>
   </Card>

@@ -18,7 +18,8 @@ import path from 'path';
 import {
   installedVersion, watchpackPolling, storybookWatcherAdvice, storybookWatcherHint,
   probeStorybookWatcher, removeStaleProbes, POLLING_FIX,
-  ensureWatcherPolling, mainConfiguresPolling, WATCHER_POLLING_MARKER,
+  ensureWatcherLauncher, pollingIsConfigured, WATCHER_POLLING_MARKER,
+  WATCHER_LAUNCHER_FILE, routeScriptThroughLauncher, removeWatcherPollingPreamble,
 } from '../story-generator/verify/storybookWatcher.js';
 
 const project = (storybookVersion: string | null) => {
@@ -166,38 +167,87 @@ describe('removeStaleProbes', () => {
   });
 });
 
-describe('polling preamble in .storybook/main', () => {
+describe('the launcher that actually sets WATCHPACK_POLLING', () => {
   const main = `import type { StorybookConfig } from '@storybook/react-vite';
-import {
-  mergeConfig,
-} from 'vite';
+
+// Story UI: keep the story-index watcher alive. On macOS, Storybook's story-index watcher
+// drops events silently.
+if (process.platform === 'darwin' && !process.env.WATCHPACK_POLLING) process.env.WATCHPACK_POLLING = '1000';
 
 const config: StorybookConfig = {
   stories: ['../src/**/*.stories.tsx'],
 };
 export default config;
 `;
-  it('goes after the last import, once, and only on macOS at runtime', () => {
-    const out = ensureWatcherPolling(main)!;
-    expect(out).not.toBeNull();
-    const at = out.indexOf(WATCHER_POLLING_MARKER);
-    expect(at).toBeGreaterThan(out.indexOf("from 'vite';"));
-    expect(at).toBeLessThan(out.indexOf('const config'));
-    expect(out).toContain("if (process.platform === 'darwin' && !process.env.WATCHPACK_POLLING) process.env.WATCHPACK_POLLING = '1000';");
-    expect(ensureWatcherPolling(out)).toBeNull();
-    expect(ensureWatcherPolling("process.env.WATCHPACK_POLLING = '500';\n" + main)).toBeNull();
-  });
 
-  it('goes first in a file without imports', () => {
-    const out = ensureWatcherPolling("module.exports = { stories: [] };\n")!;
-    expect(out.startsWith('// ' + WATCHER_POLLING_MARKER)).toBe(true);
-  });
-
-  it('is read back from the project', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sbmain-'));
+  const project = (scripts: Record<string, string>) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'launcher-'));
     fs.mkdirSync(path.join(dir, '.storybook'));
-    expect(mainConfiguresPolling(dir)).toBe(false);
-    fs.writeFileSync(path.join(dir, '.storybook', 'main.ts'), ensureWatcherPolling(main)!);
-    expect(mainConfiguresPolling(dir)).toBe(true);
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'p', scripts }, null, 2));
+    return dir;
+  };
+
+  it('rewrites only the storybook invocation, keeping every flag', () => {
+    expect(routeScriptThroughLauncher('storybook dev -p 6109 --no-open'))
+      .toBe(`node ./.storybook/${WATCHER_LAUNCHER_FILE} dev -p 6109 --no-open`);
+    expect(routeScriptThroughLauncher('npx storybook dev -p 6006'))
+      .toBe(`node ./.storybook/${WATCHER_LAUNCHER_FILE} dev -p 6006`);
+    // A build is not a watch, and a script that calls another script inherits
+    // the environment the launcher sets, so neither is touched.
+    expect(routeScriptThroughLauncher('storybook build')).toBeNull();
+    expect(routeScriptThroughLauncher('concurrently "npm run storybook" "npm run story-ui"')).toBeNull();
+    // Idempotent.
+    const once = routeScriptThroughLauncher('storybook dev -p 6006')!;
+    expect(routeScriptThroughLauncher(once)).toBeNull();
+  });
+
+  it('installs the launcher, points the script at it, and reports it', () => {
+    const dir = project({ storybook: 'storybook dev -p 6006', build: 'storybook build' });
+    const result = ensureWatcherLauncher(dir);
+    expect(result.file).toBe('created');
+    expect(result.scripts).toEqual(['storybook']);
+    const scripts = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).scripts;
+    expect(scripts.storybook).toContain(WATCHER_LAUNCHER_FILE);
+    expect(scripts.build).toBe('storybook build');
+    // The launcher must set the variable BEFORE it imports Storybook — the whole
+    // point of the file. Anything else is the bug it exists to fix.
+    const src = fs.readFileSync(path.join(dir, '.storybook', WATCHER_LAUNCHER_FILE), 'utf8');
+    expect(src.indexOf('WATCHPACK_POLLING')).toBeLessThan(src.indexOf("require.resolve('storybook/package.json'"));
+    // Running it again changes nothing.
+    const again = ensureWatcherLauncher(dir);
+    expect(again.file).toBe('unchanged');
+    expect(again.scripts).toEqual([]);
+    expect(pollingIsConfigured(dir)).toBe(true);
+  });
+
+  it('says so when no script starts Storybook directly', () => {
+    const dir = project({ dev: 'vite' });
+    const result = ensureWatcherLauncher(dir);
+    expect(result.scripts).toEqual([]);
+    expect(result.note).toContain('No package script starts Storybook directly');
+    expect(pollingIsConfigured(dir)).toBe(false);
+  });
+
+  it('deletes the preamble that never worked, so nothing reads it as a fix', () => {
+    const dir = project({ storybook: 'storybook dev' });
+    fs.writeFileSync(path.join(dir, '.storybook', 'main.ts'), main);
+    const result = ensureWatcherLauncher(dir);
+    expect(result.removedDeadPreamble).toBe('main.ts');
+    const after = fs.readFileSync(path.join(dir, '.storybook', 'main.ts'), 'utf8');
+    expect(after).not.toContain('WATCHPACK_POLLING');
+    expect(after).not.toContain(WATCHER_POLLING_MARKER);
+    // The rest of the config survives intact.
+    expect(after).toContain("stories: ['../src/**/*.stories.tsx']");
+    expect(after).toContain("import type { StorybookConfig }");
+    expect(removeWatcherPollingPreamble(after)).toBeNull();
+  });
+
+  it('does not count the dead preamble as polling', () => {
+    // This is the regression that mattered: `check` reported polling configured
+    // because the marker was in the config, while watchpack had read the
+    // variable before that line ever ran.
+    const dir = project({ storybook: 'storybook dev' });
+    fs.writeFileSync(path.join(dir, '.storybook', 'main.ts'), main);
+    expect(pollingIsConfigured(dir)).toBe(false);
   });
 });

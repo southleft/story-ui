@@ -65,54 +65,184 @@ export function watchpackPolling(value: string | undefined): number | boolean {
   return true;
 }
 
-export const POLLING_FIX = 'npx story-ui update (adds WATCHPACK_POLLING to .storybook/main), or start with WATCHPACK_POLLING=1000 npm run storybook';
+export const POLLING_FIX = 'npx story-ui update (routes the storybook script through a launcher that sets it), or start with WATCHPACK_POLLING=1000 npm run storybook';
 
-/** Marks the polling preamble `init`/`update` write into .storybook/main. */
+/** Marks the polling preamble older versions wrote into .storybook/main. */
 export const WATCHER_POLLING_MARKER = 'Story UI: keep the story-index watcher alive';
 
+/** The launcher `init`/`update` write into the .storybook directory. */
+export const WATCHER_LAUNCHER_FILE = 'story-ui-storybook.mjs';
+
 /**
- * The preamble. Evaluated when Storybook loads its main config, in the same
- * process and before watchpack creates a single watcher, so the variable is
- * in place for it — the same effect as the env var, without anyone having
- * to know it exists. macOS only: the drop is FSEvents'; elsewhere fs.watch
- * is fine and polling would only cost CPU.
+ * WHY A LAUNCHER AND NOT A LINE IN .storybook/main.
+ *
+ * Story UI used to write this into the Storybook config:
+ *
+ *   if (process.platform === 'darwin' && !process.env.WATCHPACK_POLLING)
+ *     process.env.WATCHPACK_POLLING = '1000';
+ *
+ * on the reasoning that the config is evaluated in Storybook's own process
+ * before any watcher is created. The second half is true and irrelevant.
+ * watchpack does not read the variable when it creates a watcher; its
+ * DirectoryWatcher module reads it ONCE, at module scope, to compute a
+ * `FORCE_POLLING` constant — and Storybook's core-server imports watchpack at
+ * ITS module scope, which happens before the user's config file is loaded.
+ *
+ * Measured, by proxying `process.env` and logging each access with a stack:
+ *
+ *   [read ] undefined  watchpack/lib/DirectoryWatcher.js <- getWatcherManager
+ *   [read ] undefined  .storybook/main.ts:1
+ *   [write] "1000"     .storybook/main.ts:1
+ *
+ * The preamble ran second. Every project that took the fix was still watching
+ * with fs.watch, while `check` reported polling was configured because the
+ * marker was in the file — a check that could not fail, on a fix that did
+ * nothing. That combination is the reason this comment is this long.
+ *
+ * The variable has to be in the environment before Node loads Storybook, so
+ * this launcher sets it and then imports Storybook's own binary, forwarding
+ * argv untouched. Storybook's dispatcher re-execs a child process, which
+ * inherits the environment, so the value reaches the process that watches.
  */
-export function watcherPollingSnippet(): string {
-  return `// ${WATCHER_POLLING_MARKER}. On macOS, Storybook's story-index watcher (watchpack over
-// fs.watch) shares one FSEvents stream rooted at your home directory, and a burst of file
-// activity anywhere under it drops events silently — a new story then never appears until
-// Storybook restarts. Polling stats the directories instead, so nothing FSEvents does can
-// reach it. Remove this if you set WATCHPACK_POLLING yourself.
-if (process.platform === 'darwin' && !process.env.WATCHPACK_POLLING) process.env.WATCHPACK_POLLING = '1000';
+export function watcherLauncherSource(): string {
+  return `#!/usr/bin/env node
+// Written by Story UI. Starts Storybook with WATCHPACK_POLLING set on macOS, where
+// Storybook's story-index watcher (watchpack over fs.watch) shares one FSEvents stream
+// rooted at your home directory: a burst of file activity anywhere under it drops events
+// silently, and a new story then never appears until Storybook restarts. Polling stats the
+// directories instead, so nothing FSEvents does can reach it.
+//
+// This has to happen before Node loads Storybook — watchpack reads the variable once, when
+// its module is first evaluated, which is before .storybook/main is read. Setting it inside
+// the config is too late and has no effect.
+//
+// Everything after the script name is passed to Storybook unchanged, so this file is a
+// drop-in for the \`storybook\` command. Delete it and restore the plain command if you set
+// WATCHPACK_POLLING yourself.
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
+import path from 'node:path';
+
+if (process.platform === 'darwin' && !process.env.WATCHPACK_POLLING) {
+  process.env.WATCHPACK_POLLING = '1000';
+}
+
+const require = createRequire(import.meta.url);
+const pkgPath = require.resolve('storybook/package.json', { paths: [process.cwd(), import.meta.dirname] });
+const pkg = require(pkgPath);
+const bin = typeof pkg.bin === 'string' ? pkg.bin : pkg.bin.storybook;
+await import(pathToFileURL(path.join(path.dirname(pkgPath), bin)).href);
 `;
 }
 
-const IMPORT_RE = /^[ \t]*import\s+(?:type\s+)?(?:[^'";]*?\s+from\s+)?['"][^'"]+['"];?[ \t]*$/gm;
+/** The command a package script must run for the launcher to be in play. */
+const LAUNCHER_CMD = `node ./.storybook/${WATCHER_LAUNCHER_FILE}`;
 
 /**
- * Insert the preamble after the last import (imports are hoisted, so a
- * statement before them would still run after them — placing it after keeps
- * the file reading in execution order). Null when it is already there.
+ * Route a package script through the launcher.
+ *
+ * Only a script that runs Storybook's binary directly is rewritten, and only
+ * the `storybook dev` token within it — flags, ports and everything around it
+ * survive. A script that runs another script (`npm run storybook`) is left
+ * alone: it starts a child that inherits the environment the launcher sets.
+ * Returns null when there is nothing to do.
  */
-export function ensureWatcherPolling(mainContent: string): string | null {
-  if (mainContent.includes(WATCHER_POLLING_MARKER) || /WATCHPACK_POLLING/.test(mainContent)) return null;
-  let lastImportEnd = 0;
-  for (const m of mainContent.matchAll(IMPORT_RE)) lastImportEnd = m.index + m[0].length;
-  const snippet = watcherPollingSnippet();
-  if (lastImportEnd === 0) return `${snippet}\n${mainContent}`;
-  const rest = mainContent.slice(lastImportEnd).replace(/^\n+/, '\n');
-  return `${mainContent.slice(0, lastImportEnd)}\n\n${snippet}${rest}`;
+export function routeScriptThroughLauncher(script: string): string | null {
+  if (!script || script.includes(WATCHER_LAUNCHER_FILE)) return null;
+  const re = /(^|&&\s*|\|\|\s*|;\s*|"\s*)((?:npx|pnpm exec|yarn|bun x|bunx)\s+)?storybook(\s+dev\b)/;
+  const m = re.exec(script);
+  if (!m) return null;
+  return script.replace(re, `$1${LAUNCHER_CMD}$3`);
 }
 
-/** Does this project's .storybook/main already set polling? */
-export function mainConfiguresPolling(cwd: string): boolean {
-  for (const name of ['main.ts', 'main.mts', 'main.tsx', 'main.js', 'main.mjs', 'main.cjs']) {
-    try {
-      const content = fs.readFileSync(path.join(cwd, '.storybook', name), 'utf8');
-      return content.includes(WATCHER_POLLING_MARKER) || /WATCHPACK_POLLING\s*=/.test(content);
-    } catch { /* try the next name */ }
-  }
+export interface LauncherResult {
+  /** What happened to the launcher file. */
+  file: 'created' | 'updated' | 'unchanged';
+  /** Scripts rewritten to go through it. */
+  scripts: string[];
+  /** Set when .storybook/main still carried the preamble that never worked. */
+  removedDeadPreamble?: string;
+  /** Set when no script runs Storybook directly, so nothing could be routed. */
+  note?: string;
+}
+
+/**
+ * Strip the preamble older versions wrote into .storybook/main. It is inert
+ * (see above) and leaving it there makes a later reader believe polling is on.
+ * Null when the file does not carry it.
+ */
+export function removeWatcherPollingPreamble(mainContent: string): string | null {
+  if (!mainContent.includes(WATCHER_POLLING_MARKER)) return null;
+  const lines = mainContent.split('\n');
+  const start = lines.findIndex(l => l.includes(WATCHER_POLLING_MARKER));
+  let end = start;
+  // The block is the comment lines plus the single assignment that follows.
+  while (end < lines.length && (lines[end].startsWith('//') || lines[end].includes('WATCHPACK_POLLING'))) end++;
+  const kept = [...lines.slice(0, start), ...lines.slice(end)];
+  // Collapse the blank line the block leaves behind.
+  while (kept[start] === '' && kept[start - 1] === '') kept.splice(start, 1);
+  return kept.join('\n');
+}
+
+/** Do the project's own files put polling in Storybook's environment? */
+export function pollingIsConfigured(cwd: string): boolean {
+  if (!fs.existsSync(path.join(cwd, '.storybook', WATCHER_LAUNCHER_FILE))) return false;
+  try {
+    const scripts = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8')).scripts || {};
+    if (Object.values(scripts).some((s: any) => typeof s === 'string' && s.includes(WATCHER_LAUNCHER_FILE))) return true;
+  } catch { /* no package.json to read */ }
   return false;
+}
+
+/**
+ * Install the launcher and point the project's Storybook script at it.
+ * Idempotent: safe to run on every `update`.
+ */
+export function ensureWatcherLauncher(cwd: string): LauncherResult {
+  const sbDir = path.join(cwd, '.storybook');
+  fs.mkdirSync(sbDir, { recursive: true });
+  const target = path.join(sbDir, WATCHER_LAUNCHER_FILE);
+  const source = watcherLauncherSource();
+  let file: LauncherResult['file'] = 'created';
+  if (fs.existsSync(target)) {
+    file = fs.readFileSync(target, 'utf8') === source ? 'unchanged' : 'updated';
+  }
+  if (file !== 'unchanged') fs.writeFileSync(target, source);
+
+  const result: LauncherResult = { file, scripts: [] };
+
+  const pkgPath = path.join(cwd, 'package.json');
+  try {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    const scripts = pkg.scripts || {};
+    let changed = false;
+    for (const [name, cmd] of Object.entries(scripts)) {
+      if (typeof cmd !== 'string') continue;
+      const routed = routeScriptThroughLauncher(cmd);
+      if (routed) { scripts[name] = routed; result.scripts.push(name); changed = true; }
+    }
+    if (changed) {
+      pkg.scripts = scripts;
+      fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
+    } else if (!pollingIsConfigured(cwd)) {
+      result.note = `No package script starts Storybook directly, so nothing was rewritten — start it with \`${LAUNCHER_CMD} dev\` (or set WATCHPACK_POLLING=1000 yourself) for the index to keep up on macOS`;
+    }
+  } catch {
+    result.note = 'package.json could not be read, so the Storybook script was left alone';
+  }
+
+  for (const name of ['main.ts', 'main.mts', 'main.tsx', 'main.js', 'main.mjs', 'main.cjs']) {
+    const mainPath = path.join(sbDir, name);
+    if (!fs.existsSync(mainPath)) continue;
+    const stripped = removeWatcherPollingPreamble(fs.readFileSync(mainPath, 'utf8'));
+    if (stripped !== null) {
+      fs.writeFileSync(mainPath, stripped);
+      result.removedDeadPreamble = name;
+    }
+    break;
+  }
+
+  return result;
 }
 
 export function storybookWatcherAdvice(input: {
@@ -154,7 +284,7 @@ export function storybookWatcherHint(
   platform: NodeJS.Platform = process.platform,
 ): string {
   const version = installedVersion(cwd, 'storybook');
-  const polling = watchpackPolling(env.WATCHPACK_POLLING) || (mainConfiguresPolling(cwd) ? 1000 : false);
+  const polling = watchpackPolling(env.WATCHPACK_POLLING) || (pollingIsConfigured(cwd) ? 1000 : false);
   const advice = storybookWatcherAdvice({ platform, storybookVersion: version, polling });
   if (advice.risk !== 'fsevents') return '';
   return ` Storybook ${version} on macOS watches with fs.watch through one FSEvents stream rooted at your home directory; a burst of file activity anywhere under it drops events silently and the watcher does not recover. Restart Storybook with WATCHPACK_POLLING=1000 (polling, immune to this), and run npx story-ui update so it polls from then on.`;
