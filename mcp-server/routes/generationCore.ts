@@ -108,7 +108,6 @@ const GEOMETRY_PROP = /^(sm|md|lg|xl|xxl|max|xs|span|offset|start|end|gap|column
 const LAYOUT_PROSE = /\b(column|columns|grid|breakpoint|gutter|span|spacing|width|row|layout)\b/i;
 import { enrichWithSourceFacts, withLocalPropFacts } from '../../story-generator/knowledge/sourceFacts.js';
 import { readStylingFacts, formatStylingGuidance, readDesignTokens, readLayoutBehaviour, formatLayoutBehaviour, layoutComponentsFrom } from '../../story-generator/knowledge/stylingFacts.js';
-import { fixStretchedControlRows } from '../../story-generator/knowledge/stretchFix.js';
 import type { LayoutBehaviour } from '../../story-generator/knowledge/stylingFacts.js';
 import type { StylingFacts } from '../../story-generator/knowledge/stylingFacts.js';
 import {
@@ -464,8 +463,6 @@ async function runStoryGenerationPipeline(
   let stylingFacts: StylingFacts | null = null;
   let spacingVocab: SpacingVocabulary | null = null;
   let layoutBehaviours: LayoutBehaviour[] = [];
-  /** The stretch pass reports once per generation, not once per finalize. */
-  let stretchFixReported = false;
   let iconVocab: IconVocabulary | null = null;
 
   const {
@@ -1878,34 +1875,6 @@ async function runStoryGenerationPipeline(
      * the first output, a healed regeneration and a repair candidate all pass
      * through, so no route can miss it.
      */
-    {
-      const held = layoutBehaviours.length
-        ? fixStretchedControlRows(fixed, layoutBehaviours, finalFileName)
-        : null;
-      if (held?.edits.length) fixed = held.code;
-      /**
-       * Reported on every path, including the one where nothing happened.
-       *
-       * The first version logged only when it changed something, so a pass
-       * that ran and found nothing was indistinguishable from a pass that
-       * never ran — which is the exact conflation this codebase keeps paying
-       * for, introduced here by the commit that fixed it elsewhere. It cost a
-       * run to notice. Logged once per generation, not once per finalize,
-       * because the finalizer also runs for every repair candidate.
-       */
-      if (!stretchFixReported) {
-        stretchFixReported = true;
-        if (!held) {
-          logger.log('↔️ Stretch fix: no container behaviour was derived for this design system — the pass did not run');
-        } else if (held.edits.length) {
-          logger.log(`↔️ Stretch fix: ${held.source} — ${held.edits.map(e => `L${e.line} <${e.row}> of ${e.count} <${e.control}>`).join(', ')}`);
-        } else if (held.skipped.length) {
-          logger.log(`↔️ Stretch fix: left ${held.skipped.length} row(s) alone — ${held.skipped.map(sk => `L${sk.line} ${sk.reason}`).join('; ')}`);
-        } else {
-          logger.log(`↔️ Stretch fix: ${held.ran ? 'ran, ' : ''}${held.source}`);
-        }
-      }
-    }
     fixed = applyTitleAndId(fixed, cleanTitle, storyIdSlug, config.storyPrefix);
     fixed = alignStorybookTypesImport(fixed, config.storybookFramework);
 
