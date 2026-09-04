@@ -1,3 +1,10 @@
+## [5.7.2](https://github.com/southleft/story-ui/compare/v5.7.1...v5.7.2) (2026-09-04)
+
+
+### Bug Fixes
+
+* **generator:** the grouped row has to refuse the stretch too ([604d2fb](https://github.com/southleft/story-ui/commit/604d2fb79ad6e21cf105055d00ded598570eddd6))
+
 ## [5.7.1](https://github.com/southleft/story-ui/compare/v5.7.0...v5.7.1) (2026-09-04)
 
 
