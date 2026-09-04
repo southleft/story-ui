@@ -831,10 +831,29 @@ export function formatLayoutBehaviour(result: LayoutBehaviourResult): string {
   for (const b of stretching) {
     if (seen.has(b.component)) continue;
     seen.add(b.component);
+    const axis = /grid$/.test(b.display) ? 'justify-items' : 'align-items';
+    const selfProp = /grid$/.test(b.display) ? 'justifySelf' : 'alignSelf';
     lines.push(
       `- <${b.component}> renders \`display: ${b.display}\`${b.autoFlow ? `, \`grid-auto-flow: ${b.autoFlow}\`` : ''} (.${b.className}) and sets no ` +
-      `${/grid$/.test(b.display) ? 'justify-items' : 'align-items'}, so EVERY direct child stretches to its full width. ` +
-      `A button, tag, badge or chip placed directly inside comes out full width. Put such controls in a row that sizes to its content instead.`,
+      `${axis}, so EVERY direct child stretches to its full width. ` +
+      `A button, tag, badge or chip placed directly inside comes out full width.`,
+    );
+    /**
+     * The second-order case, and the one that actually failed three times.
+     *
+     * Wrapping the controls in a row is the obvious remedy and it is not
+     * enough: the ROW is a direct child too, so it is stretched to the full
+     * width, and its own auto tracks then absorb the free space and push the
+     * first and last control to opposite ends. Measured on Carbon: a login
+     * form and a pricing page both put two buttons in a horizontal Stack
+     * inside a vertical Stack, and the layout probe reported a 300px void
+     * between them, three gate attempts running.
+     */
+    lines.push(
+      `  Wrapping them in a row is NOT enough on its own: the row is a direct child too, so it is ` +
+      `stretched to the full width and its own columns then spread the controls to opposite ends. ` +
+      `Give the row \`${selfProp}: 'start'\` (or put it inside an element that hugs its content) so it ` +
+      `stays as wide as its buttons.`,
     );
   }
   return lines.join('\n');

@@ -794,7 +794,13 @@ export async function runLayoutProbe(page: any, options: LayoutOptions = {}): Pr
                 message:
                   `${children.length} controls (${names.join(', ')}) are spread across the full width of their row instead of grouped: ${names[worstIdx + 1]} starts ${Math.round(worst)}px after ${names[worstIdx]} ends, although the declared gap is ${gap}px. ` +
                   `The parent is a ${mechanism}. ` +
-                  `Group them: put the controls in a row that sizes to its content (display: flex with the gap, or ${isGrid ? 'inline-grid / grid-auto-columns: max-content' : 'justify-content: flex-start'}) or use the design system's button-group component${isGrid ? '' : ', and keep the spare width outside the group'}.`,
+                  `Group them: put the controls in a row that sizes to its content (display: flex with the gap, or ${isGrid ? 'inline-grid / grid-auto-columns: max-content' : 'justify-content: flex-start'}) or use the design system's button-group component${isGrid ? '' : ', and keep the spare width outside the group'}. ` +
+                  // The remedy above was followed and the defect came back
+                  // three times: the design system's own row primitive is a
+                  // grid, so wrapping the controls in it produced another
+                  // stretched grid that spread them again. The row has to
+                  // refuse the stretch as well as group the controls.
+                  `If that row is itself a child of a stretching flex or grid container — which the design system's own stack primitive usually is — it will be stretched to the full width and spread the controls again, so give the row justify-self: start (or align-self: start in a column flex parent) as well.`,
                 evidence: `voids between neighbours: ${voids.map(v => Math.round(v)).join('px, ')}px against a ${gap}px gap; container ${Math.round(contentWidth)}px wide, controls ${rects.map(r => Math.round(r.width)).join('/')}px`,
                 selector: cssPath(el),
                 ...authorOf(el),
