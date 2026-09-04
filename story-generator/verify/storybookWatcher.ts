@@ -291,7 +291,7 @@ export function storybookWatcherHint(
 }
 
 export type WatcherProbeOutcome =
-  | { outcome: 'alive'; ms: number; file: string }
+  | { outcome: 'alive'; ms: number; file: string; loads?: { ok: boolean; error?: string } }
   | { outcome: 'dead'; ms: number; file: string }
   | { outcome: 'unreachable'; error: string }
   | { outcome: 'skipped'; reason: string };
@@ -304,6 +304,17 @@ export interface WatcherProbeOptions {
   timeoutMs?: number;
   intervalMs?: number;
   fetchImpl?: typeof fetch;
+  /**
+   * Asked, while the probe story still exists, whether Storybook can LOAD it.
+   *
+   * Indexing and loading are different capabilities and only one of them was
+   * ever checked. Storybook 10.1.x indexes a story written after startup and
+   * then fails to load it — `importers[path] is not a function` — so a project
+   * passed every check and could not render a single generated story. Measured
+   * on that version: 3 of 3 generations reported "not verified" for a reason
+   * the preflight had already had the chance to name.
+   */
+  verifyLoads?: (storyId: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
 const PROBE_PREFIX = '__story-ui-watcher-probe-';
@@ -347,8 +358,14 @@ export async function probeStorybookWatcher(opts: WatcherProbeOptions): Promise<
       await new Promise(r => setTimeout(r, intervalMs));
       try {
         const entries = await readIndex();
-        if (Object.values(entries).some(e => e.title === title)) {
-          return { outcome: 'alive', ms: Date.now() - started, file };
+        const found = Object.entries(entries).find(([, e]) => e.title === title);
+        if (found) {
+          const ms = Date.now() - started;
+          if (!opts.verifyLoads) return { outcome: 'alive', ms, file };
+          const loads = await opts.verifyLoads(found[0]).catch(error => ({
+            ok: false, error: error instanceof Error ? error.message : String(error),
+          }));
+          return { outcome: 'alive', ms, file, loads };
         }
       } catch { /* a transient error mid-poll is not an answer; keep polling */ }
     }
