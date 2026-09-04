@@ -27,6 +27,7 @@
 
 import ts from 'typescript';
 import { readAngularDeclarations } from './angularInputs.js';
+import { readVueDeclarations } from './vueProps.js';
 
 /** Angular's compiler-emitted declaration types; see knowledge/angularInputs.ts. */
 const ANGULAR_DECLARATION = /ɵɵ(Component|Directive)Declaration/;
@@ -776,6 +777,25 @@ function collectFromFile(
    * It costs one AST walk on every file and yields nothing for React, Vue,
    * Svelte or Lit, which declare no such member.
    */
+  /**
+   * Vue resolves its props into the type it generates, and nothing above
+   * looked there either: the Vue environment knew 39 of 174 components' props.
+   * Same shape as the Angular reader — the framework's own contract, read for
+   * any library built on it. See knowledge/vueProps.ts.
+   */
+  for (const component of readVueDeclarations(source)) {
+    const props: PropFact[] = component.props.map(p => ({
+      name: p.name,
+      required: false,
+      ...(p.type ? { type: p.type } : {}),
+      ...(p.options ? { options: p.options } : {}),
+    }));
+    const prior = out[component.name];
+    out[component.name] = prior
+      ? { ...prior, props: mergeProps(prior.props, props) }
+      : { name: component.name, props };
+  }
+
   for (const component of readAngularDeclarations(source)) {
     if (!component.inputs.length) continue;
     const props: PropFact[] = component.inputs.map(input => ({
