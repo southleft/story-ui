@@ -28,6 +28,18 @@
 import ts from 'typescript';
 import { readAngularDeclarations } from './angularInputs.js';
 import { readVueDeclarations } from './vueProps.js';
+import { resolvePropsWithChecker } from './checkerProps.js';
+
+/** Does this package declare React — the framework whose components a JSX probe can resolve? */
+function declaresReact(root: string): boolean {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf-8'));
+    return ['peerDependencies', 'dependencies', 'devDependencies']
+      .some(field => pkg[field] && Object.keys(pkg[field]).some((d: string) => d === 'react' || d === '@types/react'));
+  } catch {
+    return false;
+  }
+}
 
 /** Angular's compiler-emitted declaration types; see knowledge/angularInputs.ts. */
 const ANGULAR_DECLARATION = /ɵɵ(Component|Directive)Declaration/;
@@ -1395,7 +1407,8 @@ function collectPropTypes(source: ts.SourceFile, out: Record<string, ComponentFa
  *    exported component rather than a `<Name>Props` convention; a path given
  *    as the package no longer reads node_modules.
  */
-const EXTRACTOR_SCHEMA = 7 // 7: optionsOpen from the member's own type text; 6: OverridableStringUnion literals; caches written before it hid MUI's variant/color/size;
+const EXTRACTOR_SCHEMA = 8 // 8: props resolved by the TypeScript checker for React packages;
+  // // 7: optionsOpen from the member's own type text; 6: OverridableStringUnion literals; caches written before it hid MUI's variant/color/size;
 
 /**
  * Keyed on version AND a content fingerprint (`knowledge/cacheKey`).
@@ -1583,6 +1596,53 @@ async function readOnePackage(
   }
   if (crossFilled > 0) {
     logger.log(`🧠 Resolved option values across files for ${crossFilled} prop(s) in ${pkgName}`);
+  }
+
+  /**
+   * Ask the compiler about what reading declarations could not resolve.
+   *
+   * `interface ButtonProps extends HTMLChakraProps<"button", ButtonBaseProps> {}`
+   * declares nothing locally and cannot be followed syntactically. Measured by
+   * the resolution bench, that shape cost one library 664 of its 754
+   * components. Type resolution answers it, and only ADDS: a prop already read
+   * from a declaration keeps its own reading, which carries the library's
+   * prose.
+   *
+   * Gated on the library declaring React, because the probe is a JSX element —
+   * a question tsc can answer about a React component and not about a Vue,
+   * Angular or Lit one, which declare their inputs outright and are read
+   * directly. The gate is the package's own manifest, not its name.
+   */
+  if (declaresReact(root)) {
+    try {
+      const checked = resolvePropsWithChecker({ projectRoot, importPath: pkgName, storiesDir: projectRoot });
+      if (!checked.ran) {
+        logger.log(`🧠 Type resolution for ${pkgName}: did not run — ${checked.reason}`);
+      } else {
+        let filled = 0;
+        let added = 0;
+        for (const component of checked.components) {
+          if (!component.own.length) continue;
+          const prior = components[component.name];
+          if (prior && prior.props.length) {
+            const before = prior.props.length;
+            prior.props = mergeProps(prior.props, component.own);
+            if (prior.props.length > before) filled++;
+          } else {
+            components[component.name] = { name: component.name, props: component.own };
+            added++;
+          }
+        }
+        logger.log(
+          `🧠 Type resolution for ${pkgName}: ${checked.components.length} export(s) probed in ${(checked.ms / 1000).toFixed(1)}s — ` +
+          `${added} component(s) that had no props now have them, ${filled} extended` +
+          `${checked.baseProps.length ? `; ${checked.baseProps.length} prop(s) shared by nearly every component treated as this library's base` : '; no shared base found, so nothing was subtracted'}`,
+        );
+      }
+    } catch (error) {
+      // Never fail an extraction because type resolution could not run.
+      logger.log(`🧠 Type resolution for ${pkgName} failed, declarations stand alone: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   const entry = typesEntryFile(root);
