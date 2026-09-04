@@ -293,6 +293,23 @@ export function buildRecord({ prompt, events, durationMs, env, transportError = 
       /** The leg the headline uses: no repair was needed AND none stood after. */
       firstOutputClean: verificationLeg,
       findingsByClass: countBy(completion?.verification?.findings ?? [], f => `${f.severity}/${f.class}`),
+      /**
+       * The KIND, not just the class. A run that reports "warning/code: 28"
+       * says nothing about what to fix next, and reading it back meant opening
+       * a server log beside the results. The kind is what the taxonomy is
+       * built from, so record it here where the analysis actually happens.
+       */
+      findingsByKind: countBy(completion?.verification?.findings ?? [], f => f.kind || f.type || 'unnamed'),
+      /** One example message per kind, capped, so a kind can be recognised. */
+      findingExamples: Object.fromEntries(
+        Object.entries(
+          (completion?.verification?.findings ?? []).reduce((acc, f) => {
+            const k = f.kind || f.type || 'unnamed';
+            if (!acc[k]) acc[k] = String(f.message ?? '').slice(0, 160);
+            return acc;
+          }, {}),
+        ).slice(0, 12),
+      ),
       repairRan,
       repairImproved,
     },
