@@ -1,3 +1,10 @@
+# [5.9.0](https://github.com/southleft/story-ui/compare/v5.8.4...v5.9.0) (2026-09-04)
+
+
+### Features
+
+* **generator:** move a CSS prop into the component's own style prop ([5173088](https://github.com/southleft/story-ui/commit/5173088690b79757271f4e015981473c41428e09))
+
 ## [5.8.4](https://github.com/southleft/story-ui/compare/v5.8.3...v5.8.4) (2026-09-04)
 
 
