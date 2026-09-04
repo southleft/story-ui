@@ -1,3 +1,10 @@
+## [5.6.5](https://github.com/southleft/story-ui/compare/v5.6.4...v5.6.5) (2026-09-04)
+
+
+### Bug Fixes
+
+* **generator:** say which way the repair-recompile wait failed ([1bbb07b](https://github.com/southleft/story-ui/commit/1bbb07b90133437746a9307e0772c731917d7b35))
+
 ## [5.6.4](https://github.com/southleft/story-ui/compare/v5.6.3...v5.6.4) (2026-09-04)
 
 
