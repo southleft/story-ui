@@ -1,3 +1,10 @@
+# [5.12.0](https://github.com/southleft/story-ui/compare/v5.11.0...v5.12.0) (2026-09-04)
+
+
+### Features
+
+* **generator:** read the props Vue resolves for a component ([51eb1f1](https://github.com/southleft/story-ui/commit/51eb1f148a36cfc748da8db9fd44b86b69d62455))
+
 # [5.11.0](https://github.com/southleft/story-ui/compare/v5.10.0...v5.11.0) (2026-09-04)
 
 
