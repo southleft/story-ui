@@ -1611,6 +1611,14 @@ async function runStoryGenerationPipeline(
       ],
       warnings: [],
       autoFixApplied: !!astResult?.fixedCode,
+      // Kept in buckets as well as flattened: which KIND of error the first
+      // model output produced is the thing prevention work aims at, and the
+      // flat list cannot answer it.
+      errorsByBucket: {
+        syntax: currentErrors.syntaxErrors,
+        pattern: currentErrors.patternErrors,
+        import: currentErrors.importErrors,
+      },
     });
 
     finalErrors = currentErrors;

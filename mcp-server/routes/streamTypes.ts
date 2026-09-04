@@ -71,6 +71,26 @@ export interface ValidationFeedback {
   warnings: string[];
   autoFixApplied: boolean;
   fixDetails?: string[];
+  /**
+   * How many model calls the self-healing loop spent on this pipeline run,
+   * counting the first. Present only on the completion event's validation
+   * block — the in-flight `validation` events describe one round each.
+   *
+   * Reported so a measurement can tell "passed on the first attempt" from
+   * "passed after two corrections". Both end with `isValid: true`, and
+   * without this number they are indistinguishable to any client.
+   */
+  attempts?: number;
+  /** Whether any correction round ran at all. `attempts > 1`, stated plainly. */
+  selfHealingUsed?: boolean;
+  /**
+   * The same errors, still in the three buckets the pipeline validates in.
+   * `errors` flattens them, which loses the one fact a measurement of
+   * PREVENTION needs: whether the model wrote unparseable code, used a
+   * forbidden pattern, or reached for something the design system does not
+   * have. Absent on events emitted outside the healing loop.
+   */
+  errorsByBucket?: { syntax: string[]; pattern: string[]; import: string[] };
 }
 
 // Retry information
@@ -160,12 +180,30 @@ export interface CompletionFeedback {
       message: string;
       evidence?: string;
       selector?: string;
+      /**
+       * Whether a bounded repair could plausibly fix this. The gate treats
+       * `false` as "the library authored it, not the story", so a client
+       * cannot tell a story-authored blocker from a library-authored one
+       * without this field.
+       */
+      repairable?: boolean;
     }>;
     metrics?: Record<string, number | string | boolean | string[]>;
   };
 
   // Validation status
   validation: ValidationFeedback;
+
+  /**
+   * What the shippable gate did: how many full regenerations it spent, which
+   * attempt was kept, and why.
+   *
+   * The pipeline has computed this all along and the SSE route dropped it, so
+   * a story that took three regenerations reported exactly what a story that
+   * was right immediately reported. Absent when the outcome carried no gate
+   * result, which a client must read as unknown rather than as one attempt.
+   */
+  gate?: { attempts: number; bestAttempt: number; shippable: boolean; reason: string };
 
   // The generated code
   code: string;

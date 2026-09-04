@@ -1,13 +1,86 @@
 # Benches
 
-Two benches, deliberately separate. Conflating them meant paying LLM prices
+Four benches, deliberately separate. Conflating them meant paying LLM prices
 to measure a filesystem property, badly.
 
 | Bench | Measures | Cost | Run |
 |---|---|---|---|
 | `resolution.mjs` | what the engine **knows** about a design system: components found, import specifiers resolve, props/descriptions/examples known | free, seconds, deterministic | on every change |
 | `fidelity.mjs` | what the engine **produces**: right components, right variants, inside the design system, minimal iterations, pins kept | LLM calls, minutes, noisy subject with deterministic scoring | when generation behaviour changes |
+| `firstAttempt.mjs` | how often the **first** model output is already right, before healing, repair or regeneration | LLM calls, minutes | before and after a prevention change |
 | `componentSelection.mjs` | judgement only | LLM | rarely |
+
+## firstAttempt.mjs
+
+The pipeline hides its own failure rate. Validation self-heals up to three
+times, verification repairs, and the shippable gate regenerates up to three
+times — so a story that cost four model calls and two rewrites reports exactly
+what a story that was right immediately reports: "Verified". That is right for
+the user and useless for judging PREVENTION work, which is about the first
+output, not the recovery.
+
+This bench drives the real server over `POST /mcp/generate-story-stream` and
+records, per prompt, what happened *before* any healing.
+
+```bash
+node bench/firstAttempt.mjs --server http://localhost:4109 --storybook http://localhost:6109 --name carbon
+node bench/firstAttempt.mjs --server http://localhost:4110 --suite 6          # 6 prompts, spread across the range
+node bench/firstAttempt.mjs --server http://localhost:4110 --only c01,c05,w03 # named prompts
+```
+
+Flags: `--server`, `--storybook`, `--project` (a path, or a directory name
+under `STORY_UI_TEST_PROJECTS` / `../test-storybooks`), `--name`, `--suite N`,
+`--only id,id`, `--timeout SECONDS` (default 600), `--keep` (do not delete the
+generated stories).
+
+The prompt set — 10 "classic" and 10 "workspace", simple → complex — lives in
+the script so two runs are comparable. `--suite N` takes N *evenly across* the
+ordered set: taking the first N would take the three simple ones and call the
+result a first-attempt rate.
+
+### The metric
+
+```
+first-attempt clean: N/20 (X%) · median model calls M · median Ns
+```
+
+`firstAttemptClean` is true when **all three** hold:
+
+| Leg | Read from |
+|---|---|
+| static validation passed on round 1 | the first `validation` SSE event of gate attempt 1 |
+| verification found no story-authored blocker, **and no repair was needed** | no `verify_repairing` phase, plus `completion.gate.shippable` (fallback: `verification.findings`, filtered exactly as `gate.ts` `storyBlockers` does) |
+| the gate spent one attempt | `completion.gate.attempts` (fallback: counting `gate_retry` progress events) |
+
+The repair clause is load-bearing. The gate's verdict is computed on the
+report taken *after* the repair pass, so `shippable` alone cannot tell a story
+that was right from one that was made right — a repair having run is itself
+proof that verification found a story-authored blocker in the first output.
+On the first carbon run this was the difference between 4/6 and 2/6.
+
+Also per prompt: `validationAttempts` and the classified errors of each
+correction round, `repairRan` / `repairImproved`, `gateAttempts` with the
+reason each earlier attempt failed, model calls (the server's own count across
+every gate attempt), seconds, findings by severity/class, and the outcome.
+
+### Absent is never zero
+
+A leg the stream could not report is `null`, printed as `?` and as `UNKNOWN`,
+and the run is counted in **neither** column — the percentage is over what was
+*judged*, with the unjudged count printed beside it. A Storybook that stalls
+mid-run therefore lowers confidence in a run instead of silently inflating or
+deflating the score. A conjunction with one definitely-false leg is still
+`false`, though, even when another leg is unknown.
+
+`node_modules` note: verification needs the project's Playwright and a
+reachable Storybook. **react-mantine (6101) cannot load newly created stories**
+and every run there reports `not_verified`; use another environment.
+
+### Output
+
+`bench/results/first-attempt/<timestamp>/<id>.json` per prompt, plus
+`summary.json`, a printed table, and the headline line. The table's last
+column is the first round's error classes — the prevention targets.
 
 ## fidelity.mjs
 

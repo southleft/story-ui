@@ -226,9 +226,17 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
         findings: outcome.verification.findings.map(f => ({
           id: f.id, severity: f.severity, class: f.class,
           message: f.message, evidence: f.evidence, selector: f.selector,
+          // Without this a client cannot tell a blocker the story authored
+          // from one the library rendered; the gate distinguishes them and
+          // only the first is the generator's fault.
+          repairable: f.repairable,
         })),
         metrics: outcome.verification.metrics,
       } : undefined,
+      // What the gate did. Computed by the pipeline and previously dropped
+      // here, which made "right first time" and "right on the third
+      // regeneration" report identically.
+      gate: outcome.gate,
       // Only surface runtime results the user should act on: a pass, or a
       // genuine in-Storybook crash. Inconclusive infra results (story not
       // indexed yet, Storybook unreachable) would show a false alarm.
@@ -247,6 +255,8 @@ export async function generateStoryFromPromptStream(req: Request, res: Response)
         warnings: outcome.validation.warnings,
         autoFixApplied: outcome.validation.autoFixApplied,
         fixDetails: outcome.validation.fixDetails,
+        attempts: outcome.validation.attempts,
+        selfHealingUsed: outcome.validation.selfHealingUsed,
       },
       code: outcome.code,
     });
