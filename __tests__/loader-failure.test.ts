@@ -110,5 +110,10 @@ describe('the prompt bounds scope instead of encouraging it', () => {
     expect(text).toContain('Completeness means BEHAVIOUR, not scope');
     expect(text).toContain('Build what was asked for');
     expect(text).toContain('a navigation bar is a navigation bar');
+    // The bench found every Carbon first-round failure was an undeclared prop
+    // or an out-of-union value; the model was never told either is rejected.
+    expect(text).toContain('REJECTED before the story is saved');
+    expect(text).toContain('never `ariaLabel`');
+    expect(text).toContain("prop's VALUE");
   });
 });
