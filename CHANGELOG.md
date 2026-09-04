@@ -1,3 +1,10 @@
+## [5.8.1](https://github.com/southleft/story-ui/compare/v5.8.0...v5.8.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* **generator:** report the stretch pass even when it changes nothing ([6054136](https://github.com/southleft/story-ui/commit/6054136d87d68dccf61dde1ba094d03c006658e5))
+
 # [5.8.0](https://github.com/southleft/story-ui/compare/v5.7.3...v5.8.0) (2026-09-04)
 
 
