@@ -614,14 +614,33 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
      * the "looks broken" the user sees.
      */
     for (const r of interaction.reflows ?? []) {
-      findings.push({
-        id: `reflow-${findings.length}`,
-        severity: 'blocker',
-        class: 'code',
-        message: `Using "${r.label}" changes the width of the whole composition (${r.before}px → ${r.after}px), so the page jumps when it is used — the layout takes its width from its content. Give the composition's outermost element a width it controls (fill the space it is given, with a max-width if it should not run too wide) so switching content cannot resize it.`,
-        evidence: `${r.descriptor} "${r.label}": composition ${r.before}px → ${r.after}px while the viewport changed by ${r.hostDelta}px`,
-        repairable: true,
-      });
+      /**
+       * Whose defect is this?
+       *
+       * When Storybook's own root is a shrink-to-fit flex item — which a
+       * project's preview stylesheet causes by centring the body — the width
+       * follows the content whatever the story does, and asking a model to
+       * fix it would have it rewrite a correct composition. That is the
+       * environment's to fix, in one line of CSS, which `story-ui update`
+       * writes. Only when the host is innocent is the story answerable.
+       */
+      findings.push(r.hostShrinkWraps
+        ? {
+            id: `reflow-host-${findings.length}`,
+            severity: 'warning',
+            class: 'infrastructure',
+            message: `Using "${r.label}" changes the width of the whole page (${r.before}px → ${r.after}px), because this Storybook's preview makes the story hug its content rather than fill the canvas. The story is not the cause. Run \`npx story-ui update\` to add the one-line preview rule, then restart Storybook.`,
+            evidence: `${r.descriptor} "${r.label}": ${r.before}px → ${r.after}px; #storybook-root is a shrink-to-fit item of a flex/grid parent`,
+            repairable: false,
+          }
+        : {
+            id: `reflow-${findings.length}`,
+            severity: 'blocker',
+            class: 'code',
+            message: `Using "${r.label}" changes the width of the whole composition (${r.before}px → ${r.after}px), so the page jumps when it is used — its width depends on which content is showing. Give the composition's outermost element a width that does not follow its content.`,
+            evidence: `${r.descriptor} "${r.label}": composition ${r.before}px → ${r.after}px while the viewport changed by ${r.hostDelta}px`,
+            repairable: true,
+          });
     }
 
     findings.push(...censusFindings(census.problems));
