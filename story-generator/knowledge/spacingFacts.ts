@@ -552,6 +552,13 @@ export function formatSpacingRules(
 
   lines.push('1. STORY WRAPPER (REQUIRED): one outer container gives the story its breathing room.');
   lines.push(`   Pattern: ${wrapperExample}`);
+  lines.push('   A composition with regions — a page, a dashboard, a settings screen, anything with');
+  lines.push('   tabs, a table or a sidebar — must take its width from the SPACE IT IS GIVEN, never');
+  lines.push('   from its content: fill the available width, and add a max width only if it should');
+  lines.push('   not run too wide. A root that hugs its content is re-measured every time the content');
+  lines.push('   changes, so switching a tab visibly resizes the whole page. A single component shown');
+  lines.push('   on its own (one button, one card, one input) should NOT be stretched — this rule is');
+  lines.push('   about compositions, not specimens.');
   lines.push('2. FORM FIELDS & VERTICAL GROUPS: siblings are spaced by their PARENT. Put the gap on the');
   lines.push('   container and give no child a margin — a one-sided margin on one field of a pair is');
   lines.push('   the most common misalignment in generated code.');
@@ -615,6 +622,13 @@ spacing utility scale, so inline spacing values are acceptable here — and only
    - The rendered story MUST have a wrapper element with padding
    - Pattern: ${ex.wrapper}
    - This ensures content has breathing room within the Storybook canvas
+   - A composition with regions — a page, a dashboard, a settings screen, anything with
+     tabs, a table or a sidebar — must take its width from the SPACE IT IS GIVEN, never
+     from its content: fill the available width, and add a max width only if it should
+     not run too wide. A root that hugs its content is re-measured every time the content
+     changes, so switching a tab visibly resizes the whole page. A single component shown
+     on its own (one button, one card, one input) should NOT be stretched — this rule is
+     about compositions, not specimens.
 
 2. FORM FIELD SPACING (CRITICAL):
    - ALWAYS wrap form fields in a container with vertical spacing
