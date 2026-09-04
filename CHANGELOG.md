@@ -1,3 +1,10 @@
+## [5.6.2](https://github.com/southleft/story-ui/compare/v5.6.1...v5.6.2) (2026-09-04)
+
+
+### Bug Fixes
+
+* **cli:** set WATCHPACK_POLLING where watchpack can still read it ([4a5b3d6](https://github.com/southleft/story-ui/commit/4a5b3d6e273313804227025539f328a0f2908ee9))
+
 ## [5.6.1](https://github.com/southleft/story-ui/compare/v5.6.0...v5.6.1) (2026-09-04)
 
 
