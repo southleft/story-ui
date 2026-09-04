@@ -1,3 +1,10 @@
+## [5.8.4](https://github.com/southleft/story-ui/compare/v5.8.3...v5.8.4) (2026-09-04)
+
+
+### Bug Fixes
+
+* **generator:** do not wait for a recompile a cosmetic repair cannot cause ([d3f499f](https://github.com/southleft/story-ui/commit/d3f499fa390c9461656930e2f2f0f0ded1742e64))
+
 ## [5.8.3](https://github.com/southleft/story-ui/compare/v5.8.2...v5.8.3) (2026-09-04)
 
 
