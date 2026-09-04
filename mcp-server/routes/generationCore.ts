@@ -3074,6 +3074,9 @@ async function buildClaudePromptWithContext(
       name: c.name,
       propValues: (c.propTypes || []).flatMap((p: any) => p.options || []),
       propTypes: (c.propTypes || []).map((p: any) => p.type || ''),
+      // With the prop that declares a variant value, the derived advice can be
+      // written back as JSX the model can copy verbatim.
+      props: (c.propTypes || []).map((p: any) => ({ name: p.name, values: p.options, type: p.type })),
     })));
     const layoutSection = formatLayoutBehaviour(layout);
     if (layoutSection) {

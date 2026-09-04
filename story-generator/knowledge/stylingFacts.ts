@@ -676,6 +676,8 @@ export interface LayoutBehaviour {
   autoFlow?: string;
   templateColumns?: string;
   flexDirection?: string;
+  /** The prop and value that select this variant, when the class named one. */
+  variant?: { prop: string; value: string };
   /** Children are stretched across the container's inline axis by default. */
   stretchesChildren: boolean;
 }
@@ -715,6 +717,8 @@ function classSegments(className: string): string[] {
  */
 export interface LayoutComponent {
   name: string;
+  /** Declared props with the values they accept, so a variant class can name its prop. */
+  props?: Array<{ name: string; values?: string[]; type?: string }>;
   /** String values this component's own props accept, e.g. vertical/horizontal. */
   propValues?: string[];
   /**
@@ -739,6 +743,8 @@ export function readLayoutBehaviour(
   const files = stylesheetFiles || [];
   const wanted = new Map<string, string>();
   const valuesOf = new Map<string, Set<string>>();
+  /** value -> the prop that declares it, so a variant class can be written back as JSX. */
+  const propOf = new Map<string, Map<string, string>>();
   for (const c of components) {
     const name = typeof c === 'string' ? c : c.name;
     wanted.set(name.toLowerCase(), name);
@@ -746,6 +752,15 @@ export function readLayoutBehaviour(
       ? []
       : [...(c.propValues || []).map(v => v.toLowerCase()), ...(c.propTypes || []).flatMap(literalsOfType)];
     valuesOf.set(name, new Set(declared));
+    const byProp = new Map<string, string>();
+    if (typeof c !== 'string') {
+      for (const prop of c.props || []) {
+        for (const v of [...(prop.values || []).map(x => x.toLowerCase()), ...literalsOfType(prop.type || '')]) {
+          if (!byProp.has(v)) byProp.set(v, prop.name);
+        }
+      }
+    }
+    propOf.set(name, byProp);
   }
   const componentNames = components.map(c => (typeof c === 'string' ? c : c.name));
   const behaviours: LayoutBehaviour[] = [];
@@ -804,9 +819,11 @@ export function readLayoutBehaviour(
       const stretchesChildren = alongBlock
         && (isGrid ? !decls['justify-items'] || decls['justify-items'] === 'stretch'
                    : !decls['align-items'] || decls['align-items'] === 'stretch');
+      const variantProp = trailing.length === 1 ? propOf.get(hit)?.get(trailing[0]) : undefined;
       behaviours.push({
         component: hit,
         className,
+        ...(variantProp ? { variant: { prop: variantProp, value: trailing[0] } } : {}),
         display,
         autoFlow,
         templateColumns: decls['grid-template-columns'],
@@ -855,6 +872,24 @@ export function formatLayoutBehaviour(result: LayoutBehaviourResult): string {
       `Give the row \`${selfProp}: 'start'\` (or put it inside an element that hugs its content) so it ` +
       `stays as wide as its buttons.`,
     );
+    /**
+     * The pattern, not just the rule.
+     *
+     * Measured: with the rule alone, the model composed the action row without
+     * the stretch refusal on the first attempt and added it only after the
+     * layout probe reported the defect — three prompts, every run. It copies
+     * examples far more reliably than it applies conditional prose, so the row
+     * it is meant to copy has to carry the fix already.
+     */
+    const row = result.behaviours.find(r =>
+      r.component === b.component && r.variant && !r.stretchesChildren
+      && (/column/.test(r.autoFlow || '') || /^row$/.test(r.flexDirection || '')));
+    if (row) {
+      lines.push(
+        `  COPY THIS for any row of controls inside <${b.component}>: ` +
+        `<${row.component} ${row.variant!.prop}="${row.variant!.value}" style={{ ${selfProp}: 'start' }}> … </${row.component}>`,
+      );
+    }
   }
   return lines.join('\n');
 }
