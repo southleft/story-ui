@@ -1,3 +1,10 @@
+## [5.9.2](https://github.com/southleft/story-ui/compare/v5.9.1...v5.9.2) (2026-09-04)
+
+
+### Bug Fixes
+
+* **generator:** let a repair finish instead of paying for a regeneration ([92bb765](https://github.com/southleft/story-ui/commit/92bb76519518814ba88dbda1bf640431df70b3f8))
+
 ## [5.9.1](https://github.com/southleft/story-ui/compare/v5.9.0...v5.9.1) (2026-09-04)
 
 
