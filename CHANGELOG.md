@@ -1,3 +1,10 @@
+## [5.6.4](https://github.com/southleft/story-ui/compare/v5.6.3...v5.6.4) (2026-09-04)
+
+
+### Bug Fixes
+
+* **generator:** rule out the container that spreads an action row ([0c83e78](https://github.com/southleft/story-ui/commit/0c83e7814d88ba86f6bf6dedb6dbc549496552b2))
+
 ## [5.6.3](https://github.com/southleft/story-ui/compare/v5.6.2...v5.6.3) (2026-09-04)
 
 
