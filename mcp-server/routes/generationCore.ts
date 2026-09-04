@@ -2375,20 +2375,39 @@ async function runStoryGenerationPipeline(
                 logger.log('🔧 Repair returned the story unchanged — nothing to re-verify');
               } else {
                 const before = await moduleText(verifyUrl, relModule);
+                const diskBefore = (() => { try { return fs.readFileSync(outPath, 'utf-8'); } catch { return null; } })();
                 writeStory(finalized);
-                const recompile = await waitForRecompile(verifyUrl, relModule, before);
-                if (!recompile.live) {
-                  // Say WHICH failure this is. The three read identically in a
-                  // render and were logged identically, which sent one
-                  // investigation after the dev server when the poll simply had
-                  // no baseline to compare against.
-                  const why = {
-                    no_baseline: `the module could not be read from ${verifyUrl}/${relModule} before the write, so no comparison was possible`,
-                    unreachable: `the module never returned 200 from ${verifyUrl}/${relModule}${recompile.status ? ` (last status ${recompile.status})` : ''}`,
-                    timeout: `the served module was byte-identical for ${Math.round(recompile.waitedMs / 1000)}s (${recompile.beforeBytes} bytes before, ${recompile.afterBytes} after) although the file on disk changed`,
-                    changed: '',
-                  }[recompile.reason];
-                  logger.warn(`⚠️ The repair check may read a stale render: ${why}`);
+                const diskAfter = (() => { try { return fs.readFileSync(outPath, 'utf-8'); } catch { return null; } })();
+                /**
+                 * What LANDED on disk, not what we asked to be written.
+                 *
+                 * `identical` compares the repair's text to the file, but the
+                 * writer normalises what it saves — it rewrites the stylesheet
+                 * import and settles the trailing bytes — so a repair can
+                 * differ from the file and still leave it unchanged. When that
+                 * happens there is nothing for the dev server to recompile, and
+                 * waiting for it burned the full 25s timeout and then blamed
+                 * Storybook. Measured in one 20-prompt run: 18 times, seven and
+                 * a half minutes, every one of them reported as a dev-server
+                 * problem.
+                 */
+                if (diskBefore !== null && diskAfter !== null && diskBefore === diskAfter) {
+                  logger.log('🔧 Repair changed nothing on disk after the writer normalised it — nothing to re-verify');
+                } else {
+                  const recompile = await waitForRecompile(verifyUrl, relModule, before);
+                  if (!recompile.live) {
+                    // Say WHICH failure this is. They read identically in a
+                    // render and were logged identically, which sent one
+                    // investigation after the dev server when the poll simply
+                    // had no baseline to compare against.
+                    const why = {
+                      no_baseline: `the module could not be read from ${verifyUrl}/${relModule} before the write, so no comparison was possible`,
+                      unreachable: `the module never returned 200 from ${verifyUrl}/${relModule}${recompile.status ? ` (last status ${recompile.status})` : ''}`,
+                      timeout: `the served module was byte-identical for ${Math.round(recompile.waitedMs / 1000)}s (${recompile.beforeBytes} bytes before, ${recompile.afterBytes} after) although the bytes on disk did change`,
+                      changed: '',
+                    }[recompile.reason];
+                    logger.warn(`⚠️ The repair check may read a stale render: ${why}`);
+                  }
                 }
               }
               return verifyStory({
