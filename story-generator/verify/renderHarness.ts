@@ -548,9 +548,26 @@ export function describeFetchError(err: unknown): string {
  * path, so the honest signal is the module TEXT changing — which needs no
  * guess about what the change should look like, only that one happened.
  *
- * Returns true when the change is live, false on timeout. A timeout is not an
- * error: the caller proceeds and simply risks the stale reading it always had.
+ * Returns the outcome, never a bare boolean, because the ways this can fail
+ * are not one thing and were reported as one. `no_baseline` means the module
+ * could not be read BEFORE the write, so there is nothing to compare and the
+ * wait never happened; `timeout` means it was read and did not change. Both
+ * used to log "Storybook did not recompile in time", which sent an
+ * investigation after the dev server when the real answer was that the poll
+ * had no baseline. The caller proceeds either way and simply risks the stale
+ * reading it always had — but it now says which risk it is taking.
  */
+export interface RecompileResult {
+  live: boolean;
+  reason: 'changed' | 'timeout' | 'no_baseline' | 'unreachable';
+  waitedMs: number;
+  /** Bytes seen before and last seen after, for a log line that can be acted on. */
+  beforeBytes: number | null;
+  afterBytes: number | null;
+  /** HTTP status of the last poll, when one completed. */
+  status?: number;
+}
+
 export async function waitForRecompile(
   storybookUrl: string,
   /** Path relative to the project root, e.g. `src/stories/generated/x.stories.tsx`. */
@@ -559,25 +576,43 @@ export async function waitForRecompile(
   previousText: string | null,
   timeoutMs = 25000,
   intervalMs = 500,
-): Promise<boolean> {
-  if (previousText === null) return false;
+): Promise<RecompileResult> {
+  const started = Date.now();
+  if (previousText === null) {
+    return { live: false, reason: 'no_baseline', waitedMs: 0, beforeBytes: null, afterBytes: null };
+  }
   const base = storybookUrl.replace(/\/+$/, '');
   const url = `${base}/${modulePath.replace(/^\/+/, '')}`;
-  const deadline = Date.now() + timeoutMs;
+  const deadline = started + timeoutMs;
+  let afterBytes: number | null = null;
+  let status: number | undefined;
+  let everReached = false;
 
   while (Date.now() < deadline) {
     try {
       const res = await fetch(`${url}?t=${Date.now()}`, { headers: { 'Cache-Control': 'no-cache' } });
+      status = res.status;
       if (res.ok) {
+        everReached = true;
         const text = await res.text();
-        if (text !== previousText) return true;
+        afterBytes = text.length;
+        if (text !== previousText) {
+          return { live: true, reason: 'changed', waitedMs: Date.now() - started, beforeBytes: previousText.length, afterBytes, status };
+        }
       }
     } catch {
       // Dev server busy recompiling; keep polling until the deadline.
     }
     await new Promise(r => setTimeout(r, intervalMs));
   }
-  return false;
+  return {
+    live: false,
+    reason: everReached ? 'timeout' : 'unreachable',
+    waitedMs: Date.now() - started,
+    beforeBytes: previousText.length,
+    afterBytes,
+    status,
+  };
 }
 
 /** The dev server's current transformed text for a module, or null. */

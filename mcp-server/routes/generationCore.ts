@@ -2376,9 +2376,19 @@ async function runStoryGenerationPipeline(
               } else {
                 const before = await moduleText(verifyUrl, relModule);
                 writeStory(finalized);
-                const live = await waitForRecompile(verifyUrl, relModule, before);
-                if (!live) {
-                  logger.warn('⚠️ Storybook did not recompile in time — the repair check may read a stale render');
+                const recompile = await waitForRecompile(verifyUrl, relModule, before);
+                if (!recompile.live) {
+                  // Say WHICH failure this is. The three read identically in a
+                  // render and were logged identically, which sent one
+                  // investigation after the dev server when the poll simply had
+                  // no baseline to compare against.
+                  const why = {
+                    no_baseline: `the module could not be read from ${verifyUrl}/${relModule} before the write, so no comparison was possible`,
+                    unreachable: `the module never returned 200 from ${verifyUrl}/${relModule}${recompile.status ? ` (last status ${recompile.status})` : ''}`,
+                    timeout: `the served module was byte-identical for ${Math.round(recompile.waitedMs / 1000)}s (${recompile.beforeBytes} bytes before, ${recompile.afterBytes} after) although the file on disk changed`,
+                    changed: '',
+                  }[recompile.reason];
+                  logger.warn(`⚠️ The repair check may read a stale render: ${why}`);
                 }
               }
               return verifyStory({
