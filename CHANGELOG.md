@@ -1,3 +1,10 @@
+# [5.6.0](https://github.com/southleft/story-ui/compare/v5.5.2...v5.6.0) (2026-09-04)
+
+
+### Features
+
+* **ci:** bench how often the first model output is already right ([fd9ad5c](https://github.com/southleft/story-ui/commit/fd9ad5c6a6bffb98ac5ef5a22a5fc5cfe6b04cd2))
+
 ## [5.5.2](https://github.com/southleft/story-ui/compare/v5.5.1...v5.5.2) (2026-09-04)
 
 
