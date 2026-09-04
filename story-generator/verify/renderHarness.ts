@@ -548,6 +548,16 @@ export function describeFetchError(err: unknown): string {
  * path, so the honest signal is the module TEXT changing — which needs no
  * guess about what the change should look like, only that one happened.
  *
+ * THE TIMEOUT IS 45s BECAUSE 25s WAS INSIDE THE DISTRIBUTION. Measured on the
+ * Carbon fixture, invalidation after a write took 1s, 1s, 2s, 4s, 5s, 9s and
+ * 15s on the same project within an hour — the same edit shape each time, the
+ * spread coming from how busy the machine was. A 25s cap therefore expired on
+ * ordinary slow cases, not on broken ones, and each expiry cost far more than
+ * the wait: the repair was then judged against the previous render, looked
+ * like no improvement, was discarded, and the gate spent 80-100s regenerating
+ * a story whose repair had in fact been correct. Seven expiries in one
+ * twenty-prompt run. Waiting is nearly free; regenerating is not.
+ *
  * Returns the outcome, never a bare boolean, because the ways this can fail
  * are not one thing and were reported as one. `no_baseline` means the module
  * could not be read BEFORE the write, so there is nothing to compare and the
@@ -574,7 +584,7 @@ export async function waitForRecompile(
   modulePath: string,
   /** Module text captured BEFORE the write. */
   previousText: string | null,
-  timeoutMs = 25000,
+  timeoutMs = 45000,
   intervalMs = 500,
 ): Promise<RecompileResult> {
   const started = Date.now();
