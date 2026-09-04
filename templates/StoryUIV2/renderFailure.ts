@@ -85,8 +85,27 @@ export function formatRenderFailureReason(
   return text;
 }
 
+/**
+ * Storybook's own loader failing, rather than the story failing.
+ *
+ * `importers[path] is not a function` is Storybook asking its importer map
+ * for a module the preview bundle has not served — its index knows about the
+ * file, Vite has not caught up. The composition was never executed, so
+ * telling someone "this story does not render" points them at code that is
+ * very likely fine; the fix is to reload, or to restart Storybook.
+ */
+const LOADER_FAILURE = /importers\[|Couldn't find story matching|Failed to fetch dynamically imported module|Unable to load story|error loading dynamically imported module/i;
+
+export function isLoaderFailure(reason: string | null | undefined): boolean {
+  return LOADER_FAILURE.test(reason ?? '');
+}
+
 /** The line under an assistant turn whose story did not load. */
 export function renderFailureLine(reason: string): string {
+  if (isLoaderFailure(reason)) {
+    return 'Storybook could not load this story\u2019s module — its index has the file but the preview has not served it yet. '
+      + 'The story itself was never run. Reload, and restart Storybook if it keeps happening.';
+  }
   return `The story could not be loaded: ${reason.replace(/\.+$/, '')}.`;
 }
 
