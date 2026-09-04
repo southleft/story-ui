@@ -551,6 +551,14 @@ measure a filesystem property, badly:
   components.
 - **`bench/componentSelection.mjs`** — LLM, slow, noisy. Judgement only. Run
   rarely.
+- **`bench/firstAttempt.mjs`** — LLM, minutes. The pipeline's own recovery
+  hides its failure rate: validation self-heals, verification repairs, the gate
+  regenerates, and all three report "Verified". This one records what happened
+  BEFORE any of that, and prints one number —
+  `first-attempt clean: N/20 (X%) · median model calls M · median Ns`.
+  Run it either side of a PREVENTION change (knowledge, prompt), never on every
+  commit. A run it could not judge is counted in neither column and said out
+  loud; the percentage is over what was judged.
 
 ### Test environments, and a warning
 
