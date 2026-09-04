@@ -400,6 +400,28 @@ async function runGatedGeneration(
   return out;
 }
 
+/**
+ * The first line that differs between two versions of a file, for a log line
+ * that can be acted on.
+ *
+ * Written for one specific unexplained case: the dev server served identical
+ * module text for 25s while the bytes on disk had changed. Two hypotheses were
+ * tested and both failed — a missed watcher event did not reproduce under a
+ * 400-file burst, and the writer normalising the bytes was ruled out by
+ * comparing them. Rather than guess a third time, the next occurrence says
+ * what actually changed.
+ */
+function firstDifference(before: string | null, after: string | null): string {
+  if (before === null || after === null) return 'not captured';
+  const a = before.split('\n'); const b = after.split('\n');
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if (a[i] !== b[i]) {
+      return `line ${i + 1}: ${JSON.stringify((a[i] ?? '(absent)').trim().slice(0, 80))} -> ${JSON.stringify((b[i] ?? '(absent)').trim().slice(0, 80))}`;
+    }
+  }
+  return 'no line differs, although the strings do';
+}
+
 async function runStoryGenerationPipeline(
   request: GenerationRequest,
   events: GenerationEvents,
@@ -2442,8 +2464,30 @@ async function runStoryGenerationPipeline(
                  * a half minutes, every one of them reported as a dev-server
                  * problem.
                  */
-                if (diskBefore !== null && diskAfter !== null && diskBefore === diskAfter) {
-                  logger.log('🔧 Repair changed nothing on disk after the writer normalised it — nothing to re-verify');
+                /**
+                 * What the dev server can actually serve differently.
+                 *
+                 * Comments and formatting do not survive into a transformed
+                 * module, so a repair that changed only those leaves the served
+                 * text byte-identical for ever, and waiting for it to change
+                 * runs the full timeout and then blames the dev server. A burst
+                 * of 400 file writes was tried and did NOT reproduce a missed
+                 * watcher event — a story edited during one was still
+                 * re-transformed in about a second — so a stale watcher is not
+                 * the explanation it looked like.
+                 */
+                const meaningful = (text: string) => text
+                  .replace(/\/\*[\s\S]*?\*\//g, '')
+                  .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+                  .replace(/\s+/g, ' ')
+                  .trim();
+                const unchangedOnDisk = diskBefore !== null && diskAfter !== null && diskBefore === diskAfter;
+                const onlyCosmetic = !unchangedOnDisk && diskBefore !== null && diskAfter !== null
+                  && meaningful(diskBefore) === meaningful(diskAfter);
+                if (unchangedOnDisk || onlyCosmetic) {
+                  logger.log(unchangedOnDisk
+                    ? '🔧 Repair changed nothing on disk after the writer normalised it — nothing to re-verify'
+                    : '🔧 Repair changed only comments or formatting — the served module cannot differ, so nothing to wait for');
                 } else {
                   const recompile = await waitForRecompile(verifyUrl, relModule, before);
                   if (!recompile.live) {
@@ -2454,7 +2498,7 @@ async function runStoryGenerationPipeline(
                     const why = {
                       no_baseline: `the module could not be read from ${verifyUrl}/${relModule} before the write, so no comparison was possible`,
                       unreachable: `the module never returned 200 from ${verifyUrl}/${relModule}${recompile.status ? ` (last status ${recompile.status})` : ''}`,
-                      timeout: `the served module was byte-identical for ${Math.round(recompile.waitedMs / 1000)}s (${recompile.beforeBytes} bytes before, ${recompile.afterBytes} after) although the bytes on disk did change`,
+                      timeout: `the served module was byte-identical for ${Math.round(recompile.waitedMs / 1000)}s (${recompile.beforeBytes} bytes before, ${recompile.afterBytes} after) although the bytes on disk did change — first difference on disk: ${firstDifference(diskBefore, diskAfter)}`,
                       changed: '',
                     }[recompile.reason];
                     logger.warn(`⚠️ The repair check may read a stale render: ${why}`);
