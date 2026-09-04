@@ -1,3 +1,10 @@
+## [5.14.1](https://github.com/southleft/story-ui/compare/v5.14.0...v5.14.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* **generator:** classify an export from its own probe, not by searching for it ([1dbdb58](https://github.com/southleft/story-ui/commit/1dbdb58485192f44d633300a6301e10371ec74d3))
+
 # [5.14.0](https://github.com/southleft/story-ui/compare/v5.13.0...v5.14.0) (2026-09-04)
 
 
