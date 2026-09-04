@@ -1,3 +1,10 @@
+## [5.5.2](https://github.com/southleft/story-ui/compare/v5.5.1...v5.5.2) (2026-09-04)
+
+
+### Bug Fixes
+
+* **generator:** the prompt bounds scope instead of instructing more of it ([8ea0219](https://github.com/southleft/story-ui/commit/8ea02192733a1fefc899b899b6b38106616a6491))
+
 ## [5.5.1](https://github.com/southleft/story-ui/compare/v5.5.0...v5.5.1) (2026-09-04)
 
 
