@@ -1,3 +1,10 @@
+# [5.13.0](https://github.com/southleft/story-ui/compare/v5.12.1...v5.13.0) (2026-09-04)
+
+
+### Features
+
+* **generator:** resolve props with TypeScript when declarations cannot be followed ([1d119f9](https://github.com/southleft/story-ui/commit/1d119f941adb1706069e8ba013178be707b70fbd))
+
 ## [5.12.1](https://github.com/southleft/story-ui/compare/v5.12.0...v5.12.1) (2026-09-04)
 
 
