@@ -119,26 +119,54 @@ That is the whole install. You do not need to install the package first —
 ### Agentic install
 
 If you use an AI coding assistant (Claude Code, Cursor, Copilot, or an agent in
-your terminal), it can do the install for you. Open your project with the
-assistant and paste this:
+your terminal), it can do the whole install for you. You only need to tell it
+two things: which AI provider you have a key for, and the key itself.
+
+**1. Find your provider in this table.**
+
+| Your key is from | Say this to the assistant | Where to get a key |
+|---|---|---|
+| Anthropic (Claude) | `claude` | [console.anthropic.com](https://console.anthropic.com) |
+| OpenAI (GPT) | `openai` | [platform.openai.com](https://platform.openai.com/api-keys) |
+| Google (Gemini) | `gemini` | [aistudio.google.com](https://aistudio.google.com/apikey) |
+
+**2. Paste this to your assistant**, replacing the two marked lines with your
+own provider and key:
 
 ```text
-Please install Story UI into this Storybook project.
+Install Story UI into this Storybook project.
 
-Run:
+Provider: claude            <- claude, openai, or gemini
+API key:  sk-ant-abc123...  <- paste your key here
+
+Run these three commands, filling my provider and key into the second one:
+
   npm install --save-dev @tpitre/story-ui
-  npx story-ui init --yes --provider claude --api-key "$ANTHROPIC_API_KEY" --json
+  npx story-ui init --yes --provider PROVIDER --api-key "MY-KEY" --json
   npx story-ui check --json
 
-init is non-interactive with --yes and prints a STORY_UI_INIT {…} line saying
-what it wrote. check exits 0 when the install is usable and lists a fix for
-anything that is not. If check reports a problem, apply the fix it names and
-run check again.
+init runs without asking any questions and prints a STORY_UI_INIT {…} line
+describing what it wrote. check exits 0 when the install works and names a fix
+for anything that does not. If check reports a problem, apply the fix it names
+and run check again.
 
-Then tell me which port it chose and how to open the workspace.
+When you are done, tell me which port it chose and how to open the workspace.
 ```
 
-Use `openai` or `gemini` in place of `claude` if that is the key you have.
+**Would rather not paste a key into a chat?** Delete the `API key` line and
+write "I will add the key myself" instead. Story UI writes a placeholder into
+`.env`, and you replace it with your real key:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-your-real-key-here
+```
+
+Use `OPENAI_API_KEY` or `GEMINI_API_KEY` to match your provider. `check`
+reports the placeholder as "not set" until you do.
+
+Your key lives in `.env` in your project. If the project has a `.gitignore`,
+`init` adds `.env` to it so the key is never committed; if it has none, create
+one with a `.env` line in it.
 
 Why this works: `init` never asks a question when there is no terminal (no TTY,
 `CI=true`, or `STORY_UI_NONINTERACTIVE=true`). Every answer comes from flags and
@@ -147,6 +175,11 @@ from detection, so an agent cannot get stuck waiting on a prompt, and
 
 <details>
 <summary><strong>Flags for agents and scripts</strong></summary>
+
+For CI or a setup script, where the key comes from a secret rather than being
+typed. `"$ANTHROPIC_API_KEY"` here is shell syntax meaning "read the
+`ANTHROPIC_API_KEY` environment variable" — if you are pasting a key by hand,
+put the key itself in quotes instead.
 
 ```bash
 npx story-ui init --yes \
