@@ -89,3 +89,26 @@ describe('the preview root fills the canvas', () => {
     expect(ensurePreviewRootCss(fresh).action).toBe('created');
   });
 });
+
+describe('the prompt bounds scope instead of encouraging it', () => {
+  it('keeps operability and forbids inventing regions the request did not ask for', async () => {
+    // The rules live in the prompt buildFrameworkAwarePrompt assembles — the
+    // live path generationCore uses, not the legacy component reference.
+    const { buildFrameworkAwarePrompt } = await import('../story-generator/promptGenerator');
+    const text = await buildFrameworkAwarePrompt(
+      'a navigation bar with logo and menu links',
+      { importPath: '@acme/ui', layoutRules: {}, componentFramework: 'react', framework: 'react', generatedStoriesPath: './src/stories/generated/' } as any,
+      [{ name: 'Button', filePath: '', props: [] }] as any,
+      { framework: { componentFramework: 'react' } } as any,
+    );
+    // Operability survives: that rule exists because "keep it concise" once
+    // produced mockups with no interactive controls at all.
+    expect(text).toContain('MUST be operable, not a mockup');
+    expect(text).toContain('NEVER render a visual stand-in');
+    // The instruction that caused over-building is gone, and bounded.
+    expect(text).not.toContain('Prefer completeness of behavior over brevity');
+    expect(text).toContain('Completeness means BEHAVIOUR, not scope');
+    expect(text).toContain('Build what was asked for');
+    expect(text).toContain('a navigation bar is a navigation bar');
+  });
+});
