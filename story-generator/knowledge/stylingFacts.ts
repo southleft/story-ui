@@ -705,6 +705,35 @@ function classSegments(className: string): string[] {
 }
 
 /**
+ * The catalog as `readLayoutBehaviour` needs it, from BOTH places a prop's
+ * declared values can live.
+ *
+ * This exists because the two callers built it separately and drifted. The
+ * prompt path read `component.propTypes` and found Carbon's Stack; the
+ * generation pipeline read the same field at a point where it holds nothing
+ * and found only Grid, so the deterministic stretch pass had no row variant to
+ * place and silently did nothing for a whole twenty-prompt run. The prop facts
+ * from the extractor are the other half, and one function now supplies both.
+ */
+export function layoutComponentsFrom(
+  components: Array<{ name: string; propTypes?: Array<{ name?: string; type?: string; options?: string[] }> }>,
+  facts?: { components?: Record<string, { props?: Array<{ name: string; type?: string; options?: string[] }> }> } | null,
+): LayoutComponent[] {
+  return components.map(c => {
+    const declared = [
+      ...(c.propTypes || []).map(p => ({ name: p.name || '', values: p.options, type: p.type })),
+      ...((facts?.components?.[c.name]?.props) || []).map(p => ({ name: p.name, values: p.options, type: p.type })),
+    ].filter(p => p.name);
+    return {
+      name: c.name,
+      props: declared,
+      propValues: declared.flatMap(p => p.values || []),
+      propTypes: declared.map(p => p.type || ''),
+    };
+  });
+}
+
+/**
  * Layout rules the stylesheet states for the catalog's own components.
  *
  * The component-to-class link is a HYPOTHESIS checked against the file, never
