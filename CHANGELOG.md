@@ -1,3 +1,10 @@
+## [5.6.1](https://github.com/southleft/story-ui/compare/v5.6.0...v5.6.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* **generator:** say that undeclared props are rejected, because the model was never told ([7b990e8](https://github.com/southleft/story-ui/commit/7b990e8a698df3ca32a4a0bdf28d7efa1d3a0337))
+
 # [5.6.0](https://github.com/southleft/story-ui/compare/v5.5.2...v5.6.0) (2026-09-04)
 
 
