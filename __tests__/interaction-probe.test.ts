@@ -19,7 +19,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 
-import { resolveHostTooling } from '../story-generator/verify/hostTooling.js';
+import { testHostTooling } from './helpers/hostProject.js';
 import { acquireBrowser, closeBrowserSession } from '../story-generator/verify/browserSession.js';
 import { runInteractionProbe } from '../story-generator/verify/probes/interaction.js';
 
@@ -27,7 +27,7 @@ import { runInteractionProbe } from '../story-generator/verify/probes/interactio
  * A real browser, resolved the way the pipeline resolves it. When none is
  * available these are skipped rather than passing on literals.
  */
-const tooling = resolveHostTooling('/Users/tjpitre/Sites/test-storybooks/react-mantine');
+const tooling = testHostTooling();
 let browser: any;
 
 beforeAll(async () => {

@@ -10,11 +10,11 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 
-import { resolveHostTooling } from '../story-generator/verify/hostTooling.js';
+import { testHostTooling } from './helpers/hostProject.js';
 import { acquireBrowser, closeBrowserSession } from '../story-generator/verify/browserSession.js';
 import { runA11yProbe } from '../story-generator/verify/probes/a11y.js';
 
-const tooling = resolveHostTooling('/Users/tjpitre/Sites/test-storybooks/react-mantine');
+const tooling = testHostTooling();
 let browser: any;
 
 beforeAll(async () => {

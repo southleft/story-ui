@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { resolveHostTooling } from '../story-generator/verify/hostTooling.js';
+import { testHostTooling } from './helpers/hostProject.js';
 import { acquireBrowser, closeBrowserSession } from '../story-generator/verify/browserSession.js';
 import { runOverflowProbe } from '../story-generator/verify/probes/overflow.js';
 
-const tooling = resolveHostTooling('/Users/tjpitre/Sites/test-storybooks/react-mantine');
+const tooling = testHostTooling();
 let browser: any;
 beforeAll(async () => { if (!tooling) return; browser = await acquireBrowser(tooling).catch(() => undefined); }, 60_000);
 afterAll(async () => { await closeBrowserSession(); });

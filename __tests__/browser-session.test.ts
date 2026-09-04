@@ -19,7 +19,8 @@ import {
   closeBrowserSession,
   currentBrowser,
 } from '../story-generator/verify/browserSession.js';
-import { resolveHostTooling, canLaunchBrowser } from '../story-generator/verify/hostTooling.js';
+import { canLaunchBrowser } from '../story-generator/verify/hostTooling.js';
+import { testHostTooling } from './helpers/hostProject.js';
 import { renderStory } from '../story-generator/verify/renderHarness.js';
 
 function fakeBrowser() {
@@ -187,7 +188,7 @@ describe('browser session (fake playwright)', () => {
  * A real browser, resolved from a host project the way the pipeline resolves
  * it. Skipped when the host has no Playwright.
  */
-const realTooling = resolveHostTooling('/Users/tjpitre/Sites/test-storybooks/react-mantine');
+const realTooling = testHostTooling();
 
 describe.runIf(realTooling)('browser session (real chromium)', { retry: 2 }, () => {
   it('acquire twice returns one live browser; release counts down; the last release ends it', async () => {
