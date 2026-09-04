@@ -656,6 +656,25 @@ async function runStoryGenerationPipeline(
       for (const component of components as any[]) {
         const facts = extracted.components[component.name];
         if (!facts) continue;
+        /**
+         * A component that adds nothing to its library's styling surface is a
+         * fact, not a gap. Said once, in its own entry, so the catalog never
+         * shows a component with an empty prop list and no explanation — which
+         * reads as "unknown" and invites the model to guess.
+         */
+        /**
+         * A namespace is not writable as an element. Saying so, with the
+         * members, is the difference between a story that renders and
+         * `<Accordion>` — which this library cannot render at all.
+         */
+        if (facts.namespaceMembers?.length && !facts.props.length) {
+          const shown = facts.namespaceMembers.slice(0, 8).map(m => `${component.name}.${m}`).join(', ');
+          component.description = `Not an element on its own — a namespace. Write its members: ${shown}${facts.namespaceMembers.length > 8 ? ', …' : ''}.`;
+        } else if (facts.sharedBaseOnly && !facts.props.length) {
+          component.description = component.description && saysMoreThanName(component.name, component.description)
+            ? `${component.description} Takes this design system's shared styling props and declares none of its own.`
+            : 'Takes this design system\'s shared styling props and declares none of its own.';
+        }
         if (!component.props || component.props.length === 0) {
           // `htmlFor (string)`, not `htmlFor?: string`.
           //
