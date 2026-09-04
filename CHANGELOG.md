@@ -1,3 +1,10 @@
+# [5.14.0](https://github.com/southleft/story-ui/compare/v5.13.0...v5.14.0) (2026-09-04)
+
+
+### Features
+
+* **generator:** say what an export is when it is not a component ([297eb43](https://github.com/southleft/story-ui/commit/297eb43aa07db81db2f186230737464fe28b52c7))
+
 # [5.13.0](https://github.com/southleft/story-ui/compare/v5.12.1...v5.13.0) (2026-09-04)
 
 
