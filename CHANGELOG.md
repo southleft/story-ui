@@ -1,3 +1,10 @@
+## [5.4.2](https://github.com/southleft/story-ui/compare/v5.4.1...v5.4.2) (2026-09-04)
+
+
+### Bug Fixes
+
+* **generator:** a composition that resizes when you use it is a defect ([d1f6109](https://github.com/southleft/story-ui/commit/d1f610983bc6a0b13ca3321f6858fbbfccf29526))
+
 ## [5.4.1](https://github.com/southleft/story-ui/compare/v5.4.0...v5.4.1) (2026-09-04)
 
 
