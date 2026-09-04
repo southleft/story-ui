@@ -115,6 +115,10 @@ describe('the prompt bounds scope instead of encouraging it', () => {
     expect(text).toContain('REJECTED before the story is saved');
     expect(text).toContain('never `ariaLabel`');
     expect(text).toContain("prop's VALUE");
+    // The measured MUI failure: the model writing a prop from the library's
+    // previous major version, which the catalog does not list.
+    expect(text).toContain('The catalog describes the version installed HERE');
+    expect(text).toContain('When your memory and the catalog disagree, the catalog is right');
 
     // One prompt used to carry two image rules: the derived IMAGE RULES said a
     // placeholder is never a remote URL, and the reminder block said every image
