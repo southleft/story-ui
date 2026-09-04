@@ -40,6 +40,9 @@ export interface LayoutMetrics {
 }
 
 export type LayoutProblemKind =
+  | 'row_misaligned'
+  | 'row_height_mismatch'
+  | 'label_misaligned'
   | 'grid_underfilled'
   | 'ragged_edges'
   | 'grid_ragged'
@@ -853,6 +856,162 @@ export async function runLayoutProbe(page: any, options: LayoutOptions = {}): Pr
             ...authorOf(hit.offender),
           });
         }
+      }
+    }
+
+    /* ── 6. Rhythm: controls sharing a row line up and match height ─────── */
+
+    /**
+     * A row of controls is read as one line, so it has to BE one line.
+     *
+     * A search field, a status select and a "New project" button sitting side
+     * by side are a single utility row; when the fields carry a label above
+     * them and the button does not, the button's centre lands below theirs and
+     * the row visibly sags — the defect a designer spots instantly and no
+     * check here could see. Three rules, all arithmetic on rendered boxes:
+     *
+     *   centres align   controls in one row share a vertical centre
+     *   heights match   field-shaped controls in one row are the same height
+     *   labels centre   a checkbox or radio and its label share a centre
+     *
+     * Scoped to CONTROLS on purpose. Text of different sizes on one line is
+     * legitimately baseline-aligned, not centre-aligned, and flagging that
+     * would report every well-set heading beside a caption.
+     */
+    const CONTROL_SELECTOR = 'button, [role="button"], input:not([type="hidden"]), select, textarea, [role="combobox"], [role="checkbox"], [role="radio"], [role="switch"], [role="searchbox"], [role="spinbutton"]';
+    const TICKY = /^(checkbox|radio)$/;
+
+    const isTicky = (el: HTMLElement): boolean =>
+      TICKY.test((el as HTMLInputElement).type || '') || /^(checkbox|radio|switch)$/.test(el.getAttribute('role') || '');
+    /** A field: something that renders as a bar the eye lines up. Not a tick box, not a textarea. */
+    const isField = (el: HTMLElement): boolean => {
+      if (isTicky(el)) return false;
+      if (el.tagName === 'TEXTAREA') return false;
+      const r = el.getBoundingClientRect();
+      // An icon-only square button is sized by its own rules, not the row's.
+      const iconOnly = (el.tagName === 'BUTTON' || el.getAttribute('role') === 'button')
+        && !(el.textContent || '').trim() && Math.abs(r.width - r.height) < 8;
+      return !iconOnly && r.height > 0;
+    };
+
+    const controls = (Array.from(root.querySelectorAll(CONTROL_SELECTOR)) as HTMLElement[])
+      .filter(el => isVisible(el) && el.getBoundingClientRect().height > 0)
+      .slice(0, 120);
+
+    /** Controls that share a horizontal band and do not overlap horizontally. */
+    const rows: HTMLElement[][] = [];
+    for (const el of controls) {
+      const r = el.getBoundingClientRect();
+      const row = rows.find(group => group.every(other => {
+        const o = other.getBoundingClientRect();
+        const overlap = Math.min(r.bottom, o.bottom) - Math.max(r.top, o.top);
+        const sameBand = overlap > Math.min(r.height, o.height) * 0.5;
+        const sideBySide = r.left >= o.right - 1 || o.left >= r.right - 1;
+        // A control nested inside another (a button in a combobox) is not a peer.
+        return sameBand && sideBySide && !el.contains(other) && !other.contains(el);
+      }));
+      if (row) row.push(el); else rows.push([el]);
+    }
+
+    // Sub-pixel rounding and a focus ring live under 3px; the sag a person
+    // sees on a control row starts around 4.
+    const CENTRE_PX = 4;
+    const HEIGHT_PX = 8;
+
+    for (const row of rows) {
+      if (row.length < 2 || problems.length >= 12) continue;
+      const boxes = row.map(el => ({ el, r: el.getBoundingClientRect() }));
+      const centre = (b: { r: DOMRect }) => b.r.top + b.r.height / 2;
+
+      const lowest = boxes.reduce((a, b) => (centre(a) < centre(b) ? a : b));
+      const highest = boxes.reduce((a, b) => (centre(a) > centre(b) ? a : b));
+      const spread = centre(highest) - centre(lowest);
+      const container = row[0].parentElement as HTMLElement | null;
+      if (spread > CENTRE_PX && !(container && laidOutByLibrary(container))) {
+        const cs = container ? getComputedStyle(container) : null;
+        problems.push({
+          kind: 'row_misaligned',
+          message:
+            `${label(highest.el)} and ${label(lowest.el)} sit on the same row but their centres are ${Math.round(spread)}px apart, so the row sags. ` +
+            `Controls on one line share a vertical centre: put them in one row container with align-items: center, and if one of them has a label above it, give the others the same treatment (or align the row to the end) so every control's box starts at the same place.`,
+          evidence: `${boxes.length} controls in the row; centres from ${Math.round(centre(lowest))}px to ${Math.round(centre(highest))}px${cs ? `; parent ${cs.display}, align-items: ${cs.alignItems}` : ''}`,
+          selector: cssPath(highest.el),
+          ...authorOf(highest.el),
+        });
+        continue;   // one finding per row; the height mismatch is the same story
+      }
+
+      const fields = boxes.filter(b => isField(b.el));
+      if (fields.length >= 2) {
+        const tallest = fields.reduce((a, b) => (a.r.height >= b.r.height ? a : b));
+        const shortest = fields.reduce((a, b) => (a.r.height <= b.r.height ? a : b));
+        const diff = tallest.r.height - shortest.r.height;
+        if (diff > HEIGHT_PX && !(container && laidOutByLibrary(container))) {
+          problems.push({
+            kind: 'row_height_mismatch',
+            message:
+              `${label(tallest.el)} is ${Math.round(tallest.r.height)}px tall and ${label(shortest.el)} is ${Math.round(shortest.r.height)}px, on the same row — a filter or action row reads as one bar, so its fields and buttons should be the same height. ` +
+              `Give them one size from the design system's own size scale rather than letting each take its default.`,
+            evidence: `${fields.length} field-shaped controls: heights ${fields.map(f => Math.round(f.r.height)).join(', ')}px`,
+            selector: cssPath(tallest.el),
+            ...authorOf(tallest.el),
+          });
+        }
+      }
+    }
+
+    /* ── 7. A tick box and its label share a centre ──────────────────────── */
+
+    for (const el of controls) {
+      if (problems.length >= 12) break;
+      if (!isTicky(el)) continue;
+      const r = el.getBoundingClientRect();
+      const labelled = (el as HTMLInputElement).labels?.[0] as HTMLElement | undefined
+        ?? (el.getAttribute('aria-labelledby') ? document.getElementById(el.getAttribute('aria-labelledby')!) as HTMLElement | null : null)
+        ?? (el.closest('label') as HTMLElement | null);
+      if (!labelled || labelled === el) continue;
+      /**
+       * The label's TEXT, not its box. A `<label>` usually wraps the control,
+       * so its own rect contains the tick box and no comparison is possible;
+       * what a person sees out of line is the words. A range over the label's
+       * text nodes is exactly those glyphs.
+       */
+      const textRect = (host: HTMLElement): DOMRect | null => {
+        const walker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT);
+        let node: Node | null;
+        let box: DOMRect | null = null;
+        while ((node = walker.nextNode())) {
+          if (!(node.textContent || '').trim()) continue;
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          const r = range.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0) continue;
+          box = box
+            ? new DOMRect(Math.min(box.left, r.left), Math.min(box.top, r.top),
+                Math.max(box.right, r.right) - Math.min(box.left, r.left),
+                Math.max(box.bottom, r.bottom) - Math.min(box.top, r.top))
+            : r;
+        }
+        return box;
+      };
+      const lr = (labelled.contains(el) ? textRect(labelled) : labelled.getBoundingClientRect()) as DOMRect | null;
+      if (!lr || lr.height === 0 || lr.width === 0) continue;
+      // Only a label placed BESIDE the control; one above it is a stacked field.
+      const sideBySide = lr.left >= r.right - 2 || r.left >= lr.right - 2;
+      if (!sideBySide) continue;
+      // A label that wraps to several lines is centred as a block, not per line.
+      if (lr.height > r.height * 2.2) continue;
+      const gap = Math.abs((lr.top + lr.height / 2) - (r.top + r.height / 2));
+      if (gap > CENTRE_PX && !laidOutByLibrary((el.parentElement || el) as HTMLElement)) {
+        problems.push({
+          kind: 'label_misaligned',
+          message:
+            `${label(labelled)} is ${Math.round(gap)}px off the centre of the ${isTicky(el) ? 'tick box' : 'control'} it labels, so the pair reads as crooked. ` +
+            `Put the control and its label in one row with align-items: center — the design system's own checkbox/radio component does this when the label is passed to it rather than placed beside it.`,
+          evidence: `control centre ${Math.round(r.top + r.height / 2)}px, label centre ${Math.round(lr.top + lr.height / 2)}px`,
+          selector: cssPath(el),
+          ...authorOf(el),
+        });
       }
     }
 

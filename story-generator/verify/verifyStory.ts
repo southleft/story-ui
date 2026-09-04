@@ -550,7 +550,14 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
      * the only fix a model can make to the library's own markup is to stop
      * using the component.
      */
-    const BLOCKING_LAYOUT_KINDS = new Set(['grid_underfilled', 'grid_ragged', 'stretched_control', 'gap_outlier']);
+    // Alignment is rhythm: a control row that sags, a filter bar whose fields
+    // are different heights, and a label off its tick box are each the kind of
+    // defect a designer names on sight, and each is arithmetic on rendered
+    // boxes rather than taste. They block for the same reason the rest do.
+    const BLOCKING_LAYOUT_KINDS = new Set([
+      'grid_underfilled', 'grid_ragged', 'stretched_control', 'gap_outlier',
+      'row_misaligned', 'row_height_mismatch', 'label_misaligned',
+    ]);
     for (const p of layout.problems) {
       findings.push({
         id: `${p.kind}-${findings.length}`,
