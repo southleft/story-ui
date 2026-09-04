@@ -1,3 +1,10 @@
+# [5.11.0](https://github.com/southleft/story-ui/compare/v5.10.0...v5.11.0) (2026-09-04)
+
+
+### Features
+
+* **generator:** read the inputs Angular declares for itself ([46a483b](https://github.com/southleft/story-ui/commit/46a483bb02216780798ec8243de6edcf6481350b))
+
 # [5.10.0](https://github.com/southleft/story-ui/compare/v5.9.2...v5.10.0) (2026-09-04)
 
 
