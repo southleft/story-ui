@@ -1,3 +1,10 @@
+## [5.6.3](https://github.com/southleft/story-ui/compare/v5.6.2...v5.6.3) (2026-09-04)
+
+
+### Bug Fixes
+
+* **generator:** check the rules the prompt already states ([3bd8eb4](https://github.com/southleft/story-ui/commit/3bd8eb400e4853b91579c07193778e721686f60d))
+
 ## [5.6.2](https://github.com/southleft/story-ui/compare/v5.6.1...v5.6.2) (2026-09-04)
 
 
