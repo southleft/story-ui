@@ -1,3 +1,10 @@
+# [5.8.0](https://github.com/southleft/story-ui/compare/v5.7.3...v5.8.0) (2026-09-04)
+
+
+### Features
+
+* **generator:** hold an action row to its content without asking a model ([20db7c4](https://github.com/southleft/story-ui/commit/20db7c4827df7881ea20b5f941db9d3eabb112dc))
+
 ## [5.7.3](https://github.com/southleft/story-ui/compare/v5.7.2...v5.7.3) (2026-09-04)
 
 
