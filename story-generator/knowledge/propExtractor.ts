@@ -1736,6 +1736,16 @@ export function formatPropForCatalog(p: PropFact): string {
   return entry;
 }
 
+/**
+ * A doc sentence that describes a prop as carrying CSS itself.
+ *
+ * "Additional CSS class names" — Carbon's `className` — is deliberately NOT a
+ * match: a class-name prop takes classes, and pointing a composition's CSS at
+ * it would be the wrong destination. The exclusion is checked against the same
+ * sentence rather than against the prop's name.
+ */
+const CSS_CARRIER_DOC = /\b(additional|arbitrary|custom|extra|inline)\b[^.]{0,40}\bCSS\s+(styles?|properties|rules)\b|\bstyle overrides\b/i;
+
 export function rankProps(props: PropFact[]): PropFact[] {
   const tier = (p: PropFact): number => {
     if (p.required) return 0;
@@ -1743,6 +1753,26 @@ export function rankProps(props: PropFact[]): PropFact[] {
     if (/^(value|defaultValue|checked|active|selected|opened|open|disabled|loading|error)$/i.test(p.name)) return 2;
     if (/(section|icon|adornment|prefix|suffix|slot|label|placeholder)/i.test(p.name)) return 3;
     if (/^(variant|size|color|radius|shadow|position|orientation)$/i.test(p.name)) return 4;
+    /**
+     * The prop the library itself describes as taking arbitrary CSS.
+     *
+     * Judged by what the library WROTE about the prop, never by what the prop
+     * is called: `sx`, `css` and `style` are three libraries' names for the
+     * same idea and a custom design system owes none of them. MUI's Stack
+     * declares `sx` with "allows defining system overrides as well as
+     * additional CSS styles" — that sentence is the fact a composition needs,
+     * and it was being dropped: with no required props, no handlers and no
+     * state props, every prop on that component tied at the bottom tier and
+     * sorted alphabetically, so `sx` came eighth and the catalog attaches docs
+     * to the first six. Measured on a twenty-prompt MUI run: 28 of 29
+     * first-round validation errors were `alignItems` and `justifyContent`
+     * written as top-level props — CSS with nowhere visible to go.
+     *
+     * The pattern deliberately does not match a prop that merely mentions CSS
+     * in passing: MUI's `useFlexGap` says "the CSS flexbox `gap` is used" and
+     * is a boolean, not an escape hatch.
+     */
+    if (p.doc && CSS_CARRIER_DOC.test(p.doc) && !/\bCSS\s+class/i.test(p.doc)) return 4;
     return 5;
   };
   return [...props].sort((a, b) => tier(a) - tier(b) || a.name.localeCompare(b.name));
