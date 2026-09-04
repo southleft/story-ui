@@ -1,3 +1,10 @@
+## [5.4.1](https://github.com/southleft/story-ui/compare/v5.4.0...v5.4.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* **generator:** storybook failing to load a story is not the story failing ([9754777](https://github.com/southleft/story-ui/commit/97547776792cf8803d43697f54500efd2b75682d))
+
 # [5.4.0](https://github.com/southleft/story-ui/compare/v5.3.1...v5.4.0) (2026-09-03)
 
 
