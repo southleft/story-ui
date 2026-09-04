@@ -5,7 +5,7 @@ import chalk from 'chalk';
 import { fileURLToPath } from 'url';
 import inquirer from 'inquirer';
 import { createRequire } from 'module';
-import { ensureWatcherPolling } from '../story-generator/verify/storybookWatcher.js';
+import { ensureWatcherLauncher, WATCHER_LAUNCHER_FILE } from '../story-generator/verify/storybookWatcher.js';
 import { mergeEnv } from './envFile.js';
 import { ensurePreviewRootCss } from './setup.js';
 import { ensureManagerAddonWiring, ensureStoriesGlobCoversMdx, missingReactStorybookDep, ensureManagerHeadPort, readConfiguredPort, ensureScriptPort, viteFinalConfigSnippet, insertConfigProperty, missingViteCjsIncludes } from './setup.js';
@@ -588,12 +588,15 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
         .map(f => path.join(sbDir, f)).find(f => fs.existsSync(f));
       // Polling keeps the story-index watcher alive on macOS (storybookWatcher.ts);
       // applies to webpack Storybooks too, which watch through watchpack as well.
-      if (mainPath) {
-        const polled = ensureWatcherPolling(fs.readFileSync(mainPath, 'utf8'));
-        if (polled) {
-          fs.writeFileSync(mainPath, polled);
-          console.log(chalk.green(`   ✅ Added WATCHPACK_POLLING to .storybook/${path.basename(mainPath)} — on macOS Storybook finds new stories by polling (restart it)`));
+      {
+        const launcher = ensureWatcherLauncher(process.cwd());
+        if (launcher.file !== 'unchanged' || launcher.scripts.length) {
+          console.log(chalk.green(`   ✅ Storybook starts through .storybook/${WATCHER_LAUNCHER_FILE}${launcher.scripts.length ? ` (${launcher.scripts.join(', ')})` : ''} — on macOS it finds new stories by polling (restart it)`));
         }
+        if (launcher.removedDeadPreamble) {
+          console.log(chalk.yellow(`   ⚠️  Removed the WATCHPACK_POLLING line from .storybook/${launcher.removedDeadPreamble} — it was set after watchpack had already read it, so it never enabled polling`));
+        }
+        if (launcher.note) console.log(chalk.yellow(`   ⚠️  ${launcher.note}`));
       }
       if (mainPath && !/webpack/i.test(fs.readFileSync(mainPath, 'utf8'))) {
         const mainContent = fs.readFileSync(mainPath, 'utf8');

@@ -320,7 +320,7 @@ export const ProductCard: Story = {
   render: () => ({
     template: \`
       <app-card style="width: 300px">
-        <img appCardImage src="https://picsum.photos/300/200" alt="Product">
+        <img appCardImage src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='200'><rect width='100%' height='100%' fill='%23e5e7eb'/></svg>" alt="Product">
         <h3 appCardTitle>Product Name</h3>
         <p appCardContent>$99.00</p>
         <app-button appCardAction variant="primary">Add to Cart</app-button>

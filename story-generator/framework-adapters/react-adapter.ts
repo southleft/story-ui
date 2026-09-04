@@ -341,7 +341,7 @@ type Story = StoryObj;
 export const ProductCard: Story = {
   render: () => (
     <Card style={{ width: 300 }}>
-      <img src="https://picsum.photos/300/200" alt="Product" />
+      <img src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='200'><rect width='100%' height='100%' fill='%23e5e7eb'/></svg>" alt="Product" />
       <div>Product Name</div>
       <div>$99.00</div>
       <Button variant="primary">Add to Cart</Button>
