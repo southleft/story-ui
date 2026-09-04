@@ -518,7 +518,14 @@ export async function verifyStory(options: VerifyStoryOptions): Promise<VerifyRe
     } else {
       for (const u of classes.undefined_) {
         findings.push({
-          id: `undefined-class-${findings.length}`,
+          // `library-` prefix, matching the census findings, so a reader —
+          // and the bench — can tell the design system's own markup from the
+          // story's without parsing the message. Carbon's <Form> writes
+          // `cds--form`, for which @carbon/styles ships no rule; that is a true
+          // fact about Carbon and nothing a composition can act on.
+          id: u.ownedByLibrary && u.owner
+            ? `library-undefined-class-${findings.length}`
+            : `undefined-class-${findings.length}`,
           severity: 'warning',
           class: 'code',
           message: u.ownedByLibrary && u.owner
