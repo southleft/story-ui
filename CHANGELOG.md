@@ -1,3 +1,10 @@
+## [5.7.1](https://github.com/southleft/story-ui/compare/v5.7.0...v5.7.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* **generator:** stop waiting for a recompile the repair never triggered ([d4dca2b](https://github.com/southleft/story-ui/commit/d4dca2be21a851a857e3733ce6dc065dae56f593))
+
 # [5.7.0](https://github.com/southleft/story-ui/compare/v5.6.5...v5.7.0) (2026-09-04)
 
 
