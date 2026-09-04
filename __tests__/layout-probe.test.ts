@@ -283,3 +283,72 @@ describe.runIf(tooling)('layout probe — ragged grid rows', { retry: 2 }, () =>
     expect(r.problems.filter(p => p.kind === 'grid_underfilled')).toHaveLength(1);
   }, 30_000);
 });
+
+describe.runIf(tooling)('layout probe — rhythm: rows line up', { retry: 2 }, () => {
+  const field = (h = 36, label?: string) =>
+    `<div style="display:flex;flex-direction:column;gap:4px">${label ? `<span style="font-size:12px">${label}</span>` : ''}<input style="height:${h}px;width:180px;box-sizing:border-box"></div>`;
+  const btn = (h = 36, text = 'New project') =>
+    `<button style="height:${h}px;padding:0 16px;box-sizing:border-box">${text}</button>`;
+
+  it('flags a utility row whose button sags because only the fields carry labels', async () => {
+    // The real defect: labelled fields are taller, so a bare button centres low.
+    const r = await probe(`<div style="display:flex;align-items:center;gap:12px;padding:16px">
+      ${field(36, 'Search')}${field(36, 'Status')}${btn()}</div>`);
+    const hits = r.problems.filter(p => p.kind === 'row_misaligned');
+    expect(hits).toHaveLength(1);
+    expect(hits[0].message).toContain('centres are');
+    expect(hits[0].message).toContain('align-items: center');
+  }, 30_000);
+
+  it('passes the same row once every control shares a centre', async () => {
+    const r = await probe(`<div style="display:flex;align-items:flex-end;gap:12px;padding:16px">
+      ${field(36, 'Search')}${field(36, 'Status')}${btn()}</div>`);
+    expect(r.problems.filter(p => /row_misaligned|row_height_mismatch/.test(p.kind))).toHaveLength(0);
+  }, 30_000);
+
+  it('flags a filter row whose controls are different heights, and passes matched ones', async () => {
+    const bad = await probe(`<div style="display:flex;align-items:center;gap:12px;padding:16px">
+      <input style="height:44px;width:180px;box-sizing:border-box"><select style="height:44px;box-sizing:border-box"><option>All</option></select>${btn(28)}</div>`);
+    const hits = bad.problems.filter(p => p.kind === 'row_height_mismatch');
+    expect(hits).toHaveLength(1);
+    expect(hits[0].message).toContain('same height');
+
+    const good = await probe(`<div style="display:flex;align-items:center;gap:12px;padding:16px">
+      <input style="height:36px;width:180px;box-sizing:border-box"><select style="height:36px;box-sizing:border-box"><option>All</option></select>${btn(36)}</div>`);
+    expect(good.problems.filter(p => p.kind === 'row_height_mismatch')).toHaveLength(0);
+  }, 30_000);
+
+  it('does not fault an icon-only square button for being shorter than a field', async () => {
+    const r = await probe(`<div style="display:flex;align-items:center;gap:12px;padding:16px">
+      <input style="height:40px;width:200px;box-sizing:border-box">
+      <button aria-label="Filter" style="height:28px;width:28px;box-sizing:border-box"></button></div>`);
+    expect(r.problems.filter(p => p.kind === 'row_height_mismatch')).toHaveLength(0);
+  }, 30_000);
+
+  it('flags a checkbox whose label is off its centre, and passes an aligned pair', async () => {
+    const bad = await probe(`<div style="padding:16px"><label style="display:flex;align-items:flex-start;gap:8px">
+      <input type="checkbox" style="width:16px;height:16px;margin-top:14px">
+      <span style="font-size:14px;line-height:20px">Email me about site incidents</span></label></div>`);
+    const hits = bad.problems.filter(p => p.kind === 'label_misaligned');
+    expect(hits).toHaveLength(1);
+    expect(hits[0].message).toContain('off the centre');
+
+    const good = await probe(`<div style="padding:16px"><label style="display:flex;align-items:center;gap:8px">
+      <input type="checkbox" style="width:16px;height:16px">
+      <span style="font-size:14px;line-height:20px">Email me about site incidents</span></label></div>`);
+    expect(good.problems.filter(p => p.kind === 'label_misaligned')).toHaveLength(0);
+  }, 30_000);
+
+  it('leaves prose alone: a heading beside a caption is baseline-aligned, not broken', async () => {
+    const r = await probe(`<div style="display:flex;align-items:baseline;gap:12px;padding:16px">
+      <h2 style="font-size:28px;margin:0">Field Operations</h2>
+      <span style="font-size:12px">12 active sites</span></div>`);
+    expect(r.problems.filter(p => /row_misaligned|row_height_mismatch/.test(p.kind))).toHaveLength(0);
+  }, 30_000);
+
+  it('does not treat a stacked label above its field as a crooked pair', async () => {
+    const r = await probe(`<div style="padding:16px;display:flex;flex-direction:column;gap:4px">
+      <label for="q" style="font-size:12px">Search</label><input id="q" style="height:36px;width:200px"></div>`);
+    expect(r.problems.filter(p => p.kind === 'label_misaligned')).toHaveLength(0);
+  }, 30_000);
+});
