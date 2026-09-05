@@ -1,3 +1,10 @@
+## [5.17.8](https://github.com/southleft/story-ui/compare/v5.17.7...v5.17.8) (2026-09-05)
+
+
+### Bug Fixes
+
+* **generator:** let the compiler decide which props are real ([f2ee873](https://github.com/southleft/story-ui/commit/f2ee873ca22b4894eb91e52baf844b8fab852b09))
+
 ## [5.17.7](https://github.com/southleft/story-ui/compare/v5.17.6...v5.17.7) (2026-09-05)
 
 
