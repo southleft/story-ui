@@ -826,8 +826,53 @@ export function viteFinalConfigSnippet(): string {
 ${STORY_UI_VITE_CJS_INCLUDES.map(chain => `        '${chain}'`).join(',\n')}
       ]
     };
+    // Story UI: keep Vite's own module watcher alive on macOS. Storybook's story
+    // INDEX watcher and Vite's MODULE watcher are different watchers, and the
+    // launcher only fixes the first. Measured on a Storybook that had been
+    // running seven hours: a story rewritten on disk was never re-transformed —
+    // still serving the previous bytes after 90 seconds — so a repair was
+    // re-checked against the render it was meant to replace. With polling the
+    // same edit was served in 1 second. Remove this if you set server.watch
+    // yourself.
+    if (process.platform === 'darwin') {
+      config.server = {
+        ...config.server,
+        watch: { ...(config.server?.watch ?? {}), usePolling: true, interval: 300 },
+      };
+    }
     return config;
   },`;
+}
+
+/** Marks the Story UI viteFinal block, so `update` can extend its own work. */
+export const STORY_UI_VITE_MARKER = 'Story UI: Exclude from dependency optimization';
+
+/**
+ * Add Vite's watcher polling to a viteFinal block Story UI wrote itself.
+ *
+ * Only to its OWN block, identified by the comment it writes: a viteFinal the
+ * user authored is theirs, and this never rewrites it. Null when the block is
+ * absent, already polls, or belongs to someone else.
+ */
+export function ensureViteWatchPolling(mainContent: string): string | null {
+  if (!mainContent.includes(STORY_UI_VITE_MARKER)) return null;
+  if (/usePolling/.test(mainContent)) return null;
+  const anchor = mainContent.indexOf('return config;');
+  if (anchor < 0) return null;
+  const insertion = `// Story UI: keep Vite's own module watcher alive on macOS. Storybook's story
+    // INDEX watcher and Vite's MODULE watcher are different watchers. Measured on
+    // a Storybook running for seven hours: a story rewritten on disk was never
+    // re-transformed — still serving the previous bytes after 90 seconds — so a
+    // repair was re-checked against the render it was meant to replace. With
+    // polling the same edit was served in 1 second.
+    if (process.platform === 'darwin') {
+      config.server = {
+        ...config.server,
+        watch: { ...(config.server?.watch ?? {}), usePolling: true, interval: 300 },
+      };
+    }
+    `;
+  return mainContent.slice(0, anchor) + insertion + mainContent.slice(anchor);
 }
 
 /**
