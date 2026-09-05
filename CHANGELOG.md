@@ -1,3 +1,10 @@
+## [5.17.1](https://github.com/southleft/story-ui/compare/v5.17.0...v5.17.1) (2026-09-05)
+
+
+### Bug Fixes
+
+* **generator:** say that controls on one line share a vertical centre ([7907021](https://github.com/southleft/story-ui/commit/7907021970bab9018c3cb751942e6b3afea6f9ee))
+
 # [5.17.0](https://github.com/southleft/story-ui/compare/v5.16.0...v5.17.0) (2026-09-05)
 
 
