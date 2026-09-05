@@ -1,3 +1,10 @@
+## [5.17.2](https://github.com/southleft/story-ui/compare/v5.17.1...v5.17.2) (2026-09-05)
+
+
+### Bug Fixes
+
+* **generator:** a component that takes only children is known, not unknown ([50c9b06](https://github.com/southleft/story-ui/commit/50c9b06f6972324e0b2f8dd2302464a4ebae70bf))
+
 ## [5.17.1](https://github.com/southleft/story-ui/compare/v5.17.0...v5.17.1) (2026-09-05)
 
 
