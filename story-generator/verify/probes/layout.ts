@@ -928,6 +928,42 @@ export async function runLayoutProbe(page: any, options: LayoutOptions = {}): Pr
       .filter(el => isVisible(el) && el.getBoundingClientRect().height > 0)
       .slice(0, 120);
 
+    /**
+     * Are these two controls in repeated cells of a collection?
+     *
+     * Grouping by geometry alone made a row out of the "Add to cart" buttons
+     * of three separate product cards: one product name wrapped to a second
+     * line, so its button sat 8px lower, and the check told the composition to
+     * "put them in one row container with align-items: center" — impossible for
+     * buttons in three different cards. The gate regenerated, the finding came
+     * back, and the run cost 354s.
+     *
+     * The signal is repetition. A card grid is sibling cells with the same tag
+     * and the same classes; a control row is heterogeneous — a labelled field
+     * beside a bare button. Requiring a shared PARENT was tried first and was
+     * too strict: it lost the real defect, where a field wraps its input and
+     * the button does not.
+     *
+     * Cards of unequal height are a genuine defect, and a different check
+     * reports them in terms a composition can act on.
+     */
+    const cellOf = (el: HTMLElement, stop: HTMLElement): HTMLElement | null => {
+      let node: HTMLElement | null = el;
+      while (node && node.parentElement && node.parentElement !== stop) node = node.parentElement;
+      return node && node.parentElement === stop ? node : null;
+    };
+    const repeatedCells = (a: HTMLElement, b: HTMLElement): boolean => {
+      let common: HTMLElement | null = a.parentElement;
+      while (common && !common.contains(b)) common = common.parentElement;
+      if (!common) return false;
+      const ca = cellOf(a, common);
+      const cb = cellOf(b, common);
+      if (!ca || !cb || ca === cb) return false;
+      // Same element type and same classes, and neither IS the control: a
+      // repeated cell, not a peer control.
+      return ca !== a && cb !== b && ca.tagName === cb.tagName && ca.className === cb.className;
+    };
+
     /** Controls that share a horizontal band and do not overlap horizontally. */
     const rows: HTMLElement[][] = [];
     for (const el of controls) {
@@ -938,7 +974,25 @@ export async function runLayoutProbe(page: any, options: LayoutOptions = {}): Pr
         const sameBand = overlap > Math.min(r.height, o.height) * 0.5;
         const sideBySide = r.left >= o.right - 1 || o.left >= r.right - 1;
         // A control nested inside another (a button in a combobox) is not a peer.
-        return sameBand && sideBySide && !el.contains(other) && !other.contains(el);
+        /**
+         * And a peer must share a parent.
+         *
+         * Grouping by geometry alone made a row out of controls in different
+         * containers: the "Add to cart" buttons of three separate product
+         * cards were reported as one row whose centres were 8px apart —
+         * because one product's name wrapped to a second line. The remedy this
+         * check prints is "put them in one row container with
+         * align-items: center", which cannot be done to buttons in three
+         * different cards, so the gate regenerated the story and the finding
+         * came back. Measured: 354s and one wasted regeneration.
+         *
+         * Cards of unequal height ARE a real defect, and a different check
+         * says so in terms a composition can act on — c06's "the three tier
+         * cards do not line up". This one is about a row, and a row is
+         * something with one parent.
+         */
+        return sameBand && sideBySide && !repeatedCells(el, other)
+          && !el.contains(other) && !other.contains(el);
       }));
       if (row) row.push(el); else rows.push([el]);
     }

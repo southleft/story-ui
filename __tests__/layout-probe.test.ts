@@ -327,6 +327,27 @@ describe.runIf(tooling)('layout probe — rhythm: rows line up', { retry: 2 }, (
     expect(hits[0].message).toContain('align-items: center');
   }, 30_000);
 
+  it('does not call controls in separate cards a row', async () => {
+    /**
+     * Three product cards side by side, one product name wrapping to a second
+     * line, so its "Add to cart" button sits 8px lower than its neighbours'.
+     * Grouping by geometry alone made those three buttons a row and told the
+     * composition to "put them in one row container with align-items: center"
+     * — which cannot be done to buttons in three different cards. The gate
+     * regenerated the story, the finding came back, and the run cost 354s.
+     *
+     * Cards of unequal height are a real defect and a different check reports
+     * them in terms a composition can act on. A row is something with one
+     * parent.
+     */
+    const card = (lines: string) =>
+      `<div style="display:flex;flex-direction:column;gap:8px;width:180px;padding:8px;border:1px solid #ccc">
+         <span style="font-size:12px">${lines}</span>${btn(36, 'Add to cart')}</div>`;
+    const r = await probe(`<div style="display:flex;gap:12px;align-items:flex-start">
+      ${card('Short name')}${card('A much longer product name that wraps onto two lines')}${card('Short name')}</div>`);
+    expect(r.problems.filter(p => p.kind === 'row_misaligned')).toHaveLength(0);
+  }, 30_000);
+
   it('passes the same row once every control shares a centre', async () => {
     const r = await probe(`<div style="display:flex;align-items:flex-end;gap:12px;padding:16px">
       ${field(36, 'Search')}${field(36, 'Status')}${btn()}</div>`);
