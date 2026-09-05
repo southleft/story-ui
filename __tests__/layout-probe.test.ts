@@ -156,6 +156,33 @@ describe.runIf(tooling)('layout probe — stretched hug-content controls', { ret
     expect(hits[0].message).toContain('align-self: start');
   }, 30_000);
 
+  it('leaves a sticky action bar alone: a container is not a control', async () => {
+    /**
+     * The most expensive false positive in the suite. A sticky save bar has a
+     * background colour by necessity — without one the page scrolls under it —
+     * which made it "decorated", its two buttons give it the text
+     * "CancelSave changes" at 18 characters, and its height is a bar's height.
+     * It was reported as a content-hugging tag rendered 904px wide when full
+     * width is what a save bar is FOR.
+     *
+     * It was the only story shipping with an issue, the only one burning all
+     * three gate attempts, and the entire p90 tail, on three unrelated design
+     * systems. Four prompt rules were written against it and none could work,
+     * because the composition was correct every time.
+     */
+    const bar = `<div style="background:#f4f4f4;height:48px;display:flex;align-items:center;gap:8px;padding:0 8px">${button('Cancel')}${button('Save changes')}</div>`;
+    const r = await probe(columnStack(bar + '<p>copy</p>'));
+    expect(r.problems.filter(p => p.kind === 'stretched_control')).toHaveLength(0);
+  }, 30_000);
+
+  it('still flags a real pill that merely sits beside a control', async () => {
+    // The exclusion is about what an element CONTAINS, not what is near it: a
+    // stretched tag next to a button is still a stretched tag.
+    const r = await probe(columnStack(pill('New') + button('Save') + '<p>copy</p>'));
+    const hits = r.problems.filter(p => p.kind === 'stretched_control');
+    expect(hits.some(h => h.message.includes('208px wide'))).toBe(true);
+  }, 30_000);
+
   it('leaves an element the source sized on purpose alone', async () => {
     // `width: 100%` is a decision. The computed width is the same number as
     // a stretch, so this has to be read from what was written.
