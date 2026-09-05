@@ -430,7 +430,12 @@ async function measure(env) {
     extractedFacts = extracted;
     if (extracted) {
       for (const component of components) {
-        const facts = extracted.components[component.name];
+        // Same join the pipeline makes: a package's default export under the
+        // name the project actually imports it by.
+        const facts = extracted.components[component.name]
+          ?? (component.__componentPath && extracted.defaultExports?.[component.__componentPath]
+            ? extracted.components[extracted.defaultExports[component.__componentPath]]
+            : undefined);
         if (!facts) continue;
         if (!component.props || component.props.length === 0) {
           component.props = rankProps(facts.props).map(p => `${p.name}${p.required ? '' : '?'}`);
