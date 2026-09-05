@@ -1,3 +1,10 @@
+## [5.17.4](https://github.com/southleft/story-ui/compare/v5.17.3...v5.17.4) (2026-09-05)
+
+
+### Bug Fixes
+
+* **generator:** a container is not a content-hugging control ([c5fe3d3](https://github.com/southleft/story-ui/commit/c5fe3d30bb87de7e47700fd3fc0a131094e945de))
+
 ## [5.17.3](https://github.com/southleft/story-ui/compare/v5.17.2...v5.17.3) (2026-09-05)
 
 
