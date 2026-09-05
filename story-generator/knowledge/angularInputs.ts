@@ -47,6 +47,24 @@ export interface AngularInput {
 
 export interface AngularComponentFacts {
   name: string;
+  /**
+   * This class is an NgModule, not something a template can write.
+   *
+   * Angular ships one per component group and discovery admits them all —
+   * MatButtonModule beside MatButton. A catalog that offers a module as a
+   * component invites `<MatButtonModule>`, which renders nothing. Recognised
+   * by the declaration Angular's own compiler emits for it, never by its name.
+   */
+  isModule?: boolean;
+  /**
+   * Not writable in a template for a reason Angular's own types state: an
+   * injection token, or a test harness. Discovery admits both beside the
+   * components, and a catalog offering `<MAT_BUTTON_CONFIG>` teaches the model
+   * something impossible.
+   */
+  notWritable?: boolean;
+  /** This export is another component under a second name: `typeof MatButton`. */
+  aliasOf?: string;
   /** The CSS selector Angular matches — how the component is actually written. */
   selector?: string;
   inputs: AngularInput[];
@@ -109,9 +127,19 @@ function membersOf(arg: ts.TypeNode | undefined): Array<{ property: string; alia
     let required = false;
     if (member.type && ts.isTypeLiteralNode(member.type)) {
       for (const f of member.type.members) {
-        if (!ts.isPropertySignature(f) || !f.name || !ts.isIdentifier(f.name)) continue;
-        if (f.name.text === 'alias') alias = literalText(f.type) ?? undefined;
-        if (f.name.text === 'required') required = isTrue(f.type);
+        if (!ts.isPropertySignature(f) || !f.name) continue;
+        /**
+         * The keys are STRING LITERALS, not identifiers.
+         *
+         * Angular emits `{ "alias": "matButton"; "required": false; }`, and
+         * accepting only identifiers meant neither was ever read: every input
+         * was catalogued under its class property while a template has to
+         * write the alias. `appearance` where the answer is `matButton`.
+         */
+        const key = ts.isIdentifier(f.name) || ts.isStringLiteral(f.name)
+          ? (f.name as ts.Identifier | ts.StringLiteral).text : null;
+        if (key === 'alias') alias = literalText(f.type) ?? undefined;
+        if (key === 'required') required = isTrue(f.type);
       }
     }
     out.push({ property, ...(alias && alias !== property ? { alias } : {}), required });
@@ -151,7 +179,51 @@ export function readAngularDeclarations(source: ts.SourceFile): AngularComponent
   const out: AngularComponentFacts[] = [];
 
   const visit = (node: ts.Node): void => {
+    /**
+     * `declare const X: InjectionToken<…>` and `declare const Y: typeof Z`.
+     *
+     * The first cannot be an element at all; the second IS one, under a second
+     * name — Angular Material exports MatAnchor as `typeof MatButton`, and
+     * reading only classes left every such alias with no props at all.
+     */
+    if (ts.isVariableStatement(node)) {
+      for (const decl of node.declarationList.declarations) {
+        if (!ts.isIdentifier(decl.name) || !decl.type) continue;
+        if (ts.isTypeReferenceNode(decl.type)) {
+          const referenced = ts.isQualifiedName(decl.type.typeName) ? decl.type.typeName.right.text : decl.type.typeName.text;
+          if (referenced === 'InjectionToken') {
+            out.push({ name: decl.name.text, notWritable: true, inputs: [] });
+          }
+        } else if (ts.isTypeQueryNode(decl.type)) {
+          const target = ts.isQualifiedName(decl.type.exprName) ? decl.type.exprName.right.text : decl.type.exprName.text;
+          if (/^[A-Z]/.test(target)) out.push({ name: decl.name.text, aliasOf: target, inputs: [] });
+        }
+      }
+    }
     if (ts.isClassDeclaration(node) && node.name) {
+      const moduleMember = node.members.find(m =>
+        ts.isPropertyDeclaration(m) && m.name && ts.isIdentifier(m.name) && m.name.text === 'ɵmod');
+      if (moduleMember) {
+        out.push({ name: node.name.text, isModule: true, inputs: [] });
+      }
+      /**
+       * A test harness extends the CDK's own base class and is never written
+       * in a template. Judged by what it extends, which Angular declares.
+       */
+      const heritage = node.heritageClauses?.flatMap(h => h.types.map(t => t.expression.getText(source))) ?? [];
+      /**
+       * `static hostSelector` is the CDK's harness contract — the selector a
+       * harness searches for. A component never declares it, and a harness
+       * always does, so the shape identifies one whichever base class it
+       * extends: MatButtonHarness extends ContentContainerComponentHarness,
+       * two hops from ComponentHarness and invisible from this file.
+       */
+      const hasHostSelector = node.members.some(m =>
+        ts.isPropertyDeclaration(m) && m.name && ts.isIdentifier(m.name) && m.name.text === 'hostSelector'
+        && m.modifiers?.some(mod => mod.kind === ts.SyntaxKind.StaticKeyword));
+      if (hasHostSelector || heritage.some(h => /(^|\.)ComponentHarness$/.test(h) || /(^|\.)HarnessPredicate$/.test(h))) {
+        out.push({ name: node.name.text, notWritable: true, inputs: [] });
+      }
       for (const member of node.members) {
         if (!ts.isPropertyDeclaration(member) || !member.type || !member.name) continue;
         const memberName = ts.isIdentifier(member.name) ? member.name.text : null;
