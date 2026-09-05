@@ -70,6 +70,16 @@ export interface ResolvedComponent {
   /** Everything the compiler resolved, including the shared base. */
   total: number;
   /**
+   * Every attribute name the compiler resolved for this element.
+   *
+   * The authority on what the component accepts. Reading declarations
+   * syntactically can pick up members of a surrounding type map — MUI's
+   * OverridableTypeMap contributes `props` and `defaultComponent`, neither of
+   * which is a prop — and a catalog that lists those while claiming the list
+   * is COMPLETE is visibly wrong to anyone who knows the library.
+   */
+  resolvedNames: string[];
+  /**
    * `closed` — the compiler resolved a definite set, so anything outside it is
    * rejected. `open` — an index signature admits any prop. `unknown` — the
    * type resolved to any, or to nothing at all, which is what a type-only or
@@ -457,6 +467,7 @@ export function resolvePropsWithChecker(opts: {
     components.push({
       name,
       kind,
+      resolvedNames: [...r.symbols.keys()],
       ...(members?.length ? { members } : {}),
       own,
       total: r.symbols.size,
