@@ -251,3 +251,33 @@ export default config;
     expect(pollingIsConfigured(dir)).toBe(false);
   });
 });
+
+describe('Vite\'s own module watcher', () => {
+  it('adds polling to the block Story UI wrote, and never to one it did not', async () => {
+    /**
+     * Storybook's story INDEX watcher and Vite's MODULE watcher are different
+     * watchers, and the launcher only fixes the first. Measured on a Storybook
+     * that had been running seven hours: a story rewritten on disk was never
+     * re-transformed — still serving the previous bytes after 90 seconds — so
+     * four of six repairs in a twenty-prompt run waited the full timeout and
+     * were then re-checked against the render they were meant to replace. With
+     * polling, the same edit was served in one second.
+     */
+    const { ensureViteWatchPolling, viteFinalConfigSnippet } = await import('../cli/setup.js');
+    const ours = `export default {\n  ${viteFinalConfigSnippet()}\n};\n`;
+    // What init writes already polls, so there is nothing to add.
+    expect(ours).toContain('usePolling');
+    expect(ensureViteWatchPolling(ours)).toBeNull();
+
+    // An older install carries the block without it.
+    const older = ours.replace(/\/\/ Story UI: keep Vite's own[\s\S]*?\n    }\n/, '');
+    expect(older).not.toContain('usePolling');
+    const updated = ensureViteWatchPolling(older);
+    expect(updated).toContain('usePolling');
+    expect(updated).toContain('return config;');
+
+    // Someone else's viteFinal is theirs.
+    const theirs = 'export default { viteFinal: async (config) => { return config; } };';
+    expect(ensureViteWatchPolling(theirs)).toBeNull();
+  });
+});

@@ -8,7 +8,7 @@ import { createRequire } from 'module';
 import { ensureWatcherLauncher, WATCHER_LAUNCHER_FILE } from '../story-generator/verify/storybookWatcher.js';
 import { mergeEnv } from './envFile.js';
 import { ensurePreviewRootCss } from './setup.js';
-import { ensureManagerAddonWiring, ensureStoriesGlobCoversMdx, missingReactStorybookDep, ensureManagerHeadPort, readConfiguredPort, ensureScriptPort, viteFinalConfigSnippet, insertConfigProperty, missingViteCjsIncludes } from './setup.js';
+import { ensureManagerAddonWiring, ensureStoriesGlobCoversMdx, missingReactStorybookDep, ensureManagerHeadPort, readConfiguredPort, ensureScriptPort, viteFinalConfigSnippet, insertConfigProperty, missingViteCjsIncludes, ensureViteWatchPolling } from './setup.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -607,7 +607,13 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
             console.log(chalk.green(`   ✅ Added the Story UI viteFinal block to .storybook/${path.basename(mainPath)}`));
           }
         } else {
-          const missing = missingViteCjsIncludes(mainContent);
+          // Our own block gains the watcher polling; a user-authored one is theirs.
+          const polled = ensureViteWatchPolling(mainContent);
+          if (polled) {
+            fs.writeFileSync(mainPath, polled);
+            console.log(chalk.green(`   ✅ Vite's module watcher now polls in .storybook/${path.basename(mainPath)} — a repaired story is re-checked against the repair, not the render before it (restart Storybook)`));
+          }
+          const missing = missingViteCjsIncludes(fs.readFileSync(mainPath, 'utf8'));
           if (missing.length) {
             console.log(chalk.yellow(`   ⚠️  .storybook/${path.basename(mainPath)} has its own viteFinal excluding @tpitre/story-ui but its optimizeDeps.include lacks: ${missing.join(', ')}`));
           }
