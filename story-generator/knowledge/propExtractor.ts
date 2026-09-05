@@ -165,6 +165,15 @@ export interface ExtractedProps {
   components: Record<string, ComponentFacts>;
   /** Interfaces that declare nothing locally, so callers can be honest about gaps. */
   inheritedOnly: string[];
+  /**
+   * Package name -> the name that package's default export declares.
+   *
+   * The join a package-per-component library needs: discovery knows a
+   * component as `Tag` because that is how the project imports it, while the
+   * library's own declaration calls the same value `RemovableTag`. Recorded
+   * here so an enrichment holding both can put them together.
+   */
+  defaultExports?: Record<string, string>;
   extractedAt: string;
   /**
    * Packages this one re-exports from, when it is a barrel over siblings.
@@ -1636,6 +1645,7 @@ async function readOnePackage(
   const files = filesToRead();
   const components: Record<string, ComponentFacts> = {};
   const inheritedOnly: string[] = [];
+  const defaultExports: Record<string, string> = {};
   const allTypes: Record<string, PropFact[]> = {};
   const links: PropsTypeLink[] = [];
   const registry: TypeTextRegistry = { aliases: new Map(), tuples: new Map() };
@@ -1711,6 +1721,7 @@ async function readOnePackage(
   if (declaresReact(root)) {
     try {
       const checked = resolvePropsWithChecker({ projectRoot, importPath: pkgName, storiesDir: projectRoot });
+      if (checked.defaultExport) defaultExports[pkgName] = checked.defaultExport;
       if (!checked.ran) {
         logger.log(`🧠 Type resolution for ${pkgName}: did not run — ${checked.reason}`);
       } else {
@@ -1798,6 +1809,7 @@ async function readOnePackage(
     version,
     components,
     inheritedOnly,
+    ...(Object.keys(defaultExports).length ? { defaultExports } : {}),
     extractedAt: new Date().toISOString(),
     reexportedFrom,
   };
@@ -1947,6 +1959,7 @@ export async function extractPropsForPackages(
 
   const merged: Record<string, ComponentFacts> = {};
   const inheritedOnly: string[] = [];
+  const defaultExports: Record<string, string> = {};
   let any = false;
 
   for (const pkg of unique) {
@@ -1957,6 +1970,14 @@ export async function extractPropsForPackages(
       const prior = merged[name];
       merged[name] = prior
         ? {
+            // Spread first, for the same reason mergeComponents does: this is
+            // a second copy of that merge, and rebuilding an entry from four
+            // named fields drops every fact added since — namespace, module,
+            // closed prop set, declares-nothing. A package-per-component
+            // library goes through THIS path, so the flags were being lost on
+            // exactly the libraries that need them most.
+            ...facts,
+            ...prior,
             name,
             props: mergeProps(prior.props, facts.props),
             variants: prior.variants ?? facts.variants,
@@ -1965,6 +1986,7 @@ export async function extractPropsForPackages(
         : facts;
     }
     for (const n of one.inheritedOnly) if (!inheritedOnly.includes(n)) inheritedOnly.push(n);
+    Object.assign(defaultExports, one.defaultExports ?? {});
   }
 
   if (!any) return null;
@@ -1973,6 +1995,7 @@ export async function extractPropsForPackages(
     importPath: unique.join(','),
     components: merged,
     inheritedOnly,
+    ...(Object.keys(defaultExports).length ? { defaultExports } : {}),
     extractedAt: new Date().toISOString(),
   };
 }

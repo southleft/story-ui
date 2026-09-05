@@ -80,6 +80,16 @@ export interface ResolvedComponent {
 
 export interface CheckerPropsResult {
   components: ResolvedComponent[];
+  /**
+   * The name the package's DEFAULT export declares for itself.
+   *
+   * A package-per-component library exports its component as the default, and
+   * the value's own declaration often names it something else — Atlassian's
+   * `@atlaskit/tag` default is declared `RemovableTag`, while everyone imports
+   * it as `Tag`. Reported so a caller holding the name discovery uses can join
+   * the two; neither half can do it alone.
+   */
+  defaultExport?: string;
   /** Props shared by nearly every component, treated as the library's base. */
   baseProps: string[];
   /** False when no program could be built; distinct from "resolved nothing". */
@@ -454,5 +464,5 @@ export function resolvePropsWithChecker(opts: {
     });
   }
 
-  return { components, baseProps, ran: true, ms: Date.now() - started };
+  return { components, baseProps, ran: true, ms: Date.now() - started, ...(defaultName ? { defaultExport: defaultName } : {}) };
 }

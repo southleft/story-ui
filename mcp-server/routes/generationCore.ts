@@ -654,7 +654,21 @@ async function runStoryGenerationPipeline(
       let enriched = 0;
       let describedFromTypes = 0;
       for (const component of components as any[]) {
-        const facts = extracted.components[component.name];
+        /**
+         * A package-per-component library exports its component as the
+         * default, and the value's own declaration often names it something
+         * else: `@atlaskit/tag`'s default is declared `RemovableTag` while the
+         * project imports it as `Tag`. Neither half can resolve that alone —
+         * discovery holds the name in use, the extractor holds the package's
+         * default — so they are joined here, and only when nothing was found
+         * under the name itself.
+         */
+        const facts = extracted.components[component.name]
+          ?? (() => {
+            const home = component.__componentPath;
+            const declared = home && extracted.defaultExports?.[home];
+            return declared ? extracted.components[declared] : undefined;
+          })();
         if (!facts) continue;
         /**
          * A component that adds nothing to its library's styling surface is a
