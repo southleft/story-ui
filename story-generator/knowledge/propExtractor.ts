@@ -1757,10 +1757,22 @@ async function readOnePackage(
           // `open` counts too: a component whose props type admits extra keys
           // still resolved a definite styling surface, and reporting it as
           // unknown was the same conflation this comment block exists to stop.
-          if (component.own.length || component.verdict === 'unknown' || component.total <= SUBSTANTIAL_TOTAL) continue;
+          if (component.own.length || component.verdict === 'unknown') continue;
           const prior = components[component.name];
           if (prior && prior.props.length) continue;
-          components[component.name] = { ...(prior ?? { name: component.name, props: [] }), sharedBaseOnly: true };
+          /**
+           * Two ways to declare nothing, and both were counted as unknown.
+           *
+           * A component that spreads a styling surface declares nothing of its
+           * own beyond it. A render-prop component — Chakra ships one per
+           * compound component, `(props: ContextProps) => ReactNode` — declares
+           * nothing beyond `children`. The first was recorded and the second
+           * was not, because the rule required a large resolved set, so 51
+           * components on one library read as "we know nothing" when the truth
+           * was "it takes children".
+           */
+          const marker = component.total > SUBSTANTIAL_TOTAL ? { sharedBaseOnly: true } : { declaresNoProps: true };
+          components[component.name] = { ...(prior ?? { name: component.name, props: [] }), ...marker };
           baseOnly++;
         }
         logger.log(
