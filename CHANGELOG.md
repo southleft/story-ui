@@ -1,3 +1,10 @@
+# [5.17.0](https://github.com/southleft/story-ui/compare/v5.16.0...v5.17.0) (2026-09-05)
+
+
+### Features
+
+* **generator:** read what Angular says each export is ([280e2e4](https://github.com/southleft/story-ui/commit/280e2e4d0fc35e544d46268de6255bff40b55899))
+
 # [5.16.0](https://github.com/southleft/story-ui/compare/v5.15.0...v5.16.0) (2026-09-05)
 
 
