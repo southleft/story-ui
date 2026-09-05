@@ -182,6 +182,18 @@ export interface GenerationRequest {
    * a "v2" beside the failed one.
    */
   regenerateOf?: { fileName: string; title: string; hash: string };
+  /**
+   * The code the previous gate attempt produced, carried into the retry.
+   *
+   * The gate used to send only the findings, so a second attempt regenerated
+   * the whole story from the prompt — eight thousand tokens — and discarded
+   * whatever the repair pass had already improved. With the previous code in
+   * hand the model can correct it instead of rebuilding it.
+   *
+   * It is CONTEXT, not an edit baseline: a retry is allowed to restructure,
+   * so the edit-divergence guard does not apply to it.
+   */
+  gatePreviousCode?: string;
 }
 
 export interface GenerationEvents {
@@ -365,6 +377,7 @@ async function runGatedGeneration(
       gateFeedback: gateFeedback(verdict),
       gateAttempt: attempt + 1,
       regenerateOf: { fileName: result.fileName, title: result.title, hash },
+      gatePreviousCode: result.code,
     };
     events.onProgress?.(11, 12, 'gate_retry',
       `Attempt ${attempt} failed verification (${verdict.reason.slice(0, 80)}) — generating again with the findings`);
@@ -996,6 +1009,8 @@ async function runStoryGenerationPipeline(
    * guard is skipped for exactly this baseline.
    */
   let previousCodeIsFallback = false;
+  /** The baseline is the last gate attempt: context for a correction, not an edit to police. */
+  let previousCodeIsGateRetry = false;
   /**
    * Props the user set by hand on this story. Told to the model, and
    * re-applied to whatever it returns — the model rewrites props as a matter
@@ -1063,6 +1078,11 @@ async function runStoryGenerationPipeline(
       logger.log(`📄 History had no version for ${fileName}; using the file on disk as the base for this edit`);
     }
 
+    if (!previousCode && request.gatePreviousCode) {
+      previousCode = request.gatePreviousCode;
+      previousCodeIsGateRetry = true;
+      logger.log('📄 Gate retry: correcting the previous attempt rather than regenerating from scratch');
+    }
     if (previousCode && isFallbackStoryCode(previousCode)) {
       previousCodeIsFallback = true;
       logger.log(
@@ -1463,7 +1483,7 @@ async function runStoryGenerationPipeline(
     // prop tweaks score well under 0.4.
     const CONVERSATIONAL_UPDATE_DIVERGENCE_LIMIT = 0.6;
     const editErrors: string[] = [];
-    if (previousCode && !previousCodeIsFallback) {
+    if (previousCode && !previousCodeIsFallback && !previousCodeIsGateRetry) {
       const { divergence, before, after } = editDivergence(previousCode, aiText);
       const limit = selection ? TARGETED_EDIT_DIVERGENCE_LIMIT : CONVERSATIONAL_UPDATE_DIVERGENCE_LIMIT;
       if (divergence > limit) {
