@@ -1,3 +1,10 @@
+# [5.16.0](https://github.com/southleft/story-ui/compare/v5.15.0...v5.16.0) (2026-09-05)
+
+
+### Features
+
+* **generator:** say when a prop list is complete ([18d228c](https://github.com/southleft/story-ui/commit/18d228cc595001621fb215a8da016bc27ed900ba))
+
 # [5.15.0](https://github.com/southleft/story-ui/compare/v5.14.1...v5.15.0) (2026-09-04)
 
 
