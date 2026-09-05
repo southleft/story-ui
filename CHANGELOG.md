@@ -1,3 +1,10 @@
+## [5.17.6](https://github.com/southleft/story-ui/compare/v5.17.5...v5.17.6) (2026-09-05)
+
+
+### Bug Fixes
+
+* **generator:** a grid of cards is not a row of controls ([0a10203](https://github.com/southleft/story-ui/commit/0a1020330922a224f26f5c40c1e4c1ad84325510))
+
 ## [5.17.5](https://github.com/southleft/story-ui/compare/v5.17.4...v5.17.5) (2026-09-05)
 
 
