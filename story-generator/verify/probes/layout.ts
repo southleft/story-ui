@@ -336,6 +336,30 @@ export async function runLayoutProbe(page: any, options: LayoutOptions = {}): Pr
       if (r.height > 64) return false;
       const descendants = (Array.from(el.querySelectorAll('*')) as Element[]).filter(d => !d.parentElement?.closest('svg'));
       if (descendants.length > 4) return false;
+      /**
+       * An element containing a control is a CONTAINER, not a control.
+       *
+       * `decorated` above admits anything with a background colour, and a
+       * sticky action bar has one by necessity — without it the page scrolls
+       * under the bar. With two buttons inside, its text reads
+       * "CancelSave changes", 18 characters, and its height is a bar's height,
+       * so it passed every test here and was reported as a content-hugging tag
+       * rendered 904px wide. It is full width BY DESIGN.
+       *
+       * That false positive was the single most expensive finding in the
+       * suite: the only story shipping with an issue, the only one burning all
+       * three gate attempts, and the whole p90 tail — on Carbon, Sail Shelf and
+       * Material alike. Four prompt rules were written against it and none
+       * could work, because the composition was correct every time. The last
+       * one carried BOTH remedies the tool had asked for, `justifySelf: start`
+       * and `alignItems: center`, and was still reported.
+       *
+       * A tag, pill or badge contains text and perhaps an icon. It never
+       * contains a button.
+       */
+      if (el.querySelector('button, a[href], [role="button"], [role="tab"], [role="menuitem"], input, select, textarea')) {
+        return false;
+      }
       const t = (el.textContent || '').trim();
       return t.length > 0 && t.length <= 40;
     };
