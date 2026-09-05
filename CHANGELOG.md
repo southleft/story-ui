@@ -1,3 +1,10 @@
+## [5.17.7](https://github.com/southleft/story-ui/compare/v5.17.6...v5.17.7) (2026-09-05)
+
+
+### Bug Fixes
+
+* **generator:** a bare scope means every package installed under it ([758d31e](https://github.com/southleft/story-ui/commit/758d31e9f7394151da98672747fca0dc7c6aea24))
+
 ## [5.17.6](https://github.com/southleft/story-ui/compare/v5.17.5...v5.17.6) (2026-09-05)
 
 
