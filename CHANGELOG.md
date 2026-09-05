@@ -1,3 +1,10 @@
+## [5.17.5](https://github.com/southleft/story-ui/compare/v5.17.4...v5.17.5) (2026-09-05)
+
+
+### Bug Fixes
+
+* **cli:** keep Vite's own module watcher alive, not just Storybook's indexer ([feda062](https://github.com/southleft/story-ui/commit/feda0626f4f9b909a8e595666b3a3a91324ff37d))
+
 ## [5.17.4](https://github.com/southleft/story-ui/compare/v5.17.3...v5.17.4) (2026-09-05)
 
 
