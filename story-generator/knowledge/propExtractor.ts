@@ -1936,6 +1936,32 @@ export async function extractProps(
  * packages (a re-export, or a shared base) should end up with the union of
  * what both declare, by the same field-wise rule used within a package.
  */
+/**
+ * A bare scope stands for every package installed under it.
+ *
+ * A design system published as one package per component is configured with
+ * the SCOPE as its import path, and a component whose home was recorded as the
+ * scope rather than a package got no package-level read at all: no types, no
+ * checker pass, nothing. Measured on Atlassian — 36 packages installed, 15
+ * ever read, and every component in the other 21 arrived with no props while
+ * the compiler could resolve them perfectly well when asked directly.
+ *
+ * The list is what is installed on disk, not a guess: a scope with no
+ * directory expands to itself and nothing changes.
+ */
+function expandScope(specifier: string, projectRoot: string): string[] {
+  if (!specifier.startsWith('@') || specifier.includes('/')) return [specifier];
+  const dir = path.join(projectRoot, 'node_modules', specifier);
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true })
+      .filter(e => (e.isDirectory() || e.isSymbolicLink()) && !e.name.startsWith('.'))
+      .map(e => `${specifier}/${e.name}`);
+    return entries.length ? entries : [specifier];
+  } catch {
+    return [specifier];
+  }
+}
+
 export async function extractPropsForPackages(
   packages: string[],
   projectRoot: string = process.cwd(),
@@ -1952,7 +1978,7 @@ export async function extractPropsForPackages(
    * first generation. Atlassian's homes are each their own package and
    * collapse to nothing, which is the correct answer there.
    */
-  const unique = [...new Set(specifiers.map(knowledgeRootOf))];
+  const unique = [...new Set(specifiers.flatMap(spec => expandScope(spec, projectRoot).map(knowledgeRootOf)))];
   if (unique.length < specifiers.length) {
     logger.log(`🧠 ${specifiers.length} component home(s) live in ${unique.length} package(s); reading each package once`);
   }
