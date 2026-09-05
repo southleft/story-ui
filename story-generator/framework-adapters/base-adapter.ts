@@ -291,9 +291,29 @@ export abstract class BaseFrameworkAdapter implements FrameworkAdapter {
         : hiddenHasBehaviour
           ? `, …${hidden.length} more`
           : `, …${hidden.length} more (styling and layout only — every state prop and handler this component has is listed above)`;
+      /**
+       * Say when the list is COMPLETE, and only then.
+       *
+       * A list of props reads as a sample, and a model weighing a sample
+       * against a strong memory of a library's earlier major version picks the
+       * memory. Measured on Material: 30 first-round validation errors across
+       * 11 prompts, 19 of them one prop — `alignItems` on Stack — that the
+       * library moved into `sx` and the catalog had correctly stopped listing.
+       * Three separate prompt rules failed to move that number; none of them
+       * said the list was exhaustive, because nothing knew that it was.
+       *
+       * The compiler knows: it resolves a definite prop set for a component
+       * whose type has no index signature. Claimed only when nothing was
+       * withheld from the entry — a truncated list is not a complete one — and
+       * only for the components the request is about, where the docs are
+       * rendered and the extra clause is affordable.
+       */
+      const complete = hidden.length === 0 && (component as any).__propsClosed
+        ? ' — this is the COMPLETE list; any other prop is rejected before the story is saved, including one you remember from an earlier version of this library'
+        : '';
       entry += docs
-        ? `\n  Props:\n    ${shown.join('\n    ')}${tail ? `\n    ${tail.replace(/^, /, '')}` : ''}`
-        : `\n  Props: ${shown.join(', ')}${tail}`;
+        ? `\n  Props${complete}:\n    ${shown.join('\n    ')}${tail ? `\n    ${tail.replace(/^, /, '')}` : ''}`
+        : `\n  Props${complete}: ${shown.join(', ')}${tail}`;
     }
 
     // A description that only restates the name — discovery's `Chip component

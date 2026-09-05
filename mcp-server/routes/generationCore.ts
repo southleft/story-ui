@@ -719,6 +719,12 @@ async function runStoryGenerationPipeline(
             if (!p.deprecated && p.doc && p.doc.trim()) propDocs[p.name] = p.doc.trim().split('\n')[0];
           }
           if (Object.keys(propDocs).length) component.__propDocs = propDocs;
+          /**
+           * Carried to the catalog so the entry can say the list is complete.
+           * Only meaningful when the compiler resolved a definite set — see
+           * propsAreClosed in propExtractor.ts.
+           */
+          if (facts.propsAreClosed) component.__propsClosed = true;
           component.props = rankProps(facts.props.filter(p => !p.deprecated)).map(p => {
             /**
              * Say REQUIRED, rather than implying it by the absence of `?`.

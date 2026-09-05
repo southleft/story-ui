@@ -135,6 +135,17 @@ export interface ComponentFacts {
    * cannot know from a bare name that `<CLIENT_VERSION />` is impossible.
    */
   notAComponent?: boolean;
+  /**
+   * The compiler resolved a DEFINITE prop set for this component: no index
+   * signature, nothing unresolved. Anything outside it is rejected.
+   *
+   * Recorded so the catalog can say so. Listing props without saying the list
+   * is complete reads as a sample, and a model weighing a sample against a
+   * strong memory of an earlier major version picks the memory: measured on
+   * Material, 30 first-round validation errors across 11 prompts, nearly all
+   * of them one prop that library moved out of the component.
+   */
+  propsAreClosed?: boolean;
 }
 
 export interface ExtractedProps {
@@ -1654,13 +1665,15 @@ async function readOnePackage(
         let added = 0;
         for (const component of checked.components) {
           if (!component.own.length) continue;
+          const closed = component.verdict === 'closed' ? { propsAreClosed: true } : {};
           const prior = components[component.name];
           if (prior && prior.props.length) {
             const before = prior.props.length;
             prior.props = mergeProps(prior.props, component.own);
+            Object.assign(prior, closed);
             if (prior.props.length > before) filled++;
           } else {
-            components[component.name] = { name: component.name, props: component.own };
+            components[component.name] = { name: component.name, props: component.own, ...closed };
             added++;
           }
         }
