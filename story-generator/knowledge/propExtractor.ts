@@ -1733,6 +1733,20 @@ async function readOnePackage(
           const prior = components[component.name];
           if (prior && prior.props.length) {
             const before = prior.props.length;
+            /**
+             * Where the compiler resolved a definite set, it is the authority.
+             *
+             * Reading declarations syntactically can pick up members of a
+             * surrounding type map: MUI's OverridableTypeMap contributes
+             * `props` and `defaultComponent`, and the catalog listed both for
+             * Stack while claiming the list was COMPLETE. A list that is
+             * visibly wrong is worse than a shorter one — a model that knows
+             * the library will trust its own memory over it.
+             */
+            if (component.verdict === 'closed' && component.resolvedNames.length) {
+              const real = new Set(component.resolvedNames);
+              prior.props = prior.props.filter(p => real.has(p.name));
+            }
             prior.props = mergeProps(prior.props, component.own);
             Object.assign(prior, closed);
             if (prior.props.length > before) filled++;
