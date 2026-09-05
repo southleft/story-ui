@@ -1,3 +1,10 @@
+## [5.17.3](https://github.com/southleft/story-ui/compare/v5.17.2...v5.17.3) (2026-09-05)
+
+
+### Bug Fixes
+
+* **generator:** join a package's default export to the name the project uses ([aedf704](https://github.com/southleft/story-ui/commit/aedf7040500365b3a18131adfe1c3c62e73d53c3))
+
 ## [5.17.2](https://github.com/southleft/story-ui/compare/v5.17.1...v5.17.2) (2026-09-05)
 
 
