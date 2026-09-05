@@ -45,7 +45,7 @@ function declaresReact(root: string): boolean {
 }
 
 /** Angular's compiler-emitted declaration types; see knowledge/angularInputs.ts. */
-const ANGULAR_DECLARATION = /ɵɵ(Component|Directive)Declaration/;
+const ANGULAR_DECLARATION = /ɵɵ(Component|Directive)Declaration|ComponentHarness/;   // a harness file declares neither a component nor a "Prop", and holds the exports to EXCLUDE
 import fs from 'fs';
 import path from 'path';
 import { contentFingerprint, knowledgeCacheFile, pruneStaleKnowledge } from './cacheKey.js';
@@ -146,6 +146,15 @@ export interface ComponentFacts {
    * of them one prop that library moved out of the component.
    */
   propsAreClosed?: boolean;
+  /**
+   * Resolved, and it declares no props at all.
+   *
+   * Angular's MatIconButton is a real component whose input map is empty. An
+   * empty prop list would otherwise mean "we could not read it", so it was
+   * counted as unknown alongside the injection tokens and test harnesses —
+   * the same absent-versus-zero conflation, one more time.
+   */
+  declaresNoProps?: boolean;
 }
 
 export interface ExtractedProps {
@@ -850,8 +859,32 @@ function collectFromFile(
       : { name: component.name, props };
   }
 
+  const angularAliases: Array<{ name: string; aliasOf: string }> = [];
   for (const component of readAngularDeclarations(source)) {
-    if (!component.inputs.length) continue;
+    if (component.aliasOf) {
+      angularAliases.push({ name: component.name, aliasOf: component.aliasOf });
+      continue;
+    }
+    if (component.notWritable) {
+      const prior = out[component.name];
+      out[component.name] = { ...(prior ?? { name: component.name, props: [] }), notAComponent: true };
+      continue;
+    }
+    if (component.isModule) {
+      // An NgModule is not something a template writes. Marked so the catalog
+      // stops offering it beside the components it declares.
+      const prior = out[component.name];
+      out[component.name] = { ...(prior ?? { name: component.name, props: [] }), notAComponent: true };
+      continue;
+    }
+    if (!component.inputs.length) {
+      // A component with an empty input map declares nothing — a fact, not a gap.
+      const prior = out[component.name];
+      if (!prior || !prior.props.length) {
+        out[component.name] = { ...(prior ?? { name: component.name, props: [] }), declaresNoProps: true };
+      }
+      continue;
+    }
     const props: PropFact[] = component.inputs.map(input => ({
       name: input.output ? `(${input.name})` : input.name,
       required: input.required,
@@ -863,6 +896,19 @@ function collectFromFile(
       ? { ...prior, props: mergeProps(prior.props, props) }
       : { name: component.name, props };
   }
+
+  /**
+   * An alias takes the props of what it aliases. Applied after the pass so the
+   * target has been read, whichever order the declarations appear in.
+   */
+  for (const { name, aliasOf } of angularAliases) {
+    const target = out[aliasOf];
+    if (!target || !target.props.length) continue;
+    const prior = out[name];
+    if (prior && prior.props.length) continue;
+    out[name] = { ...(prior ?? { name, props: [] }), props: target.props, doc: target.doc };
+  }
+
 }
 
 /**
@@ -1338,6 +1384,13 @@ function mergeComponents(
     const prior = into[name];
     into[name] = prior
       ? {
+          // Spread both sides FIRST: this rebuilt the entry from four named
+          // fields, so every fact added since — that an export is a namespace,
+          // an NgModule, a component declaring nothing, or one whose prop set
+          // the compiler closed — was silently dropped whenever a package was
+          // merged. The flags were written and never survived to a reader.
+          ...facts,
+          ...prior,
           name,
           props: mergeProps(prior.props, facts.props),
           variants: prior.variants ?? facts.variants,

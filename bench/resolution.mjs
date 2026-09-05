@@ -555,10 +555,24 @@ async function measure(env) {
    */
   const knownByBase = new Set(
     Object.entries(extractedFacts?.components || {})
-      .filter(([, f]) => (f.sharedBaseOnly || f.namespaceMembers?.length) && !(f.props || []).length)
+      .filter(([, f]) => (f.sharedBaseOnly || f.declaresNoProps || f.namespaceMembers?.length) && !(f.props || []).length)
       .map(([name]) => name),
   );
-  const withProps = components.filter(c => (c.props || []).length > 0 || knownByBase.has(c.name)).length;
+  /**
+   * Exports the compiler proved are not components — an NgModule, an injection
+   * token, a version constant. They were counted as components we knew nothing
+   * about, which is two errors at once: the percentage looked worse than the
+   * knowledge, and the catalog was offering the model something it cannot
+   * write. Excluded from the denominator and reported, never silently dropped.
+   */
+  const notComponents = new Set(
+    Object.entries(extractedFacts?.components || {})
+      .filter(([, f]) => f.notAComponent)
+      .map(([name]) => name),
+  );
+  const judged = components.filter(c => !notComponents.has(c.name));
+  const excluded = components.length - judged.length;
+  const withProps = judged.filter(c => (c.props || []).length > 0 || knownByBase.has(c.name)).length;
   /**
    * WHICH components we know nothing about, not just how many.
    *
@@ -566,7 +580,7 @@ async function measure(env) {
    * are not components — namespace objects, type exports, modules — and the two
    * call for opposite fixes. Named here so the next reader can tell them apart.
    */
-  const noProps = components.filter(c => (c.props || []).length === 0 && !knownByBase.has(c.name)).map(c => c.name);
+  const noProps = judged.filter(c => (c.props || []).length === 0 && !knownByBase.has(c.name)).map(c => c.name);
   /**
    * A description counts only if it says something the component's NAME does
    * not — the same predicate the pipeline uses to decide whether to REPLACE a
@@ -595,6 +609,8 @@ async function measure(env) {
     runtimeOnlyExport,
     knowProps: withProps,
     noProps,
+    judgedComponents: judged.length,
+    excludedNotComponents: excluded,
     totalProps, docedProps, deprecatedProps, defaultedProps,
     knowDescription: withDesc,
     knowExamples: withExamples,
@@ -616,7 +632,8 @@ function report(r) {
       : `  named export present       : n/a — no bare package specifiers in this catalog`)
     : `  named export present       : ${checked - r.missingExport.length}/${checked}  ${pct(checked - r.missingExport.length, checked)}` +
       (r.uncheckedExport.length ? `  (${r.uncheckedExport.length} NOT CHECKED — no readable package entry)` : ''));
-  console.log(`  props known                : ${r.knowProps}/${r.components}  ${pct(r.knowProps, r.components)}`);
+  console.log(`  props known                : ${r.knowProps}/${r.judgedComponents ?? r.components}  ${pct(r.knowProps, r.judgedComponents ?? r.components)}`
+    + (r.excludedNotComponents ? `  (${r.excludedNotComponents} export(s) excluded: the compiler proved they cannot be written as an element)` : ''));
   if (r.noProps?.length) {
     console.log(`    no props known for ${r.noProps.length}: ${r.noProps.slice(0, 14).join(', ')}${r.noProps.length > 14 ? ' …' : ''}`);
   }
