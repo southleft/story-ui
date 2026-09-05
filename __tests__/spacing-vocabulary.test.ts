@@ -76,6 +76,11 @@ describe('deriveSpacingVocabulary', () => {
     expect(rules).toContain('SIZE TO ITS CONTENT');
     expect(rules).toContain('space-between/space-around/space-evenly');
     expect(rules).toContain('Spare width belongs OUTSIDE the group');
+    // The only defect that shipped as a blocker on all three design systems
+    // measured: a row whose controls do not share a vertical centre. The probe
+    // said it; the prompt did not.
+    expect(rules).toContain('SHARE A VERTICAL CENTRE');
+    expect(rules).toContain('align-items: center');
   });
 
   it('reads the spacing scale from tokens whose name says spacing AND whose value is a length, sorted by size', () => {
