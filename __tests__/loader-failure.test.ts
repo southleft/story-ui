@@ -129,3 +129,29 @@ describe('the prompt bounds scope instead of encouraging it', () => {
     expect(text).not.toMatch(/src=["']https:\/\/picsum/);
   });
 });
+
+describe('a gate retry corrects the previous attempt', () => {
+  it('treats the carried code as context, not as an edit to police', async () => {
+    /**
+     * The gate used to send only the findings, so a second attempt regenerated
+     * the whole story from the prompt — eight thousand tokens — and discarded
+     * whatever the repair pass had already improved.
+     *
+     * Carrying the previous code turns that into a correction. It must NOT
+     * turn on the edit-divergence guard: that guard exists to stop a
+     * conversational edit rewriting a page, and a gate retry is sometimes
+     * required to restructure precisely because the previous structure failed
+     * verification. Blocking it would leave the retry unable to make the fix
+     * it exists to make.
+     */
+    const source = await import('fs').then(fs =>
+      fs.readFileSync(new URL('../mcp-server/routes/generationCore.ts', import.meta.url), 'utf8'));
+    // The gate hands its attempt's code to the next one.
+    expect(source).toContain('gatePreviousCode: result.code');
+    // It becomes the baseline the prompt describes...
+    expect(source).toContain('previousCode = request.gatePreviousCode');
+    // ...and the divergence guard stands down for it, as it does for a
+    // placeholder baseline.
+    expect(source).toContain('!previousCodeIsFallback && !previousCodeIsGateRetry');
+  });
+});
