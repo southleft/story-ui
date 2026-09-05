@@ -1,3 +1,10 @@
+## [5.17.9](https://github.com/southleft/story-ui/compare/v5.17.8...v5.17.9) (2026-09-05)
+
+
+### Bug Fixes
+
+* **generator:** let a gate retry correct the previous attempt ([cec8adf](https://github.com/southleft/story-ui/commit/cec8adf00abf4ce9b55e3e4695eeb865c35dcf37))
+
 ## [5.17.8](https://github.com/southleft/story-ui/compare/v5.17.7...v5.17.8) (2026-09-05)
 
 
