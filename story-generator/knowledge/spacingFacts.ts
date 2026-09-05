@@ -567,6 +567,22 @@ export function formatSpacingRules(
   // the spare width, leaving a 300px void between two buttons. Rule 3 named
   // the right container and never ruled out the wrong one, so this states the
   // prohibition in the same words the layout probe uses when it catches it.
+  /**
+   * The single most common defect in a story that ships carrying an issue.
+   *
+   * Measured across three design systems: the same prompt — a settings page
+   * with a sticky save bar — was the ONLY story to ship with a blocker on
+   * Carbon, on Sail Shelf and on Material, and in all three the blocker was
+   * the same, a row whose controls do not share a vertical centre. The layout
+   * probe says exactly this when it catches one; the prompt never said it. It
+   * appeared only inside a fallback code example that a design system with its
+   * own row primitive never sees — which is every library where this failed.
+   */
+  lines.push('   Controls on one line SHARE A VERTICAL CENTRE. A row of mixed heights — a button beside');
+  lines.push('   an input, a heading beside an action — sags unless the row centres them: use the row');
+  lines.push('   primitive\'s own alignment prop, or align-items: center on the container. If one control');
+  lines.push('   has a label above it and the others do not, they no longer share a centre; give them the');
+  lines.push('   same treatment or align the row to its bottom edge instead.');
   lines.push('   The row must SIZE TO ITS CONTENT. Never let a container distribute its spare width');
   lines.push('   between the buttons — no space-between/space-around/space-evenly on a row of two or');
   lines.push('   three controls, and no grid whose auto tracks stretch to fill the container. Both put');
