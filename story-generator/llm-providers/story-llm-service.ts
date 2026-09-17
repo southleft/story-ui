@@ -558,6 +558,8 @@ export function getProviderInfo(requested?: {
   currentProvider: string;
   currentModel: string;
   supportsVision: boolean;
+  /** PDF document blocks, decided per model. */
+  supportsDocuments: boolean;
   supportsStreaming: boolean;
   /** The model's real output ceiling, so callers stop hardcoding one. */
   maxOutputTokens?: number;
@@ -580,6 +582,7 @@ export function getProviderInfo(requested?: {
       currentProvider: provider.name,
       currentModel: modelId,
       supportsVision: modelInfo ? modelInfo.supportsVision : provider.supportsVision(),
+      supportsDocuments: modelInfo ? modelInfo.supportsDocuments : provider.supportsDocuments(),
       supportsStreaming: modelInfo ? modelInfo.supportsStreaming : provider.supportsStreaming(),
       maxOutputTokens: modelInfo?.maxOutputTokens,
     };
@@ -588,6 +591,7 @@ export function getProviderInfo(requested?: {
       currentProvider: 'None',
       currentModel: 'None',
       supportsVision: false,
+      supportsDocuments: false,
       supportsStreaming: false,
     };
   }
