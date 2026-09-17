@@ -555,7 +555,10 @@ export function getProviderInfo(requested?: {
   provider?: ProviderType;
   model?: string;
 }): {
+  /** Display name. */
   currentProvider: string;
+  /** Registry type, what a caller selects by. Absent when nothing is configured. */
+  currentProviderType?: ProviderType;
   currentModel: string;
   supportsVision: boolean;
   /** PDF document blocks, decided per model. */
@@ -580,6 +583,7 @@ export function getProviderInfo(requested?: {
 
     return {
       currentProvider: provider.name,
+      currentProviderType: provider.type,
       currentModel: modelId,
       supportsVision: modelInfo ? modelInfo.supportsVision : provider.supportsVision(),
       supportsDocuments: modelInfo ? modelInfo.supportsDocuments : provider.supportsDocuments(),

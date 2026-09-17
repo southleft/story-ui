@@ -1907,12 +1907,12 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                 }
               } else if (data.current) {
                 // Saved provider no longer configured, fall back to server default
-                dispatch({ type: 'SET_SELECTED_PROVIDER', payload: data.current.provider.toLowerCase() });
+                dispatch({ type: 'SET_SELECTED_PROVIDER', payload: data.current.provider });
                 dispatch({ type: 'SET_SELECTED_MODEL', payload: data.current.model });
               }
             } else if (data.current) {
               // No saved preferences, use server default
-              dispatch({ type: 'SET_SELECTED_PROVIDER', payload: data.current.provider.toLowerCase() });
+              dispatch({ type: 'SET_SELECTED_PROVIDER', payload: data.current.provider });
               dispatch({ type: 'SET_SELECTED_MODEL', payload: data.current.model });
             }
           }
