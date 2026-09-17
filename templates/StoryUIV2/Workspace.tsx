@@ -1925,7 +1925,8 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
                 <Text weight="medium">No AI provider is configured.</Text>
                 <br />
                 Add an API key to <Kbd size="1">.env</Kbd> (<Kbd size="1">ANTHROPIC_API_KEY</Kbd>,{' '}
-                <Kbd size="1">OPENAI_API_KEY</Kbd> or <Kbd size="1">GEMINI_API_KEY</Kbd>) and restart the server.
+                <Kbd size="1">OPENAI_API_KEY</Kbd> or <Kbd size="1">GEMINI_API_KEY</Kbd>), or set{' '}
+                <Kbd size="1">DEFAULT_PROVIDER=claude-code</Kbd> to use your Claude Code login, and restart the server.
               </>
             )}
           </Callout.Text>

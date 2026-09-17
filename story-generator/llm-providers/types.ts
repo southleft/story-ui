@@ -58,7 +58,7 @@ export interface ModelInfo {
 }
 
 // Provider types
-export type ProviderType = 'claude' | 'openai' | 'gemini' | 'ollama' | 'custom';
+export type ProviderType = 'claude' | 'claude-code' | 'openai' | 'gemini' | 'ollama' | 'custom';
 
 // Provider configuration
 export interface ProviderConfig {

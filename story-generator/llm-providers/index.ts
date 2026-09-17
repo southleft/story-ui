@@ -12,7 +12,8 @@ export { BaseLLMProvider } from './base-provider.js';
 
 // Provider implementations
 export { ClaudeProvider, CLAUDE_MODELS } from './claude-provider.js';
-import { CLAUDE_SMALL_MODEL } from './claude-provider.js';
+export { ClaudeCodeProvider, CLAUDE_CODE_MODELS } from './claude-code-provider.js';
+import { CLAUDE_SMALL_MODEL, CLAUDE_DEFAULT_MODEL, CLAUDE_KEY_ENV_VARS } from './claude-provider.js';
 import { OPENAI_SMALL_MODEL } from './openai-provider.js';
 import { GEMINI_SMALL_MODEL } from './gemini-provider.js';
 export { OpenAIProvider, OPENAI_MODELS } from './openai-provider.js';
@@ -44,6 +45,7 @@ import {
   ProviderConfig,
 } from './types.js';
 import { ClaudeProvider } from './claude-provider.js';
+import { ClaudeCodeProvider } from './claude-code-provider.js';
 import { OpenAIProvider } from './openai-provider.js';
 import { GeminiProvider } from './gemini-provider.js';
 import { logger } from '../logger.js';
@@ -65,7 +67,8 @@ class DefaultProviderRegistry implements ProviderRegistry {
     this.register(new ClaudeProvider());
     this.register(new OpenAIProvider());
     this.register(new GeminiProvider());
-    logger.debug('Registered built-in providers: Claude, OpenAI, Gemini');
+    this.register(new ClaudeCodeProvider());
+    logger.debug('Registered built-in providers: Claude, OpenAI, Gemini, Claude Code');
   }
 
   register(provider: LLMProvider): void {
@@ -181,7 +184,8 @@ export function getProvider(type: ProviderType): LLMProvider | undefined {
 export function smallModelFor(provider?: ProviderType | string): string | undefined {
   const type = (provider as ProviderType | undefined) || getDefaultProvider()?.type;
   switch (type) {
-    case 'claude': return CLAUDE_SMALL_MODEL;
+    case 'claude':
+    case 'claude-code': return CLAUDE_SMALL_MODEL;
     case 'openai': return OPENAI_SMALL_MODEL;
     case 'gemini': return GEMINI_SMALL_MODEL;
     default: return undefined;
@@ -209,13 +213,17 @@ export function initializeFromEnv(): void {
   const registry = getProviderRegistry();
 
   // Configure Claude if API key is present
-  const claudeKey = process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY;
+  const claudeModel = resolveModelAlias(process.env.CLAUDE_MODEL || CLAUDE_DEFAULT_MODEL);
+  const claudeKey = CLAUDE_KEY_ENV_VARS.map(k => process.env[k]).find(Boolean);
   if (claudeKey) {
-    registry.configureProvider('claude', {
-      apiKey: claudeKey,
-      model: resolveModelAlias(process.env.CLAUDE_MODEL || 'claude-opus-5'),
-    });
+    registry.configureProvider('claude', { apiKey: claudeKey, model: claudeModel });
     logger.info('Claude provider configured from environment');
+  }
+
+  // Claude Code has no key to detect; it is on only when selected explicitly.
+  if (process.env.DEFAULT_PROVIDER === 'claude-code') {
+    registry.configureProvider('claude-code', { model: claudeModel });
+    logger.info('Claude Code provider configured from environment (Claude Code login, no API key)');
   }
 
   // Configure OpenAI if API key is present

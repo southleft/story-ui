@@ -78,7 +78,7 @@ export function getStoryProvider(): LLMProvider {
     return defaultProvider;
   }
 
-  throw new Error('No LLM provider configured. Please set CLAUDE_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY.');
+  throw new Error('No LLM provider configured. Set CLAUDE_API_KEY, OPENAI_API_KEY or GEMINI_API_KEY, or DEFAULT_PROVIDER=claude-code to use your Claude Code login.');
 }
 
 /**

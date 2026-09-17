@@ -25,6 +25,8 @@ export abstract class BaseLLMProvider implements LLMProvider {
   abstract readonly supportedModels: ModelInfo[];
 
   protected config: ProviderConfig;
+  /** False for providers that authenticate some other way (a CLI login); they are configured once given a model. */
+  protected readonly requiresApiKey: boolean = true;
 
   constructor(config?: Partial<ProviderConfig>) {
     // Note: provider type will be set by subclass after construction
@@ -83,7 +85,7 @@ export abstract class BaseLLMProvider implements LLMProvider {
   }
 
   isConfigured(): boolean {
-    return !!this.config.apiKey && !!this.config.model;
+    return (!this.requiresApiKey || !!this.config.apiKey) && !!this.config.model;
   }
 
   // Helper methods
