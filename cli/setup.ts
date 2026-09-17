@@ -4,7 +4,7 @@ import path from 'path';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import { autoDetectDesignSystem, findLocalComponentDirectory, isStorybookScaffoldStory, localImportForComponents } from '../story-generator/configLoader.js';
-import { mergeEnv, parseEnv, isUsableApiKey } from './envFile.js';
+import { mergeEnv, parseEnv, isUsableApiKey, type EnvEntry } from './envFile.js';
 import * as ts from 'typescript';
 import { deriveHostContract, type HostContract } from '../story-generator/knowledge/hostContract.js';
 import { fileURLToPath } from 'url';
@@ -1173,7 +1173,7 @@ interface SetupAnswers {
   componentsPath?: string;
   /** Set when the local library has no barrel: stories import each component by its own path. */
   importStyle?: 'individual';
-  llmProvider?: 'claude' | 'openai' | 'gemini';
+  llmProvider?: LlmProviderId;
   hasApiKey?: boolean;
   apiKey?: string;
   mcpPort?: string;
@@ -1191,6 +1191,14 @@ const LLM_PROVIDERS = {
     docsUrl: 'https://console.anthropic.com/',
     description: 'Recommended - Best for complex reasoning and code quality'
   },
+  'claude-code': {
+    name: 'Claude Code (your Claude subscription)',
+    // No key: the Claude Agent SDK uses the machine's `claude auth login`.
+    envKey: undefined,
+    models: CLAUDE_MODELS.map(m => m.id),
+    docsUrl: 'https://github.com/southleft/story-ui#readme',
+    description: 'No API key; per developer, not for a shared server'
+  },
   openai: {
     name: 'OpenAI (GPT)',
     envKey: 'OPENAI_API_KEY',
@@ -1206,6 +1214,30 @@ const LLM_PROVIDERS = {
     description: 'Cost-effective with good performance'
   }
 };
+
+export type LlmProviderId = keyof typeof LLM_PROVIDERS;
+
+/** The .env line for a provider's key; undefined when it takes none. An unknown provider gets a generic name. */
+function providerEnvKey(provider: string): string | undefined {
+  const known = LLM_PROVIDERS[provider as LlmProviderId];
+  return known ? known.envKey : 'API_KEY';
+}
+
+/** What init writes to .env: the provider, its key line when it takes one, the port. */
+export function providerEnvEntries(provider: string, apiKey: string | undefined, port: string): EnvEntry[] {
+  const known = LLM_PROVIDERS[provider as LlmProviderId];
+  const envKey = providerEnvKey(provider);
+  return [
+    { key: 'DEFAULT_PROVIDER', value: provider, comment: `Story UI: LLM provider (${known?.name || provider})` },
+    ...(envKey ? [{
+      key: envKey,
+      value: apiKey || 'your-api-key-here',
+      comment: `API key for ${known?.name || provider}\nGet your key from: ${known?.docsUrl || 'your provider dashboard'}`,
+      onlyIfPlaceholder: !apiKey,
+    }] : []),
+    { key: 'VITE_STORY_UI_PORT', value: port, comment: 'Story UI server port' },
+  ];
+}
 
 // Design system installation configurations (organized by framework)
 const DESIGN_SYSTEM_CONFIGS: Record<string, {
@@ -1420,7 +1452,7 @@ async function installDesignSystem(systemKey: keyof typeof DESIGN_SYSTEM_CONFIGS
 // CLI options interface
 export interface SetupOptions {
   designSystem?: string;
-  llmProvider?: 'claude' | 'openai' | 'gemini';
+  llmProvider?: LlmProviderId;
   yes?: boolean;
   skipInstall?: boolean;
   /** Overwrite an existing config and panel files. Without it, init keeps what is there. */
@@ -1789,6 +1821,7 @@ export async function setupCommand(options: SetupOptions = {}) {
         message: 'Which AI provider would you like to use?',
         choices: [
           { name: `${chalk.green('Claude (Anthropic)')} - ${chalk.gray('Recommended for complex reasoning and code quality')}`, value: 'claude' },
+          { name: `${chalk.green('Claude Code')} - ${chalk.gray('Your Claude subscription via claude auth login; no API key')}`, value: 'claude-code' },
           { name: `${chalk.blue('OpenAI (GPT-5)')} - ${chalk.gray('Versatile and fast')}`, value: 'openai' },
           { name: `${chalk.yellow('Google Gemini')} - ${chalk.gray('Cost-effective with good performance')}`, value: 'gemini' }
         ],
@@ -1801,6 +1834,7 @@ export async function setupCommand(options: SetupOptions = {}) {
           const provider = LLM_PROVIDERS[promptAnswers.llmProvider as keyof typeof LLM_PROVIDERS];
           return `Do you have a ${provider?.name || 'provider'} API key? (You can add it later)`;
         },
+        when: (promptAnswers) => Boolean(providerEnvKey(promptAnswers.llmProvider ?? 'claude')),
         default: false
       },
       {
@@ -2020,7 +2054,7 @@ Material UI (MUI) is a React component library implementing Material Design.
   config.storyPrefix = 'Generated/';
   config.componentFramework = componentFramework; // react, angular, vue, svelte, or web-components
   config.storybookFramework = storybookFramework; // e.g., @storybook/react-vite, @storybook/angular
-  config.llmProvider = answers.llmProvider || 'claude'; // claude, openai, or gemini
+  config.llmProvider = answers.llmProvider || 'claude'; // a key of LLM_PROVIDERS
 
   // For web-components with local imports, add importExamples guidance
   if (componentFramework === 'web-components' && config.importPath?.startsWith('.')) {
@@ -2496,41 +2530,35 @@ export default registry;
   const selectedProvider = answers.llmProvider || 'claude';
   const providerConfig = LLM_PROVIDERS[selectedProvider as keyof typeof LLM_PROVIDERS];
 
-  const envKeyName = providerConfig?.envKey || 'API_KEY';
+  const envKeyName = providerEnvKey(selectedProvider);
   {
     const existingEnv = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : null;
     // A key typed at the prompt is written whether or not .env exists; with
     // none typed, a real key already in the file stays and only a
     // placeholder is (re)written. Every other line is left untouched.
-    const merged = mergeEnv(existingEnv, [
-      { key: 'DEFAULT_PROVIDER', value: selectedProvider, comment: `Story UI: LLM provider (${providerConfig?.name || selectedProvider})` },
-      {
-        key: envKeyName,
-        value: answers.apiKey || 'your-api-key-here',
-        comment: `API key for ${providerConfig?.name || selectedProvider}\nGet your key from: ${providerConfig?.docsUrl || 'your provider dashboard'}`,
-        onlyIfPlaceholder: !answers.apiKey,
-      },
-      { key: 'VITE_STORY_UI_PORT', value: String(answers.mcpPort || '4001'), comment: 'Story UI server port' },
-    ]);
+    const entries = providerEnvEntries(selectedProvider, answers.apiKey, String(answers.mcpPort || '4001'));
+    const merged = mergeEnv(existingEnv, entries);
     const header = existingEnv === null
       ? `# Story UI Configuration\n# Generated by: npx story-ui init\n\n`
       : '';
     if (existingEnv === null || merged.replaced.length || merged.appended.length) {
       fs.writeFileSync(envPath, header + merged.content);
     }
-    const keyState = answers.apiKey
-      ? `${envKeyName} set`
-      : isUsableApiKey(parseEnv(merged.content)[envKeyName]) ? `existing ${envKeyName} kept` : `${envKeyName} still needs your key`;
+    const keyState = !envKeyName
+      ? 'no API key needed'
+      : answers.apiKey
+        ? `${envKeyName} set`
+        : isUsableApiKey(parseEnv(merged.content)[envKeyName]) ? `existing ${envKeyName} kept` : `${envKeyName} still needs your key`;
     if (existingEnv === null) {
       console.log(chalk.green(`✅ Created .env for ${providerConfig?.name || selectedProvider} (${keyState}, VITE_STORY_UI_PORT=${answers.mcpPort || '4001'})`));
     } else if (merged.replaced.length || merged.appended.length) {
       console.log(chalk.green(`✅ Updated .env (${keyState}, VITE_STORY_UI_PORT=${answers.mcpPort || '4001'}); other lines untouched`));
     } else {
-      console.log(chalk.gray(`ℹ️  .env already has DEFAULT_PROVIDER, ${envKeyName} and VITE_STORY_UI_PORT as init would write them — left as is`));
+      console.log(chalk.gray(`ℹ️  .env already has ${entries.map(e => e.key).join(', ')} as init would write them — left as is`));
     }
   }
-  /** Whether .env now carries a key a provider would accept. */
-  const envHasUsableKey = isUsableApiKey(parseEnv(fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '')[envKeyName]);
+  /** Whether .env now carries a key the provider would accept; true when it takes none. */
+  const envHasUsableKey = !envKeyName || isUsableApiKey(parseEnv(fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '')[envKeyName]);
 
   // The manager page (?path=/workspace/) cannot read .env: Storybook's own
   // esbuild bundles it, not Vite. The port reaches it through a <meta> in

@@ -455,7 +455,7 @@ The server reads `.env` in the directory it is started from.
 
 | Command | Options |
 |---|---|
-| `story-ui init` | `-y, --yes`, `--provider <claude\|openai\|gemini>`, `--api-key <key>`, `--port <port>`, `--stories-path <path>`, `--import-path <specifier>`, `--components-path <path>`, `--component-prefix <prefix>`, `-d, --design-system <system>`, `--skip-install`, `--force`, `--json` |
+| `story-ui init` | `-y, --yes`, `--provider <claude\|claude-code\|openai\|gemini>`, `--api-key <key>`, `--port <port>`, `--stories-path <path>`, `--import-path <specifier>`, `--components-path <path>`, `--component-prefix <prefix>`, `-d, --design-system <system>`, `--skip-install`, `--force`, `--json` |
 | `story-ui check` | `--server <url>`, `--storybook <url>`, `--json`. Exit code 1 when something is broken. |
 | `story-ui start` | `-p, --port <port>` (default 4001; if busy, the next free port is used and logged), `--mcp` |
 | `story-ui mcp` | `--http-port <port>` (default: the port init configured) |
@@ -570,7 +570,8 @@ directory you start the server from, or set `DEFAULT_PROVIDER=claude-code` (see
 below). `GET /mcp/providers` shows what the server sees.
 
 **Using a Claude subscription instead of an API key.** Set
-`DEFAULT_PROVIDER=claude-code` in `.env` and leave the Anthropic key out. Requests
+`DEFAULT_PROVIDER=claude-code` in `.env` and leave the Anthropic key out (or pick
+Claude Code in `npx story-ui init`, which writes exactly that). Requests
 then run through the Claude Agent SDK, which uses the Claude Code login on the
 machine (`claude auth login`) and draws from that subscription's usage limits.
 This is per developer: a shared or deployed server still needs an API key. Any
