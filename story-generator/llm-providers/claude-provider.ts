@@ -14,7 +14,6 @@ import {
   StreamChunk,
   ValidationResult,
   MessageContent,
-  ImageContent,
 } from './types.js';
 import { BaseLLMProvider } from './base-provider.js';
 import { fetchWithRetry } from './http-utils.js';
@@ -113,7 +112,10 @@ export const CLAUDE_LEGACY_MODEL_ALIASES: Record<string, string> = {
 
 // Default model. Accuracy over cost: the user's stated priority is that the
 // composition uses the right components, variants and states.
-const DEFAULT_MODEL = 'claude-opus-5';
+export const CLAUDE_DEFAULT_MODEL = 'claude-opus-5';
+
+/** Env vars that carry an Anthropic API key, in precedence order. */
+export const CLAUDE_KEY_ENV_VARS = ['CLAUDE_API_KEY', 'ANTHROPIC_API_KEY'];
 
 // API configuration
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
@@ -136,16 +138,21 @@ function supportsAdaptiveThinking(model?: string): boolean {
 }
 
 /** Effort levels the current models accept. */
-const EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+const EFFORT_LEVELS = new Set<string>(['low', 'medium', 'high', 'xhigh', 'max']);
+
+/** Effort for a request: the call, then CLAUDE_EFFORT, then 'high'. */
+export function resolveEffort(options?: ChatOptions): EffortLevel {
+  const requested = (options?.effort || process.env.CLAUDE_EFFORT || 'high').toLowerCase();
+  return (EFFORT_LEVELS.has(requested) ? requested : 'high') as EffortLevel;
+}
 
 /**
- * Thinking + effort for a request. Effort comes from the call, then
- * CLAUDE_EFFORT, then 'high'. Haiku 4.5 and older take neither.
+ * Thinking + effort for a request. Haiku 4.5 and older take neither.
  */
 function reasoningParams(model: string, options?: ChatOptions, streaming = false): Record<string, unknown> {
   if (!supportsAdaptiveThinking(model)) return {};
-  const requested = (options?.effort || process.env.CLAUDE_EFFORT || 'high').toLowerCase();
-  const effort = EFFORT_LEVELS.has(requested) ? requested : 'high';
+  const effort = resolveEffort(options);
   return {
     // Streaming asks for the summarised reasoning so the wait before the
     // first token can be narrated; buffered calls have nobody to narrate to.
@@ -155,14 +162,14 @@ function reasoningParams(model: string, options?: ChatOptions, streaming = false
 }
 
 /** Absolute ceiling on one streamed call, silence or not. */
-const STREAM_HARD_CAP_MS = Number(process.env.CLAUDE_STREAM_MAX_MS) || 15 * 60 * 1000;
+export const STREAM_HARD_CAP_MS = Number(process.env.CLAUDE_STREAM_MAX_MS) || 15 * 60 * 1000;
 
 interface AnthropicMessage {
   role: 'user' | 'assistant';
   content: string | AnthropicContent[];
 }
 
-interface AnthropicContent {
+export interface AnthropicContent {
   type: 'text' | 'image' | 'document';
   text?: string;
   source?: {
@@ -186,7 +193,7 @@ interface AnthropicResponse {
   usage: AnthropicUsage;
 }
 
-interface AnthropicUsage {
+export interface AnthropicUsage {
   input_tokens: number;
   output_tokens: number;
   cache_read_input_tokens?: number;
@@ -211,7 +218,7 @@ export class ClaudeProvider extends BaseLLMProvider {
     this.setProviderType();
     // Set default model if not provided
     if (!this.config.model) {
-      this.config.model = DEFAULT_MODEL;
+      this.config.model = CLAUDE_DEFAULT_MODEL;
     }
   }
 
@@ -448,24 +455,19 @@ export class ClaudeProvider extends BaseLLMProvider {
         return;
       } } finally { idle.stop(); }
 
-      this.logCacheUsage({
+      const usage: AnthropicUsage = {
         input_tokens: inputTokens,
         output_tokens: outputTokens,
         cache_read_input_tokens: cacheReadTokens,
         cache_creation_input_tokens: cacheCreationTokens,
-      }, 'stream');
+      };
+      this.logCacheUsage(usage, 'stream');
 
       yield {
         type: 'done',
-        finishReason: stopReason === undefined ? undefined : this.mapStopReason(stopReason),
+        finishReason: stopReason === undefined ? undefined : mapStopReason(stopReason),
         model: servedModel,
-        usage: {
-          promptTokens: inputTokens,
-          completionTokens: outputTokens,
-          totalTokens: inputTokens + outputTokens,
-          ...(cacheReadTokens !== undefined && { cacheReadInputTokens: cacheReadTokens }),
-          ...(cacheCreationTokens !== undefined && { cacheCreationInputTokens: cacheCreationTokens }),
-        },
+        usage: toUsage(usage),
       };
     } catch (error) {
       yield {
@@ -528,45 +530,8 @@ export class ClaudeProvider extends BaseLLMProvider {
       .filter(msg => msg.role !== 'system') // System messages handled separately
       .map(msg => ({
         role: msg.role as 'user' | 'assistant',
-        content: this.convertContent(msg.content),
+        content: toAnthropicContent(msg.content),
       }));
-  }
-
-  private convertContent(content: string | MessageContent[]): string | AnthropicContent[] {
-    if (typeof content === 'string') {
-      return content;
-    }
-
-    return content.map(item => {
-      if (item.type === 'text') {
-        return { type: 'text' as const, text: item.text };
-      }
-      if (item.type === 'image') {
-        const imageContent = item as ImageContent;
-        return {
-          type: 'image' as const,
-          source: {
-            type: imageContent.source.type,
-            media_type: imageContent.source.mediaType,
-            data: imageContent.source.data,
-            url: imageContent.source.url,
-          },
-        };
-      }
-      // A PDF goes as a native document block; the model reads its pages
-      // (text and layout) directly. Placeholder text here used to hide the
-      // whole file from the model while the log said it was attached.
-      if (item.type === 'document') {
-        return {
-          type: 'document' as const,
-          source: item.source.type === 'url'
-            ? { type: 'url' as const, url: item.source.url }
-            : { type: 'base64' as const, media_type: item.source.mediaType || 'application/pdf', data: item.source.data },
-          ...(item.source.name ? { title: item.source.name.slice(0, 200) } : {}),
-        };
-      }
-      return { type: 'text' as const, text: '' };
-    });
   }
 
   private convertResponse(data: AnthropicResponse): ChatResponse {
@@ -579,18 +544,8 @@ export class ClaudeProvider extends BaseLLMProvider {
       id: data.id,
       model: data.model,
       content: textContent,
-      finishReason: this.mapStopReason(data.stop_reason),
-      usage: {
-        promptTokens: data.usage.input_tokens,
-        completionTokens: data.usage.output_tokens,
-        totalTokens: data.usage.input_tokens + data.usage.output_tokens,
-        ...(data.usage.cache_read_input_tokens !== undefined && {
-          cacheReadInputTokens: data.usage.cache_read_input_tokens,
-        }),
-        ...(data.usage.cache_creation_input_tokens !== undefined && {
-          cacheCreationInputTokens: data.usage.cache_creation_input_tokens,
-        }),
-      },
+      finishReason: mapStopReason(data.stop_reason),
+      usage: toUsage(data.usage),
       raw: data,
     };
   }
@@ -635,23 +590,63 @@ export class ClaudeProvider extends BaseLLMProvider {
     });
   }
 
-  private mapStopReason(
-    stopReason: string | null
-  ): 'stop' | 'length' | 'tool_calls' | 'content_filter' | 'error' {
-    switch (stopReason) {
-      case 'end_turn':
-      case 'stop_sequence':
-        return 'stop';
-      case 'max_tokens':
-        return 'length';
-      case 'tool_use':
-        return 'tool_calls';
-      case 'refusal':
-        return 'content_filter';
-      default:
-        return 'stop';
-    }
+}
+
+/** Our content blocks in the Messages API shape. Shared with the Claude Code provider. */
+export function toAnthropicContent(content: string | MessageContent[]): string | AnthropicContent[] {
+  if (typeof content === 'string') {
+    return content;
   }
 
+  return content.map(item => {
+    if (item.type === 'text') {
+      return { type: 'text' as const, text: item.text };
+    }
+    if (item.type === 'image') {
+      return {
+        type: 'image' as const,
+        source: item.source.type === 'url'
+          ? { type: 'url' as const, url: item.source.url }
+          : { type: 'base64' as const, media_type: item.source.mediaType, data: item.source.data },
+      };
+    }
+    // A PDF goes as a native document block; the model reads its pages
+    // (text and layout) directly. Placeholder text here used to hide the
+    // whole file from the model while the log said it was attached.
+    if (item.type === 'document') {
+      return {
+        type: 'document' as const,
+        source: item.source.type === 'url'
+          ? { type: 'url' as const, url: item.source.url }
+          : { type: 'base64' as const, media_type: item.source.mediaType || 'application/pdf', data: item.source.data },
+        ...(item.source.name ? { title: item.source.name.slice(0, 200) } : {}),
+      };
+    }
+    return { type: 'text' as const, text: '' };
+  });
+}
+
+/** Anthropic usage → ours. Absent cache counters stay absent, not 0. */
+export function toUsage(usage: AnthropicUsage): ChatResponse['usage'] {
+  return {
+    promptTokens: usage.input_tokens,
+    completionTokens: usage.output_tokens,
+    totalTokens: usage.input_tokens + usage.output_tokens,
+    ...(usage.cache_read_input_tokens !== undefined && { cacheReadInputTokens: usage.cache_read_input_tokens }),
+    ...(usage.cache_creation_input_tokens !== undefined && { cacheCreationInputTokens: usage.cache_creation_input_tokens }),
+  };
+}
+
+export function mapStopReason(stopReason: string | null): 'stop' | 'length' | 'tool_calls' | 'content_filter' | 'error' {
+  switch (stopReason) {
+    case 'max_tokens':
+      return 'length';
+    case 'tool_use':
+      return 'tool_calls';
+    case 'refusal':
+      return 'content_filter';
+    default:
+      return 'stop';
+  }
 }
 
