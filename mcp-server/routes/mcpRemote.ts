@@ -109,7 +109,7 @@ function fileMatchesStoryId(filename: string, storyId: string): boolean {
   return false;
 }
 
-export const router = Router();
+export const router: Router = Router();
 
 // Store SSE transports for legacy session management
 const sseTransports: Record<string, SSEServerTransport> = {};

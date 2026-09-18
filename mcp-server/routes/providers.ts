@@ -22,7 +22,8 @@ export function getProviders(req: Request, res: Response) {
     res.json({
       providers,
       current: {
-        provider: currentInfo.currentProvider,
+        // The type, not the display name: the panels select by it.
+        provider: currentInfo.currentProviderType ?? '',
         model: currentInfo.currentModel,
         supportsVision: currentInfo.supportsVision,
         supportsStreaming: currentInfo.supportsStreaming,

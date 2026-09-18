@@ -568,10 +568,10 @@ async function runStoryGenerationPipeline(
   if (files && Array.isArray(files) && files.length > 0) {
     const processed = processFileInputs(files);
     skippedFiles.push(...processed.skipped);
-    const providerNow = getProviderInfo({ provider: provider as any, model }).currentProvider;
+    const providerNow = getProviderInfo({ provider: provider as any, model });
     for (const block of processed.blocks) {
-      if (block.type === 'document' && providerNow !== 'claude') {
-        skippedFiles.push({ name: block.source.name || 'document', reason: `PDFs are only read by Claude; the request used ${providerNow}` });
+      if (block.type === 'document' && !providerNow.supportsDocuments) {
+        skippedFiles.push({ name: block.source.name || 'document', reason: `PDFs are only read by Claude; the request used ${providerNow.currentProvider} (${providerNow.currentModel})` });
         continue;
       }
       attachments.push(block);

@@ -15,6 +15,7 @@ import { EnhancedComponentDiscovery } from '../story-generator/enhancedComponent
 import { extractProps } from '../story-generator/knowledge/propExtractor.js';
 import { readConfiguredPort, storiesGlobCoversMdx, storybookMainSyntaxError, managerHeadPort, readScriptPort } from './setup.js';
 import { isUsableApiKey } from './envFile.js';
+import { CLAUDE_KEY_ENV_VARS } from '../story-generator/llm-providers/claude-provider.js';
 import { relativeImportResolves, localImportForComponents } from '../story-generator/configLoader.js';
 import { resolveHostTooling, canLaunchBrowser } from '../story-generator/verify/hostTooling.js';
 import { closeBrowserSession } from '../story-generator/verify/browserSession.js';
@@ -43,7 +44,7 @@ export interface CheckReport {
   summary: { components: number; importPath?: string; componentsPath?: string; port?: number; server?: string };
 }
 
-const PROVIDER_KEYS = ['ANTHROPIC_API_KEY', 'CLAUDE_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY'];
+const PROVIDER_KEYS = [...CLAUDE_KEY_ENV_VARS, 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY'];
 
 function readEnv(cwd: string): Record<string, string> {
   const p = path.join(cwd, '.env');
@@ -358,15 +359,19 @@ export async function runChecks(opts: { server?: string; storybook?: string; cwd
   // 5. A provider key. A placeholder, "undefined", or a dozen characters
   // is a line, not a key; the server would start and every request fail.
   const keyName = PROVIDER_KEYS.find(k => isUsableApiKey(env[k]));
-  const placeholderName = keyName ? undefined : PROVIDER_KEYS.find(k => env[k] !== undefined && env[k] !== '');
+  const usesClaudeCode = env.DEFAULT_PROVIDER === 'claude-code';
+  const hasProvider = Boolean(keyName) || usesClaudeCode;
+  const placeholderName = hasProvider ? undefined : PROVIDER_KEYS.find(k => env[k] !== undefined && env[k] !== '');
   items.push({
-    id: 'provider-key', ok: Boolean(keyName),
-    detail: keyName
-      ? `${keyName} is set`
-      : placeholderName
-        ? `${placeholderName} is set to a placeholder or an invalid value ("${String(env[placeholderName]).slice(0, 12)}…" — not a key)`
-        : 'no provider API key in .env or the environment',
-    fix: keyName ? undefined : `put ${placeholderName || 'ANTHROPIC_API_KEY'}=<your real key> in .env (or OPENAI_API_KEY / GEMINI_API_KEY), or re-run npx story-ui init --api-key <key>`,
+    id: 'provider-key', ok: hasProvider,
+    detail: usesClaudeCode
+      ? 'DEFAULT_PROVIDER=claude-code — requests go through your Claude Code login, no API key needed'
+      : keyName
+        ? `${keyName} is set`
+        : placeholderName
+          ? `${placeholderName} is set to a placeholder or an invalid value ("${String(env[placeholderName]).slice(0, 12)}…" — not a key)`
+          : 'no provider API key in .env or the environment',
+    fix: hasProvider ? undefined : `put ${placeholderName || 'ANTHROPIC_API_KEY'}=<your real key> in .env (or OPENAI_API_KEY / GEMINI_API_KEY), re-run npx story-ui init --api-key <key>, or set DEFAULT_PROVIDER=claude-code to use your Claude Code login`,
   });
 
   // 6. The server, if asked or if the config names a port.

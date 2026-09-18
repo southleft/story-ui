@@ -39,7 +39,7 @@ program
   .command('init')
   .description('Initialize Story UI configuration with interactive setup')
   .option('-d, --design-system <system>', 'Design system to configure (auto, custom, mantine, mui, chakra, carbon, vuetify, angular-material, skeleton-ui, shoelace, …)')
-  .option('-l, --llm-provider <provider>', 'LLM provider to use (claude, openai, gemini)')
+  .option('-l, --llm-provider <provider>', 'LLM provider to use (claude, claude-code, openai, gemini)')
   .option('--provider <provider>', 'Alias of --llm-provider')
   .option('--api-key <key>', 'API key for the provider, written to .env')
   .option('--port <port>', 'Port for the Story UI server (default: first free port from 4001)')

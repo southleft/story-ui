@@ -78,7 +78,7 @@ export function getStoryProvider(): LLMProvider {
     return defaultProvider;
   }
 
-  throw new Error('No LLM provider configured. Please set CLAUDE_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY.');
+  throw new Error('No LLM provider configured. Set CLAUDE_API_KEY, OPENAI_API_KEY or GEMINI_API_KEY, or DEFAULT_PROVIDER=claude-code to use your Claude Code login.');
 }
 
 /**
@@ -547,9 +547,14 @@ export function getProviderInfo(requested?: {
   provider?: ProviderType;
   model?: string;
 }): {
+  /** Display name. */
   currentProvider: string;
+  /** Registry type, what a caller selects by. Absent when nothing is configured. */
+  currentProviderType?: ProviderType;
   currentModel: string;
   supportsVision: boolean;
+  /** PDF document blocks. Per model: Haiku cannot read them. */
+  supportsDocuments: boolean;
   supportsStreaming: boolean;
   /** The model's real output ceiling, so callers stop hardcoding one. */
   maxOutputTokens?: number;
@@ -570,8 +575,10 @@ export function getProviderInfo(requested?: {
 
     return {
       currentProvider: provider.name,
+      currentProviderType: provider.type,
       currentModel: modelId,
       supportsVision: modelInfo ? modelInfo.supportsVision : provider.supportsVision(),
+      supportsDocuments: modelInfo ? modelInfo.supportsDocuments : provider.supportsDocuments(),
       supportsStreaming: modelInfo ? modelInfo.supportsStreaming : provider.supportsStreaming(),
       maxOutputTokens: modelInfo?.maxOutputTokens,
     };
@@ -580,6 +587,7 @@ export function getProviderInfo(requested?: {
       currentProvider: 'None',
       currentModel: 'None',
       supportsVision: false,
+      supportsDocuments: false,
       supportsStreaming: false,
     };
   }

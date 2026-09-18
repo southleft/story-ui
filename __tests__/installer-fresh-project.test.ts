@@ -21,6 +21,7 @@ import {
   ensureScriptPort,
   readConfiguredPort,
   toProjectRelative,
+  providerEnvEntries,
 } from '../cli/setup.js';
 import { mergeEnv, parseEnv, isUsableApiKey } from '../cli/envFile.js';
 import { readConfigField } from '../cli/update.js';
@@ -240,6 +241,11 @@ describe('.env merge (defect 2)', () => {
     const r = mergeEnv(`DEFAULT_PROVIDER=claude\nANTHROPIC_API_KEY=${REAL}\nVITE_STORY_UI_PORT=4120\n`, entries(REAL));
     expect(r.replaced).toEqual([]);
     expect(r.appended).toEqual([]);
+  });
+
+  it('writes no key line for claude-code, which has none', () => {
+    expect(providerEnvEntries('claude-code', undefined, '4001').map(e => e.key)).toEqual(['DEFAULT_PROVIDER', 'VITE_STORY_UI_PORT']);
+    expect(providerEnvEntries('claude', 'k', '4001').map(e => e.key)).toEqual(['DEFAULT_PROVIDER', 'ANTHROPIC_API_KEY', 'VITE_STORY_UI_PORT']);
   });
 
   it('treats placeholders and short values as no key', () => {

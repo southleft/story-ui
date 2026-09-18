@@ -428,7 +428,7 @@ The server reads `.env` in the directory it is started from.
 | `CLAUDE_API_KEY` or `ANTHROPIC_API_KEY` | Anthropic key. |
 | `OPENAI_API_KEY`, `OPENAI_ORG_ID` | OpenAI key and optional organisation. |
 | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | Google key. |
-| `DEFAULT_PROVIDER` | `claude`, `openai` or `gemini`. |
+| `DEFAULT_PROVIDER` | `claude`, `openai`, `gemini`, or `claude-code` to run through your Claude Code login instead of an API key (see below). |
 | `DEFAULT_MODEL` | Model id. Defaults: `claude-opus-5`, `gpt-5.6-sol`, `gemini-3.1-pro`. |
 | `CLAUDE_EFFORT` | `low`, `medium`, `high` (default) or `xhigh`. |
 | `CLAUDE_STREAM_MAX_MS` | Hard cap on one streamed model call. Default 15 minutes. |
@@ -455,7 +455,7 @@ The server reads `.env` in the directory it is started from.
 
 | Command | Options |
 |---|---|
-| `story-ui init` | `-y, --yes`, `--provider <claude\|openai\|gemini>`, `--api-key <key>`, `--port <port>`, `--stories-path <path>`, `--import-path <specifier>`, `--components-path <path>`, `--component-prefix <prefix>`, `-d, --design-system <system>`, `--skip-install`, `--force`, `--json` |
+| `story-ui init` | `-y, --yes`, `--provider <claude\|claude-code\|openai\|gemini>`, `--api-key <key>`, `--port <port>`, `--stories-path <path>`, `--import-path <specifier>`, `--components-path <path>`, `--component-prefix <prefix>`, `-d, --design-system <system>`, `--skip-install`, `--force`, `--json` |
 | `story-ui check` | `--server <url>`, `--storybook <url>`, `--json`. Exit code 1 when something is broken. |
 | `story-ui start` | `-p, --port <port>` (default 4001; if busy, the next free port is used and logged), `--mcp` |
 | `story-ui mcp` | `--http-port <port>` (default: the port init configured) |
@@ -566,8 +566,17 @@ install chromium` in your project. Story UI resolves Playwright from your
 
 **No provider available.** No key was found. Put `ANTHROPIC_API_KEY` (or
 `CLAUDE_API_KEY`), `OPENAI_API_KEY` or `GEMINI_API_KEY` in the `.env` of the
-directory you start the server from. `GET /mcp/providers` shows what the server
-sees.
+directory you start the server from, or set `DEFAULT_PROVIDER=claude-code` (see
+below). `GET /mcp/providers` shows what the server sees.
+
+**Using a Claude subscription instead of an API key.** Set
+`DEFAULT_PROVIDER=claude-code` in `.env` and leave the Anthropic key out (or pick
+Claude Code in `npx story-ui init`, which writes exactly that). Requests
+then run through the Claude Agent SDK, which uses the Claude Code login on the
+machine (`claude auth login`) and draws from that subscription's usage limits.
+This is per developer: a shared or deployed server still needs an API key. Any
+`ANTHROPIC_API_KEY` in the environment is stripped from the Claude Code process so
+it cannot silently switch billing back to the API.
 
 **The API key you typed is not in `.env`.** Older versions skipped an existing
 `.env`. Current versions merge into it; re-run `npx story-ui init --api-key
