@@ -54,6 +54,12 @@ This document provides comprehensive context for AI assistants working on the St
 | Prop/type knowledge | `story-generator/knowledge/propExtractor.ts` |
 | Token + styling idiom | `story-generator/knowledge/stylingFacts.ts` |
 | Description quality predicate | `story-generator/knowledge/descriptionQuality.ts` |
+| Voice Canvas: Jev decisions (no LLM) | `story-generator/voice/decide.ts` |
+| Voice Canvas: canvas code as an AST tree | `story-generator/voice/canvasTree.ts` |
+| Voice Canvas: templates from the team's stories | `story-generator/voice/templates.ts` |
+| Voice Canvas: Jev HTTP client | `story-generator/voice/jevClient.ts` |
+| Voice Canvas route (`POST /mcp/canvas-voice`) | `mcp-server/routes/canvasVoice.ts` |
+| Voice Canvas panel UI | `templates/StoryUI/voice/VoiceCanvas.tsx` |
 | CLI Entry | `cli/index.ts` |
 | CLI Setup | `cli/setup.ts` |
 
@@ -297,60 +303,6 @@ When validation fails, the system:
 
 ---
 
-## Codebase Structure
-
-```
-story-ui/
-├── cli/                          # CLI commands
-│   ├── index.ts                  # Main CLI entry (commands: init, start, deploy, mcp)
-│   ├── setup.ts                  # Project setup utilities (~1150 lines)
-│   └── deploy.ts                 # Deployment commands
-│
-├── mcp-server/                   # Express MCP server
-│   ├── index.ts                  # Express app, routes, proxy setup
-│   ├── mcp-stdio-server.ts       # STDIO server for Claude Desktop
-│   └── routes/
-│       ├── generateStory.ts      # Non-streaming generation with self-healing
-│       ├── generateStoryStream.ts # Streaming generation with self-healing
-│       ├── providers.ts          # LLM provider management
-│       ├── components.ts         # Component discovery endpoints
-│       ├── frameworks.ts         # Framework detection
-│       └── mcpRemote.ts          # Claude Desktop MCP endpoint
-│
-├── story-generator/              # Core generation logic
-│   ├── generateStory.ts          # Main generation function
-│   ├── selfHealingLoop.ts        # Error correction utilities
-│   ├── validateStory.ts          # TypeScript AST validation
-│   ├── storyValidator.ts         # Pattern validation
-│   ├── componentDiscovery.ts     # Component discovery
-│   ├── configLoader.ts           # Configuration loading (30s cache)
-│   ├── promptGenerator.ts        # Prompt building
-│   ├── llm-providers/
-│   │   ├── base-provider.ts      # Base class
-│   │   ├── claude-provider.ts    # Claude/Anthropic
-│   │   ├── openai-provider.ts    # OpenAI/GPT
-│   │   └── gemini-provider.ts    # Google Gemini
-│   └── framework-adapters/
-│       ├── base-adapter.ts       # Base adapter
-│       ├── react-adapter.ts      # React stories format
-│       ├── vue-adapter.ts        # Vue stories format
-│       ├── angular-adapter.ts    # Angular stories format
-│       ├── svelte-adapter.ts     # Svelte stories format
-│       └── web-components-adapter.ts # Web Components format
-│
-├── templates/                    # Storybook integration
-│   └── StoryUI/
-│       ├── StoryUIPanel.tsx      # Main panel component (~2900 lines)
-│       ├── StoryUIPanel.mdx      # Cross-framework wrapper
-│       ├── manager.tsx           # Addon registration
-│       └── index.tsx             # Panel registration
-│
-├── dist/                         # Compiled output
-└── test-storybooks/              # NOT IN THIS REPO - separate directory
-```
-
----
-
 ## Cross-Framework Support
 
 ### The MDX Wrapper Solution
@@ -576,6 +528,28 @@ model has memorised. It makes four separate subsystems look correct:
 valuable environment. `src/housekit` is a synthetic design system the model has
 no training data for — the only way to test an unknown library.
 
+## Voice Canvas and Jev (September 2026)
+
+The Voice Canvas decides spoken edits with **Jev** (TypeSafe's System One
+model: Choice / Score / Noul questions, no text generation, ~150–400 ms,
+`TYPESAFE_API_KEY` in the project `.env`) and applies them as AST splices on
+the canvas code. Anything Jev cannot decide from closed sets — a section of
+several parts, a restyle, low confidence — returns `fallback` and goes to the
+LLM route (`/mcp/canvas-generate`, Sonnet 5 by default; `STORY_UI_CANVAS_MODEL`).
+
+- Every value comes from a closed set: declared props and their `const`
+  tuples, attributes the team's own stories set, DOM attributes the compiler
+  confirms (`facts.acceptedNames`), verbatim spans of the transcript, and the
+  project's Storybook `globalTypes` (so "dark mode" is a global, not a model call).
+- Jev reads literally and is distracted by unrelated state. Ask one literal
+  question per judgement and combine in code; send add questions with
+  `{ request }` alone as state (the canvas outline cost 0.90 → 0.76).
+- The preview posts `VOICE_CANVAS_RENDERED` after every change. An edit that
+  throws is undone and handed to the model; model code that throws gets one
+  repair, then reverts. Checking code is not checking the canvas.
+- Measure with `bench/voiceCanvas.mjs` (real Jev, no LLM, fractions of a cent)
+  before changing a question's wording or a threshold.
+
 ## Issue History & Resolutions
 
 ### July 28, 2026 (knowledge, verification and direct manipulation)
@@ -633,25 +607,6 @@ no training data for — the only way to test an unknown library.
 |-------|------------|------------|
 | White text on light background | LLM generating incorrect colors | Added universal best practices to prompt |
 | LLM returning markdown | Missing assistant prefill | Added `<` prefill |
-
----
-
-## LLM Provider Models
-
-### Claude (Anthropic)
-- `claude-opus-4-8` - Most capable (Opus 4.8)
-- `claude-sonnet-5` - Recommended balance (default)
-- `claude-haiku-4-5` - Fast, economical
-
-### OpenAI
-- `gpt-5.5` - Frontier flagship, 1M context (default)
-- `gpt-5.4-mini` - Fast, economical 1M context
-- `gpt-5.4-nano` - Fastest, high-volume tasks
-
-### Gemini
-- `gemini-3.1-pro` - Most capable, 1M context (default)
-- `gemini-3.5-flash` - Fast frontier (GA)
-- `gemini-3.1-flash-lite` - Most cost-efficient
 
 ---
 
