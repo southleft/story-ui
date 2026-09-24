@@ -461,6 +461,14 @@ export const Default = { render: () => (
     }
   });
 
+  it('keeps the element a request names by its own words', async () => {
+    const code = insertChild(parseCanvas(CARD_CODE), 'e3', '<Button>Send</Button>');
+    const { ask } = scripted({ action: 'edit', target: 'e5', names_element: 0.9, singles_out: 0.3, change: 'prop:disabled', 'v:disabled': 'on' });
+    const out = await decideVoiceEdit({ transcript: 'Disable the submit button', code, recent: 'e6' }, ctx(ask));
+    expect(out.kind).toBe('applied');
+    if (out.kind === 'applied') expect(out.code).toContain('<Button disabled variant="default"');
+  });
+
   it('hands an undocumented container given several texts to the model', async () => {
     const cat = [{ name: 'Panel', props: ['children'] }];
     const { ask } = scripted({ action: 'add', component: 'Panel', 'add:Panel.multi': 0.9, 'add:Panel.slot:Panel.text': 'Invite', 'add:Panel.said:Panel.text': 0.9 });

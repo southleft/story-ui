@@ -497,6 +497,10 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
         type: 'noul',
         instructions: 'Does `request` name or describe which element it is about, such as "the button", "the checkbox" or "the email field"?',
       };
+      q1.singles_out = {
+        type: 'noul',
+        instructions: 'Does `request` say WHICH one it means when there are several of the same kind — by its words, label, colour or position (such as "the Send Invite button" or "the second card")? Just "the button" does not.',
+      };
       if (recentNodes.length > 1) {
         const rc: Record<string, string> = {};
         for (const n of recentNodes) rc[n.id] = describeNode(tree, n);
@@ -625,7 +629,10 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
       // "The button" with three buttons on the canvas: Jev picks one, not
       // surely. The one just added or changed is what a person means.
       const sameKind = recentNodes.find(n => n.tag === target!.tag && n.id !== target!.id);
-      if (t.confidence < 0.8 && sameKind) {
+      const singled = noul(r1.answers.singles_out);
+      // Said its words ("the CANCEL button") — named, whatever the Noul thinks.
+      const saidItsText = !!target.text && transcript.toLowerCase().includes(target.text.toLowerCase());
+      if (sameKind && !saidItsText && (t.confidence < 0.8 || (singled && singled.noul < 0.5))) {
         target = sameKind;
         steps.push({ step: 'Resolve target', value: `${describeNode(tree, target)} (the ${target.tag} just changed)`, by: 'code', confidence: t.confidence });
       } else {
