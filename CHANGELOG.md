@@ -1,3 +1,10 @@
+# [5.18.0](https://github.com/southleft/story-ui/compare/v5.17.9...v5.18.0) (2026-09-24)
+
+
+### Features
+
+* **generator:** decide voice canvas edits with Jev, fall back to the model ([95e2697](https://github.com/southleft/story-ui/commit/95e269732ada21eea7cb35ca7b5724e12eaada0c))
+
 ## [5.17.9](https://github.com/southleft/story-ui/compare/v5.17.8...v5.17.9) (2026-09-05)
 
 
