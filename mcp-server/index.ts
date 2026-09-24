@@ -37,6 +37,8 @@ import mcpRemoteRouter from './routes/mcpRemote.js';
 // Voice Canvas endpoints
 import { canvasSaveHandler } from './routes/canvasSave.js';
 import { canvasGenerateHandler, refreshVoiceCanvasStory } from './routes/canvasGenerate.js';
+import { canvasVoiceHandler } from './routes/canvasVoice.js';
+import { jevConfigured } from '../story-generator/voice/jevClient.js';
 import { getAdapterRegistry } from '../story-generator/framework-adapters/index.js';
 // Manifest — story ↔ chat source of truth
 import {
@@ -177,6 +179,7 @@ app.get('/mcp/props', getProps);
 app.post('/mcp/generate-story', generateStoryFromPrompt);
 app.post('/mcp/generate-story-stream', generateStoryFromPromptStream);
 // Voice Canvas endpoints
+app.post('/mcp/canvas-voice', canvasVoiceHandler); // Jev fast path: decide + apply one edit, or say fall back
 app.post('/mcp/canvas-generate', canvasGenerateHandler); // generate + write voice-canvas.stories.tsx
 app.post('/mcp/canvas-save', canvasSaveHandler);         // save canvas to named .stories.tsx
 // In-flight generations — lets a reconnecting poller distinguish "the server
@@ -218,6 +221,8 @@ app.get('/mcp/canvas-config', (_req, res) => {
     // Empty when undeclared; the client falls back to importPath rather than
     // guessing a name from a package path.
     designSystemName: config.designSystemGuidelines?.name || '',
+    // Whether the Voice Canvas can decide edits with Jev (TYPESAFE_API_KEY set).
+    voiceDecisions: jevConfigured(),
   });
 });
 

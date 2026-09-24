@@ -155,6 +155,13 @@ export interface ComponentFacts {
    * the same absent-versus-zero conflation, one more time.
    */
   declaresNoProps?: boolean;
+  /**
+   * Every attribute the compiler says this element accepts — its own props
+   * AND the DOM attributes it passes through (`defaultChecked`,
+   * `placeholder`), which `props` deliberately leaves out. Present only where
+   * type resolution ran; absent means unknown, not "accepts nothing".
+   */
+  acceptedNames?: string[];
 }
 
 export interface ExtractedProps {
@@ -1511,7 +1518,7 @@ function collectPropTypes(source: ts.SourceFile, out: Record<string, ComponentFa
  *    exported component rather than a `<Name>Props` convention; a path given
  *    as the package no longer reads node_modules.
  */
-const EXTRACTOR_SCHEMA = 8 // 8: props resolved by the TypeScript checker for React packages;
+const EXTRACTOR_SCHEMA = 9 // 9: acceptedNames kept from type resolution; 8: props resolved by the TypeScript checker for React packages;
   // // 7: optionsOpen from the member's own type text; 6: OverridableStringUnion literals; caches written before it hid MUI's variant/color/size;
 
 /**
@@ -1727,6 +1734,16 @@ async function readOnePackage(
       } else {
         let filled = 0;
         let added = 0;
+        // What each element accepts in full, kept for callers that edit DOM
+        // attributes (a voice "check the box" sets defaultChecked).
+        for (const component of checked.components) {
+          if (component.verdict === 'unknown' || !component.resolvedNames.length) continue;
+          const prior = components[component.name];
+          if (prior) prior.acceptedNames = component.resolvedNames;
+          else if (component.kind !== 'value' && component.kind !== 'namespace') {
+            components[component.name] = { name: component.name, props: [], acceptedNames: component.resolvedNames };
+          }
+        }
         for (const component of checked.components) {
           if (!component.own.length) continue;
           const closed = component.verdict === 'closed' ? { propsAreClosed: true } : {};
@@ -1751,7 +1768,7 @@ async function readOnePackage(
             Object.assign(prior, closed);
             if (prior.props.length > before) filled++;
           } else {
-            components[component.name] = { name: component.name, props: component.own, ...closed };
+            components[component.name] = { ...(prior ?? {}), name: component.name, props: component.own, ...closed };
             added++;
           }
         }

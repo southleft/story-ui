@@ -3399,3 +3399,134 @@ button.sui-verify-pill:focus-visible {
 
 .sui-handoff-result dt { color: var(--sui-text-secondary, #6b7280); }
 .sui-handoff-result dd { margin: 0; overflow-wrap: anywhere; }
+
+/* ── Voice Canvas: Decisions panel ─────────────────────────── */
+
+.sui-canvas-decisions {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  bottom: 12px;
+  width: min(320px, calc(100% - 24px));
+  display: flex;
+  flex-direction: column;
+  background: var(--sui-surface);
+  color: var(--sui-text);
+  border: 1px solid var(--sui-border);
+  border-radius: 10px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+  z-index: 15;
+  overflow: hidden;
+}
+
+.sui-canvas-decisions-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--sui-border);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.sui-canvas-decisions-close {
+  background: none;
+  border: 0;
+  color: var(--sui-text-secondary);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.sui-canvas-decisions-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sui-canvas-decision {
+  padding: 10px;
+  border: 1px solid var(--sui-border);
+  border-radius: 8px;
+  background: var(--sui-surface-subtle);
+  font-size: 12px;
+}
+
+.sui-canvas-decision-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.sui-canvas-decision-request {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.sui-canvas-decision-kind {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--sui-text-secondary);
+}
+
+.sui-canvas-decision--applied .sui-canvas-decision-kind,
+.sui-canvas-decision--generated .sui-canvas-decision-kind { color: var(--sui-success); }
+.sui-canvas-decision--deciding .sui-canvas-decision-kind { color: var(--sui-accent); }
+.sui-canvas-decision--fallback .sui-canvas-decision-kind { color: var(--sui-warning); }
+.sui-canvas-decision--failed .sui-canvas-decision-kind { color: var(--sui-danger); }
+
+.sui-canvas-decision-detail {
+  margin-top: 4px;
+  color: var(--sui-text-secondary);
+}
+
+.sui-canvas-decision-steps {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.sui-canvas-decision-steps li {
+  display: grid;
+  grid-template-columns: 88px 1fr auto;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.sui-canvas-decision-step { color: var(--sui-text-secondary); }
+.sui-canvas-decision-value { overflow-wrap: anywhere; }
+.sui-canvas-decision-by {
+  font-family: var(--sui-mono);
+  font-size: 10px;
+  color: var(--sui-text-secondary);
+}
+
+.sui-canvas-decision-stats {
+  margin-top: 8px;
+  font-family: var(--sui-mono);
+  font-size: 10px;
+  color: var(--sui-text-secondary);
+}
+
+.sui-canvas-action--on {
+  color: var(--sui-accent);
+}
+.sui-canvas-decision--setting .sui-canvas-decision-kind { color: var(--sui-success); }
+.sui-canvas-decision--waiting .sui-canvas-decision-kind { color: var(--sui-accent); }
+
+/* The design keeps its full width beside the Decisions panel, not under it. */
+.sui-canvas-preview--decisions .sui-canvas-live-wrapper {
+  width: calc(100% - min(344px, 45%));
+}
+.sui-canvas-preview--decisions .sui-canvas-decisions {
+  width: min(320px, calc(45% - 24px));
+}

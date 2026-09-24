@@ -109,7 +109,7 @@ export function classifyProp(p: PropFact): EditableProp {
  * and a deprecated prop should never be offered as a choice — surfacing it in
  * a picker actively invites the mistake the deprecation exists to prevent.
  */
-function panelWorthy(p: EditableProp): boolean {
+export function panelWorthy(p: EditableProp): boolean {
   if (/^(children|key|ref|className|id)$/.test(p.name)) return false;
   if (/^on[A-Z]/.test(p.name)) return false;
   if (p.deprecated) return false;
@@ -259,7 +259,7 @@ async function discoveredCatalog(config: ReturnType<typeof loadUserConfig>): Pro
  * component's own file. This resolver reuses those channels and merges
  * field-wise, so the panel offers what the pipeline already knows.
  */
-async function resolveComponentKnowledge(
+export async function resolveComponentKnowledge(
   config: ReturnType<typeof loadUserConfig>,
   componentName: string,
 ): Promise<{ facts: ComponentFacts | undefined; props: PropFact[]; sources: string[] }> {

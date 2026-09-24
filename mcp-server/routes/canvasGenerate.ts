@@ -131,8 +131,8 @@ STRICT RULES:
 //   1. localStorage (persists across iframe reloads)
 //   2. window.postMessage (instant in-place updates)
 //
-const VOICE_CANVAS_TEMPLATE = `import React, { useState, useEffect } from 'react';
-import { LiveProvider, LivePreview, LiveError } from 'react-live';
+const VOICE_CANVAS_TEMPLATE = `import React, { useState, useEffect, useContext } from 'react';
+import { LiveProvider, LivePreview, LiveError, LiveContext } from 'react-live';
 import type { Meta, StoryObj } from '@storybook/react';
 
 // '!dev' keeps this out of the Storybook sidebar: it is the canvas's render
@@ -179,6 +179,30 @@ const PLACEHOLDER = \`const Canvas = () => (
 );
 render(<Canvas />);\`;
 
+/**
+ * Tells the panel whether the code it sent actually rendered.
+ *
+ * Every check before this one reads code; only the browser knows that a
+ * <Form> without its react-hook-form methods throws on render. Without this
+ * report a crash looked, to the panel, exactly like success — and every later
+ * edit landed on a canvas that could no longer show it.
+ */
+const RenderReport = ({ code }: { code: string }) => {
+  const { error } = useContext(LiveContext) as { error?: string };
+  useEffect(() => {
+    // Let effects and the error boundary settle before judging.
+    const t = setTimeout(() => {
+      const root = document.getElementById('storybook-root');
+      const empty = !!root && !root.innerText.trim() && root.querySelectorAll('img,svg,input,button,canvas,video').length === 0;
+      try {
+        window.parent.postMessage({ type: 'VOICE_CANVAS_RENDERED', code, error: error || null, empty }, window.location.origin);
+      } catch {}
+    }, 350);
+    return () => clearTimeout(t);
+  }, [code, error]);
+  return null;
+};
+
 export const Default: StoryObj = {
   render: () => {
     // Read from localStorage on mount for the initial code delivery.
@@ -208,6 +232,7 @@ export const Default: StoryObj = {
         <LiveProvider code={code} scope={scope} noInline>
           <LivePreview />
           <LiveError style={{ color: 'red', fontFamily: 'monospace', fontSize: '12px', padding: '8px', whiteSpace: 'pre-wrap' }} />
+          <RenderReport code={code} />
         </LiveProvider>
       </CanvasProvider>
     );
@@ -518,6 +543,17 @@ export async function canvasGenerateHandler(req: Request, res: Response) {
       conversationHistory = [],
     } = req.body;
 
+    // The canvas is a live surface: a person is waiting mid-sentence, so it
+    // runs on a fast model rather than the chat panel's choice. Measured on the
+    // same newsletter request: Opus 5 20s, Sonnet 5 9s, Haiku 4.5 7s — Sonnet
+    // keeps the quality. STORY_UI_CANVAS_MODEL overrides; other providers
+    // keep the model they were sent.
+    if (process.env.STORY_UI_CANVAS_MODEL) {
+      model = process.env.STORY_UI_CANVAS_MODEL;
+    } else if (!provider || provider === 'claude') {
+      model = 'claude-sonnet-5';
+    }
+
     if (!prompt || typeof prompt !== 'string') {
       return res.status(400).json({ error: 'prompt is required' });
     }
@@ -621,7 +657,7 @@ export async function canvasGenerateHandler(req: Request, res: Response) {
           return;
         }
         const result = healed.code;
-        logger.log(`[canvas-generate] Streamed ${result.split('\n').length} lines for: "${prompt.slice(0, 60)}"`);
+        logger.log(`[canvas-generate] Streamed ${result.split("\n").length} lines with ${model} for: "${prompt.slice(0, 60)}"`);
         res.write(`event: complete\ndata: ${JSON.stringify({ canvasCode: result, storyId: VOICE_CANVAS_STORY_ID })}\n\n`);
       } catch (streamError) {
         const message = streamError instanceof Error ? streamError.message : String(streamError);
@@ -659,7 +695,7 @@ export async function canvasGenerateHandler(req: Request, res: Response) {
     }
     const result = healed.code;
 
-    logger.log(`[canvas-generate] Generated ${result.split('\n').length} lines for: "${prompt.slice(0, 60)}"`);
+    logger.log(`[canvas-generate] Generated ${result.split('\n').length} lines with ${model} for: "${prompt.slice(0, 60)}"`);
 
     return res.json({
       canvasCode: result,
