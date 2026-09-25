@@ -66,7 +66,7 @@ export async function voicePropsFor(config: ReturnType<typeof loadUserConfig>, c
     // CSS-wide keywords (inherit, initial, …) are valid for every property and
     // are nothing a person dictates.
     if (c.options) c.options = c.options.filter(o => !/^(-[a-z]+-)?(inherit|initial|revert|revert-layer|unset)$/.test(o));
-    if ((c.kind === 'enum' && (c.options?.length ?? 0) > 1) || c.kind === 'boolean') editable.push({ ...c, doc: b.doc });
+    if ((c.kind === 'enum' && (c.options?.length ?? 0) > 1) || c.kind === 'boolean') editable.push({ ...c, doc: b.doc, base: true });
   }
   for (const name of facts?.acceptedNames ?? []) {
     const kind = DOM_ATTRIBUTES[name];
@@ -143,7 +143,13 @@ export async function canvasVoiceHandler(req: Request, res: Response) {
         recent: typeof recent === 'string' ? recent.slice(0, 300) : null,
         final: final === true,
       },
-      { catalog: components as never, propsFor: name => voicePropsFor(config, name), globals: readStorybookGlobals(process.cwd()) },
+      {
+        catalog: components as never,
+        propsFor: name => voicePropsFor(config, name),
+        layoutRules: (config as { layoutRules?: { multiColumnWrapper?: string } }).layoutRules,
+        rawPropsFor: async name => (await resolveComponentKnowledge(config, name)).props.map(p => ({ name: p.name, doc: p.doc, type: p.type })),
+        globals: readStorybookGlobals(process.cwd()),
+      },
     );
     const s = outcome.stats;
     logger.log(

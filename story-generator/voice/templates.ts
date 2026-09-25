@@ -412,8 +412,16 @@ export function uniquifyIds(root: TemplateNode, code: string): TemplateNode {
 
 // ── Printing ──────────────────────────────────────────────────
 
+/**
+ * Marks a template attribute as a JavaScript expression rather than a string
+ * — code-owned values only (a recipe's CSS fallback), never anything spoken.
+ */
+export const EXPR = '\u0001';
+export const expr = (source: string): string => `${EXPR}${source}`;
+
 function printAttr([k, v]: [string, Literal]): string {
   if (v === true) return k;
+  if (typeof v === 'string' && v.startsWith(EXPR)) return `${k}={${v.slice(1)}}`;
   if (typeof v === 'string') return /["{}<>\n]/.test(v) ? `${k}={${JSON.stringify(v)}}` : `${k}="${v}"`;
   return `${k}={${String(v)}}`;
 }

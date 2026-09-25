@@ -609,6 +609,61 @@ export const Default = { render: () => (
     if (out.kind === 'applied') expect(out.code).toContain('<CardTitle size="lg">Invite a teammate</CardTitle>');
   });
 
+  it('builds N of a component in columns under a heading, from a recipe, with no model', async () => {
+    const cat: CatalogComponent[] = [
+      ...catalog,
+      { name: 'SimpleGrid', description: 'Lays children out in columns' },
+      { name: 'Stack', description: 'Stacks children vertically' },
+      { name: 'Title', description: 'A heading', props: ['children'] },
+      { name: 'Text', description: 'Body text', props: ['children'] },
+    ];
+    const { ask, calls } = scripted({
+      action: 'compose', recipe: 0.95, recipe_count: '3', recipe_arrangement: 'columns', recipe_item: 'Card',
+      recipe_heading: 'our favorite picks', 'recipe_heading?': 0.9, recipe_wants_heading: 0.9,
+      grid: 'SimpleGrid', stack: 'Stack', heading: 'Title', text: 'Text', cols: 'cols',
+    });
+    const out = await decideVoiceEdit(
+      { transcript: 'build three cards in columns with a heading that says our favorite picks', code: EMPTY_CANVAS_CODE },
+      { ...ctx(ask), catalog: cat, layoutRules: { multiColumnWrapper: 'SimpleGrid' }, rawPropsFor: async () => [{ name: 'cols', doc: 'Number of columns' }, { name: 'spacing' }] },
+    );
+    expect(out.kind).toBe('applied');
+    if (out.kind !== 'applied') return;
+    expect(out.code).toContain('<SimpleGrid cols={3}>');
+    expect(out.code).toContain('<Title>Our favorite picks</Title>');
+    // Three copies of the team's own Card example, each with its own parts.
+    expect(out.code.match(/<CardTitle>Create project<\/CardTitle>/g)).toHaveLength(3);
+    // The wrapper comes from layoutRules; Jev picks only its column prop.
+    expect(calls.some(c => c.cols)).toBe(true);
+    expect(calls.some(c => c.grid)).toBe(false);
+  });
+
+  it('falls back to a CSS grid and named parts when the catalog has no layout component', async () => {
+    const cat: CatalogComponent[] = [
+      { name: 'Tile', props: ['children'] },
+      { name: 'Image' },
+      { name: 'Button', props: ['children'] },
+    ];
+    const { ask } = scripted({ action: 'compose', recipe: 0.95, recipe_count: '2', recipe_arrangement: 'columns', recipe_item: 'Tile' });
+    const out = await decideVoiceEdit(
+      { transcript: 'make two tiles in a row, each tile with an image and a button', code: EMPTY_CANVAS_CODE },
+      { catalog: cat, propsFor: async () => [], ask },
+    );
+    expect(out.kind).toBe('applied');
+    if (out.kind !== 'applied') return;
+    expect(out.code).toContain("style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 24 }}");
+    expect(out.code.match(/<Tile>/g)).toHaveLength(2);
+    expect(out.code.match(/<Image src="https:\/\/picsum\.photos\/seed\/[^"]+"/g)).toHaveLength(2);
+    expect(out.code.match(/<Button>Button<\/Button>/g)).toHaveLength(2);
+  });
+
+  it('ignores a declared wrapper the catalog does not have, and uses CSS', async () => {
+    const { ask } = scripted({ action: 'compose', recipe: 0.95, recipe_count: '2', recipe_arrangement: 'columns', recipe_item: 'Tile' });
+    const out = await decideVoiceEdit({ transcript: 'two tiles in a row', code: EMPTY_CANVAS_CODE },
+      { catalog: [{ name: 'Tile', props: ['children'] }], propsFor: async () => [], ask, layoutRules: { multiColumnWrapper: 'div' } });
+    expect(out.kind).toBe('applied');
+    if (out.kind === 'applied') expect(out.code).toContain("display: 'grid'");
+  });
+
   it('hands a change no declared prop covers to the generative model', async () => {
     const { ask } = scripted({ action: 'edit', target: 'e5', change: 'other' });
     const out = await decideVoiceEdit({ transcript: 'Make the button full width', code: CARD_CODE }, ctx(ask));
