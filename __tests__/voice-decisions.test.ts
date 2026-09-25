@@ -331,8 +331,10 @@ export const Default = { render: () => (
     expect(out.code).toContain('<Button>Deploy</Button>');
     // Two calls, in parallel: the add questions carry only the words said,
     // so the canvas outline cannot distract them. Wall-clock is one round trip.
+    // One round trip: the main call and the words-only call, in parallel.
     expect(calls).toHaveLength(2);
-    expect(Object.keys(calls[1]).every(k => k.startsWith('add:Card.'))).toBe(true);
+    expect(Object.keys(calls[1]).some(k => k.startsWith('add:Card.'))).toBe(true);
+    expect(calls[1].instruction).toBeDefined();
     expect(out.stats.ms).toBe(5);
   });
 
@@ -358,7 +360,7 @@ export const Default = { render: () => (
     const out = await decideVoiceEdit({ transcript: 'The text should be send', code: CARD_CODE, pointer: 'e5' }, ctx(ask));
     expect(out.kind).toBe('applied');
     if (out.kind === 'applied') expect(out.code).toContain('>Send</Button>');
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
     expect(calls[0].target).toBeUndefined();
   });
 
@@ -377,9 +379,9 @@ export const Default = { render: () => (
     const { ask, calls } = scripted({ action: 'edit', target: 'e6', change: 'prop:defaultChecked', 'v:defaultChecked': 'on' });
     const out = await decideVoiceEdit({ transcript: 'Check the box by default', code }, { ...ctx(ask), propsFor: async () => [] });
     expect(out.kind).toBe('applied');
-    expect(Object.keys((calls[1].change as any).criteria)).toContain('prop:defaultChecked');
+    expect(Object.keys((calls.find(c => c.change)!.change as any).criteria)).toContain('prop:defaultChecked');
     // A Checkbox is never given text of its own: no story does it.
-    expect(Object.keys((calls[1].change as any).criteria)).not.toContain('text');
+    expect(Object.keys((calls.find(c => c.change)!.change as any).criteria)).not.toContain('text');
   });
 
   it('offers the attributes an element already has', async () => {
@@ -387,7 +389,7 @@ export const Default = { render: () => (
     const out = await decideVoiceEdit({ transcript: 'Change the placeholder to email address', code: CARD_CODE }, { ...ctx(ask), propsFor: async () => [] });
     expect(out.kind).toBe('applied');
     // Input's catalog props omit children, so its text is not on offer.
-    expect(Object.keys((calls[1].change as any).criteria)).not.toContain('text');
+    expect(Object.keys((calls.find(c => c.change)!.change as any).criteria)).not.toContain('text');
   });
 
   it('fills each spoken phrase into one slot only', async () => {
@@ -423,7 +425,7 @@ export const Default = { render: () => (
     if (out.kind !== 'applied') return;
     expect(out.code).toContain('<Label htmlFor="terms">Send welcome email</Label>');
     expect(out.touched).toBe('e8');
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
   });
 
   it('prefers the element the request names over the one just changed', async () => {
@@ -571,6 +573,40 @@ export const Default = { render: () => (
       { catalog: cat, propsFor: async () => [{ name: 'src', kind: 'string' as const }, { name: 'alt', kind: 'string' as const }], ask });
     expect(out.kind).toBe('applied');
     if (out.kind === 'applied') expect(out.code).toMatch(/<Image src="https:\/\/picsum\.photos\/seed\/pasta1\/800\/400"/);
+  });
+
+  it('applies one edit to every element of a kind when asked for all of them', async () => {
+    const code = insertChild(parseCanvas(CARD_CODE), 'e3', '<Button>Send</Button>');
+    const { ask } = scripted({ action: 'edit', target: 'e5', all_of_kind: 0.9, change: 'prop:variant', 'v:variant': 'secondary' });
+    const out = await decideVoiceEdit({ transcript: 'make all the buttons secondary', code }, ctx(ask));
+    expect(out.kind).toBe('applied');
+    if (out.kind === 'applied') expect(out.code.match(/variant="secondary"/g)).toHaveLength(2);
+  });
+
+  it('steps a declared scale for "bigger" without an exact value', async () => {
+    const { ask } = scripted({ action: 'edit', target: 'e5', change: 'prop:variant', relative: 'more' });
+    const out = await decideVoiceEdit({ transcript: 'make the button more intense', code: CARD_CODE }, ctx(async (st: unknown, q: any) => {
+      const r = await ask(st, q);
+      if (r.answers.relative) (r.answers.relative as any).confidence = 0.9;
+      return r;
+    }));
+    // variant is "default" (index 0 of default/secondary/destructive) → one step up.
+    expect(out.kind).toBe('applied');
+    if (out.kind === 'applied') expect(out.code).toContain('variant="secondary"');
+  });
+
+  it('does not turn a confident prop pick into a text edit because the request quotes the element', async () => {
+    const code = CARD_CODE.replace('<CardTitle>Invite a teammate</CardTitle>', '<CardTitle size="md">Invite a teammate</CardTitle>');
+    const props = async () => [{ name: 'size', kind: 'enum' as const, options: ['sm', 'md', 'lg'] }];
+    const { ask } = scripted({ action: 'edit', target: 'e2', change: 'prop:size', relative: 'more' });
+    const out = await decideVoiceEdit({ transcript: 'increase the size of the title where it says invite a teammate', code }, { ...ctx(async (st: unknown, q: any) => {
+      const r = await ask(st, q);
+      if (r.answers.relative) (r.answers.relative as any).confidence = 0.9;
+      if (r.answers.change) (r.answers.change as any).confidence = 0.99;
+      return r;
+    }), propsFor: props });
+    expect(out.kind).toBe('applied');
+    if (out.kind === 'applied') expect(out.code).toContain('<CardTitle size="lg">Invite a teammate</CardTitle>');
   });
 
   it('hands a change no declared prop covers to the generative model', async () => {

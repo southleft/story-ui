@@ -67,6 +67,8 @@ export interface CatalogComponent extends TemplateSourceComponent {
 
 export interface EditablePropInfo {
   name: string;
+  /** An HTML attribute the component passes through, not one it declares. */
+  dom?: boolean;
   kind: 'enum' | 'boolean' | 'number' | 'string' | 'other';
   options?: string[];
   doc?: string;
@@ -241,8 +243,15 @@ async function editQuestions(
   // the request names and what the element already sets ahead of the rest:
   // Mantine's TextInput offers 26, and a flat cap of 24 cut `placeholder`.
   const said = new Set(transcriptWords(transcript));
+  // Relevance: the prop named outright, then one whose own documentation
+  // shares the request's words ("background" in bg's doc), then what the
+  // element already sets. Mantine offers ~60 props here; the cap is 32.
+  const docHits = (p: EditablePropInfo) => {
+    const w = new Set(transcriptWords(`${p.name} ${p.doc ?? ''}`).filter(x => x.length > 3));
+    return [...said].filter(x => x.length > 3 && w.has(x)).length;
+  };
   const rank = (p: EditablePropInfo) =>
-    (nameWords(p.name).every(w => said.has(w)) ? 0 : 2) + (p.name in node.attrs ? 0 : 1);
+    (nameWords(p.name).every(w => said.has(w)) ? 0 : 4) - Math.min(docHits(p), 3) + (p.name in node.attrs ? 0 : 1);
   const ranked = props.filter(p => !p.name.startsWith('__')).sort((a, b) => rank(a) - rank(b));
   props.length = 0;
   props.push(...ranked.slice(0, 32));
@@ -276,6 +285,15 @@ async function editQuestions(
   if (hasText) {
     questions[`${prefix}text`] = valueQuestion(transcript, node.tag, 'text', '`target`');
   }
+  questions[`${prefix}relative`] = {
+    type: 'choice',
+    instructions: 'Does `request` ask for more or less of something, without naming the exact value?',
+    criteria: {
+      more: 'bigger, larger, increase, more, bolder, wider, taller',
+      less: 'smaller, decrease, less, lighter, narrower, shorter',
+      exact: 'It names the value it wants',
+    },
+  };
   for (const p of props) {
     if (p.kind === 'enum' && p.options?.length) {
       const criteria: Record<string, null> = {};
@@ -312,14 +330,19 @@ function applyEdit(
   threshold: number,
   steps: DecisionStep[],
   transcript: string,
-): { code: string; summary: string } | { fallback: string } {
+): { code: string; summary: string; prop?: string; value?: string | boolean } | { fallback: string } {
   const change = choice(answers[`${prefix}change`]);
   // The request quotes one of the element's current values — "make EMAIL
   // ADDRESS say phone number", "where it says PARTNER ONE NAME" — so that is
   // the property being changed, whatever Jev leaned to (it chose the
   // placeholder once, while the words quoted were the label).
   const quoted = quotedField(node, transcript);
-  if (quoted && change && change.choice !== quoted) {
+  // Only when Jev picked a text field or was unsure: "increase the size of
+  // the title where it says X" quotes the title to NAME it, and must not turn
+  // Jev's confident `size` into a text edit.
+  const pickedTextField = !!change && (change.choice === 'text' || change.choice === 'other'
+    || plan.props.some(p => `prop:${p.name}` === change.choice && p.kind === 'string'));
+  if (quoted && change && change.choice !== quoted && (pickedTextField || change.confidence < threshold)) {
     steps.push({ step: 'Change', value: `${quoted.replace(/^prop:/, '')} (the request quotes its current value)`, by: 'code' });
     change.choice = quoted;
     change.confidence = Math.max(change.confidence, threshold);
@@ -355,13 +378,27 @@ function applyEdit(
   const propName = change.choice.slice('prop:'.length);
   const prop = plan.props.find(p => p.name === propName);
   const value = choice(answers[`${prefix}v:${propName}`]);
+  const relative = choice(answers[`${prefix}relative`]);
+  if (prop?.kind === 'enum' && prop.options?.length && relative && relative.choice !== 'exact' && relative.confidence >= threshold) {
+    // "Increase the size": one step along the values the component declares,
+    // from the one it has now (or the middle of the scale).
+    const opts = prop.options;
+    const current = node.attrs[propName];
+    const at = typeof current === 'string' && opts.includes(current) ? opts.indexOf(current) : Math.floor((opts.length - 1) / 2);
+    const nextAt = Math.max(0, Math.min(opts.length - 1, at + (relative.choice === 'more' ? 1 : -1)));
+    if (nextAt !== at || current === undefined) {
+      const v = opts[nextAt];
+      steps.push({ step: 'Value', value: `${propName} = ${JSON.stringify(v)} (one step ${relative.choice === 'more' ? 'up' : 'down'})`, by: 'code', confidence: relative.confidence });
+      return { code: setAttr(tree, node.id, propName, v), summary: `Set ${propName} on ${label} to ${JSON.stringify(v)}`, prop: propName, value: v };
+    }
+  }
   if (!prop || !value || value.confidence < threshold || value.choice === NONE) {
     return { fallback: `Could not tell what ${propName} should be` };
   }
   let v: string | boolean = prop.kind === 'string' ? shown(prop.name, value.choice) : value.choice;
   if (prop.kind === 'boolean') v = value.choice === 'on';
   steps.push({ step: 'Value', value: `${propName} = ${JSON.stringify(v)}`, by: 'jev', confidence: value.confidence });
-  return { code: setAttr(tree, node.id, propName, v), summary: `Set ${propName} on ${label} to ${JSON.stringify(v)}` };
+  return { code: setAttr(tree, node.id, propName, v), summary: `Set ${propName} on ${label} to ${JSON.stringify(v)}`, prop: propName, value: v };
 }
 
 // ── Placement: where a new element goes inside its parent ─────
@@ -429,7 +466,10 @@ async function addPlan(
       // Addresses are not words anyone dictates.
       if (p.kind === 'string' && !/^(children|src|srcSet|href|id|className)$/.test(p.name)) bareSlots.push({ role: `${entry.name}.${p.name}`, field: p.name });
     }
-    if (declared.some(p => p.name === 'src')) imageSource = true;
+    // Declared by the component itself — not merely an HTML attribute it
+    // passes through (an <input> accepts src for type="image"; a Checkbox
+    // with a photo is not what "add a checkbox" means).
+    if (declared.some(p => p.name === 'src' && !p.dom)) imageSource = true;
     bareSlots.splice(8);
     templates[0] = { name: 'bare', root: { tag: entry.name, attrs: [], children: [] } };
   }
@@ -520,6 +560,11 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
   // ── Stage 1 ──
   // `action` is added last, once the preview settings are known.
   const q1: Record<string, JevQuestion> = {};
+  // Judgements about the WORDS alone — is it an instruction, is it finished,
+  // "all the buttons" or one — go in a parallel call whose state is only the
+  // request. With the canvas outline beside them, three cards on the canvas
+  // turned "make the card gray" into an edit of all three (0.19 alone).
+  const qAdd: Record<string, JevQuestion> = {};
   if (choices.length) {
     const criteria: Record<string, string | null> = {};
     for (const c of choices) criteria[c.name] = describeComponent(c);
@@ -535,11 +580,11 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
     if (recentNodes.length) {
       // Two literal questions, combined in code — rather than one question
       // that asks Jev to apply a rule about when to use the other.
-      q1.names_element = {
+      qAdd.names_element = {
         type: 'noul',
         instructions: 'Does `request` name or describe which element it is about, such as "the button", "the checkbox" or "the email field"?',
       };
-      q1.singles_out = {
+      qAdd.singles_out = {
         type: 'noul',
         instructions: 'Does `request` say WHICH one it means when there are several of the same kind — by its words, label, colour or position (such as "the Send Invite button" or "the second card")? Just "the button" does not.',
       };
@@ -569,7 +614,6 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
   // pick of "send" for a new button's text fell from 0.90 to 0.76 —
   // unrelated state is a distractor (Jev 1.13's documented jagged edge).
   const specs = new Map<string, AddPlan>();
-  const qAdd: Record<string, JevQuestion> = {};
   for (const c of namedComponents(ctx.catalog, transcript)) {
     const plan = await addPlan(c, transcript, ctx, known, addPrefix(c.name));
     specs.set(c.name, plan);
@@ -584,15 +628,15 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
   // An add of one component is Jev's; a section of several is the model's.
   // Asked as its own literal question — the action Choice alone put "a
   // newsletter with an input and three checkboxes" down as one add.
-  q1.several = {
+  qAdd.several = {
     type: 'noul',
     instructions: 'Does `request` ask for a whole section, form, page or layout, or for several separate new elements at once (such as "three cards" or "an input and two checkboxes")? A single element with its own title or text counts as one.',
   };
-  q1.instruction = {
+  qAdd.instruction = {
     type: 'noul',
     instructions: 'Is `request` an instruction to change the design (add, remove, move, edit or restyle something), rather than a comment, a question, or talk to another person?',
   };
-  q1.move_dir = {
+  qAdd.move_dir = {
     type: 'choice',
     instructions: 'If `request` asks to move an element, which way?',
     criteria: {
@@ -603,7 +647,7 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
       none: 'It does not ask to move anything',
     },
   };
-  q1.place = {
+  qAdd.place = {
     type: 'choice',
     instructions: 'If `request` adds something, where does it go relative to the element it mentions?',
     criteria: {
@@ -613,11 +657,15 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
       unsaid: 'It does not say where',
     },
   };
-  q1.new_element = {
+  qAdd.all_of_kind = {
+    type: 'noul',
+    instructions: 'Does `request` say "all", "every" or "each", or name the elements in the plural (such as "the buttons"), so that it means more than one element?',
+  };
+  qAdd.new_element = {
     type: 'noul',
     instructions: 'Does `request` ask to put a NEW element on `canvas` that is not there yet (not changing, labelling or restyling one that is)?',
   };
-  q1.complete = {
+  qAdd.complete = {
     type: 'noul',
     instructions: 'Is `request` a complete instruction, rather than one cut off in the middle (for example ending in "to say", "called" or "and")?',
   };
@@ -635,9 +683,7 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
   }
   q1.action = { type: 'choice', instructions: 'What does `request` ask to do to the design on `canvas`?', criteria: actions };
 
-  const [main, adds] = Object.keys(qAdd).length
-    ? await tally.runAll([[state, q1], [{ request: transcript }, qAdd]])
-    : [await tally.run(state, q1), null];
+  const [main, adds] = await tally.runAll([[state, q1], [{ request: transcript }, qAdd]]);
   const r1: JevResponse = { ...main, answers: { ...main.answers, ...(adds?.answers ?? {}) } };
   const action = choice(r1.answers.action);
   if (!action) return { kind: 'fallback', reason: 'Jev returned no action', steps, stats: tally.stats };
@@ -668,6 +714,14 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
   const instruction = noul(r1.answers.instruction);
   if (instruction && instruction.noul < 0.4 && !COMMANDS.has(action.choice as VoiceCommandKind) && action.choice !== 'setting') {
     return { kind: 'ignored', reason: 'Not a design instruction', steps, stats: tally.stats };
+  }
+  // "Make all the buttons green" read as a restyle; it is one edit, many times.
+  const everyOne = noul(r1.answers.all_of_kind);
+  if (everyOne && everyOne.noul >= 0.8 && (action.choice === 'compose' || (action.choice === 'edit' && action.confidence < threshold))
+    && (action.probabilities.edit ?? 0) + (action.probabilities.compose ?? 0) >= 0.7) {
+    steps.push({ step: 'Every', value: 'one edit, applied to each', by: 'jev', confidence: everyOne.noul });
+    action.choice = 'edit';
+    action.confidence = Math.max(action.confidence, threshold);
   }
   // A move Jev is sure of, whatever the action vote says.
   const dir = choice(r1.answers.move_dir);
@@ -773,6 +827,20 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
     }
     const result = applyEdit(tree, target!, plan, answers, prefix, threshold, steps, transcript);
     if ('fallback' in result) return { kind: 'fallback', reason: result.fallback, steps, stats: tally.stats };
+    // "Change ALL the buttons to blue": the same one-attribute edit, applied
+    // to every element of that component. Attribute edits never reorder
+    // elements, so ids hold between edits.
+    const every = noul(r1.answers.all_of_kind);
+    if (every && every.noul >= 0.8 && result.prop && result.value !== undefined) {
+      let code = result.code;
+      let count = 1;
+      for (const other of tree.nodes.filter(n => n.tag === target!.tag && n.id !== target!.id)) {
+        code = setAttr(parseCanvas(code), other.id, result.prop, result.value);
+        count++;
+      }
+      steps.push({ step: 'Every', value: `all ${count} ${target!.tag} elements`, by: 'jev', confidence: every.noul });
+      return finish(code, `Set ${result.prop} to ${JSON.stringify(result.value)} on all ${count} ${target!.tag} elements`, null);
+    }
     // An attribute or text edit never reorders elements, so the id holds.
     return finish(result.code, result.summary, target!.id);
   }

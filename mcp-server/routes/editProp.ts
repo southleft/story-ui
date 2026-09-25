@@ -262,7 +262,7 @@ async function discoveredCatalog(config: ReturnType<typeof loadUserConfig>): Pro
 export async function resolveComponentKnowledge(
   config: ReturnType<typeof loadUserConfig>,
   componentName: string,
-): Promise<{ facts: ComponentFacts | undefined; props: PropFact[]; sources: string[] }> {
+): Promise<{ facts: ComponentFacts | undefined; props: PropFact[]; sources: string[]; baseProps: PropFact[] }> {
   const sources: string[] = [];
 
   let catalog: CatalogEntry[] = [];
@@ -283,6 +283,7 @@ export async function resolveComponentKnowledge(
     ? await extractPropsForPackages([config.importPath, ...homes], process.cwd())
     : await extractProps(config.importPath, process.cwd());
   const facts = extracted?.components?.[componentName];
+  const baseProps = extracted?.baseProps ?? [];
   let props: PropFact[] = facts?.props ? [...facts.props] : [];
   if (props.length > 0) sources.push(`declarations(${props.length})`);
 
@@ -308,7 +309,7 @@ export async function resolveComponentKnowledge(
     }
   }
 
-  return { facts, props, sources };
+  return { facts, props, sources, baseProps };
 }
 
 export async function editablePropsHandler(req: Request, res: Response): Promise<void> {

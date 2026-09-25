@@ -47,7 +47,7 @@ const propsCache = new Map<string, { at: number; props: EditablePropInfo[] }>();
 export async function voicePropsFor(config: ReturnType<typeof loadUserConfig>, component: string): Promise<EditablePropInfo[]> {
   const hit = propsCache.get(component);
   if (hit && Date.now() - hit.at < PROPS_TTL) return hit.props;
-  const { props, facts } = await resolveComponentKnowledge(config, component);
+  const { props, facts, baseProps } = await resolveComponentKnowledge(config, component);
   const editable: EditablePropInfo[] = props.map(classifyProp).filter(panelWorthy);
   // A ReactNode prop (Mantine's `label`, `description`) holds words a person
   // dictates; a panel cannot offer a control for it, but a voice edit can.
@@ -56,9 +56,21 @@ export async function voicePropsFor(config: ReturnType<typeof loadUserConfig>, c
     if (p.deprecated || editable.some(e => e.name === p.name)) continue;
     if (/^(React\.)?ReactNode$/.test((p.type || '').trim())) editable.push({ name: p.name, kind: 'string', doc: p.doc });
   }
+  // The library's shared style props (Mantine's bg, c, fz, …) where this
+  // component accepts them: "change the background colour" is one of these.
+  const accepted = new Set(facts?.acceptedNames ?? []);
+  for (const b of baseProps) {
+    if (b.deprecated || editable.some(e => e.name === b.name) || (accepted.size && !accepted.has(b.name))) continue;
+    if (/^(classNames|styles|vars|unstyled|attributes|mod|component|renderRoot|__)/.test(b.name)) continue;
+    const c = classifyProp(b);
+    // CSS-wide keywords (inherit, initial, …) are valid for every property and
+    // are nothing a person dictates.
+    if (c.options) c.options = c.options.filter(o => !/^(-[a-z]+-)?(inherit|initial|revert|revert-layer|unset)$/.test(o));
+    if ((c.kind === 'enum' && (c.options?.length ?? 0) > 1) || c.kind === 'boolean') editable.push({ ...c, doc: b.doc });
+  }
   for (const name of facts?.acceptedNames ?? []) {
     const kind = DOM_ATTRIBUTES[name];
-    if (kind && !editable.some(e => e.name === name)) editable.push({ name, kind });
+    if (kind && !editable.some(e => e.name === name)) editable.push({ name, kind, dom: true });
   }
   propsCache.set(component, { at: Date.now(), props: editable });
   return editable;
