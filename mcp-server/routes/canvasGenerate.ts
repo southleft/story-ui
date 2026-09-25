@@ -113,7 +113,13 @@ STRICT RULES:
 • Use REAL design system component names — avoid raw HTML elements (<div>, <p>, <span>)
 • Use proper design system variants, sizes, and color schemes
 • Use realistic content (not placeholder text / lorem ipsum)
-• For multi-step or interactive UIs, use useState hooks inside Canvas
+• Write STATIC, LITERAL markup: every text as a literal child, every prop as a
+  literal value. The canvas is edited by voice afterwards, one attribute at a
+  time, and only literal markup can be edited that way. No useState, handlers,
+  conditional rendering ({x ? … : …}) or .map() unless the request asks for
+  interaction — list repeated items out one by one instead.
+• Keep it compact: the smallest markup that shows what was asked, about 60
+  lines at most. Every extra line is time the person waits.
 • Do NOT use any icon libraries (Tabler, Heroicons, FontAwesome, Lucide, etc.) — icons are NOT in scope
 • For images, use STABLE picsum.photos seed URLs: https://picsum.photos/seed/{word}/{width}/{height}
   Example: https://picsum.photos/seed/mountain/400/250
