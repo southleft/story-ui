@@ -1,3 +1,10 @@
+# [5.21.0](https://github.com/southleft/story-ui/compare/v5.20.0...v5.21.0) (2026-09-25)
+
+
+### Features
+
+* **generator:** build rows and grids of a component by voice, with no model ([1f1764e](https://github.com/southleft/story-ui/commit/1f1764ea8659d06c0f83383a3263c4350ea05a1b))
+
 # [5.20.0](https://github.com/southleft/story-ui/compare/v5.19.1...v5.20.0) (2026-09-25)
 
 
