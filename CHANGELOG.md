@@ -1,3 +1,15 @@
+# [5.19.0](https://github.com/southleft/story-ui/compare/v5.18.4...v5.19.0) (2026-09-25)
+
+
+### Bug Fixes
+
+* **ui:** centre the voice canvas building overlay ([f15ec9e](https://github.com/southleft/story-ui/commit/f15ec9e20ba45172b3e14e9dff47c16af2c77038))
+
+
+### Features
+
+* **generator:** move, place beside, and read quoted values in voice edits ([87ed4ef](https://github.com/southleft/story-ui/commit/87ed4ef6a03f80bd1c665585ea37786bc02f8e44))
+
 ## [5.18.4](https://github.com/southleft/story-ui/compare/v5.18.3...v5.18.4) (2026-09-25)
 
 
