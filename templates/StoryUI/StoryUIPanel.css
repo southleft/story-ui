@@ -3530,3 +3530,8 @@ button.sui-verify-pill:focus-visible {
 .sui-canvas-preview--decisions .sui-canvas-decisions {
   width: min(320px, calc(45% - 24px));
 }
+.sui-canvas-empty-hint--save {
+  margin-top: 4px;
+  max-width: 440px;
+  font-style: normal;
+}

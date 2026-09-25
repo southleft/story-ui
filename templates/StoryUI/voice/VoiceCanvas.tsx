@@ -982,6 +982,10 @@ function VoiceCanvas({
             <p className="sui-canvas-empty-hint">
               Try: "Create a product card with an image, title, price, and buy button"
             </p>
+            <p className="sui-canvas-empty-hint sui-canvas-empty-hint--save">
+              Keep talking to change it: "make the button green", "add a checkbox".
+              When you're happy, say <strong>"save it"</strong> (or press the save button) to keep it as a story.
+            </p>
           </div>
         )}
 
@@ -1129,7 +1133,9 @@ function VoiceCanvas({
                 <span className="sui-canvas-status-final">{pendingTranscript}</span>
               ) : (
                 <span className="sui-canvas-status-listening">
-                  {voiceDecisions ? 'Listening… speak a change, pause to apply' : 'Listening... describe what you want to build'}
+                  {hasContent
+                    ? 'Listening… speak a change, or say "save it" when you\'re done'
+                    : voiceDecisions ? 'Listening… speak a change, pause to apply' : 'Listening... describe what you want to build'}
                 </span>
               )}
             </div>
@@ -1141,7 +1147,7 @@ function VoiceCanvas({
               ref={textInputRef}
               type="text"
               className="sui-canvas-text-input"
-              placeholder="Type what to build..."
+              placeholder={hasContent ? 'Type a change, or "save it" when you\'re done…' : 'Type what to build...'}
               value={textInput}
               onChange={(e) => setTextInput(e.target.value)}
               onKeyDown={handleTextSubmit}
