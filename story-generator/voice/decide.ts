@@ -25,7 +25,7 @@
  */
 
 import { askJev, JEV_USD_PER_INPUT_TOKEN, MAX_CHOICE_OPTIONS, type ChoiceAnswer, type JevAnswer, type JevQuestion, type JevResponse, type NoulAnswer } from './jevClient.js';
-import { containers, describeNode, insertChild, outlineCanvas, parseCanvas, removeNode, setAttr, setText, type CanvasNode, type CanvasTree } from './canvasTree.js';
+import { containers, describeNode, insertBeside, insertChild, moveNode, outlineCanvas, parseCanvas, removeNode, setAttr, setText, type CanvasNode, type CanvasTree, type MoveDirection } from './canvasTree.js';
 import { attrsUsedInStories, fillSlots, printTemplate, slotsOf, summarizeTemplate, takesTextInStories, templatesFor, uniquifyIds, type Template, type TemplateNode, type TemplateSourceComponent } from './templates.js';
 import { asDisplayText, NONE, valueSpans } from './spans.js';
 import { saysMoreThanName } from '../knowledge/descriptionQuality.js';
@@ -106,7 +106,8 @@ const ACTIONS: Record<string, string> = {
   add: 'Add a new element to the design, such as a button, an input, a checkbox, a heading or a card',
   edit: 'Change one element that is already on the canvas: its text, label, placeholder, variant, size, width, colour, checked or disabled state, or another single setting',
   remove: 'Delete an element that is on the canvas',
-  compose: 'Rearrange the layout, restyle several elements at once, change spacing between elements, or build a section with many parts',
+  move: 'Move one element up or down, or to the top or bottom, among the elements beside it',
+  compose: 'Rearrange the whole layout (columns, centring, alignment), restyle several elements at once, change spacing between elements, or build a section with many parts',
   undo: 'Undo the last change',
   redo: 'Redo a change that was just undone',
   clear: 'Start over with an empty canvas',
@@ -313,6 +314,16 @@ function applyEdit(
   transcript: string,
 ): { code: string; summary: string } | { fallback: string } {
   const change = choice(answers[`${prefix}change`]);
+  // The request quotes one of the element's current values — "make EMAIL
+  // ADDRESS say phone number", "where it says PARTNER ONE NAME" — so that is
+  // the property being changed, whatever Jev leaned to (it chose the
+  // placeholder once, while the words quoted were the label).
+  const quoted = quotedField(node, transcript);
+  if (quoted && change && change.choice !== quoted) {
+    steps.push({ step: 'Change', value: `${quoted.replace(/^prop:/, '')} (the request quotes its current value)`, by: 'code' });
+    change.choice = quoted;
+    change.confidence = Math.max(change.confidence, threshold);
+  }
   if (!change || change.confidence < threshold) return { fallback: 'Not sure which part of the element to change' };
   steps.push({ step: 'Change', value: change.choice.replace(/^prop:/, ''), by: 'jev', confidence: change.confidence });
   if (change.choice === 'other') {
@@ -392,6 +403,8 @@ interface AddPlan {
   bare: boolean;
   bareSlots: Array<{ role: string; field: string }>;
   questions: Record<string, JevQuestion>;
+  /** A bare element that shows an image by `src` — empty, it renders nothing. */
+  imageSource?: boolean;
 }
 
 const addPrefix = (name: string) => `add:${name}.`;
@@ -408,10 +421,15 @@ async function addPlan(
   // Nothing documents this component, so its own declared text props are the
   // only slots it has: `label`, `description`, `placeholder`, its children.
   const bareSlots: Array<{ role: string; field: string }> = [];
+  let imageSource = false;
   if (bare) {
     const declared = await ctx.propsFor(entry.name);
     if (declared.some(p => p.name === 'children') || entry.props?.includes('children')) bareSlots.push({ role: `${entry.name}.text`, field: 'text' });
-    for (const p of declared) if (p.kind === 'string' && p.name !== 'children') bareSlots.push({ role: `${entry.name}.${p.name}`, field: p.name });
+    for (const p of declared) {
+      // Addresses are not words anyone dictates.
+      if (p.kind === 'string' && !/^(children|src|srcSet|href|id|className)$/.test(p.name)) bareSlots.push({ role: `${entry.name}.${p.name}`, field: p.name });
+    }
+    if (declared.some(p => p.name === 'src')) imageSource = true;
     bareSlots.splice(8);
     templates[0] = { name: 'bare', root: { tag: entry.name, attrs: [], children: [] } };
   }
@@ -445,7 +463,7 @@ async function addPlan(
         : `Does \`request\` say what the ${sl.field} of ${subject} should be?`,
     };
   }
-  return { templates, bare, bareSlots, questions };
+  return { templates, bare, bareSlots, questions, imageSource };
 }
 
 /**
@@ -570,6 +588,31 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
     type: 'noul',
     instructions: 'Does `request` ask for a whole section, form, page or layout, or for several separate new elements at once (such as "three cards" or "an input and two checkboxes")? A single element with its own title or text counts as one.',
   };
+  q1.instruction = {
+    type: 'noul',
+    instructions: 'Is `request` an instruction to change the design (add, remove, move, edit or restyle something), rather than a comment, a question, or talk to another person?',
+  };
+  q1.move_dir = {
+    type: 'choice',
+    instructions: 'If `request` asks to move an element, which way?',
+    criteria: {
+      up: 'earlier / higher / above the one before it',
+      down: 'later / lower / below the one after it',
+      first: 'to the very top or start',
+      last: 'to the very bottom or end',
+      none: 'It does not ask to move anything',
+    },
+  };
+  q1.place = {
+    type: 'choice',
+    instructions: 'If `request` adds something, where does it go relative to the element it mentions?',
+    criteria: {
+      inside: 'inside it (for example "add an image to the card")',
+      before: 'just above or before it ("above the title")',
+      after: 'just below or after it ("below the image")',
+      unsaid: 'It does not say where',
+    },
+  };
   q1.new_element = {
     type: 'noul',
     instructions: 'Does `request` ask to put a NEW element on `canvas` that is not there yet (not changing, labelling or restyling one that is)?',
@@ -617,6 +660,20 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
     const decided = fresh.noul >= 0.3 ? 'add' : 'edit';
     steps.push({ step: 'Add or edit', value: decided === 'add' ? 'a new element' : 'an existing element', by: 'jev', confidence: decided === 'add' ? fresh.noul : 1 - fresh.noul });
     action.choice = decided;
+    action.confidence = Math.max(action.confidence, threshold);
+  }
+  // Talk that is not an instruction never reaches the model. Measured:
+  // conversation 0.05–0.21, instructions 0.88–0.97. Commands and settings
+  // ("save it", "dark mode") are exempt — they are instructions of their own.
+  const instruction = noul(r1.answers.instruction);
+  if (instruction && instruction.noul < 0.4 && !COMMANDS.has(action.choice as VoiceCommandKind) && action.choice !== 'setting') {
+    return { kind: 'ignored', reason: 'Not a design instruction', steps, stats: tally.stats };
+  }
+  // A move Jev is sure of, whatever the action vote says.
+  const dir = choice(r1.answers.move_dir);
+  if (dir && dir.choice !== NONE && dir.confidence >= 0.8 && action.choice !== 'move') {
+    steps.push({ step: 'Move', value: dir.choice, by: 'jev', confidence: dir.confidence });
+    action.choice = 'move';
     action.confidence = Math.max(action.confidence, threshold);
   }
   if (action.confidence < threshold) {
@@ -687,6 +744,18 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
     return finish(code, `Removed ${describeNode(tree, target!)}`, null);
   }
 
+  // ── Move ──
+  if (action.choice === 'move') {
+    if (!dir || dir.choice === NONE) return { kind: 'fallback', reason: 'Could not tell which way to move it', steps, stats: tally.stats };
+    let code: string;
+    try {
+      code = moveNode(tree, target!.id, dir.choice as MoveDirection);
+    } catch (e) {
+      return { kind: 'fallback', reason: e instanceof Error ? e.message : String(e), steps, stats: tally.stats };
+    }
+    return finish(code, `Moved ${describeNode(tree, target!)} ${dir.choice}`, null);
+  }
+
   // ── Edit ──
   if (action.choice === 'edit') {
     let plan = pointedPlan;
@@ -729,15 +798,48 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
   // Where it goes: the pointed-at container, Jev's choice, or the top.
   let parentNode: CanvasNode | null = null;
   let wrapPart: string | null = null;
+  let besideAnchor: { node: CanvasNode; where: 'before' | 'after' } | null = null;
   if (pointed && !pointed.text) {
     parentNode = pointed;
   } else {
+    // Where the request points: the element it mentions ("to that CARD",
+    // "above the TITLE"), else the one just added — "that card component I
+    // just added" put three images at the bottom of the canvas, out of view,
+    // because an unsure placement fell back to the top level.
+    const place = choice(r1.answers.place);
+    const t = choice(r1.answers.target);
+    let anchor = t && t.choice !== NONE && t.confidence >= threshold ? tree.nodes.find(n => n.id === t.choice) ?? null : null;
+    // Only when the request says where ("to that card", "above that"):
+    // "add a send button" after a checkbox must not nest inside the checkbox.
+    if (!anchor && recentRoot && place && place.choice !== 'unsaid' && place.confidence >= threshold) anchor = recentRoot;
+    // The request names the kind of element it means ("to that CARD", "below
+    // the existing IMAGE"): an element of that component beats Jev's pick of
+    // a look-alike (it chose the newsletter's Paper for "that card"). The
+    // component being added counts only when placing beside ("another image
+    // below the image"). Among several, the one just changed, else the last.
+    const beside = place && (place.choice === 'before' || place.choice === 'after') && place.confidence >= threshold;
+    const namedTags = new Set(namedComponents(ctx.catalog, transcript, 5).map(c => c.name).filter(n => n !== entry.name || beside));
+    if (namedTags.size && !(anchor && namedTags.has(anchor.tag))) {
+      const ofKind = tree.nodes.filter(n => namedTags.has(n.tag));
+      const pick = ofKind.find(n => recentNodes.some(r => r.id === n.id)) ?? ofKind[ofKind.length - 1];
+      if (pick) anchor = pick;
+    }
+    if (anchor && place && (place.choice === 'before' || place.choice === 'after') && place.confidence >= threshold && anchor.parent) {
+      besideAnchor = { node: anchor, where: place.choice };
+    } else if (anchor && (
+      // Said "inside" ("to that card"): even a container holding a word of
+      // placeholder text — a bare <Card>Card</Card> — takes it.
+      (place?.choice === 'inside' && place.confidence >= threshold)
+      || (!anchor.text && (!choice(r1.answers.parent) || choice(r1.answers.parent)!.confidence < threshold))
+    )) {
+      parentNode = anchor;
+    }
     const p = choice(r1.answers.parent);
-    if (p && p.choice !== 'top' && p.confidence >= threshold) parentNode = tree.nodes.find(n => n.id === p.choice) ?? null;
+    if (!parentNode && !besideAnchor && p && p.choice !== 'top' && p.confidence >= threshold) parentNode = tree.nodes.find(n => n.id === p.choice) ?? null;
     // One design on the canvas (a card, a form): an unsure placement goes
     // inside it, not beside it. Only a confident "top" puts it next to it.
     const topLevel = (tree.root?.children ?? []).map(id => tree.nodes.find(n => n.id === id)!).filter(n => n?.tag);
-    if (!parentNode && topLevel.length === 1 && !topLevel[0].text && !(p?.choice === 'top' && p.confidence >= 0.8)) {
+    if (!parentNode && !besideAnchor && topLevel.length === 1 && !topLevel[0].text && !(p?.choice === 'top' && p.confidence >= 0.8)) {
       parentNode = topLevel[0];
     }
   }
@@ -751,8 +853,17 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
       steps.push({ step: 'Placement', value: existing ? `the existing ${part}` : `a new ${part}`, by: 'code' });
     }
   }
-  steps.push({ step: 'Place inside', value: parentNode ? describeNode(tree, parentNode) : 'the design', by: parentNode && !pointed ? 'jev' : 'code' });
+  steps.push(besideAnchor
+    ? { step: 'Place', value: `${besideAnchor.where} ${describeNode(tree, besideAnchor.node)}`, by: 'jev' }
+    : { step: 'Place inside', value: parentNode ? describeNode(tree, parentNode) : 'the design', by: parentNode && !pointed ? 'jev' : 'code' });
 
+  // Nothing documents this component AND nothing is known about its props:
+  // building it blind is a guess. Mantine's Image resolved no props here and
+  // went on the canvas without a src — it rendered nothing, and the request
+  // looked ignored. The model knows the component; let it build this one.
+  if (templatesFor(entry, known).every(t => t.name === 'bare') && !(entry.props?.length) && (await ctx.propsFor(entry.name)).length === 0) {
+    return { kind: 'fallback', reason: `Nothing documents ${entry.name}'s props or usage`, steps, stats: tally.stats };
+  }
   let plan = specs.get(entry.name) ?? null;
   let ans = r1.answers;
   const pfx = plan ? addPrefix(entry.name) : '';
@@ -807,7 +918,12 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
   let root = bare
     ? {
         tag: entry.name,
-        attrs: bareSlots.filter(b => b.field !== 'text' && values[b.role] !== undefined).map((b): [string, string] => [b.field, values[b.role]]),
+        attrs: [
+          // A bare image with no source renders nothing — it looked as if the
+          // request had been ignored. Stable picsum seeds, as the model uses.
+          ...(plan.imageSource ? [['src', `https://picsum.photos/seed/${imageSeed(transcript, tree.code)}/800/400`] as [string, string]] : []),
+          ...bareSlots.filter(b => b.field !== 'text' && values[b.role] !== undefined).map((b): [string, string] => [b.field, values[b.role]]),
+        ],
         children: values[`${entry.name}.text`] !== undefined
           ? [values[`${entry.name}.text`]]
           : bareSlots.some(b => b.field === 'text') ? [entry.name] : [],
@@ -816,14 +932,24 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
   root = uniquifyIds(root, tree.code);
   if (wrapPart) root = { tag: wrapPart, attrs: [], children: [root] };
   const jsx = printTemplate(root);
-  const code = insertChild(tree, parentNode?.id ?? null, jsx);
+  const code = besideAnchor
+    ? insertBeside(tree, besideAnchor.node.id, jsx, besideAnchor.where)
+    : insertChild(tree, parentNode?.id ?? null, jsx);
   // The new element is the last child of the element it went into.
   const inserted = (() => {
     const after = parseCanvas(code);
+    if (besideAnchor) {
+      // The new element sits right before or after the anchor in document order.
+      const start = besideAnchor.where === 'before' ? besideAnchor.node.start : besideAnchor.node.end + 1;
+      return after.nodes.filter(n => n.start >= start).sort((a, b) => a.start - b.start)[0]?.id ?? null;
+    }
     const host = parentNode ? after.nodes.find(n => n.id === parentNode!.id) : after.root;
     return host?.children[host.children.length - 1] ?? null;
   })();
-  return finish(code, `Added ${entry.name}${parentNode ? ` inside ${parentNode.tag}` : ''}`, inserted);
+  const where = besideAnchor
+    ? ` ${besideAnchor.where === 'before' ? 'above' : 'below'} ${describeNode(tree, besideAnchor.node)}`
+    : parentNode ? ` inside ${parentNode.tag}` : '';
+  return finish(code, `Added ${entry.name}${where}`, inserted);
 
   function finish(code: string, summary: string, touched: string | null): VoiceOutcome {
     if (!parsesCleanly(code)) {
@@ -861,3 +987,36 @@ export function stripLeadingFiller(transcript: string): string {
 
 const nameWords = (s: string) => s.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
 const transcriptWords = (t: string) => t.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+
+const NUMBER_WORDS: Record<string, string> = { one: '1', two: '2', three: '3', four: '4', five: '5', six: '6', seven: '7', eight: '8', nine: '9', ten: '10' };
+const normalizeSaid = (t: string) => ` ${transcriptWords(t).map(w => NUMBER_WORDS[w] ?? w).join(' ')} `;
+
+/**
+ * Which field of `node` the request quotes by its current value: `text`, or
+ * `prop:<name>` for a string attribute. Only a unique match of at least two
+ * words counts.
+ */
+function quotedField(node: CanvasNode, transcript: string): string | null {
+  const said = normalizeSaid(transcript);
+  const fields: Array<[string, string]> = [];
+  if (node.text) fields.push(['text', node.text]);
+  for (const [k, v] of Object.entries(node.attrs)) {
+    if (typeof v === 'string' && !/^(className|class|id|htmlFor|type|name|src|href|style|variant|size|color)$/.test(k)) fields.push([`prop:${k}`, v]);
+  }
+  const hits = fields.filter(([, value]) => {
+    const v = normalizeSaid(value);
+    const words = v.trim().split(' ').filter(Boolean);
+    // Two words at least: "the SUBMIT button" names the element by its text,
+    // it does not quote the value being changed.
+    return words.length >= 2 && said.includes(v);
+  });
+  return hits.length === 1 ? hits[0][0] : null;
+}
+
+/** A stable picsum seed from the request's own words, distinct per image on the canvas. */
+function imageSeed(transcript: string, code: string): string {
+  const skip = new Set(['add', 'an', 'a', 'the', 'image', 'picture', 'photo', 'to', 'of', 'and', 'then', 'now', 'that', 'this', 'another', 'above', 'below', 'component', 'card', 'with', 'in', 'on']);
+  const word = transcriptWords(transcript).find(w => w.length > 3 && !skip.has(w)) ?? 'canvas';
+  const n = (code.match(/picsum\.photos\/seed\//g) ?? []).length + 1;
+  return `${word}${n}`;
+}

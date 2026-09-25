@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import {
-  EMPTY_CANVAS_CODE, parseCanvas, setAttr, setText, insertChild, removeNode, describeNode,
+  EMPTY_CANVAS_CODE, parseCanvas, setAttr, setText, insertChild, removeNode, describeNode, moveNode,
 } from '../story-generator/voice/canvasTree.js';
 import {
   templatesFromStorySource, templatesFromExamples, slotsOf, fillSlots, printTemplate, uniquifyIds, templatesFor,
@@ -103,6 +103,18 @@ describe('canvas edits', () => {
     const tree = parseCanvas(out);
     expect(tree.nodes.map(n => n.tag)).toEqual(['', 'Card', 'CardTitle']);
     expect(out).toContain('    <>\n      <Card>\n        <CardTitle>Hi</CardTitle>\n      </Card>\n    </>');
+  });
+
+  it('moves an element among its siblings', () => {
+    const three = insertChild(parseCanvas(CARD_CODE), 'e3', '<Checkbox id="terms" />');
+    // CardContent (e3): Input e4, Button e5, Checkbox e6
+    const up = moveNode(parseCanvas(three), 'e5', 'up');
+    expect(parseCanvas(up).nodes.filter(n => n.parent === 'e3').map(n => n.tag)).toEqual(['Button', 'Input', 'Checkbox']);
+    const first = moveNode(parseCanvas(three), 'e6', 'first');
+    expect(parseCanvas(first).nodes.filter(n => n.parent === 'e3').map(n => n.tag)).toEqual(['Checkbox', 'Input', 'Button']);
+    const last = moveNode(parseCanvas(three), 'e4', 'last');
+    expect(parseCanvas(last).nodes.filter(n => n.parent === 'e3').map(n => n.tag)).toEqual(['Button', 'Checkbox', 'Input']);
+    expect(() => moveNode(parseCanvas(three), 'e4', 'up')).toThrow(/already first/);
   });
 
   it('removes an element and its line', () => {
@@ -232,7 +244,7 @@ describe('spanCandidates', () => {
  */
 function scripted(given: Record<string, string | number>) {
   // Requests are complete sentences unless a test says otherwise.
-  const script: Record<string, string | number> = { complete: 0.95, ...given };
+  const script: Record<string, string | number> = { complete: 0.95, instruction: 0.95, ...given };
   const calls: Array<Record<string, JevQuestion>> = [];
   const ask = async (_state: unknown, questions: Record<string, JevQuestion>): Promise<JevResponse> => {
     calls.push(questions);
@@ -500,6 +512,65 @@ export const Default = { render: () => (
     const out = await decideVoiceEdit({ transcript: 'add the placeholder your email above the field', code: CARD_CODE }, ctx(ask));
     expect(out.kind).toBe('applied');
     if (out.kind === 'applied') expect(out.code).toContain('placeholder="your email"');
+  });
+
+  it('moves the element a request names, with no model', async () => {
+    const { ask } = scripted({ action: 'compose', move_dir: 'up', target: 'e5' });
+    const out = await decideVoiceEdit({ transcript: 'move the submit button up', code: CARD_CODE }, ctx(async (st: unknown, q: any) => {
+      const r = await ask(st, q);
+      if (r.answers.move_dir) (r.answers.move_dir as any).confidence = 0.99;
+      return r;
+    }));
+    expect(out.kind).toBe('applied');
+    if (out.kind === 'applied') expect(out.code.indexOf('<Button')).toBeLessThan(out.code.indexOf('<Input'));
+  });
+
+  it('ignores conversation instead of sending it to the model', async () => {
+    const { ask } = scripted({ action: 'edit', instruction: 0.1, target: 'e5' });
+    const out = await decideVoiceEdit({ transcript: 'check out the logs and let me know what you think', code: CARD_CODE }, ctx(ask));
+    expect(out.kind).toBe('ignored');
+  });
+
+  it('still runs a command that is not a design instruction', async () => {
+    const { ask } = scripted({ action: 'save', instruction: 0.1 });
+    expect((await decideVoiceEdit({ transcript: 'save it', code: CARD_CODE }, ctx(ask))).kind).toBe('command');
+  });
+
+  it('changes the field whose current value the request quotes', async () => {
+    const code = CARD_CODE.replace('<Input type="email" placeholder="example@" />', '<Input label="Partner 1 Name" placeholder="Jordan Reyes" />');
+    const { ask } = scripted({ action: 'edit', target: 'e4', change: 'prop:placeholder', 'v:label': 'my first name', 'v:placeholder': 'my first name' });
+    const props = async () => [{ name: 'label', kind: 'string' as const }, { name: 'placeholder', kind: 'string' as const }];
+    const out = await decideVoiceEdit({ transcript: "where it says partner one name make it say my first name", code }, { ...ctx(ask), propsFor: props });
+    expect(out.kind).toBe('applied');
+    if (out.kind === 'applied') {
+      expect(out.code).toContain('label="My first name"');
+      expect(out.code).toContain('placeholder="Jordan Reyes"');
+    }
+  });
+
+  it('adds inside the card the request points at, and above an element when asked', async () => {
+    const two = insertChild(parseCanvas(EMPTY_CANVAS_CODE), null, '<Card>\n  <CardHeader>\n    <CardTitle>One</CardTitle>\n  </CardHeader>\n</Card>\n<Card>\n  <CardHeader>\n    <CardTitle>Two</CardTitle>\n  </CardHeader>\n</Card>');
+    // e1 Card(One) e2 header e3 title; e4 Card(Two) e5 header e6 title
+    const inside = await decideVoiceEdit({ transcript: 'add an image to that card component', code: two, recent: 'e4' },
+      ctx(scripted({ action: 'add', component: 'Input', place: 'inside' }).ask));
+    expect(inside.kind).toBe('applied');
+    if (inside.kind === 'applied') expect(inside.code.indexOf('<Input')).toBeGreaterThan(inside.code.indexOf('Two'));
+    const above = await decideVoiceEdit({ transcript: 'add an input above the title', code: two },
+      ctx(scripted({ action: 'add', component: 'Input', target: 'e3', place: 'before' }).ask));
+    expect(above.kind).toBe('applied');
+    if (above.kind === 'applied') {
+      expect(above.code.indexOf('<Input')).toBeLessThan(above.code.indexOf('<CardTitle>One'));
+      expect(above.code.indexOf('<Input')).toBeGreaterThan(above.code.indexOf('<CardHeader>'));
+    }
+  });
+
+  it('gives a bare image a source, so it shows something', async () => {
+    const cat = [{ name: 'Image' }];
+    const { ask } = scripted({ action: 'add', component: 'Image' });
+    const out = await decideVoiceEdit({ transcript: 'add an image of pasta', code: EMPTY_CANVAS_CODE },
+      { catalog: cat, propsFor: async () => [{ name: 'src', kind: 'string' as const }, { name: 'alt', kind: 'string' as const }], ask });
+    expect(out.kind).toBe('applied');
+    if (out.kind === 'applied') expect(out.code).toMatch(/<Image src="https:\/\/picsum\.photos\/seed\/pasta1\/800\/400"/);
   });
 
   it('hands a change no declared prop covers to the generative model', async () => {
