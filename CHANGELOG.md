@@ -1,3 +1,10 @@
+## [5.19.1](https://github.com/southleft/story-ui/compare/v5.19.0...v5.19.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* **generator:** pause Jev and say so when TypeSafe refuses the account ([948b07f](https://github.com/southleft/story-ui/commit/948b07f2b4a5a5ce251fd76fd1c4f7c33e8a2e73))
+
 # [5.19.0](https://github.com/southleft/story-ui/compare/v5.18.4...v5.19.0) (2026-09-25)
 
 
