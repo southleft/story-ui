@@ -1,3 +1,11 @@
+## [5.18.3](https://github.com/southleft/story-ui/compare/v5.18.2...v5.18.3) (2026-09-25)
+
+
+### Bug Fixes
+
+* **generator:** ask the canvas model for short, literal markup ([b267aca](https://github.com/southleft/story-ui/commit/b267aca91229fd2b68ae7df6dcb0a9c1a7602215))
+* **generator:** keep more spoken edits on Jev ([25f6be1](https://github.com/southleft/story-ui/commit/25f6be181d28b6477acf2d9c28cf9bde549fc93c))
+
 ## [5.18.2](https://github.com/southleft/story-ui/compare/v5.18.1...v5.18.2) (2026-09-25)
 
 
