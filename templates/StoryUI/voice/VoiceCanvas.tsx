@@ -75,7 +75,7 @@ const PAUSE_TO_GENERATE_MS = 3000;
  * After Jev says a request stops mid-sentence, how long to wait for the rest
  * before deciding on what was said.
  */
-const PAUSE_TO_FINISH_MS = 3000;
+const PAUSE_TO_FINISH_MS = 2000;
 
 export interface VoiceCanvasProps {
   apiBase: string;

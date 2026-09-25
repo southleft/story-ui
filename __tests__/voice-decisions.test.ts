@@ -10,7 +10,7 @@ import {
 } from '../story-generator/voice/templates.js';
 import { spanCandidates, words, asDisplayText, valueSpans } from '../story-generator/voice/spans.js';
 import { globalsFromPreviewSource } from '../story-generator/voice/storybookGlobals.js';
-import { decideVoiceEdit, type CatalogComponent, type EditablePropInfo } from '../story-generator/voice/decide.js';
+import { decideVoiceEdit, stripLeadingFiller, type CatalogComponent, type EditablePropInfo } from '../story-generator/voice/decide.js';
 import type { JevQuestion, JevResponse } from '../story-generator/voice/jevClient.js';
 
 // ────────────────────────────────────────────────────────────────
@@ -474,6 +474,32 @@ export const Default = { render: () => (
     const { ask } = scripted({ action: 'add', component: 'Panel', 'add:Panel.multi': 0.9, 'add:Panel.slot:Panel.text': 'Invite', 'add:Panel.said:Panel.text': 0.9 });
     const out = await decideVoiceEdit({ transcript: 'add a panel titled Invite with a description saying hello', code: EMPTY_CANVAS_CODE }, { catalog: cat, propsFor: async () => [], ask });
     expect(out).toMatchObject({ kind: 'fallback' });
+  });
+
+  it('strips the joining words continuous speech starts with', () => {
+    expect(stripLeadingFiller('and then add an image above the title')).toBe('add an image above the title');
+    expect(stripLeadingFiller('okay so, add a checkbox')).toBe('add a checkbox');
+    expect(stripLeadingFiller('and')).toBe('and');
+    expect(stripLeadingFiller('Android button')).toBe('Android button');
+  });
+
+  it('settles an unsure add-or-edit with the new-element question', async () => {
+    const edit = scripted({ action: 'edit', new_element: 0.05, target: 'e5', change: 'text', text: 'submit' });
+    const out = await decideVoiceEdit({ transcript: 'and make the button say submit', code: CARD_CODE }, ctx(async (st: unknown, q: any) => {
+      const r = await edit.ask(st, q);
+      const a = r.answers.action as any;
+      if (a) { a.confidence = 0.48; a.probabilities = { edit: 0.53, add: 0.47 }; }
+      return r;
+    }));
+    expect(out.kind).toBe('applied');
+    if (out.kind === 'applied') expect(out.code).toContain('>Submit</Button>');
+  });
+
+  it('sets a text prop the request names even when Jev calls the change "other"', async () => {
+    const { ask } = scripted({ action: 'edit', target: 'e4', change: 'other', 'v:placeholder': 'your email' });
+    const out = await decideVoiceEdit({ transcript: 'add the placeholder your email above the field', code: CARD_CODE }, ctx(ask));
+    expect(out.kind).toBe('applied');
+    if (out.kind === 'applied') expect(out.code).toContain('placeholder="your email"');
   });
 
   it('hands a change no declared prop covers to the generative model', async () => {
