@@ -1,3 +1,12 @@
+## [5.18.4](https://github.com/southleft/story-ui/compare/v5.18.3...v5.18.4) (2026-09-25)
+
+
+### Bug Fixes
+
+* **mcp:** a request from the server's own origin is always allowed by CORS ([3187bb3](https://github.com/southleft/story-ui/commit/3187bb3b0bf3d350e221d9e6734e80e202bfb90a))
+* **ui:** tell people how to save what they dictated on the voice canvas ([c2e9252](https://github.com/southleft/story-ui/commit/c2e9252e73b3a32e9bb46b63557b2e74b6002dba))
+* **ui:** the workspace talks to its own origin on any hosted domain ([21016c1](https://github.com/southleft/story-ui/commit/21016c1ae5a3f476b0dee621c5821140aedbdf04))
+
 ## [5.18.3](https://github.com/southleft/story-ui/compare/v5.18.2...v5.18.3) (2026-09-25)
 
 
