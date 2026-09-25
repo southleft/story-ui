@@ -1029,15 +1029,14 @@ app.listen(PORT, accessPolicy.host, () => {
     console.error('🔒 Loopback only. Set STORY_UI_TOKEN to expose it to other machines.');
   }
   console.error(`Stories will be generated to: ${config.generatedStoriesPath}`);
-  // The voice-canvas scratch story is NOT created here. Writing it at start
-  // put "Generated/Voice Canvas" into every user's sidebar before they had
-  // asked for anything; the canvas route (POST /mcp/canvas-generate) writes
-  // it on first use, which is the first time the iframe can need it. One
-  // that already exists is brought up to date, so an upgrade's template
-  // change (tags, catalog scope) lands on restart.
+  // The voice-canvas scratch story is created (or brought up to date) here,
+  // before anyone opens the canvas: a new story file makes Storybook reload
+  // the preview, and creating it on the first request reloaded the page
+  // under the person making it. It is tagged !dev, so it stays out of the
+  // sidebar. See refreshVoiceCanvasStory.
   setTimeout(() => {
     refreshVoiceCanvasStory(config)
-      .then(refreshed => { if (refreshed) console.error('[canvas] Voice canvas story checked against the current catalog'); })
+      .then(ready => { if (ready) console.error('[canvas] Voice canvas story ready (created or checked against the current catalog)'); })
       .catch(err => console.error('[canvas] Voice canvas refresh skipped:', err instanceof Error ? err.message : err));
   }, 1500);
   // Initialize manifest manager (loads file, migrates from StoryTracker, reconciles)

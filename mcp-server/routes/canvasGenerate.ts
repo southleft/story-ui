@@ -356,15 +356,28 @@ export function voiceCanvasStorySource(config: StoryUIConfig, components: Discov
 }
 
 /**
- * Refresh an EXISTING voice-canvas story at server start. Never creates one
- * (that would put a story into every sidebar uninvited); only brings a file
- * a previous version wrote up to the current template and catalog, so an
- * upgrade takes effect on restart rather than on the next canvas command.
+ * Make sure the voice-canvas story is current at server start — creating it
+ * when the project can run the canvas.
+ *
+ * It used to be written on the first canvas request. A NEW story file makes
+ * Storybook re-index and Vite reload the preview, so the first request of
+ * every fresh deploy reloaded the page under the person using it: the
+ * panel, its microphone and the answer all vanished, and every request after
+ * that went nowhere. The story is tagged `!dev`, so creating it up front no
+ * longer puts anything in the sidebar. Created only for a React project that
+ * can resolve react-live; anything else is left alone.
  */
 export async function refreshVoiceCanvasStory(config: StoryUIConfig): Promise<boolean> {
   const storiesDir = config.generatedStoriesPath || './src/stories/generated/';
   const filePath = path.resolve(process.cwd(), storiesDir, VOICE_CANVAS_STORY_FILE);
-  if (!fs.existsSync(filePath)) return false;
+  if (!fs.existsSync(filePath)) {
+    if (config.componentFramework && config.componentFramework !== 'react') return false;
+    try {
+      await ensureReactLive();
+    } catch {
+      return false;
+    }
+  }
   const components = await getCanvasComponents(config);
   ensureVoiceCanvasStory(storiesDir, voiceCanvasStorySource(config, components));
   return true;
