@@ -1,3 +1,10 @@
+## [5.21.2](https://github.com/southleft/story-ui/compare/v5.21.1...v5.21.2) (2026-09-25)
+
+
+### Bug Fixes
+
+* **generator:** an undocumented component given no content goes to the model ([6f1b5f8](https://github.com/southleft/story-ui/commit/6f1b5f8fbf2339e571edb6ccd8519d8659187e11))
+
 ## [5.21.1](https://github.com/southleft/story-ui/compare/v5.21.0...v5.21.1) (2026-09-25)
 
 
