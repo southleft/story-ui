@@ -127,7 +127,23 @@ const corsOptions = {
   },
   credentials: true,
 };
-app.use(cors(corsOptions));
+/**
+ * A request whose Origin is this server's own host is same-origin: the page
+ * was served from here. The list above only knew localhost, Railway and
+ * Pages domains, so on a custom domain every Storybook asset the browser
+ * fetched with an Origin header (module scripts) was refused with a 500 and
+ * the page rendered blank. Host comes from X-Forwarded-Host behind a proxy.
+ */
+app.use(cors((req, callback) => {
+  const origin = req.headers.origin;
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+  let sameOrigin = false;
+  if (origin && host) {
+    try { sameOrigin = new URL(origin).host === host; } catch { /* not a URL */ }
+  }
+  if (sameOrigin) return callback(null, { ...corsOptions, origin: true });
+  callback(null, corsOptions);
+}));
 
 // Who may talk to this server at all. Resolved before any route is mounted and
 // refuses to start a public deployment with no token — see auth.ts.
