@@ -28,7 +28,7 @@ function scaffoldProject(storiesRel: string): void {
     // '@storybook/react' declared so the react-host dependency check does not
     // try a real npm install inside the test; its logic is unit-tested in
     // init-workspace.test.ts (missingReactStorybookDep).
-    devDependencies: { 'react-live': '^4.1.8', storybook: '^9.0.0', '@storybook/react': '^9.0.0' }
+    devDependencies: { 'react-live': '^4.1.8', storybook: '^9.0.0', '@storybook/react': '^9.0.0', '@storybook/addon-docs': '^9.0.0' }
   }, null, 2));
 
   fs.writeFileSync(path.join(root, 'story-ui.config.js'), `module.exports = {

@@ -781,6 +781,51 @@ export function missingReactStorybookDep(
 }
 
 /**
+ * `@storybook/addon-docs`, when the host cannot compile MDX without it.
+ *
+ * The panel's entry is `StoryUIPanel.mdx`; addon-docs is what compiles MDX.
+ * A project set up by Story UI 3.x had a `.stories.tsx` entry instead, and
+ * `update` replaced it with the MDX file on a Storybook that had never listed
+ * addon-docs — the panel 404'd with "invalid JS syntax" at the first `</div>`.
+ * Pinned to the host's exact Storybook version: addon-docs must match it.
+ */
+export function missingAddonDocs(cwd: string, allDeps: Record<string, unknown>): { name: string; range: string } | null {
+  if (allDeps['@storybook/addon-docs']) return null;
+  const hostRequire = createRequire(path.join(cwd, 'package.json'));
+  try {
+    hostRequire.resolve('@storybook/addon-docs/package.json');
+    return null;
+  } catch { /* not installed */ }
+  let version: string | null = null;
+  try {
+    version = JSON.parse(fs.readFileSync(hostRequire.resolve('storybook/package.json'), 'utf-8')).version;
+  } catch { /* fall back to the major */ }
+  return { name: '@storybook/addon-docs', range: version ?? `^${hostStorybookMajor(cwd) ?? 9}.0.0` };
+}
+
+/**
+ * List `@storybook/addon-docs` in `.storybook/main`'s addons, when it is not
+ * there. Returns whether the file changed. Leaves a config it cannot read
+ * alone rather than guess at its shape.
+ */
+export function ensureAddonDocsRegistered(cwd: string = process.cwd()): boolean {
+  const main = ['main.ts', 'main.mts', 'main.js', 'main.mjs', 'main.cjs']
+    .map(f => path.join(cwd, '.storybook', f))
+    .find(f => fs.existsSync(f));
+  if (!main) return false;
+  const src = fs.readFileSync(main, 'utf-8');
+  // Storybook 8's addon-essentials bundles addon-docs; listing it again duplicates it.
+  if (src.includes('@storybook/addon-docs') || src.includes('@storybook/addon-essentials')) return false;
+  const m = src.match(/(["']?addons["']?\s*:\s*\[)(\s*)/);
+  if (!m || m.index === undefined) return false;
+  const at = m.index + m[1].length;
+  const empty = /^\s*\]/.test(src.slice(at));
+  const next = `${src.slice(0, at)}${empty ? "'@storybook/addon-docs'" : "'@storybook/addon-docs',"}${src.slice(at).replace(/^\s*/, empty ? '' : m[2])}`;
+  fs.writeFileSync(main, next);
+  return true;
+}
+
+/**
  * CommonJS-only packages reachable ONLY through '@tpitre/story-ui' once it is
  * excluded from Vite's dependency optimization.
  *

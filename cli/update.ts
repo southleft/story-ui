@@ -8,7 +8,7 @@ import { createRequire } from 'module';
 import { ensureWatcherLauncher, WATCHER_LAUNCHER_FILE } from '../story-generator/verify/storybookWatcher.js';
 import { mergeEnv } from './envFile.js';
 import { ensurePreviewRootCss } from './setup.js';
-import { ensureManagerAddonWiring, ensureStoriesGlobCoversMdx, missingReactStorybookDep, ensureManagerHeadPort, readConfiguredPort, ensureScriptPort, viteFinalConfigSnippet, insertConfigProperty, missingViteCjsIncludes, ensureViteWatchPolling } from './setup.js';
+import { ensureManagerAddonWiring, ensureStoriesGlobCoversMdx, missingReactStorybookDep, missingAddonDocs, ensureAddonDocsRegistered, ensureManagerHeadPort, readConfiguredPort, ensureScriptPort, viteFinalConfigSnippet, insertConfigProperty, missingViteCjsIncludes, ensureViteWatchPolling } from './setup.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -477,6 +477,10 @@ function ensureConsumerDependencies(options: UpdateOptions, componentFramework?:
     missing.push(`${storybookReactDep.name}@${storybookReactDep.range}`);
   }
 
+  // The panel entry is MDX; without addon-docs Storybook cannot compile it.
+  const addonDocs = missingAddonDocs(cwd, allDeps);
+  if (addonDocs) missing.push(`${addonDocs.name}@${addonDocs.range}`);
+
   if (missing.length === 0) {
     return result;
   }
@@ -731,6 +735,9 @@ export async function updateCommand(options: UpdateOptions = {}): Promise<Update
 
   if (filesToUpdate.length === 0) {
     wireStorybookEntries();
+  if (!options.dryRun && ensureAddonDocsRegistered(process.cwd())) {
+    console.log(chalk.green('   ✅ Added @storybook/addon-docs to .storybook/main addons — the panel entry is MDX'));
+  }
     // The version stamp records which release the project was last brought
     // up to, and a project whose files were already current never got it —
     // a 5.0.0 project kept reading `_storyUIVersion: '4.17.0'`.
