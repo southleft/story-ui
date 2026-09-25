@@ -53,7 +53,7 @@ type VoiceOutcome =
   | { kind: 'applied'; canvasCode: string; summary: string; touched?: string | null; steps: DecisionStep[]; stats: DecisionRecord['stats'] }
   | { kind: 'command'; command: 'undo' | 'redo' | 'clear' | 'save' | 'stop'; steps: DecisionStep[]; stats: DecisionRecord['stats'] }
   | { kind: 'setting'; globals: Record<string, string>; summary: string; steps: DecisionStep[]; stats: DecisionRecord['stats'] }
-  | { kind: 'fallback' | 'ignored' | 'incomplete'; reason: string; steps: DecisionStep[]; stats: DecisionRecord['stats'] };
+  | { kind: 'fallback' | 'ignored' | 'incomplete'; reason: string; jevUnavailable?: string; steps: DecisionStep[]; stats: DecisionRecord['stats'] };
 
 const DECISION_LABEL: Record<DecisionRecord['kind'], string> = {
   deciding: 'Deciding',
@@ -129,6 +129,8 @@ function VoiceCanvas({
   voiceDecisionsRef.current = voiceDecisions;
   const [decisions, setDecisions] = useState<DecisionRecord[]>([]);
   const [showDecisions, setShowDecisions] = useState(true);
+  // Why fast decisions are off right now (no TypeSafe credits, bad key), or ''.
+  const [jevNotice, setJevNotice] = useState('');
   const decisionIdRef = useRef(0);
   const healPendingRef = useRef<{ transcript: string; decisionId?: number; lastGood: string } | null>(null);
   // The element id the last applied request added or changed, valid only for
@@ -500,6 +502,7 @@ function VoiceCanvas({
       return generateWithModel(request, id);
     }
     const base = { steps: outcome.steps ?? [], stats: outcome.stats };
+    setJevNotice(outcome.kind === 'fallback' && outcome.jevUnavailable ? outcome.jevUnavailable : '');
     if (outcome.kind === 'applied') {
       const before = currentCodeRef.current;
       commitCode(outcome.canvasCode, request);
@@ -559,7 +562,11 @@ function VoiceCanvas({
     let cancelled = false;
     fetch(`${apiBase}/mcp/canvas-config`)
       .then(r => (r.ok ? r.json() : null))
-      .then(cfg => { if (!cancelled) setVoiceDecisions(!!cfg?.voiceDecisions); })
+      .then(cfg => {
+        if (cancelled) return;
+        setVoiceDecisions(!!cfg?.voiceDecisions);
+        if (cfg?.voiceDecisionsPaused) setJevNotice(cfg.voiceDecisionsPaused);
+      })
       .catch(() => { /* no config, no fast path */ });
     return () => { cancelled = true; };
   }, [apiBase]);
@@ -1024,6 +1031,13 @@ function VoiceCanvas({
               className="sui-canvas-iframe"
               onLoad={handleIframeLoad}
             />
+          </div>
+        )}
+
+        {/* Fast decisions are off: say so where it cannot be missed */}
+        {voiceDecisions && jevNotice && (
+          <div className="sui-canvas-jev-notice" role="status">
+            <strong>Fast decisions are paused.</strong> {jevNotice}. Requests are going to the model, which is slower.
           </div>
         )}
 

@@ -66,6 +66,29 @@ export async function voicePropsFor(config: ReturnType<typeof loadUserConfig>, c
 
 const emptyStats = { ms: 0, calls: 0, questions: 0, inputTokens: 0, usd: 0 };
 
+/**
+ * Jev refused the account (no credits, bad key): stop asking for a while.
+ *
+ * Every request paid a failed round trip before falling back, and the only
+ * trace was one line in the Decisions panel — a live demo ran entirely on the
+ * model with no visible reason. While paused, requests go straight to the
+ * model and say why; after the pause Jev is tried again, so topping up
+ * credits recovers without a restart.
+ */
+const PAUSE_MS = 5 * 60_000;
+let jevPausedUntil = 0;
+let jevPauseReason = '';
+
+export function jevPause(): { paused: boolean; reason: string } {
+  return Date.now() < jevPausedUntil ? { paused: true, reason: jevPauseReason } : { paused: false, reason: '' };
+}
+
+function describeRefusal(error: JevError): string {
+  if (error.status === 402) return 'TypeSafe credits ran out — add credits at console.typesafe.ai/settings/billing';
+  if (error.status === 401 || error.status === 403) return 'TypeSafe rejected the API key';
+  return error.message;
+}
+
 export async function canvasVoiceHandler(req: Request, res: Response) {
   const { transcript, canvasCode, pointer, recent, final } = req.body ?? {};
   if (!transcript || typeof transcript !== 'string') {
@@ -73,6 +96,12 @@ export async function canvasVoiceHandler(req: Request, res: Response) {
   }
   if (!jevConfigured()) {
     const out: VoiceOutcome = { kind: 'fallback', reason: 'TYPESAFE_API_KEY is not set', steps: [], stats: emptyStats };
+    return res.json(out);
+  }
+
+  const pause = jevPause();
+  if (pause.paused) {
+    const out = { kind: 'fallback', reason: pause.reason, jevUnavailable: pause.reason, steps: [], stats: emptyStats };
     return res.json(out);
   }
 
@@ -113,6 +142,12 @@ export async function canvasVoiceHandler(req: Request, res: Response) {
     return res.json(outcome.kind === 'applied' ? { ...outcome, canvasCode: outcome.code } : outcome);
   } catch (error) {
     // A Jev failure is never fatal to the canvas: the client falls back.
+    if (error instanceof JevError && (error.status === 401 || error.status === 402 || error.status === 403)) {
+      jevPausedUntil = Date.now() + PAUSE_MS;
+      jevPauseReason = describeRefusal(error);
+      logger.warn(`[canvas-voice] Jev refused the account (${error.status}); pausing Jev for ${PAUSE_MS / 60_000} min: ${jevPauseReason}`);
+      return res.json({ kind: 'fallback', reason: jevPauseReason, jevUnavailable: jevPauseReason, steps: [], stats: emptyStats });
+    }
     const reason = error instanceof JevError ? error.message : `Voice decision failed: ${error instanceof Error ? error.message : String(error)}`;
     logger.warn(`[canvas-voice] ${reason}`);
     const out: VoiceOutcome = { kind: 'fallback', reason, steps: [], stats: emptyStats };

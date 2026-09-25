@@ -3561,3 +3561,20 @@ button.sui-verify-pill:focus-visible {
   border-radius: 12px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
 }
+
+.sui-canvas-jev-notice {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 16;
+  max-width: min(640px, calc(100% - 24px));
+  padding: 10px 16px;
+  border-radius: 10px;
+  background: hsl(38 92% 50% / 0.14);
+  border: 1px solid hsl(38 92% 50% / 0.45);
+  color: var(--sui-text);
+  font-size: 13px;
+  line-height: 1.45;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
