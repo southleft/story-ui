@@ -37,7 +37,7 @@ import mcpRemoteRouter from './routes/mcpRemote.js';
 // Voice Canvas endpoints
 import { canvasSaveHandler } from './routes/canvasSave.js';
 import { canvasGenerateHandler, refreshVoiceCanvasStory } from './routes/canvasGenerate.js';
-import { canvasVoiceHandler } from './routes/canvasVoice.js';
+import { canvasVoiceHandler, jevPause } from './routes/canvasVoice.js';
 import { jevConfigured } from '../story-generator/voice/jevClient.js';
 import { getAdapterRegistry } from '../story-generator/framework-adapters/index.js';
 // Manifest — story ↔ chat source of truth
@@ -239,6 +239,8 @@ app.get('/mcp/canvas-config', (_req, res) => {
     designSystemName: config.designSystemGuidelines?.name || '',
     // Whether the Voice Canvas can decide edits with Jev (TYPESAFE_API_KEY set).
     voiceDecisions: jevConfigured(),
+    // Set while Jev is refusing the account (no credits, bad key).
+    voiceDecisionsPaused: jevPause().paused ? jevPause().reason : '',
   });
 });
 
