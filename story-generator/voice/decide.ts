@@ -236,7 +236,15 @@ async function editQuestions(
     if (typeof v === 'boolean') add(k, 'boolean');
     else if (typeof v === 'string') add(k, 'string');
   }
-  props.splice(24);
+  // Internal props (`__clearable`) are nobody's to dictate. Then rank what
+  // the request names and what the element already sets ahead of the rest:
+  // Mantine's TextInput offers 26, and a flat cap of 24 cut `placeholder`.
+  const said = new Set(transcriptWords(transcript));
+  const rank = (p: EditablePropInfo) =>
+    (nameWords(p.name).every(w => said.has(w)) ? 0 : 2) + (p.name in node.attrs ? 0 : 1);
+  const ranked = props.filter(p => !p.name.startsWith('__')).sort((a, b) => rank(a) - rank(b));
+  props.length = 0;
+  props.push(...ranked.slice(0, 32));
   // Text is on offer when the element has some, or when the component takes
   // children and nothing here says it only holds elements.
   const acceptsChildren = intrinsic
@@ -302,11 +310,27 @@ function applyEdit(
   prefix: string,
   threshold: number,
   steps: DecisionStep[],
+  transcript: string,
 ): { code: string; summary: string } | { fallback: string } {
   const change = choice(answers[`${prefix}change`]);
   if (!change || change.confidence < threshold) return { fallback: 'Not sure which part of the element to change' };
   steps.push({ step: 'Change', value: change.choice.replace(/^prop:/, ''), by: 'jev', confidence: change.confidence });
-  if (change.choice === 'other') return { fallback: 'That change is not a single property the component declares' };
+  if (change.choice === 'other') {
+    // "Add the LABEL location": Jev reads the position words as a move, but
+    // the request names a declared text prop outright and its value is clear.
+    const said = new Set(transcriptWords(transcript));
+    const named = plan.props.filter(p => p.kind === 'string' && nameWords(p.name).every(w => said.has(w)));
+    const valued = named
+      .map(p => ({ p, v: choice(answers[`${prefix}v:${p.name}`]) }))
+      .filter(x => x.v && x.v.choice !== NONE && x.v.confidence >= 0.7);
+    if (valued.length === 1) {
+      const { p, v } = valued[0];
+      const value = shown(p.name, v!.choice);
+      steps.push({ step: 'Value', value: `${p.name} = ${JSON.stringify(value)} (named in the request)`, by: 'code', confidence: v!.confidence });
+      return { code: setAttr(tree, node.id, p.name, value), summary: `Set ${p.name} on ${describeNode(tree, node)} to ${JSON.stringify(value)}` };
+    }
+    return { fallback: 'That change is not a single property the component declares' };
+  }
 
   const label = describeNode(tree, node);
   if (change.choice === 'text') {
@@ -451,7 +475,7 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
   const threshold = ctx.threshold ?? Number(process.env.STORY_UI_VOICE_CONFIDENCE || 0.5);
   const tally = new Tally(ctx.ask ?? askJev);
   const steps: DecisionStep[] = [];
-  const transcript = req.transcript.trim();
+  const transcript = stripLeadingFiller(req.transcript);
   const tree = parseCanvas(req.code);
   if (!tree.root) {
     return { kind: 'fallback', reason: 'The canvas code has no Canvas element to edit', steps, stats: tally.stats };
@@ -546,6 +570,10 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
     type: 'noul',
     instructions: 'Does `request` ask for a whole section, form, page or layout, or for several separate new elements at once (such as "three cards" or "an input and two checkboxes")? A single element with its own title or text counts as one.',
   };
+  q1.new_element = {
+    type: 'noul',
+    instructions: 'Does `request` ask to put a NEW element on `canvas` that is not there yet (not changing, labelling or restyling one that is)?',
+  };
   q1.complete = {
     type: 'noul',
     instructions: 'Is `request` a complete instruction, rather than one cut off in the middle (for example ending in "to say", "called" or "and")?',
@@ -571,7 +599,9 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
   const action = choice(r1.answers.action);
   if (!action) return { kind: 'fallback', reason: 'Jev returned no action', steps, stats: tally.stats };
   const complete = noul(r1.answers.complete);
-  if (!req.final && complete && complete.noul < 0.5) {
+  // Only a clearly unfinished request waits; "a third text field for
+  // location" read as unfinished at 0.40 and cost three seconds.
+  if (!req.final && complete && complete.noul < 0.3) {
     // Speech arrives in pieces; applying half a sentence is how "update the
     // title to say" went to the model with nothing to say.
     steps.push({ step: 'Read request', value: 'Waiting for the rest of the sentence', by: 'jev', confidence: 1 - complete.noul });
@@ -579,6 +609,16 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
   }
   steps.push({ step: 'Choose action', value: action.choice, by: 'jev', confidence: action.confidence });
 
+  // Add or edit, unsure between them: one literal question settles it.
+  // Measured: edits 0.02–0.09, adds 0.82–0.97 on "is this a NEW element?".
+  const addOrEdit = (action.probabilities.add ?? 0) + (action.probabilities.edit ?? 0);
+  const fresh = noul(r1.answers.new_element);
+  if (action.confidence < threshold && (action.choice === 'add' || action.choice === 'edit') && addOrEdit >= 0.7 && fresh) {
+    const decided = fresh.noul >= 0.3 ? 'add' : 'edit';
+    steps.push({ step: 'Add or edit', value: decided === 'add' ? 'a new element' : 'an existing element', by: 'jev', confidence: decided === 'add' ? fresh.noul : 1 - fresh.noul });
+    action.choice = decided;
+    action.confidence = Math.max(action.confidence, threshold);
+  }
   if (action.confidence < threshold) {
     const top = Object.entries(action.probabilities).sort((a, b) => b[1] - a[1]).slice(0, 3)
       .map(([k, p]) => `${k} ${p.toFixed(2)}`).join(', ');
@@ -662,7 +702,7 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
       answers = r2.answers;
       prefix = '';
     }
-    const result = applyEdit(tree, target!, plan, answers, prefix, threshold, steps);
+    const result = applyEdit(tree, target!, plan, answers, prefix, threshold, steps, transcript);
     if ('fallback' in result) return { kind: 'fallback', reason: result.fallback, steps, stats: tally.stats };
     // An attribute or text edit never reorders elements, so the id holds.
     return finish(result.code, result.summary, target!.id);
@@ -802,3 +842,22 @@ function subtree(tree: CanvasTree, root: CanvasNode): CanvasNode[] {
   }
   return out;
 }
+
+/**
+ * Continuous speech arrives as "and make the button say submit", "and then
+ * add an image", "okay so add a checkbox". The joining words carry no
+ * instruction and pulled Jev's add/edit split to a coin toss (0.53 / 0.47).
+ */
+export function stripLeadingFiller(transcript: string): string {
+  let t = transcript.trim();
+  const FILLER = /^(and then|and also|and|then|also|so|okay|ok|um+|uh+|now|next|alright|all right)\b[\s,.]*/i;
+  for (let i = 0; i < 4 && FILLER.test(t); i++) {
+    const next = t.replace(FILLER, '').trim();
+    if (!next) break;
+    t = next;
+  }
+  return t;
+}
+
+const nameWords = (s: string) => s.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+const transcriptWords = (t: string) => t.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
