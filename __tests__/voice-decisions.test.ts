@@ -645,6 +645,18 @@ export const Default = { render: () => (
     expect(calls.some(c => c.grid)).toBe(false);
   });
 
+  it('does not fill an undocumented component with its own name', async () => {
+    const cat: CatalogComponent[] = [{ name: 'Panel', props: ['children'] }];
+    const out = await decideVoiceEdit({ transcript: 'generate a panel for a surf website', code: EMPTY_CANVAS_CODE },
+      { catalog: cat, propsFor: async () => [{ name: 'children', kind: 'string' as const }], ask: scripted({ action: 'add', component: 'Panel' }).ask });
+    expect(out).toMatchObject({ kind: 'fallback' });
+    const said = await decideVoiceEdit({ transcript: 'add a panel that says hello there', code: EMPTY_CANVAS_CODE },
+      { catalog: cat, propsFor: async () => [{ name: 'children', kind: 'string' as const }],
+        ask: scripted({ action: 'add', component: 'Panel', 'add:Panel.slot:Panel.text': 'hello there', 'add:Panel.said:Panel.text': 0.9 }).ask });
+    expect(said.kind).toBe('applied');
+    if (said.kind === 'applied') expect(said.code).toContain('<Panel>Hello there</Panel>');
+  });
+
   it('never gives an image source by name alone', async () => {
     const cat: CatalogComponent[] = [{ name: 'Tile', props: ['children'] }, { name: 'Image' }];
     const { ask } = scripted({ action: 'compose', recipe: 0.95, recipe_count: '2', recipe_arrangement: 'columns', recipe_item: 'Tile' });
