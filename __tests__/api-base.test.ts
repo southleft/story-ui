@@ -73,6 +73,20 @@ describe('resolveApiBase', () => {
     );
   });
 
+  it('uses the same origin on a custom domain, not the local port', () => {
+    // story-ui-react.southleft.com sent every visitor to localhost:4101.
+    expect(resolveApiBase({
+      window: win({}, 'story-ui-react.southleft.com'),
+      document: doc({ 'story-ui-port': '4101' }),
+    })).toBe('https://story-ui-react.southleft.com');
+  });
+
+  it('keeps the local port on this machine and the local network', () => {
+    for (const host of ['localhost', '127.0.0.1', '192.168.1.20', '10.0.0.5', '172.20.1.1', 'app.localhost']) {
+      expect(resolveApiBase({ window: win({ __STORY_UI_PORT__: '4101' }, host) })).toBe('http://localhost:4101');
+    }
+  });
+
   it('ignores blank values rather than treating them as configured', () => {
     expect(
       resolveApiBase({

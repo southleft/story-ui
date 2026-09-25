@@ -7,7 +7,12 @@
  *
  * The first four sources are the order the MDX page has always used, kept
  * as they were: explicit edge URL from Vite env, runtime edge override, a
- * Railway deployment (same origin), then `http://localhost:<port>`.
+ * hosted deployment (same origin), then `http://localhost:<port>`.
+ *
+ * "Hosted" means any page not served from this machine or the local network
+ * — the classic panel's rule. It used to mean `*.up.railway.app` only, so a
+ * deployment on a custom domain (story-ui-react.southleft.com) sent every
+ * visitor's workspace to `localhost:4101`: "Server unreachable".
  *
  * The port itself comes from the first of:
  *   1. `import.meta.env.VITE_STORY_UI_PORT`  — the preview (Vite) only
@@ -88,11 +93,21 @@ export function resolveApiBase(host: Host = currentHost()): string {
   const fromWindow = nonEmpty(win?.__STORY_UI_EDGE_URL__);
   const fromMeta = readMeta(doc, EDGE_META_NAME) || nonEmpty(processEnv?.STORYBOOK_STORY_UI_EDGE_URL);
   const hostname: string = win?.location?.hostname ?? '';
-  const isRailway = /up\.railway\.app$/.test(hostname);
   const base =
     fromEnv ||
     fromWindow ||
     fromMeta ||
-    (isRailway ? String(win.location.origin) : `http://localhost:${resolveStoryUiPort(host)}`);
+    (hostname && !isLocalHostname(hostname) ? String(win.location.origin) : `http://localhost:${resolveStoryUiPort(host)}`);
   return base.replace(/\/+$/, '');
+}
+
+/** This machine or the local network — where the server runs on its own port. */
+export function isLocalHostname(hostname: string): boolean {
+  return hostname === 'localhost'
+    || hostname.endsWith('.localhost')
+    || hostname === '127.0.0.1'
+    || hostname === '[::1]' || hostname === '::1'
+    || hostname.startsWith('192.168.')
+    || hostname.startsWith('10.')
+    || /^172\.(1[6-9]|2\d|3[01])\./.test(hostname);
 }
