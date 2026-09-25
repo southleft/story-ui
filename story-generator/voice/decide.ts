@@ -31,6 +31,7 @@ import { asDisplayText, NONE, valueSpans } from './spans.js';
 import { saysMoreThanName } from '../knowledge/descriptionQuality.js';
 import ts from 'typescript';
 import type { StorybookGlobal } from './storybookGlobals.js';
+import { buildRecipe, type LayoutKit } from './recipes.js';
 
 // ── Public types ──────────────────────────────────────────────
 
@@ -69,6 +70,8 @@ export interface EditablePropInfo {
   name: string;
   /** An HTML attribute the component passes through, not one it declares. */
   dom?: boolean;
+  /** One of the library's shared props (style props every component has). */
+  base?: boolean;
   kind: 'enum' | 'boolean' | 'number' | 'string' | 'other';
   options?: string[];
   doc?: string;
@@ -84,6 +87,10 @@ export interface VoiceContext {
   threshold?: number;
   /** The preview settings the project's Storybook declares (theme, …). */
   globals?: StorybookGlobal[];
+  /** The project's declared layout rules (story-ui.config.js `layoutRules`). */
+  layoutRules?: { multiColumnWrapper?: string };
+  /** Every declared prop of a component, numbers and all — for a layout's column count. */
+  rawPropsFor?: (component: string) => Promise<Array<{ name: string; doc?: string; type?: string }>>;
 }
 
 export interface VoiceRequest {
@@ -665,6 +672,34 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
     type: 'noul',
     instructions: 'Does `request` ask to put a NEW element on `canvas` that is not there yet (not changing, labelling or restyling one that is)?',
   };
+  // Layout recipe: N of one component in columns or rows, with an optional
+  // heading and subheading — answered from the words alone.
+  qAdd.recipe = {
+    type: 'noul',
+    instructions: 'Does `request` ask for several copies of one kind of element laid out together — in columns, a row, a grid or a list (such as "three cards in columns" or "a row of four buttons")?',
+  };
+  qAdd.recipe_count = {
+    type: 'choice',
+    instructions: 'How many copies does `request` ask for?',
+    criteria: { '2': 'two', '3': 'three', '4': 'four', '5': 'five', '6': 'six', '8': 'eight', none: 'It does not say a number' },
+  };
+  qAdd.recipe_arrangement = {
+    type: 'choice',
+    instructions: 'How should the copies in `request` be arranged?',
+    criteria: { columns: 'side by side: columns, a row or a grid', rows: 'one above another: a list, stacked, rows' },
+  };
+  if (choices.length) {
+    const criteria: Record<string, string | null> = {};
+    for (const c of choices) criteria[c.name] = describeComponent(c);
+    criteria[NONE] = 'No component is named';
+    qAdd.recipe_item = { type: 'choice', instructions: 'Which component does `request` ask to repeat?', criteria };
+  }
+  qAdd.recipe_heading = valueQuestion(transcript, 'section', 'heading', 'the section');
+  qAdd['recipe_heading?'] = { type: 'noul', instructions: 'Does `request` give the words for a heading or title above the section?' };
+  qAdd.recipe_sub = valueQuestion(transcript, 'section', 'subheading', 'the section');
+  qAdd['recipe_sub?'] = { type: 'noul', instructions: 'Does `request` give the words for a subheading or description under the heading?' };
+  qAdd.recipe_wants_heading = { type: 'noul', instructions: 'Does `request` ask for a heading, header or title above the repeated items?' };
+  qAdd.recipe_wants_sub = { type: 'noul', instructions: 'Does `request` ask for a subheading, subhead or description under the heading?' };
   qAdd.complete = {
     type: 'noul',
     instructions: 'Is `request` a complete instruction, rather than one cut off in the middle (for example ending in "to say", "called" or "and")?',
@@ -715,6 +750,10 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
   if (instruction && instruction.noul < 0.4 && !COMMANDS.has(action.choice as VoiceCommandKind) && action.choice !== 'setting') {
     return { kind: 'ignored', reason: 'Not a design instruction', steps, stats: tally.stats };
   }
+  // ── Layout recipe ──
+  const recipe = await tryRecipe();
+  if (recipe) return recipe;
+
   // "Make all the buttons green" read as a restyle; it is one edit, many times.
   const everyOne = noul(r1.answers.all_of_kind);
   if (everyOne && everyOne.noul >= 0.8 && (action.choice === 'compose' || (action.choice === 'edit' && action.confidence < threshold))
@@ -1019,6 +1058,76 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
     : parentNode ? ` inside ${parentNode.tag}` : '';
   return finish(code, `Added ${entry.name}${where}`, inserted);
 
+  async function tryRecipe(): Promise<VoiceOutcome | null> {
+    const wants = noul(r1.answers.recipe);
+    const count = choice(r1.answers.recipe_count);
+    const item = choice(r1.answers.recipe_item);
+    if (!wants || wants.noul < 0.6 || !count || count.choice === NONE || count.confidence < threshold) return null;
+    if (!item || item.choice === NONE || item.confidence < threshold) return null;
+    const entry = ctx.catalog.find(c => c.name === item.choice);
+    if (!entry) return null;
+    const arrangement = choice(r1.answers.recipe_arrangement)?.choice === 'rows' ? 'rows' : 'columns';
+    steps.push({ step: 'Recipe', value: `${count.choice} × ${entry.name}, ${arrangement}`, by: 'jev', confidence: Math.min(wants.noul, count.confidence, item.confidence) });
+
+    const kit = await layoutKitFor(ctx, tally, threshold);
+    steps.push({ step: 'Layout', value: [kit.grid ? `${kit.grid.tag} (${kit.grid.colsProp})` : 'CSS grid', kit.heading, kit.text].filter(Boolean).join(', '), by: 'jev' });
+
+    // One copy of the item: the team's own example of it, else the parts the
+    // request names after it ("each card has an IMAGE, a TITLE and a BUTTON").
+    const itemTemplates = templatesFor(entry, known);
+    let itemRoot: TemplateNode;
+    if (itemTemplates[0] && itemTemplates[0].name !== 'bare') {
+      itemRoot = itemTemplates[0].root;
+    } else {
+      const partsFrom = mentionAt(entry.name, transcript);
+      const parts = namedComponents(ctx.catalog, transcript, 8)
+        .filter(c => c.name !== entry.name && c.name !== kit.grid?.tag && c.name !== kit.stack)
+        .map(c => ({ c, at: mentionAt(c.name, transcript) }))
+        .filter(x => x.at > partsFrom)
+        .sort((a, b) => a.at - b.at);
+      const children: TemplateNode[] = [];
+      for (const { c } of parts) {
+        const example = templatesFor(c, known)[0];
+        if (example && example.name !== 'bare') { children.push(example.root); continue; }
+        // Its OWN props — not the HTML attributes it passes through or the
+        // library's shared style props, which every component has.
+        const own = (await ctx.propsFor(c.name)).filter(p => !p.dom && !p.base);
+        // A source it declares — or, when nothing is known of its own props
+        // (Mantine's Image resolves none), a component the person called an
+        // image by name. Without one it renders nothing and the item looks empty.
+        // Called an image AND named like one: always a source, never text.
+        // (An <img> with children throws, and the prop lists disagree across
+        // processes for Mantine's polymorphic Image — the name is the one
+        // fact both the person and the catalog state.)
+        const src = own.some(p => p.name === 'src') || /image|img|photo|picture/i.test(c.name);
+        children.push({
+          tag: c.name,
+          attrs: src ? [['src', `https://picsum.photos/seed/${imageSeed(transcript, tree.code)}/800/450`]] : [],
+          // Placeholder words for every part that is not an image: `children`
+          // is stripped from every prop list, so "takes text" cannot be read.
+          children: src ? [] : [c.name],
+        });
+      }
+      itemRoot = { tag: entry.name, attrs: [], children: children.length ? children : [entry.name] };
+    }
+
+    const said = (key: string) => {
+      const n = noul(r1.answers[`${key}?`]);
+      const v = choice(r1.answers[key]);
+      return n && n.noul >= 0.5 && v && v.choice !== NONE && v.confidence >= threshold ? asDisplayText(v.choice) : undefined;
+    };
+    const wantsHeading = (noul(r1.answers.recipe_wants_heading)?.noul ?? 0) >= 0.5;
+    const wantsSub = (noul(r1.answers.recipe_wants_sub)?.noul ?? 0) >= 0.5;
+    const heading = said('recipe_heading') ?? (wantsHeading ? 'Section heading' : undefined);
+    const subheading = said('recipe_sub') ?? (wantsSub ? 'A short description of this section' : undefined);
+
+    const root = uniquifyIds(buildRecipe({ count: Number(count.choice), arrangement, item: itemRoot, heading, subheading }, kit), tree.code);
+    const code = insertChild(tree, null, printTemplate(root));
+    const after = parseCanvas(code);
+    const host = after.root;
+    return finish(code, `Built ${count.choice} ${entry.name} ${arrangement === 'columns' ? 'in columns' : 'stacked'}${heading ? ` under "${heading}"` : ''}`, host?.children[host.children.length - 1] ?? null);
+  }
+
   function finish(code: string, summary: string, touched: string | null): VoiceOutcome {
     if (!parsesCleanly(code)) {
       return { kind: 'fallback', reason: 'The edit produced code that does not parse', steps, stats: tally.stats };
@@ -1083,8 +1192,65 @@ function quotedField(node: CanvasNode, transcript: string): string | null {
 
 /** A stable picsum seed from the request's own words, distinct per image on the canvas. */
 function imageSeed(transcript: string, code: string): string {
-  const skip = new Set(['add', 'an', 'a', 'the', 'image', 'picture', 'photo', 'to', 'of', 'and', 'then', 'now', 'that', 'this', 'another', 'above', 'below', 'component', 'card', 'with', 'in', 'on']);
+  const skip = new Set(['add', 'an', 'a', 'the', 'image', 'images', 'picture', 'photo', 'to', 'of', 'and', 'then', 'now', 'that', 'this', 'another', 'above', 'below',
+    'component', 'card', 'cards', 'with', 'in', 'on', 'make', 'build', 'create', 'show', 'each', 'every', 'columns', 'column', 'layout', 'three', 'four', 'five', 'heading', 'says', 'title', 'button', 'buttons', 'section']);
   const word = transcriptWords(transcript).find(w => w.length > 3 && !skip.has(w)) ?? 'canvas';
   const n = (code.match(/picsum\.photos\/seed\//g) ?? []).length + 1;
   return `${word}${n}`;
+}
+
+/** Where the request first names a component ("…each CARD has an image…"), or -1. */
+function mentionAt(name: string, transcript: string): number {
+  const text = ` ${transcript.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).join(' ')} `;
+  const phrase = name.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
+  const i = text.indexOf(` ${phrase}`);
+  return i;
+}
+
+const kitCache = new Map<string, LayoutKit>();
+
+/**
+ * Which components in THIS catalog do the laying out — asked once per
+ * catalog and cached. The request plays no part: these are facts about the
+ * design system, chosen from its own names and descriptions.
+ */
+async function layoutKitFor(ctx: VoiceContext, tally: Tally, threshold: number): Promise<LayoutKit> {
+  const names = ctx.catalog.filter(c => /^[A-Z]/.test(c.name)).map(c => c.name);
+  const key = names.join('|');
+  const hit = kitCache.get(key);
+  if (hit) return hit;
+  const list = componentChoices(ctx.catalog, '');
+  const criteria: Record<string, string | null> = {};
+  for (const c of list) criteria[c.name] = describeComponent(c);
+  criteria[NONE] = 'None of these';
+  const ask = (instructions: string): JevQuestion => ({ type: 'choice', instructions, criteria });
+  // The column wrapper is what the project DECLARES (layoutRules), not what
+  // Jev guesses from names: asked, it picked Mantine's Grid over SimpleGrid
+  // (88/12), and Grid needs a Grid.Col around each item — the cards piled up.
+  // Nothing declared, or 'div': a plain CSS grid, which is always right.
+  const r = await tally.run({ design_system: 'the components listed as options' }, {
+    stack: ask('Which component stacks its children vertically with even spacing?'),
+    heading: ask('Which component shows a section heading or title?'),
+    text: ask('Which component shows a paragraph of body text?'),
+  });
+  const pick = (id: string) => {
+    const a = choice(r.answers[id]);
+    return a && a.choice !== NONE && a.confidence >= threshold ? a.choice : undefined;
+  };
+  const kit: LayoutKit = { stack: pick('stack'), heading: pick('heading'), text: pick('text') };
+  const declaredWrapper = ctx.layoutRules?.multiColumnWrapper;
+  const gridTag = declaredWrapper && ctx.catalog.some(c => c.name === declaredWrapper) ? declaredWrapper : undefined;
+  if (gridTag && ctx.rawPropsFor) {
+    const props = (await ctx.rawPropsFor(gridTag)).filter(p => !/^(children|className|style|classNames|styles|vars|__)/.test(p.name));
+    if (props.length) {
+      const pc: Record<string, string | null> = {};
+      for (const p of props.slice(0, 60)) pc[p.name] = p.doc?.split('\n')[0]?.slice(0, 120) ?? null;
+      pc[NONE] = 'None of these sets the number of columns';
+      const r2 = await tally.run({ component: gridTag }, { cols: { type: 'choice', instructions: `Which prop of ${gridTag} sets how many columns it has?`, criteria: pc } });
+      const c = choice(r2.answers.cols);
+      if (c && c.choice !== NONE && c.confidence >= threshold) kit.grid = { tag: gridTag, colsProp: c.choice };
+    }
+  }
+  kitCache.set(key, kit);
+  return kit;
 }
