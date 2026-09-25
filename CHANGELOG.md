@@ -1,3 +1,10 @@
+## [5.21.1](https://github.com/southleft/story-ui/compare/v5.21.0...v5.21.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* **generator:** voice edits reach every button, or exactly the ones named ([ba30bfd](https://github.com/southleft/story-ui/commit/ba30bfd19316749fa669bd87849828be65062038))
+
 # [5.21.0](https://github.com/southleft/story-ui/compare/v5.20.0...v5.21.0) (2026-09-25)
 
 
