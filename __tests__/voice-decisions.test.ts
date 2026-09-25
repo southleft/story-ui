@@ -583,6 +583,14 @@ export const Default = { render: () => (
     if (out.kind === 'applied') expect(out.code.match(/variant="secondary"/g)).toHaveLength(2);
   });
 
+  it('changes the text of every element of a kind', async () => {
+    const code = insertChild(parseCanvas(CARD_CODE), 'e3', '<Button>Send</Button>');
+    const { ask } = scripted({ action: 'edit', target: 'e5', all_of_kind: 0.95, change: 'text', text: 'bye now' });
+    const out = await decideVoiceEdit({ transcript: 'make all of the button labels say bye now', code }, ctx(ask));
+    expect(out.kind).toBe('applied');
+    if (out.kind === 'applied') expect(out.code.match(/>Bye now<\/Button>/g)).toHaveLength(2);
+  });
+
   it('steps a declared scale for "bigger" without an exact value', async () => {
     const { ask } = scripted({ action: 'edit', target: 'e5', change: 'prop:variant', relative: 'more' });
     const out = await decideVoiceEdit({ transcript: 'make the button more intense', code: CARD_CODE }, ctx(async (st: unknown, q: any) => {
@@ -637,6 +645,15 @@ export const Default = { render: () => (
     expect(calls.some(c => c.grid)).toBe(false);
   });
 
+  it('never gives an image source by name alone', async () => {
+    const cat: CatalogComponent[] = [{ name: 'Tile', props: ['children'] }, { name: 'Image' }];
+    const { ask } = scripted({ action: 'compose', recipe: 0.95, recipe_count: '2', recipe_arrangement: 'columns', recipe_item: 'Tile' });
+    const out = await decideVoiceEdit({ transcript: 'two tiles in a row each tile with an image', code: EMPTY_CANVAS_CODE },
+      { catalog: cat, propsFor: async () => [], ask, rawPropsFor: async () => [] });
+    expect(out.kind).toBe('applied');
+    if (out.kind === 'applied') expect(out.code).not.toContain('picsum');
+  });
+
   it('falls back to a CSS grid and named parts when the catalog has no layout component', async () => {
     const cat: CatalogComponent[] = [
       { name: 'Tile', props: ['children'] },
@@ -646,7 +663,8 @@ export const Default = { render: () => (
     const { ask } = scripted({ action: 'compose', recipe: 0.95, recipe_count: '2', recipe_arrangement: 'columns', recipe_item: 'Tile' });
     const out = await decideVoiceEdit(
       { transcript: 'make two tiles in a row, each tile with an image and a button', code: EMPTY_CANVAS_CODE },
-      { catalog: cat, propsFor: async () => [], ask },
+      // The Image here DECLARES src, as Mantine's does — that fact, not its name, earns it a source.
+      { catalog: cat, propsFor: async () => [], ask, rawPropsFor: async (n: string) => (n === 'Image' ? [{ name: 'src', type: 'any' }] : []) },
     );
     expect(out.kind).toBe('applied');
     if (out.kind !== 'applied') return;
@@ -656,10 +674,22 @@ export const Default = { render: () => (
     expect(out.code.match(/<Button>Button<\/Button>/g)).toHaveLength(2);
   });
 
+  it('hands N empty undocumented boxes to the model, and outlines named-part items', async () => {
+    const cat: CatalogComponent[] = [{ name: 'Tile', props: ['children'] }, { name: 'Button', props: ['children'] }];
+    const empty = await decideVoiceEdit({ transcript: 'three tiles in columns', code: EMPTY_CANVAS_CODE },
+      { catalog: cat, propsFor: async () => [], ask: scripted({ action: 'compose', recipe: 0.95, recipe_count: '3', recipe_arrangement: 'columns', recipe_item: 'Tile' }).ask });
+    expect(empty).toMatchObject({ kind: 'fallback' });
+    const withParts = await decideVoiceEdit({ transcript: 'three tiles in columns each tile with a button', code: EMPTY_CANVAS_CODE },
+      { catalog: cat, propsFor: async (n: string) => (n === 'Tile' ? [{ name: 'bordered', kind: 'boolean' as const, doc: 'Adds a border' }] : []),
+        ask: scripted({ action: 'compose', recipe: 0.95, recipe_count: '3', recipe_arrangement: 'columns', recipe_item: 'Tile', outline: 'bordered' }).ask });
+    expect(withParts.kind).toBe('applied');
+    if (withParts.kind === 'applied') expect(withParts.code.match(/<Tile bordered>/g)).toHaveLength(3);
+  });
+
   it('ignores a declared wrapper the catalog does not have, and uses CSS', async () => {
     const { ask } = scripted({ action: 'compose', recipe: 0.95, recipe_count: '2', recipe_arrangement: 'columns', recipe_item: 'Tile' });
-    const out = await decideVoiceEdit({ transcript: 'two tiles in a row', code: EMPTY_CANVAS_CODE },
-      { catalog: [{ name: 'Tile', props: ['children'] }], propsFor: async () => [], ask, layoutRules: { multiColumnWrapper: 'div' } });
+    const out = await decideVoiceEdit({ transcript: 'two tiles in a row each tile with a button', code: EMPTY_CANVAS_CODE },
+      { catalog: [{ name: 'Tile', props: ['children'] }, { name: 'Button', props: ['children'] }], propsFor: async () => [], ask, layoutRules: { multiColumnWrapper: 'div' } });
     expect(out.kind).toBe('applied');
     if (out.kind === 'applied') expect(out.code).toContain("display: 'grid'");
   });

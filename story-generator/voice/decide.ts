@@ -26,7 +26,7 @@
 
 import { askJev, JEV_USD_PER_INPUT_TOKEN, MAX_CHOICE_OPTIONS, type ChoiceAnswer, type JevAnswer, type JevQuestion, type JevResponse, type NoulAnswer } from './jevClient.js';
 import { containers, describeNode, insertBeside, insertChild, moveNode, outlineCanvas, parseCanvas, removeNode, setAttr, setText, type CanvasNode, type CanvasTree, type MoveDirection } from './canvasTree.js';
-import { attrsUsedInStories, fillSlots, printTemplate, slotsOf, summarizeTemplate, takesTextInStories, templatesFor, uniquifyIds, type Template, type TemplateNode, type TemplateSourceComponent } from './templates.js';
+import { attrsUsedInStories, fillSlots, type Literal, printTemplate, slotsOf, summarizeTemplate, takesTextInStories, templatesFor, uniquifyIds, type Template, type TemplateNode, type TemplateSourceComponent } from './templates.js';
 import { asDisplayText, NONE, valueSpans } from './spans.js';
 import { saysMoreThanName } from '../knowledge/descriptionQuality.js';
 import ts from 'typescript';
@@ -337,7 +337,7 @@ function applyEdit(
   threshold: number,
   steps: DecisionStep[],
   transcript: string,
-): { code: string; summary: string; prop?: string; value?: string | boolean } | { fallback: string } {
+): { code: string; summary: string; prop?: string; value?: string | boolean; text?: string } | { fallback: string } {
   const change = choice(answers[`${prefix}change`]);
   // The request quotes one of the element's current values — "make EMAIL
   // ADDRESS say phone number", "where it says PARTNER ONE NAME" — so that is
@@ -379,7 +379,7 @@ function applyEdit(
     if (!span || span.choice === NONE || span.confidence < threshold) return { fallback: 'Could not tell which words are the new text' };
     const text = asDisplayText(span.choice);
     steps.push({ step: 'Value', value: `"${text}"`, by: 'jev', confidence: span.confidence });
-    return { code: setText(tree, node.id, text), summary: `Set ${label} text to "${text}"` };
+    return { code: setText(tree, node.id, text), summary: `Set ${label} text to "${text}"`, text };
   }
 
   const propName = change.choice.slice('prop:'.length);
@@ -476,7 +476,7 @@ async function addPlan(
     // Declared by the component itself — not merely an HTML attribute it
     // passes through (an <input> accepts src for type="image"; a Checkbox
     // with a photo is not what "add a checkbox" means).
-    if (declared.some(p => p.name === 'src' && !p.dom)) imageSource = true;
+    if (await declaresSrc(ctx, entry.name)) imageSource = true;
     bareSlots.splice(8);
     templates[0] = { name: 'bare', root: { tag: entry.name, attrs: [], children: [] } };
   }
@@ -668,6 +668,16 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
     type: 'noul',
     instructions: 'Does `request` say "all", "every" or "each", or name the elements in the plural (such as "the buttons"), so that it means more than one element?',
   };
+  // Subsets by position — "the second and third card", "the last card": one
+  // literal question per element that has look-alikes, its position stated
+  // by code. Jev answers each on its own; code applies the edit to the yeses.
+  const positioned = positionsOf(tree).slice(0, 24);
+  positioned.forEach(({ node, position }) => {
+    qAdd[`pick:${node.id}`] = {
+      type: 'noul',
+      instructions: { element: position, question: 'Does `request` specifically ask to change `element` (for example by saying which one: "the second", "the last", "the second and third")?' },
+    };
+  });
   qAdd.new_element = {
     type: 'noul',
     instructions: 'Does `request` ask to put a NEW element on `canvas` that is not there yet (not changing, labelling or restyling one that is)?',
@@ -869,16 +879,46 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
     // "Change ALL the buttons to blue": the same one-attribute edit, applied
     // to every element of that component. Attribute edits never reorder
     // elements, so ids hold between edits.
+    // A subset named by position ("the second and third card") wins over
+    // "more than one" — Jev reads both as plural, but only one names which.
+    const sameKind = tree.nodes.filter(n => n.tag === target!.tag);
+    const pickedEarly = positioned
+      .filter(p => p.node.tag === target!.tag && (noul(r1.answers[`pick:${p.node.id}`])?.noul ?? 0) >= 0.7)
+      .map(p => p.node);
+    const strictSubset = pickedEarly.length >= 1 && pickedEarly.length < sameKind.length;
     const every = noul(r1.answers.all_of_kind);
-    if (every && every.noul >= 0.8 && result.prop && result.value !== undefined) {
+    if (!strictSubset && every && every.noul >= 0.8 && ((result.prop && result.value !== undefined) || result.text !== undefined)) {
+      // Text as well as props: "make all of the button labels say bye now"
+      // changed one button five times over before this covered text edits.
       let code = result.code;
       let count = 1;
       for (const other of tree.nodes.filter(n => n.tag === target!.tag && n.id !== target!.id)) {
-        code = setAttr(parseCanvas(code), other.id, result.prop, result.value);
+        const t = parseCanvas(code);
+        const node = t.nodes.find(n => n.id === other.id);
+        if (!node) continue;
+        if (result.text !== undefined) {
+          if (!node.textRange && node.children.length) continue; // holds elements, not words
+          code = setText(t, node.id, result.text);
+        } else {
+          code = setAttr(t, node.id, result.prop!, result.value!);
+        }
         count++;
       }
       steps.push({ step: 'Every', value: `all ${count} ${target!.tag} elements`, by: 'jev', confidence: every.noul });
-      return finish(code, `Set ${result.prop} to ${JSON.stringify(result.value)} on all ${count} ${target!.tag} elements`, null);
+      const what = result.text !== undefined ? `text to "${result.text}"` : `${result.prop} to ${JSON.stringify(result.value)}`;
+      return finish(code, `Set ${what} on all ${count} ${target!.tag} elements`, null);
+    }
+    // Picked by position ("the second and third card"): the same edit on each.
+    const picked = pickedEarly;
+    if (picked.length >= 1 && !(picked.length === 1 && picked[0].id === target!.id) && ((result.prop && result.value !== undefined) || result.text !== undefined)) {
+      let code = tree.code;
+      for (const n of picked) {
+        const t = parseCanvas(code);
+        code = result.text !== undefined ? setText(t, n.id, result.text) : setAttr(t, n.id, result.prop!, result.value!);
+      }
+      steps.push({ step: 'Which ones', value: picked.map(n => positioned.find(p => p.node.id === n.id)!.position).join('; '), by: 'jev' });
+      const what = result.text !== undefined ? `text to "${result.text}"` : `${result.prop} to ${JSON.stringify(result.value)}`;
+      return finish(code, `Set ${what} on ${picked.length} ${target!.tag} element${picked.length > 1 ? 's' : ''}`, picked.length === 1 ? picked[0].id : null);
     }
     // An attribute or text edit never reorders elements, so the id holds.
     return finish(result.code, result.summary, target!.id);
@@ -968,7 +1008,9 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
   // building it blind is a guess. Mantine's Image resolved no props here and
   // went on the canvas without a src — it rendered nothing, and the request
   // looked ignored. The model knows the component; let it build this one.
-  if (templatesFor(entry, known).every(t => t.name === 'bare') && !(entry.props?.length) && (await ctx.propsFor(entry.name)).length === 0) {
+  if (templatesFor(entry, known).every(t => t.name === 'bare') && !(entry.props?.length)
+    && (await ctx.propsFor(entry.name)).length === 0
+    && (!ctx.rawPropsFor || (await ctx.rawPropsFor(entry.name).catch(() => [])).length === 0)) {
     return { kind: 'fallback', reason: `Nothing documents ${entry.name}'s props or usage`, steps, stats: tally.stats };
   }
   let plan = specs.get(entry.name) ?? null;
@@ -1058,6 +1100,28 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
     : parentNode ? ` inside ${parentNode.tag}` : '';
   return finish(code, `Added ${entry.name}${where}`, inserted);
 
+  /**
+   * Which of the item's own settings draws a visible box around it (Mantine
+   * Card's withBorder) — a bare Card is white on white. Chosen by Jev from the
+   * component's declared boolean props, once per component.
+   */
+  async function outlineProp(component: string): Promise<[string, Literal] | null> {
+    const bools = (await ctx.propsFor(component)).filter(p => p.kind === 'boolean' && !p.dom && !p.base);
+    const cacheKey = `${component}|${bools.map(b => b.name).join(',')}`;
+    if (outlineCache.has(cacheKey)) return outlineCache.get(cacheKey)!;
+    let found: [string, Literal] | null = null;
+    if (bools.length) {
+      const criteria: Record<string, string | null> = {};
+      for (const b of bools.slice(0, 40)) criteria[b.name] = b.doc?.split('\n')[0]?.slice(0, 120) ?? null;
+      criteria[NONE] = 'None of these draws a border or outline';
+      const r = await tally.run({ component }, { outline: { type: 'choice', instructions: `Which setting of ${component} draws a border or outline around it?`, criteria } });
+      const c = choice(r.answers.outline);
+      if (c && c.choice !== NONE && c.confidence >= threshold) found = [c.choice, true];
+    }
+    outlineCache.set(cacheKey, found);
+    return found;
+  }
+
   async function tryRecipe(): Promise<VoiceOutcome | null> {
     const wants = noul(r1.answers.recipe);
     const count = choice(r1.answers.recipe_count);
@@ -1089,17 +1153,9 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
       for (const { c } of parts) {
         const example = templatesFor(c, known)[0];
         if (example && example.name !== 'bare') { children.push(example.root); continue; }
-        // Its OWN props — not the HTML attributes it passes through or the
-        // library's shared style props, which every component has.
-        const own = (await ctx.propsFor(c.name)).filter(p => !p.dom && !p.base);
-        // A source it declares — or, when nothing is known of its own props
-        // (Mantine's Image resolves none), a component the person called an
-        // image by name. Without one it renders nothing and the item looks empty.
-        // Called an image AND named like one: always a source, never text.
-        // (An <img> with children throws, and the prop lists disagree across
-        // processes for Mantine's polymorphic Image — the name is the one
-        // fact both the person and the catalog state.)
-        const src = own.some(p => p.name === 'src') || /image|img|photo|picture/i.test(c.name);
+        // A source when the component declares one itself — an image with no
+        // source renders nothing, and one given text children throws.
+        const src = await declaresSrc(ctx, c.name);
         children.push({
           tag: c.name,
           attrs: src ? [['src', `https://picsum.photos/seed/${imageSeed(transcript, tree.code)}/800/450`]] : [],
@@ -1108,7 +1164,14 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
           children: src ? [] : [c.name],
         });
       }
-      itemRoot = { tag: entry.name, attrs: [], children: children.length ? children : [entry.name] };
+      if (!children.length) {
+        // No example to copy and no parts named: N empty boxes with the
+        // component's own name in them is not what "a card in each column"
+        // means. The model fills them; naming the parts keeps it on Jev.
+        return { kind: 'fallback', reason: `${entry.name} has no example to copy and the request names nothing inside it — say what each ${entry.name.toLowerCase()} holds to build it instantly`, steps, stats: tally.stats };
+      }
+      const outline = await outlineProp(entry.name);
+      itemRoot = { tag: entry.name, attrs: outline ? [outline] : [], children };
     }
 
     const said = (key: string) => {
@@ -1192,6 +1255,8 @@ function quotedField(node: CanvasNode, transcript: string): string | null {
 
 /** A stable picsum seed from the request's own words, distinct per image on the canvas. */
 function imageSeed(transcript: string, code: string): string {
+  // Cosmetic only: which of the person's words seeds the placeholder photo.
+  // It affects no decision — any word gives a valid, stable picsum image.
   const skip = new Set(['add', 'an', 'a', 'the', 'image', 'images', 'picture', 'photo', 'to', 'of', 'and', 'then', 'now', 'that', 'this', 'another', 'above', 'below',
     'component', 'card', 'cards', 'with', 'in', 'on', 'make', 'build', 'create', 'show', 'each', 'every', 'columns', 'column', 'layout', 'three', 'four', 'five', 'heading', 'says', 'title', 'button', 'buttons', 'section']);
   const word = transcriptWords(transcript).find(w => w.length > 3 && !skip.has(w)) ?? 'canvas';
@@ -1208,6 +1273,7 @@ function mentionAt(name: string, transcript: string): number {
 }
 
 const kitCache = new Map<string, LayoutKit>();
+const outlineCache = new Map<string, [string, Literal] | null>();
 
 /**
  * Which components in THIS catalog do the laying out — asked once per
@@ -1253,4 +1319,51 @@ async function layoutKitFor(ctx: VoiceContext, tally: Tally, threshold: number):
   }
   kitCache.set(key, kit);
   return kit;
+}
+
+/**
+ * Whether a component DECLARES an image source itself. Read from its full
+ * declared props — `src` is often typed `any` (Mantine's Image), which the
+ * editable list drops — never from its name, and never from HTML attributes
+ * it merely passes through (an <input> accepts src for type="image").
+ */
+async function declaresSrc(ctx: VoiceContext, component: string): Promise<boolean> {
+  if (ctx.rawPropsFor) {
+    try {
+      if ((await ctx.rawPropsFor(component)).some(p => p.name === 'src')) return true;
+    } catch { /* fall through to the editable list */ }
+  }
+  return (await ctx.propsFor(component)).some(p => p.name === 'src' && !p.dom);
+}
+
+const ORDINAL = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth'];
+const ordinal = (i: number, n: number) => (i === n - 1 && n > 2 ? `last (${ORDINAL[i] ?? `${i + 1}th`})` : ORDINAL[i] ?? `${i + 1}th`);
+
+/**
+ * Where each element with look-alikes sits, in words: "the second of 3
+ * Button elements, in the second of 3 Card elements". Counted by code, so
+ * Jev only has to judge whether the request means it.
+ */
+function positionsOf(tree: CanvasTree): Array<{ node: CanvasNode; position: string }> {
+  const byTag = new Map<string, CanvasNode[]>();
+  for (const n of tree.nodes) if (n.tag && !/^[a-z]/.test(n.tag)) byTag.set(n.tag, [...(byTag.get(n.tag) ?? []), n]);
+  const out: Array<{ node: CanvasNode; position: string }> = [];
+  for (const [tag, list] of byTag) {
+    if (list.length < 2) continue;
+    list.forEach((node, i) => {
+      let where = '';
+      // The nearest ancestor that itself repeats (a card among cards).
+      let up = node.parent ? tree.nodes.find(n => n.id === node.parent) : undefined;
+      while (up) {
+        const same = byTag.get(up.tag);
+        if (same && same.length > 1 && up.tag !== tag) {
+          where = `, in the ${ordinal(same.indexOf(up), same.length)} of ${same.length} ${up.tag} elements`;
+          break;
+        }
+        up = up.parent ? tree.nodes.find(n => n.id === up!.parent) : undefined;
+      }
+      out.push({ node, position: `the ${ordinal(i, list.length)} of ${list.length} ${tag} elements${where}${node.text ? ` ("${node.text.slice(0, 30)}")` : ''}` });
+    });
+  }
+  return out;
 }

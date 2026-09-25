@@ -62,6 +62,9 @@ export async function voicePropsFor(config: ReturnType<typeof loadUserConfig>, c
   for (const b of baseProps) {
     if (b.deprecated || editable.some(e => e.name === b.name) || (accepted.size && !accepted.has(b.name))) continue;
     if (/^(classNames|styles|vars|unstyled|attributes|mod|component|renderRoot|__)/.test(b.name)) continue;
+    // Accessibility and data attributes are not design settings: "horizontal
+    // that link" once set aria-orientation, which changes nothing anyone sees.
+    if (/^(aria-|data-|on[A-Z])/.test(b.name) || /^(role|tabIndex|id|slot|inert|hidden|translate|dir|lang|draggable|spellCheck|contentEditable|autoCapitalize|enterKeyHint|inputMode|popover)$/.test(b.name)) continue;
     const c = classifyProp(b);
     // CSS-wide keywords (inherit, initial, …) are valid for every property and
     // are nothing a person dictates.
