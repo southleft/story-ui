@@ -1,3 +1,11 @@
+## [5.18.2](https://github.com/southleft/story-ui/compare/v5.18.1...v5.18.2) (2026-09-25)
+
+
+### Bug Fixes
+
+* **generator:** create the voice canvas story at startup, not on first use ([8d0c609](https://github.com/southleft/story-ui/commit/8d0c609c66e91845bc621b3e83b2334f6c5a2cb8))
+* **generator:** width and colour of one element are an edit, not a restyle ([7b4e183](https://github.com/southleft/story-ui/commit/7b4e183c0aa66fe8f0f56b5051e8a573c742f08c))
+
 ## [5.18.1](https://github.com/southleft/story-ui/compare/v5.18.0...v5.18.1) (2026-09-25)
 
 
