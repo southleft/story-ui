@@ -1,3 +1,11 @@
+## [5.18.1](https://github.com/southleft/story-ui/compare/v5.18.0...v5.18.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* **cli:** install and register addon-docs when update adds the MDX panel ([1dd8809](https://github.com/southleft/story-ui/commit/1dd8809324af47488ae8b6a23c3e52dabc5032f1))
+* **generator:** read an unsingled "the button" as the one just changed ([1935d59](https://github.com/southleft/story-ui/commit/1935d594cb30ac6acff7c641f97b2ea93fe1126b))
+
 # [5.18.0](https://github.com/southleft/story-ui/compare/v5.17.9...v5.18.0) (2026-09-24)
 
 
