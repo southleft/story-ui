@@ -104,9 +104,9 @@ export interface VoiceRequest {
 
 const ACTIONS: Record<string, string> = {
   add: 'Add a new element to the design, such as a button, an input, a checkbox, a heading or a card',
-  edit: 'Change one element that is already on the canvas: its text, label, placeholder, variant, size, checked or disabled state, or another single setting',
+  edit: 'Change one element that is already on the canvas: its text, label, placeholder, variant, size, width, colour, checked or disabled state, or another single setting',
   remove: 'Delete an element that is on the canvas',
-  compose: 'Rearrange or restyle the layout, change width, spacing or colours, change several elements at once, or build a section with many parts',
+  compose: 'Rearrange the layout, restyle several elements at once, change spacing between elements, or build a section with many parts',
   undo: 'Undo the last change',
   redo: 'Redo a change that was just undone',
   clear: 'Start over with an empty canvas',
@@ -558,7 +558,6 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
   if (globals.length) {
     const offered = globals.map(g => `${g.title || g.name} (${g.items.map(i => i.title || i.value).join(', ')})`).join('; ');
     actions.setting = `Switch how the whole preview is shown: ${offered}`;
-    actions.compose = ACTIONS.compose.replace('change width, spacing or colours', 'change width, spacing or the colour of specific elements');
     const criteria: Record<string, string> = {};
     for (const g of globals) for (const i of g.items) criteria[`${g.name}=${i.value}`] = `${g.description || g.title || g.name}: ${i.title || i.value}`;
     q1.setting = { type: 'choice', instructions: 'Which preview setting does `request` ask for?', criteria };
