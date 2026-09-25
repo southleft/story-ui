@@ -35,7 +35,7 @@ const PROPS_TTL = 300_000;
 const DOM_ATTRIBUTES: Record<string, 'boolean' | 'string'> = {
   checked: 'boolean', defaultChecked: 'boolean', disabled: 'boolean', required: 'boolean',
   readOnly: 'boolean', multiple: 'boolean', autoFocus: 'boolean',
-  placeholder: 'string', defaultValue: 'string', alt: 'string',
+  placeholder: 'string', defaultValue: 'string', alt: 'string', src: 'string',
 };
 const propsCache = new Map<string, { at: number; props: EditablePropInfo[] }>();
 

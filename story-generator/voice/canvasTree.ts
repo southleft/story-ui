@@ -332,3 +332,66 @@ export function removeNode(tree: CanvasTree, id: string): string {
 export function containers(tree: CanvasTree): CanvasNode[] {
   return tree.nodes.filter(n => !n.text || n.children.length > 0);
 }
+
+export type MoveDirection = 'up' | 'down' | 'first' | 'last';
+
+/** The element siblings of a node, in order (text and expressions skipped). */
+function elementSiblings(tree: CanvasTree, node: CanvasNode): CanvasNode[] {
+  const parent = node.parent ? tree.nodes.find(n => n.id === node.parent) : null;
+  if (!parent) return [node];
+  return parent.children.map(id => tree.nodes.find(n => n.id === id)!).filter(Boolean);
+}
+
+/** Swap two sibling elements' source, keeping what lies between them. */
+function swapSiblings(code: string, a: CanvasNode, b: CanvasNode): { code: string; movedStart: number } {
+  const [first, second] = a.start < b.start ? [a, b] : [b, a];
+  const firstSrc = code.slice(first.start, first.end);
+  const secondSrc = code.slice(second.start, second.end);
+  const between = code.slice(first.end, second.start);
+  const next = code.slice(0, first.start) + secondSrc + between + firstSrc + code.slice(second.end);
+  // Where `a` begins now: at the front if it was the second, else after the swap.
+  const movedStart = a === second ? first.start : first.start + secondSrc.length + between.length;
+  return { code: next, movedStart };
+}
+
+/**
+ * Move one element among its siblings. "Move that image up" is a closed-set
+ * change — one of four directions — and the edit is a swap of source text,
+ * so nothing but the order changes.
+ */
+export function moveNode(tree: CanvasTree, id: string, direction: MoveDirection): string {
+  let current = tree;
+  let node = findNode(current, id);
+  const steps = direction === 'up' || direction === 'down' ? 1 : Number.POSITIVE_INFINITY;
+  const towardStart = direction === 'up' || direction === 'first';
+  let moved = false;
+  for (let i = 0; i < steps; i++) {
+    const siblings = elementSiblings(current, node);
+    const at = siblings.findIndex(s => s.id === node.id);
+    const other = siblings[towardStart ? at - 1 : at + 1];
+    if (!other) break;
+    const { code, movedStart } = swapSiblings(current.code, node, other);
+    current = parseCanvas(code);
+    node = current.nodes.find(n => n.start === movedStart)!;
+    moved = true;
+    if (!node) break;
+  }
+  if (!moved) throw new Error(`${findNode(tree, id).tag} is already ${towardStart ? 'first' : 'last'}`);
+  return current.code;
+}
+
+/** Insert JSX as a sibling just before or after `id`, on its own lines. */
+export function insertBeside(tree: CanvasTree, id: string, jsx: string, where: 'before' | 'after'): string {
+  const node = findNode(tree, id);
+  if (!node.parent) throw new Error('The whole design has no siblings');
+  const indent = lineIndent(tree.code, node.start);
+  const block = reindent(jsx.trim(), indent);
+  if (where === 'before') {
+    const lineStart = tree.code.lastIndexOf('\n', node.start - 1) + 1;
+    const onOwnLine = /^\s*$/.test(tree.code.slice(lineStart, node.start));
+    return onOwnLine
+      ? tree.code.slice(0, lineStart) + `${block}\n` + tree.code.slice(lineStart)
+      : tree.code.slice(0, node.start) + `${jsx.trim()} ` + tree.code.slice(node.start);
+  }
+  return tree.code.slice(0, node.end) + `\n${block}` + tree.code.slice(node.end);
+}

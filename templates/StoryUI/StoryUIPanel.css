@@ -3535,3 +3535,29 @@ button.sui-verify-pill:focus-visible {
   max-width: 440px;
   font-style: normal;
 }
+
+/* The model is writing: status pill above the live code, centred as one group. */
+.sui-canvas-regen-overlay {
+  flex-direction: column;
+  gap: 12px;
+  padding: 24px;
+}
+.sui-canvas-regen-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: hsl(var(--background, 0 0% 100%) / 0.9);
+  border: 1px solid hsl(var(--border, 0 0% 90%));
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.12);
+  color: hsl(var(--foreground, 0 0% 10%));
+  font-weight: 500;
+}
+.sui-canvas-regen-overlay .sui-canvas-stream--overlay {
+  margin: 0;
+  width: min(520px, 100%);
+  max-width: none;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+}

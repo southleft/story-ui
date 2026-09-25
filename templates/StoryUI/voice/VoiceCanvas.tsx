@@ -1006,8 +1006,10 @@ function VoiceCanvas({
             {/* Re-generation overlay with live code stream */}
             {isGenerating && (
               <div className="sui-canvas-regen-overlay">
-                <div className="sui-canvas-progress-spinner sui-canvas-progress-spinner--sm" />
-                <span>{statusText || 'Regenerating…'}</span>
+                <div className="sui-canvas-regen-status">
+                  <div className="sui-canvas-progress-spinner sui-canvas-progress-spinner--sm" />
+                  <span>{statusText || 'Regenerating…'}</span>
+                </div>
                 {streamingCode && (
                   <pre className="sui-canvas-stream sui-canvas-stream--overlay" aria-hidden="true"><code>{streamingCode.slice(-1200)}</code></pre>
                 )}
