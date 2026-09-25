@@ -1064,6 +1064,13 @@ export async function decideVoiceEdit(req: VoiceRequest, ctx: VoiceContext): Pro
     }
   }
 
+  // Nothing documents the component and the request supplied none of its
+  // content: <Card>Card</Card> — its own name as text — is not what "a card
+  // for a surf site" means. The model builds that; saying the words keeps it
+  // on Jev ("add a button that says send").
+  if (bare && Object.keys(values).length === 0 && !plan.imageSource) {
+    return { kind: 'fallback', reason: `${entry.name} has no example to copy and the request gives none of its content`, steps, stats: tally.stats };
+  }
   let root = bare
     ? {
         tag: entry.name,
