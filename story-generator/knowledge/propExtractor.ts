@@ -181,6 +181,12 @@ export interface ExtractedProps {
    * here so an enrichment holding both can put them together.
    */
   defaultExports?: Record<string, string>;
+  /**
+   * The library's shared props (style props: `bg`, `c`, `fz`, spacing) with
+   * their types and values — subtracted from every component's `props`, kept
+   * here once for callers that edit them.
+   */
+  baseProps?: PropFact[];
   extractedAt: string;
   /**
    * Packages this one re-exports from, when it is a barrel over siblings.
@@ -1518,7 +1524,7 @@ function collectPropTypes(source: ts.SourceFile, out: Record<string, ComponentFa
  *    exported component rather than a `<Name>Props` convention; a path given
  *    as the package no longer reads node_modules.
  */
-const EXTRACTOR_SCHEMA = 9 // 9: acceptedNames kept from type resolution; 8: props resolved by the TypeScript checker for React packages;
+const EXTRACTOR_SCHEMA = 11 // 11: open value lists for shared style props; 10: baseProps (shared style props) kept; 9: 9: acceptedNames kept from type resolution; 8: props resolved by the TypeScript checker for React packages;
   // // 7: optionsOpen from the member's own type text; 6: OverridableStringUnion literals; caches written before it hid MUI's variant/color/size;
 
 /**
@@ -1725,9 +1731,11 @@ async function readOnePackage(
    * Angular or Lit one, which declare their inputs outright and are read
    * directly. The gate is the package's own manifest, not its name.
    */
+  let baseFacts: PropFact[] | undefined;
   if (declaresReact(root)) {
     try {
       const checked = resolvePropsWithChecker({ projectRoot, importPath: pkgName, storiesDir: projectRoot });
+      if (checked.baseFacts?.length) baseFacts = checked.baseFacts;
       if (checked.defaultExport) defaultExports[pkgName] = checked.defaultExport;
       if (!checked.ran) {
         logger.log(`🧠 Type resolution for ${pkgName}: did not run — ${checked.reason}`);
@@ -1841,6 +1849,7 @@ async function readOnePackage(
     components,
     inheritedOnly,
     ...(Object.keys(defaultExports).length ? { defaultExports } : {}),
+    ...(baseFacts?.length ? { baseProps: baseFacts } : {}),
     extractedAt: new Date().toISOString(),
     reexportedFrom,
   };
@@ -1944,6 +1953,7 @@ export async function extractProps(
     version: base.version,
     components,
     inheritedOnly,
+    ...(base.baseProps?.length ? { baseProps: base.baseProps } : {}),
     extractedAt: new Date().toISOString(),
     reexportedFrom: base.reexportedFrom,
   };

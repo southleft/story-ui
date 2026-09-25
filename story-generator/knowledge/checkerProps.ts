@@ -102,6 +102,13 @@ export interface CheckerPropsResult {
   defaultExport?: string;
   /** Props shared by nearly every component, treated as the library's base. */
   baseProps: string[];
+  /**
+   * Facts for those shared props — type, values, docs — read once from a
+   * component that has them. Left out of each component's `own` on purpose
+   * (a catalog listing 1,123 styling props teaches nothing), but they are
+   * exactly what "change the background colour" needs.
+   */
+  baseFacts?: PropFact[];
   /** False when no program could be built; distinct from "resolved nothing". */
   ran: boolean;
   reason?: string;
@@ -262,6 +269,25 @@ function docOf(symbol: ts.Symbol, checker: ts.TypeChecker): string | undefined {
 }
 
 /** The string literals of a union type, when every member is one. */
+/**
+ * The string values a mixed type names, for SHARED style props only.
+ *
+ * `StyleProp<DefaultMantineColor>` is the colour names OR a responsive object
+ * OR any string; `literalValues` rightly refuses it, because a catalog must
+ * not call it closed. A voice edit only needs the names to choose from, and
+ * the list is marked open, so nothing treats it as the complete set.
+ */
+function looseLiteralValues(type: ts.Type, depth = 0): string[] | undefined {
+  if (depth > 3) return undefined;
+  const parts = type.isUnion() ? type.types : [type];
+  const out = new Set<string>();
+  for (const p of parts) {
+    if (p.isStringLiteral()) out.add(p.value);
+    else if (p.isUnion()) for (const v of looseLiteralValues(p, depth + 1) ?? []) out.add(v);
+  }
+  return out.size > 1 && out.size <= 40 ? [...out] : undefined;
+}
+
 function literalValues(type: ts.Type): string[] | undefined {
   const parts = type.isUnion() ? type.types : [type];
   const out: string[] = [];
@@ -436,15 +462,13 @@ export function resolvePropsWithChecker(opts: {
     return declarations.every(d => reactTypeFiles.has(d.getSourceFile().fileName));
   };
 
-  const components: ResolvedComponent[] = [];
-  for (const [name, r] of resolved) {
-    const ownNames = [...r.symbols.keys()].filter(n =>
-      !base.has(n) && !UNIVERSAL.has(n) && !isDomAttribute(r.symbols.get(n)!));
-    const own: PropFact[] = ownNames.map(propName => {
+  const factFor = (r: { symbols: Map<string, ts.Symbol> }, propName: string, loose = false): PropFact => {
       const symbol = r.symbols.get(propName)!;
       const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0];
       const type = declaration ? checker.getTypeOfSymbolAtLocation(symbol, declaration) : undefined;
-      const values = type ? literalValues(type) : undefined;
+      const strict = type ? literalValues(type) : undefined;
+      const values = strict ?? (loose && type ? looseLiteralValues(type) : undefined);
+      const open = !strict && !!values;
       const text = type ? checker.typeToString(type) : undefined;
       const doc = docOf(symbol, checker);
       return {
@@ -452,9 +476,21 @@ export function resolvePropsWithChecker(opts: {
         required: !(symbol.flags & ts.SymbolFlags.Optional),
         ...(text && text.length <= 120 ? { type: text } : {}),
         ...(values ? { options: values } : {}),
+        ...(open ? { optionsOpen: true } : {}),
         ...(doc ? { doc } : {}),
       };
-    });
+  };
+  const baseFacts: PropFact[] = [];
+  if (baseProps.length) {
+    const donor = substantial.find(r => baseProps.every(n => r.symbols.has(n))) ?? substantial[0];
+    for (const n of baseProps) if (donor?.symbols.has(n) && !UNIVERSAL.has(n)) baseFacts.push(factFor(donor, n, true));
+  }
+
+  const components: ResolvedComponent[] = [];
+  for (const [name, r] of resolved) {
+    const ownNames = [...r.symbols.keys()].filter(n =>
+      !base.has(n) && !UNIVERSAL.has(n) && !isDomAttribute(r.symbols.get(n)!));
+    const own: PropFact[] = ownNames.map(propName => factFor(r, propName));
     const verdict = r.symbols.size <= 1 ? 'unknown' : r.open ? 'open' : 'closed';
     let kind: ExportKind = verdict === 'unknown' ? 'unknown' : 'component';
     let members: string[] | undefined;
@@ -475,5 +511,5 @@ export function resolvePropsWithChecker(opts: {
     });
   }
 
-  return { components, baseProps, ran: true, ms: Date.now() - started, ...(defaultName ? { defaultExport: defaultName } : {}) };
+  return { components, baseProps, ...(baseFacts.length ? { baseFacts } : {}), ran: true, ms: Date.now() - started, ...(defaultName ? { defaultExport: defaultName } : {}) };
 }
