@@ -380,7 +380,7 @@ click-to-edit inspector and attributed verification need React's internals.
 React design systems are developed against in four shapes, because each one
 exposed a different bug: barrel npm packages (Mantine, Carbon), subpath
 packages (MUI), one package per component (Atlassian), and local source (Radix
-+ Tailwind, and fully custom libraries). A React library shipped without type
+\+ Tailwind, and fully custom libraries). A React library shipped without type
 declarations loses prop knowledge and editable props.
 
 ---
