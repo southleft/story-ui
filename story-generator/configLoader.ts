@@ -163,6 +163,12 @@ export function loadUserConfig(): StoryUIConfig {
           // eslint-disable-next-line @typescript-eslint/no-var-requires
           const loadedModule = require(resolvedPath);
           userConfig = loadedModule.default || loadedModule;
+          // Node 22+ require()s a module.exports file in a "type": "module"
+          // package as ESM and returns an empty namespace instead of throwing,
+          // which would silently become the default config.
+          if (!userConfig || Object.keys(userConfig).length === 0) {
+            throw new Error(`${configPath} exported nothing when required`);
+          }
         } catch (requireError) {
           // If require() fails (e.g., ESM project with CJS config), fall back to parsing
           // This handles "type": "module" projects with module.exports configs
