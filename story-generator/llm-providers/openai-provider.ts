@@ -124,7 +124,7 @@ interface OpenAIResponse {
 }
 
 export class OpenAIProvider extends BaseLLMProvider {
-  readonly name = 'OpenAI';
+  readonly name: string = 'OpenAI';
   readonly type: ProviderType = 'openai';
   readonly supportedModels = OPENAI_MODELS;
 

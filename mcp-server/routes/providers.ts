@@ -7,15 +7,18 @@
 
 import { Request, Response } from 'express';
 import { getProviderRegistry, ModelInfo } from '../../story-generator/llm-providers/index.js';
-import { getAvailableProviders, getProviderInfo } from '../../story-generator/llm-providers/story-llm-service.js';
+import { getAvailableProviders, getProviderInfo, refreshLocalModels } from '../../story-generator/llm-providers/story-llm-service.js';
 import { logger } from '../../story-generator/logger.js';
 
 /**
  * GET /mcp/providers
  * Returns list of available providers and their configuration status
  */
-export function getProviders(req: Request, res: Response) {
+export async function getProviders(req: Request, res: Response) {
   try {
+    // Models loaded in a local server change while Story UI runs; read them now.
+    await refreshLocalModels();
+
     const providers = getAvailableProviders();
     const currentInfo = getProviderInfo();
 

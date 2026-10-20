@@ -17,6 +17,7 @@ import { OPENAI_SMALL_MODEL } from './openai-provider.js';
 import { GEMINI_SMALL_MODEL } from './gemini-provider.js';
 export { OpenAIProvider, OPENAI_MODELS } from './openai-provider.js';
 export { GeminiProvider, GEMINI_MODELS } from './gemini-provider.js';
+export { LocalProvider } from './local-provider.js';
 
 // Legacy model-ID aliases (kept so consumer configs written against older
 // releases keep working after an update).
@@ -46,6 +47,7 @@ import {
 import { ClaudeProvider } from './claude-provider.js';
 import { OpenAIProvider } from './openai-provider.js';
 import { GeminiProvider } from './gemini-provider.js';
+import { LocalProvider } from './local-provider.js';
 import { logger } from '../logger.js';
 
 /**
@@ -65,7 +67,8 @@ class DefaultProviderRegistry implements ProviderRegistry {
     this.register(new ClaudeProvider());
     this.register(new OpenAIProvider());
     this.register(new GeminiProvider());
-    logger.debug('Registered built-in providers: Claude, OpenAI, Gemini');
+    this.register(new LocalProvider());
+    logger.debug('Registered built-in providers: Claude, OpenAI, Gemini, Local');
   }
 
   register(provider: LLMProvider): void {
@@ -237,5 +240,17 @@ export function initializeFromEnv(): void {
       model: resolveModelAlias(process.env.GEMINI_MODEL || 'gemini-3.1-pro'),
     });
     logger.info('Gemini provider configured from environment');
+  }
+
+  // A local OpenAI-compatible server (LM Studio, Ollama, llama.cpp) needs no key
+  const localUrl = process.env.LOCAL_LLM_BASE_URL;
+  if (localUrl) {
+    registry.configureProvider('local', {
+      baseUrl: localUrl,
+      apiKey: process.env.LOCAL_LLM_API_KEY,
+      model: process.env.LOCAL_LLM_MODEL || '',
+    });
+    void (registry.get('local') as LocalProvider).refreshModels();
+    logger.info(`Local provider configured from environment (${localUrl})`);
   }
 }

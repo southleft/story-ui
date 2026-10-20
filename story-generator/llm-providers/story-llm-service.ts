@@ -10,6 +10,7 @@ import {
   smallModelFor,
   getProviderRegistry,
   initializeFromEnv,
+  LocalProvider,
   resolveModelAlias,
   ChatMessage,
   ChatResponse,
@@ -78,7 +79,18 @@ export function getStoryProvider(): LLMProvider {
     return defaultProvider;
   }
 
-  throw new Error('No LLM provider configured. Please set CLAUDE_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY.');
+  throw new Error('No LLM provider configured. Please set CLAUDE_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or LOCAL_LLM_BASE_URL.');
+}
+
+/**
+ * Re-read the models a local server has loaded. Initialises first: on the
+ * first request after startup the provider is not configured yet, and its own
+ * startup listing is still in flight.
+ */
+export async function refreshLocalModels(): Promise<void> {
+  ensureInitialized();
+  const local = getProviderRegistry().get('local');
+  if (local instanceof LocalProvider) await local.refreshModels();
 }
 
 /**
