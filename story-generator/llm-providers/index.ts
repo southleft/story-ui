@@ -182,11 +182,17 @@ export function getProvider(type: ProviderType): LLMProvider | undefined {
  * user chose.
  */
 export function smallModelFor(provider?: ProviderType | string): string | undefined {
-  const type = (provider as ProviderType | undefined) || getDefaultProvider()?.type;
+  // DEFAULT_PROVIDER first, as getStoryProvider does: the registry default is
+  // just the first provider registered, so a call naming no provider would
+  // otherwise get Claude's cheap model sent to whatever actually answers it.
+  const type = (provider as ProviderType | undefined)
+    || (process.env.DEFAULT_PROVIDER as ProviderType | undefined)
+    || getDefaultProvider()?.type;
   switch (type) {
     case 'claude': return CLAUDE_SMALL_MODEL;
     case 'openai': return OPENAI_SMALL_MODEL;
     case 'gemini': return GEMINI_SMALL_MODEL;
+    case 'local': return getProviderRegistry().get('local')?.getConfig().smallModel || undefined;
     default: return undefined;
   }
 }
@@ -242,13 +248,17 @@ export function initializeFromEnv(): void {
     logger.info('Gemini provider configured from environment');
   }
 
-  // A local OpenAI-compatible server (LM Studio, Ollama, llama.cpp) needs no key
+  // Any OpenAI-compatible server: LM Studio, Ollama, llama.cpp (no key needed), or OpenRouter
   const localUrl = process.env.LOCAL_LLM_BASE_URL;
   if (localUrl) {
+    const allowedModels = (process.env.LOCAL_LLM_MODELS || '').split(',').map(s => s.trim()).filter(Boolean);
     registry.configureProvider('local', {
       baseUrl: localUrl,
       apiKey: process.env.LOCAL_LLM_API_KEY,
       model: process.env.LOCAL_LLM_MODEL || '',
+      smallModel: process.env.LOCAL_LLM_SMALL_MODEL,
+      displayName: process.env.LOCAL_LLM_NAME,
+      allowedModels,
     });
     void (registry.get('local') as LocalProvider).refreshModels();
     logger.info(`Local provider configured from environment (${localUrl})`);

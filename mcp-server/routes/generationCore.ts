@@ -1219,7 +1219,7 @@ async function runStoryGenerationPipeline(
   const titlePromise: Promise<string> = titleNeedsModel
     ? getLLMTitle(isActualUpdate && conversation
         ? (conversation.find((msg) => msg.role === 'user')?.content || prompt)
-        : prompt, provider)
+        : prompt, provider, model)
     : Promise.resolve(stripStoryPrefix(originalTitle as string, config.storyPrefix));
 
   let aiText = '';
@@ -3726,9 +3726,9 @@ export function cleanPromptForTitle(prompt: string): string {
     .slice(0, 60);
 }
 
-async function getLLMTitle(userPrompt: string, provider?: string): Promise<string> {
+async function getLLMTitle(userPrompt: string, provider?: string, model?: string): Promise<string> {
   try {
-    return await llmGenerateTitle(userPrompt, provider as any);
+    return await llmGenerateTitle(userPrompt, provider as any, model);
   } catch {
     return '';
   }

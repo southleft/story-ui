@@ -235,7 +235,8 @@ interface ProviderInfo {
 
 interface ProvidersResponse {
   providers: ProviderInfo[];
-  current?: { provider: string; model: string };
+  // `type` is the provider key; older servers send only the `provider` label.
+  current?: { provider: string; type?: string; model: string };
 }
 
 interface StreamEvent {
@@ -1907,12 +1908,12 @@ function StoryUIPanel({ mcpPort }: StoryUIPanelProps) {
                 }
               } else if (data.current) {
                 // Saved provider no longer configured, fall back to server default
-                dispatch({ type: 'SET_SELECTED_PROVIDER', payload: data.current.provider.toLowerCase() });
+                dispatch({ type: 'SET_SELECTED_PROVIDER', payload: data.current.type ?? data.current.provider.toLowerCase() });
                 dispatch({ type: 'SET_SELECTED_MODEL', payload: data.current.model });
               }
             } else if (data.current) {
               // No saved preferences, use server default
-              dispatch({ type: 'SET_SELECTED_PROVIDER', payload: data.current.provider.toLowerCase() });
+              dispatch({ type: 'SET_SELECTED_PROVIDER', payload: data.current.type ?? data.current.provider.toLowerCase() });
               dispatch({ type: 'SET_SELECTED_MODEL', payload: data.current.model });
             }
           }

@@ -26,6 +26,7 @@ export async function getProviders(req: Request, res: Response) {
       providers,
       current: {
         provider: currentInfo.currentProvider,
+        type: currentInfo.currentProviderType,
         model: currentInfo.currentModel,
         supportsVision: currentInfo.supportsVision,
         supportsStreaming: currentInfo.supportsStreaming,
