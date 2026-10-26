@@ -429,7 +429,7 @@ The server reads `.env` in the directory it is started from.
 | `OPENAI_API_KEY`, `OPENAI_ORG_ID` | OpenAI key and optional organisation. |
 | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | Google key. |
 | `DEFAULT_PROVIDER` | `claude`, `openai` or `gemini`. |
-| `DEFAULT_MODEL` | Model id. Defaults: `claude-opus-5`, `gpt-5.6-sol`, `gemini-3.1-pro`. |
+| `DEFAULT_MODEL` | Model id. Defaults: `claude-opus-5-5`, `gpt-5.6-sol`, `gemini-4-argon`. |
 | `CLAUDE_EFFORT` | `low`, `medium`, `high` (default) or `xhigh`. |
 | `CLAUDE_STREAM_MAX_MS` | Hard cap on one streamed model call. Default 15 minutes. |
 | `PORT` | Server port. Default 4001. |

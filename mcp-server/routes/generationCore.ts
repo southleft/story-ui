@@ -3573,8 +3573,10 @@ async function generateChatSummary(args: {
           'Then on a new line write exactly "SUGGESTIONS:" followed by 3 short follow-up refinement prompts the user might click next, one per line, each under 10 words, phrased as instructions (e.g. "Make the header sticky").',
         ].filter(Boolean).join('\n'),
       },
-    // The summary is two sentences; the cheap model writes it.
-    ], { provider: provider as any, model: smallModelFor(provider) ?? model, maxTokens: 400 });
+    // The summary is two sentences; the cheap model writes it, at low effort —
+    // at high, Haiku 5.5 sometimes thought through all 400 tokens and
+    // returned no text (stop_reason max_tokens).
+    ], { provider: provider as any, model: smallModelFor(provider) ?? model, maxTokens: 400, effort: 'low' });
 
     const text = result.content.trim();
     const suggestionIdx = text.indexOf('SUGGESTIONS:');
