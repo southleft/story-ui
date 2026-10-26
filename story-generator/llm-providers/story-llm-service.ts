@@ -10,6 +10,7 @@ import {
   smallModelFor,
   getProviderRegistry,
   initializeFromEnv,
+  LocalProvider,
   resolveModelAlias,
   ChatMessage,
   ChatResponse,
@@ -78,7 +79,18 @@ export function getStoryProvider(): LLMProvider {
     return defaultProvider;
   }
 
-  throw new Error('No LLM provider configured. Please set CLAUDE_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY.');
+  throw new Error('No LLM provider configured. Please set CLAUDE_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or LOCAL_LLM_BASE_URL.');
+}
+
+/**
+ * Re-read the models a local server has loaded. Initialises first: on the
+ * first request after startup the provider is not configured yet, and its own
+ * startup listing is still in flight.
+ */
+export async function refreshLocalModels(): Promise<void> {
+  ensureInitialized();
+  const local = getProviderRegistry().get('local');
+  if (local instanceof LocalProvider) await local.refreshModels();
 }
 
 /**
@@ -496,7 +508,10 @@ export function buildMessageWithImages(
 /**
  * Generate a title for a story using the configured provider
  */
-export async function generateTitle(description: string, provider?: ProviderType): Promise<string> {
+export async function generateTitle(description: string, provider?: ProviderType, model?: string): Promise<string> {
+  // smallModelFor reads provider config, which env initialisation sets — and
+  // a title can be the first LLM call a fresh server makes.
+  ensureInitialized();
   const titlePrompt = [
     'Given the following UI description, generate a short, clear, human-friendly title suitable for a Storybook navigation item.',
     'Requirements:',
@@ -511,10 +526,12 @@ export async function generateTitle(description: string, provider?: ProviderType
     'Title:',
   ].join('\n');
 
-  // A title is not worth the generation model's price.
+  // A title is not worth the generation model's price. A provider with no
+  // cheap model (a local server, a router) uses the one the user chose — its
+  // configured default may not be one the account can reach.
   const response = await chatCompletion([{ role: 'user', content: titlePrompt }], {
     provider,
-    model: smallModelFor(provider),
+    model: smallModelFor(provider) ?? model,
     maxTokens: 100,
     temperature: 0.7,
   });
@@ -548,6 +565,8 @@ export function getProviderInfo(requested?: {
   model?: string;
 }): {
   currentProvider: string;
+  /** The registry key; `currentProvider` is a label and need not match it. */
+  currentProviderType?: ProviderType;
   currentModel: string;
   supportsVision: boolean;
   supportsStreaming: boolean;
@@ -570,6 +589,7 @@ export function getProviderInfo(requested?: {
 
     return {
       currentProvider: provider.name,
+      currentProviderType: provider.type,
       currentModel: modelId,
       supportsVision: modelInfo ? modelInfo.supportsVision : provider.supportsVision(),
       supportsStreaming: modelInfo ? modelInfo.supportsStreaming : provider.supportsStreaming(),

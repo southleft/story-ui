@@ -58,7 +58,7 @@ export interface ModelInfo {
 }
 
 // Provider types
-export type ProviderType = 'claude' | 'openai' | 'gemini' | 'ollama' | 'custom';
+export type ProviderType = 'claude' | 'openai' | 'gemini' | 'local' | 'ollama' | 'custom';
 
 // Provider configuration
 export interface ProviderConfig {
@@ -66,6 +66,9 @@ export interface ProviderConfig {
   apiKey?: string;
   model: string;
   baseUrl?: string; // For custom endpoints or proxies
+  displayName?: string; // Label for the local provider (e.g. "OpenRouter")
+  allowedModels?: string[]; // Local provider: only these of the server's models
+  smallModel?: string; // Local provider: the cheap model for titles and summaries
   organizationId?: string; // For OpenAI
   projectId?: string; // For GCP/Gemini
   timeout?: number; // Request timeout in ms
