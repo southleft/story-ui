@@ -119,6 +119,8 @@ export async function chatCompletion(
     model?: string;
     maxTokens?: number;
     temperature?: number;
+    /** Reasoning effort, for models that take one; others ignore it. */
+    effort?: string;
   }
 ): Promise<string> {
   const result = await chatCompletionDetailed(messages, options);
@@ -289,6 +291,8 @@ export async function chatCompletionDetailed(
     model?: string;
     maxTokens?: number;
     temperature?: number;
+    /** Reasoning effort, for models that take one; others ignore it. */
+    effort?: string;
     /** Caller-side abort (e.g. a phase budget) — cancels the in-flight HTTP call. */
     signal?: AbortSignal;
   }
@@ -340,6 +344,7 @@ export async function chatCompletionDetailed(
       model,
       maxTokens: options?.maxTokens,
       temperature: options?.temperature,
+      effort: options?.effort,
       systemPrompt,
       signal: options?.signal,
     });
@@ -511,12 +516,15 @@ export async function generateTitle(description: string, provider?: ProviderType
     'Title:',
   ].join('\n');
 
-  // A title is not worth the generation model's price.
+  // A title is not worth the generation model's price. Low effort: a small
+  // model that thinks at the generation effort can spend the whole budget
+  // thinking and return no text (measured on Haiku 5.5 at 400 tokens).
   const response = await chatCompletion([{ role: 'user', content: titlePrompt }], {
     provider,
     model: smallModelFor(provider),
     maxTokens: 100,
     temperature: 0.7,
+    effort: 'low',
   });
 
   // Extract the first non-empty line

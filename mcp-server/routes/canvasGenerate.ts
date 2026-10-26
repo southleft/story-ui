@@ -565,12 +565,14 @@ export async function canvasGenerateHandler(req: Request, res: Response) {
     // The canvas is a live surface: a person is waiting mid-sentence, so it
     // runs on a fast model rather than the chat panel's choice. Measured on the
     // same newsletter request: Opus 5 20s, Sonnet 5 9s, Haiku 4.5 7s — Sonnet
-    // keeps the quality. STORY_UI_CANVAS_MODEL overrides; other providers
+    // keeps the quality. Sonnet 5.5 (Oct 2026) matched Sonnet 5 on a newsletter
+    // component at effort high: 3.6–3.9s vs 3.7–4.2s, both complete.
+    // STORY_UI_CANVAS_MODEL overrides; other providers
     // keep the model they were sent.
     if (process.env.STORY_UI_CANVAS_MODEL) {
       model = process.env.STORY_UI_CANVAS_MODEL;
     } else if (!provider || provider === 'claude') {
-      model = 'claude-sonnet-5';
+      model = 'claude-sonnet-5-5';
     }
 
     if (!prompt || typeof prompt !== 'string') {

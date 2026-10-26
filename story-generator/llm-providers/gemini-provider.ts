@@ -20,12 +20,15 @@ import { BaseLLMProvider } from './base-provider.js';
 import { fetchWithRetry } from './http-utils.js';
 import { logger } from '../logger.js';
 
-// Gemini model definitions - Updated July 2026
-// Reference: https://ai.google.dev/gemini-api/docs/models
+// Gemini model definitions - Updated 26 Oct 2026 against the live models list
+// (GET /v1beta/models, each id probed with a generateContent call) and
+// https://ai.google.dev/gemini-api/docs/pricing. Prices are the STANDARD rates:
+// Argon's $2/$10 and 3.8 Flash's $0.75/$3.75 are time-limited (to Nov 30 and
+// Dec 31, 2026), so recording them would understate cost within weeks.
 export const GEMINI_MODELS: ModelInfo[] = [
   {
-    id: 'gemini-3.1-pro',
-    name: 'Gemini 3.1 Pro',
+    id: 'gemini-4-argon',
+    name: 'Gemini 4 Argon',
     provider: 'gemini',
     contextWindow: 1048576,
     maxOutputTokens: 65536,
@@ -34,12 +37,12 @@ export const GEMINI_MODELS: ModelInfo[] = [
     supportsFunctionCalling: true,
     supportsStreaming: true,
     supportsReasoning: true,
-    inputPricePer1kTokens: 0.002,
-    outputPricePer1kTokens: 0.012,
+    inputPricePer1kTokens: 0.004,
+    outputPricePer1kTokens: 0.02,
   },
   {
-    id: 'gemini-3.7-flash',
-    name: 'Gemini 3.7 Flash',
+    id: 'gemini-3.8-flash',
+    name: 'Gemini 3.8 Flash',
     provider: 'gemini',
     contextWindow: 1048576,
     maxOutputTokens: 65536,
@@ -48,12 +51,12 @@ export const GEMINI_MODELS: ModelInfo[] = [
     supportsFunctionCalling: true,
     supportsStreaming: true,
     supportsReasoning: true,
-    inputPricePer1kTokens: 0.00015,
-    outputPricePer1kTokens: 0.0006,
+    inputPricePer1kTokens: 0.0015,
+    outputPricePer1kTokens: 0.0075,
   },
   {
-    id: 'gemini-3.1-flash-lite',
-    name: 'Gemini 3.1 Flash-Lite',
+    id: 'gemini-3.5-flash-lite',
+    name: 'Gemini 3.5 Flash-Lite',
     provider: 'gemini',
     contextWindow: 1048576,
     maxOutputTokens: 65536,
@@ -61,25 +64,31 @@ export const GEMINI_MODELS: ModelInfo[] = [
     supportsDocuments: true,
     supportsFunctionCalling: true,
     supportsStreaming: true,
-    inputPricePer1kTokens: 0.0001,
-    outputPricePer1kTokens: 0.0004,
+    inputPricePer1kTokens: 0.0003,
+    outputPricePer1kTokens: 0.0025,
   },
 ];
 
-// Older/preview model IDs consumers may still have configured. The
-// 3.1-pro-preview and 3.1-flash-lite-preview aliases are being retired
-// upstream (July 2026), so these are remapped rather than passed through.
+// Older/preview model IDs consumers may still have configured. Remapped, not
+// passed through: `gemini-3.1-pro` was never served (it 404s — a GA id that
+// Google did not ship), and the July 2026 table remapped the WORKING
+// `gemini-3.1-pro-preview` onto it, so every Gemini generation failed.
 export const GEMINI_LEGACY_MODEL_ALIASES: Record<string, string> = {
-  'gemini-3.1-pro-preview': 'gemini-3.1-pro',
-  'gemini-3-flash-preview': 'gemini-3.7-flash',
-  'gemini-3.5-flash': 'gemini-3.7-flash',
-  'gemini-2.5-flash': 'gemini-3.7-flash',
+  'gemini-3.1-pro': 'gemini-4-argon',
+  'gemini-3.1-pro-preview': 'gemini-4-argon',
+  'gemini-3.7-flash': 'gemini-3.8-flash',
+  'gemini-3.6-flash': 'gemini-3.8-flash',
+  'gemini-3.5-flash': 'gemini-3.8-flash',
+  'gemini-3-flash-preview': 'gemini-3.8-flash',
+  'gemini-2.5-flash': 'gemini-3.8-flash',
+  'gemini-3.1-flash-lite': 'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite-preview': 'gemini-3.5-flash-lite',
 };
 
-// Default model - Gemini 3.1 Pro (flagship, July 2026)
-const DEFAULT_MODEL = 'gemini-3.1-pro';
+// Default model - Gemini 4 Argon (flagship reasoning model, Oct 2026)
+const DEFAULT_MODEL = 'gemini-4-argon';
 /** The cheap model for trivial calls (titles, chat summaries). */
-export const GEMINI_SMALL_MODEL = 'gemini-3.1-flash-lite';
+export const GEMINI_SMALL_MODEL = 'gemini-3.5-flash-lite';
 
 // API configuration
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';

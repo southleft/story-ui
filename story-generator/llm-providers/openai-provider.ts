@@ -70,7 +70,7 @@ export const OPENAI_LEGACY_MODEL_ALIASES: Record<string, string> = {
   'gpt-5.5': 'gpt-5.6-sol',
   'gpt-5.4-mini': 'gpt-5.6-terra',
   'gpt-5.4-nano': 'gpt-5.6-luna',
-  'o4-mini': 'gpt-5.4-mini',
+  'o4-mini': 'gpt-5.6-terra',
 };
 
 // Default model - GPT-5.5 (flagship, 1M context window, July 2026)

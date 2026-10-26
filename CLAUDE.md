@@ -535,7 +535,7 @@ model: Choice / Score / Noul questions, no text generation, ~150–400 ms,
 `TYPESAFE_API_KEY` in the project `.env`) and applies them as AST splices on
 the canvas code. Anything Jev cannot decide from closed sets — a section of
 several parts, a restyle, low confidence — returns `fallback` and goes to the
-LLM route (`/mcp/canvas-generate`, Sonnet 5 by default; `STORY_UI_CANVAS_MODEL`).
+LLM route (`/mcp/canvas-generate`, Sonnet 5.5 by default; `STORY_UI_CANVAS_MODEL`).
 
 - Every value comes from a closed set: declared props and their `const`
   tuples, attributes the team's own stories set, DOM attributes the compiler
