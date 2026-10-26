@@ -1,3 +1,15 @@
+# [5.23.0](https://github.com/southleft/story-ui/compare/v5.22.0...v5.23.0) (2026-10-26)
+
+
+### Bug Fixes
+
+* **ui:** display names for the current model lineup ([2c7e7f4](https://github.com/southleft/story-ui/commit/2c7e7f4826b437b6b8b8638e3d77288741d5273f))
+
+
+### Features
+
+* **generator:** upgrade to Claude 5.5 and Gemini 4 Argon; fix Gemini 404 ([94c51d1](https://github.com/southleft/story-ui/commit/94c51d16ed7391d592f3effd8da615a37f26b5ce))
+
 # [5.22.0](https://github.com/southleft/story-ui/compare/v5.21.2...v5.22.0) (2026-10-26)
 
 
