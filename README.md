@@ -440,6 +440,7 @@ The server reads `.env` in the directory it is started from.
 | `STORY_UI_TOKEN`, `STORY_UI_HOST`, `STORY_UI_ALLOW_UNAUTHENTICATED` | Access control; see Security. |
 | `STORY_UI_ALLOWED_ORIGINS` | Extra CORS origins, comma-separated. |
 | `STORY_UI_MAX_BODY` | Request body ceiling. Default `25mb`. |
+| `HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY` | Route LLM provider calls through a corporate proxy. Loopback is always direct; the startup log names the proxy in use. |
 | `STORYBOOK_URL`, `STORYBOOK_PORT` | Where verification finds your Storybook. |
 | `STORYBOOK_PROXY_ENABLED`, `STORYBOOK_PROXY_PORT` | Proxy non-API requests to a Storybook dev server (deployments). |
 | `STORY_UI_GATE_ATTEMPTS` | Regeneration attempts before the best is kept. Default 3. |

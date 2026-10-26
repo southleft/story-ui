@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createProxyMiddleware } from 'http-proxy-middleware';
+import { installOutboundProxy } from '../story-generator/outboundProxy.js';
 
 // Get __dirname equivalent for ES modules
 const __filename = fileURLToPath(import.meta.url);
@@ -10,6 +11,8 @@ const __dirname = path.dirname(__filename);
 // Load .env from current working directory (where the MCP server is run from)
 // This allows each environment to have its own API key configuration
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+// After .env, so HTTPS_PROXY set there applies; before any provider call.
+installOutboundProxy();
 import express from 'express';
 import cors from 'cors';
 import { resolveAccessPolicy, accessControl } from './auth.js';
