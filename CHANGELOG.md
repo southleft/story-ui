@@ -1,3 +1,10 @@
+# [5.22.0](https://github.com/southleft/story-ui/compare/v5.21.2...v5.22.0) (2026-10-26)
+
+
+### Features
+
+* **mcp:** route LLM provider calls through HTTPS_PROXY / HTTP_PROXY ([79f21ad](https://github.com/southleft/story-ui/commit/79f21adc5608cfc49890490aee1027c7c2ad7f48)), closes [#30](https://github.com/southleft/story-ui/issues/30)
+
 ## [5.21.2](https://github.com/southleft/story-ui/compare/v5.21.1...v5.21.2) (2026-09-25)
 
 
