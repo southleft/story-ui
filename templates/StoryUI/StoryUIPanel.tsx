@@ -976,19 +976,19 @@ function formatTime(timestamp: number): string {
 function getModelDisplayName(model: string): string {
   const displayNames: Record<string, string> = {
     // Claude
+    'claude-opus-5-5': 'Claude Opus 5.5',
     'claude-fable-5-1': 'Claude Fable 5.1',
+    'claude-sonnet-5-5': 'Claude Sonnet 5.5',
     'claude-opus-5': 'Claude Opus 5',
-    'claude-opus-4-8': 'Claude Opus 4.8',
-    'claude-sonnet-5': 'Claude Sonnet 5',
-    'claude-haiku-4-5': 'Claude Haiku 4.5',
+    'claude-haiku-5-5': 'Claude Haiku 5.5',
     // OpenAI
-    'gpt-5.5': 'GPT-5.5',
-    'gpt-5.4-mini': 'GPT-5.4 Mini',
-    'gpt-5.4-nano': 'GPT-5.4 Nano',
+    'gpt-5.6-sol': 'GPT-5.6 Sol',
+    'gpt-5.6-terra': 'GPT-5.6 Terra',
+    'gpt-5.6-luna': 'GPT-5.6 Luna',
     // Gemini
-    'gemini-3.1-pro': 'Gemini 3.1 Pro',
-    'gemini-3.5-flash': 'Gemini 3.5 Flash',
-    'gemini-3.1-flash-lite': 'Gemini 3.1 Flash-Lite',
+    'gemini-4-argon': 'Gemini 4 Argon',
+    'gemini-3.8-flash': 'Gemini 3.8 Flash',
+    'gemini-3.5-flash-lite': 'Gemini 3.5 Flash-Lite',
   };
   if (displayNames[model]) return displayNames[model];
   // Fallback for an id the table does not know: "claude-fable-5-1" reads as
