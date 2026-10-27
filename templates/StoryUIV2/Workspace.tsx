@@ -687,7 +687,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ apiBase, onOpenStory, onHa
         const storedProvider = readStored(PROVIDER_KEY);
         const storedModel = readStored(MODEL_KEY);
         const remembered = offered.find(p => p.type === storedProvider);
-        setProvider(prev => prev || remembered?.type || (data.current?.provider?.toLowerCase?.() ?? ''));
+        setProvider(prev => prev || remembered?.type || (data.current?.provider ?? ''));
         setModel(prev => prev || (remembered && remembered.models.includes(storedModel) ? storedModel : '') || (data.current?.model ?? ''));
         setConnected(true);
         // The server is back (or was here all along): the list of work may
