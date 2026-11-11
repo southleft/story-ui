@@ -18,6 +18,7 @@ import {
 } from './types.js';
 import { BaseLLMProvider } from './base-provider.js';
 import { fetchWithRetry } from './http-utils.js';
+import { vertexModelUrl } from './enterprise-auth.js';
 import { logger } from '../logger.js';
 
 // Gemini model definitions - Updated 26 Oct 2026 against the live models list
@@ -156,17 +157,20 @@ export class GeminiProvider extends BaseLLMProvider {
 
   private getApiUrl(model: string, stream: boolean = false): string {
     const method = stream ? 'streamGenerateContent' : 'generateContent';
+    // Vertex AI takes the same request and response shapes at its own URL.
+    if (this.config.vertex) return vertexModelUrl(this.config.vertex, 'google', model, method);
     return `${GEMINI_API_BASE}/${model}:${method}`;
+  }
+
+  private requestHeaders(): Promise<Record<string, string>> {
+    return this.authHeaders(apiKey => ({ 'x-goog-api-key': apiKey }))
+      .then(auth => ({ 'Content-Type': 'application/json', ...auth }));
   }
 
   async chat(messages: ChatMessage[], options?: ChatOptions): Promise<ChatResponse> {
     this.validateMessages(messages);
     this.logRequest(messages, options);
 
-    const apiKey = this.config.apiKey;
-    if (!apiKey) {
-      throw new Error('Gemini API key not configured');
-    }
 
     const model = resolveGeminiModel(options?.model || this.config.model);
     const geminiContents = this.convertMessages(messages);
@@ -200,14 +204,12 @@ export class GeminiProvider extends BaseLLMProvider {
     try {
       const response = await fetchWithRetry(url, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey,
-        },
+        headers: await this.requestHeaders(),
         body: JSON.stringify(requestBody),
       }, { timeoutMs, signal: options?.signal });
 
       if (!response.ok) {
+        this.noteAuthFailure(response.status);
         const errorBody = await response.text();
         logger.error('Gemini API error response', { status: response.status, body: errorBody });
         throw new Error(`Gemini API error: ${response.status} - ${errorBody}`);
@@ -235,9 +237,8 @@ export class GeminiProvider extends BaseLLMProvider {
     this.validateMessages(messages);
     this.logRequest(messages, options);
 
-    const apiKey = this.config.apiKey;
-    if (!apiKey) {
-      yield { type: 'error', error: 'Gemini API key not configured' };
+    if (!this.isConfigured()) {
+      yield { type: 'error', error: 'Gemini is not configured: set GEMINI_API_KEY, or Vertex credentials' };
       return;
     }
 
@@ -268,14 +269,12 @@ export class GeminiProvider extends BaseLLMProvider {
     try {
       const response = await fetchWithRetry(url, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey,
-        },
+        headers: await this.requestHeaders(),
         body: JSON.stringify(requestBody),
       }, { timeoutMs: this.config.timeout || 120000, signal: options?.signal });
 
       if (!response.ok) {
+        this.noteAuthFailure(response.status);
         const errorBody = await response.text();
         yield { type: 'error', error: `Gemini API error: ${response.status} - ${errorBody}` };
         return;

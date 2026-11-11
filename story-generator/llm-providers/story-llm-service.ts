@@ -78,7 +78,7 @@ export function getStoryProvider(): LLMProvider {
     return defaultProvider;
   }
 
-  throw new Error('No LLM provider configured. Please set CLAUDE_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY.');
+  throw new Error('No LLM provider configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY or GEMINI_API_KEY, or enterprise auth (STORY_UI_VERTEX, or a *_BASE_URL gateway with STORY_UI_AUTH_TOKEN_COMMAND / STORY_UI_OAUTH_*).');
 }
 
 /**

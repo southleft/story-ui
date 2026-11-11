@@ -160,5 +160,8 @@
     "env": {
       "NODE_ENV": "production"
     }
+  },
+  "optionalDependencies": {
+    "google-auth-library": "^10.9.1"
   }
 }
