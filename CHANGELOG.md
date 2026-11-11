@@ -1,3 +1,10 @@
+# [5.24.0](https://github.com/southleft/story-ui/compare/v5.23.0...v5.24.0) (2026-11-11)
+
+
+### Features
+
+* **generator:** enterprise auth via Vertex AI, gateways and OAuth ([33a5171](https://github.com/southleft/story-ui/commit/33a5171b0bb1b33f802a5943364c6a71022dc0d6))
+
 # [5.23.0](https://github.com/southleft/story-ui/compare/v5.22.0...v5.23.0) (2026-10-26)
 
 
