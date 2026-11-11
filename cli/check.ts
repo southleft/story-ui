@@ -45,6 +45,21 @@ export interface CheckReport {
 
 const PROVIDER_KEYS = ['ANTHROPIC_API_KEY', 'CLAUDE_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_API_KEY'];
 
+/** One line naming the enterprise auth set up, or undefined when there is none. */
+function describeEnterpriseAuth(env: Record<string, string | undefined>): string | undefined {
+  const bearer = env.STORY_UI_AUTH_TOKEN_COMMAND ? 'token command'
+    : env.STORY_UI_OAUTH_TOKEN_URL ? 'OAuth client credentials'
+    : undefined;
+  if (env.STORY_UI_VERTEX) {
+    const project = env.STORY_UI_VERTEX_PROJECT || env.GOOGLE_CLOUD_PROJECT || env.ANTHROPIC_VERTEX_PROJECT_ID;
+    if (!project) return undefined;
+    return `Vertex AI (${project}, ${env.STORY_UI_VERTEX_LOCATION || env.GOOGLE_CLOUD_LOCATION || 'global'}) via ${bearer || 'Google Application Default Credentials'}`;
+  }
+  const gateway = env.ANTHROPIC_BASE_URL || env.OPENAI_BASE_URL;
+  if (gateway && (bearer || env.ANTHROPIC_AUTH_TOKEN)) return `gateway via ${bearer || 'ANTHROPIC_AUTH_TOKEN'}`;
+  return undefined;
+}
+
 function readEnv(cwd: string): Record<string, string> {
   const p = path.join(cwd, '.env');
   const out: Record<string, string> = {};
@@ -357,16 +372,21 @@ export async function runChecks(opts: { server?: string; storybook?: string; cwd
 
   // 5. A provider key. A placeholder, "undefined", or a dozen characters
   // is a line, not a key; the server would start and every request fail.
-  const keyName = PROVIDER_KEYS.find(k => isUsableApiKey(env[k]));
-  const placeholderName = keyName ? undefined : PROVIDER_KEYS.find(k => env[k] !== undefined && env[k] !== '');
+  // Enterprise auth (Vertex AI, or a gateway with OAuth / a token command)
+  // replaces the key; the server reports a credential failure on first use.
+  const enterprise = describeEnterpriseAuth(env);
+  const keyName = enterprise ? undefined : PROVIDER_KEYS.find(k => isUsableApiKey(env[k]));
+  const placeholderName = keyName || enterprise ? undefined : PROVIDER_KEYS.find(k => env[k] !== undefined && env[k] !== '');
   items.push({
-    id: 'provider-key', ok: Boolean(keyName),
-    detail: keyName
+    id: 'provider-key', ok: Boolean(keyName || enterprise),
+    detail: enterprise
+      ? `enterprise auth: ${enterprise}`
+      : keyName
       ? `${keyName} is set`
       : placeholderName
         ? `${placeholderName} is set to a placeholder or an invalid value ("${String(env[placeholderName]).slice(0, 12)}…" — not a key)`
         : 'no provider API key in .env or the environment',
-    fix: keyName ? undefined : `put ${placeholderName || 'ANTHROPIC_API_KEY'}=<your real key> in .env (or OPENAI_API_KEY / GEMINI_API_KEY), or re-run npx story-ui init --api-key <key>`,
+    fix: keyName || enterprise ? undefined : `put ${placeholderName || 'ANTHROPIC_API_KEY'}=<your real key> in .env (or OPENAI_API_KEY / GEMINI_API_KEY), or re-run npx story-ui init --api-key <key>`,
   });
 
   // 6. The server, if asked or if the config names a port.

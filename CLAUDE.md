@@ -39,6 +39,7 @@ This document provides comprehensive context for AI assistants working on the St
 | Self-Healing Loop | `story-generator/selfHealingLoop.ts` |
 | Component Discovery | `story-generator/componentDiscovery.ts` |
 | LLM Providers | `story-generator/llm-providers/` |
+| Enterprise auth (Vertex AI, gateways, OAuth/token command) | `story-generator/llm-providers/enterprise-auth.ts` |
 | Framework Adapters | `story-generator/framework-adapters/` |
 | Storybook Panel (V1) | `templates/StoryUI/StoryUIPanel.tsx` |
 | MDX Wrapper | `templates/StoryUI/StoryUIPanel.mdx` |

@@ -18,6 +18,7 @@ import {
 } from './types.js';
 import { BaseLLMProvider } from './base-provider.js';
 import { fetchWithRetry } from './http-utils.js';
+import { joinEndpoint, vertexModelUrl } from './enterprise-auth.js';
 import { logger } from '../logger.js';
 
 // Claude model definitions - Updated 26 Oct 2026 against GET /v1/models (ids,
@@ -156,14 +157,17 @@ function supportsRefusalFallback(model?: string): boolean {
   return /^claude-(opus-5|sonnet-5-5|fable-5-1)/.test(model);
 }
 
-/** Request headers, with the fallback beta when the model takes it. */
-function anthropicHeaders(apiKey: string, model: string): Record<string, string> {
-  return {
-    'Content-Type': 'application/json',
-    'x-api-key': apiKey,
-    'anthropic-version': ANTHROPIC_VERSION,
-    ...(supportsRefusalFallback(model) && { 'anthropic-beta': REFUSAL_FALLBACK_BETA }),
-  };
+/** The Messages API version Vertex AI takes in the request body. */
+const VERTEX_ANTHROPIC_VERSION = 'vertex-2023-10-16';
+
+/**
+ * Messages URL for a base URL. Accepts the SDK form (`https://gw.example.com`),
+ * a `/v1` root, or the full `/v1/messages` path.
+ */
+function anthropicMessagesUrl(baseUrl: string): string {
+  const trimmed = baseUrl.replace(/\/+$/, '');
+  if (trimmed.endsWith('/v1')) return `${trimmed}/messages`;
+  return joinEndpoint(trimmed, '/v1/messages');
 }
 
 /** Effort levels the current models accept. */
@@ -252,10 +256,6 @@ export class ClaudeProvider extends BaseLLMProvider {
     this.validateMessages(messages);
     this.logRequest(messages, options);
 
-    const apiKey = this.config.apiKey;
-    if (!apiKey) {
-      throw new Error('Claude API key not configured');
-    }
 
     const model = options?.model || this.config.model;
     const anthropicMessages = this.convertMessages(messages);
@@ -266,7 +266,7 @@ export class ClaudeProvider extends BaseLLMProvider {
       max_tokens: options?.maxTokens || this.getSelectedModel()?.maxOutputTokens || 4096,
       messages: anthropicMessages,
       ...reasoningParams(model, options),
-      ...(supportsRefusalFallback(model) && { fallbacks: 'default' }),
+      ...(this.usesRefusalFallback(model) && { fallbacks: 'default' }),
     };
 
     // Add optional parameters
@@ -297,13 +297,15 @@ export class ClaudeProvider extends BaseLLMProvider {
     const timeoutMs = options?.timeoutMs || this.config.timeout || 120000;
     const requestStartedAt = Date.now();
     try {
-      const response = await fetchWithRetry(ANTHROPIC_API_URL, {
+      const target = await this.requestTarget(model, requestBody, false);
+      const response = await fetchWithRetry(target.url, {
         method: 'POST',
-        headers: anthropicHeaders(apiKey, model),
-        body: JSON.stringify(requestBody),
+        headers: target.headers,
+        body: target.body,
       }, { timeoutMs, signal: options?.signal });
 
       if (!response.ok) {
+        this.noteAuthFailure(response.status);
         const errorBody = await response.text();
         logger.error('Claude API error response', { status: response.status, body: errorBody });
         throw new Error(`Claude API error: ${response.status} - ${errorBody}`);
@@ -334,9 +336,8 @@ export class ClaudeProvider extends BaseLLMProvider {
     this.validateMessages(messages);
     this.logRequest(messages, options);
 
-    const apiKey = this.config.apiKey;
-    if (!apiKey) {
-      yield { type: 'error', error: 'Claude API key not configured' };
+    if (!this.isConfigured()) {
+      yield { type: 'error', error: 'Claude is not configured: set ANTHROPIC_API_KEY, or Vertex / gateway credentials' };
       return;
     }
 
@@ -350,7 +351,7 @@ export class ClaudeProvider extends BaseLLMProvider {
       messages: anthropicMessages,
       stream: true,
       ...reasoningParams(model, options, /* streaming */ true),
-      ...(supportsRefusalFallback(model) && { fallbacks: 'default' }),
+      ...(this.usesRefusalFallback(model) && { fallbacks: 'default' }),
     };
 
     // Idle watchdog: reset on every chunk, aborts the fetch after `timeout`
@@ -377,10 +378,11 @@ export class ClaudeProvider extends BaseLLMProvider {
     }
 
     try {
-      const response = await fetchWithRetry(ANTHROPIC_API_URL, {
+      const target = await this.requestTarget(model, requestBody, true);
+      const response = await fetchWithRetry(target.url, {
         method: 'POST',
-        headers: anthropicHeaders(apiKey, model),
-        body: JSON.stringify(requestBody),
+        headers: target.headers,
+        body: target.body,
       /**
        * A stream is bounded by SILENCE, not by wall clock. Opus 5 thinks for
        * 30–60s before its first token and writes an 8k-token story over two
@@ -392,6 +394,7 @@ export class ClaudeProvider extends BaseLLMProvider {
       }, { timeoutMs: STREAM_HARD_CAP_MS, signal: idle.signal });
 
       if (!response.ok) {
+        this.noteAuthFailure(response.status);
         const errorBody = await response.text();
         yield { type: 'error', error: `Claude API error: ${response.status} - ${errorBody}` };
         return;
@@ -500,6 +503,43 @@ export class ClaudeProvider extends BaseLLMProvider {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  /** Refusal fallback is a Claude API feature; Vertex rejects the field. */
+  private usesRefusalFallback(model: string): boolean {
+    return !this.config.vertex && supportsRefusalFallback(model);
+  }
+
+  /**
+   * URL, headers and body for one Messages request. Three destinations:
+   * the Claude API (default), a gateway at `baseUrl`, or Vertex AI, where the
+   * model goes in the URL and the API version in the body.
+   */
+  private async requestTarget(
+    model: string,
+    requestBody: Record<string, unknown>,
+    stream: boolean,
+  ): Promise<{ url: string; headers: Record<string, string>; body: string }> {
+    const auth = await this.authHeaders(apiKey => ({ 'x-api-key': apiKey }));
+    const vertex = this.config.vertex;
+    if (vertex) {
+      const { model: _omit, ...rest } = requestBody;
+      return {
+        url: vertexModelUrl(vertex, 'anthropic', model, stream ? 'streamRawPredict' : 'rawPredict'),
+        headers: { 'Content-Type': 'application/json', ...auth },
+        body: JSON.stringify({ anthropic_version: VERTEX_ANTHROPIC_VERSION, ...rest }),
+      };
+    }
+    return {
+      url: this.config.baseUrl ? anthropicMessagesUrl(this.config.baseUrl) : ANTHROPIC_API_URL,
+      headers: {
+        'Content-Type': 'application/json',
+        'anthropic-version': ANTHROPIC_VERSION,
+        ...auth,
+        ...(this.usesRefusalFallback(model) && { 'anthropic-beta': REFUSAL_FALLBACK_BETA }),
+      },
+      body: JSON.stringify(requestBody),
+    };
   }
 
   async validateApiKey(apiKey: string): Promise<ValidationResult> {

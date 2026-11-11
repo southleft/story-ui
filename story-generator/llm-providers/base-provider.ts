@@ -75,6 +75,8 @@ export abstract class BaseLLMProvider implements LLMProvider {
     logger.debug(`${this.name} provider configured`, {
       model: config.model,
       hasApiKey: !!config.apiKey,
+      credentials: config.credentials?.description,
+      vertex: config.vertex ? `${config.vertex.project}/${config.vertex.location}` : undefined,
     });
   }
 
@@ -83,7 +85,26 @@ export abstract class BaseLLMProvider implements LLMProvider {
   }
 
   isConfigured(): boolean {
-    return !!this.config.apiKey && !!this.config.model;
+    return (!!this.config.apiKey || !!this.config.credentials) && !!this.config.model;
+  }
+
+  /**
+   * Auth headers for one request: the configured credential source when there
+   * is one (OAuth, token command, Google ADC), else the provider's API-key
+   * header. Throws with a provider-named message when neither is set.
+   */
+  protected async authHeaders(apiKeyHeaders: (apiKey: string) => Record<string, string>): Promise<Record<string, string>> {
+    if (this.config.credentials) return this.config.credentials.headers();
+    if (this.config.apiKey) return apiKeyHeaders(this.config.apiKey);
+    throw new Error(`${this.name} is not configured: set an API key, or enterprise credentials (see enterprise-auth.ts)`);
+  }
+
+  /** After a 401/403, drop a cached token so the next request fetches a fresh one. */
+  protected noteAuthFailure(status: number): void {
+    if ((status === 401 || status === 403) && this.config.credentials) {
+      logger.warn(`${this.name}: ${status} from the model endpoint; refreshing ${this.config.credentials.description} on the next request`);
+      this.config.credentials.invalidate();
+    }
   }
 
   // Helper methods

@@ -452,6 +452,50 @@ The server reads `.env` in the directory it is started from.
 </details>
 
 <details>
+<summary><strong>Enterprise authentication (no API keys)</strong></summary>
+
+For organisations that don't issue long-lived API keys. Each option replaces
+the key; with only a key set, nothing changes.
+
+**Vertex AI / Model Garden.** Claude and Gemini both run there. Auth uses
+Google Application Default Credentials, which covers service accounts,
+workload identity federation (an `external_account` credentials file in
+`GOOGLE_APPLICATION_CREDENTIALS`), GKE and Cloud Run workload identity, and
+`gcloud auth application-default login`.
+
+```bash
+STORY_UI_VERTEX=true               # or "claude" / "gemini" for one provider
+STORY_UI_VERTEX_PROJECT=my-project # or GOOGLE_CLOUD_PROJECT
+STORY_UI_VERTEX_LOCATION=global    # or a region such as us-east5; default global
+DEFAULT_PROVIDER=claude
+```
+
+The model ID must be one enabled in your project's Model Garden (`CLAUDE_MODEL`,
+`GEMINI_MODEL`). ADC uses `google-auth-library`, an optional dependency that
+installs by default.
+
+**A company AI gateway** (LiteLLM, Apigee, Kong, Portkey, an internal proxy):
+
+| Variable | Purpose |
+|---|---|
+| `ANTHROPIC_BASE_URL` | Gateway root for Claude (`https://gw.example.com` or `.../v1`). |
+| `OPENAI_BASE_URL` | Gateway root for any OpenAI-compatible endpoint (`https://gw.example.com/v1`). Set `OPENAI_MODEL` to the gateway's model name. |
+
+**Short-lived bearer tokens.** These are sent as `Authorization: Bearer` to the
+gateway, or to Vertex in place of ADC. A 401 refreshes the token on the next
+request.
+
+| Variable | Purpose |
+|---|---|
+| `STORY_UI_AUTH_TOKEN_COMMAND` | Any command that prints a token: `gcloud auth print-access-token`, `az account get-access-token --query accessToken -o tsv`, an SSO or vault CLI. |
+| `STORY_UI_AUTH_TOKEN_TTL` | Seconds before the command is run again. Default 300. |
+| `STORY_UI_OAUTH_TOKEN_URL`, `STORY_UI_OAUTH_CLIENT_ID`, `STORY_UI_OAUTH_CLIENT_SECRET` | OAuth 2.0 client-credentials grant. Optional `STORY_UI_OAUTH_SCOPE`, `STORY_UI_OAUTH_AUDIENCE`. |
+| `ANTHROPIC_AUTH_TOKEN` | A fixed bearer token for Claude, as the Anthropic SDK reads it. |
+
+`story-ui check` reports which of these is in use.
+</details>
+
+<details>
 <summary><strong>Commands</strong></summary>
 
 | Command | Options |

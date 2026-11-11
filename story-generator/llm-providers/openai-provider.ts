@@ -18,6 +18,7 @@ import {
 } from './types.js';
 import { BaseLLMProvider } from './base-provider.js';
 import { fetchWithRetry } from './http-utils.js';
+import { joinEndpoint } from './enterprise-auth.js';
 import { logger } from '../logger.js';
 
 // OpenAI model definitions - Updated July 2026
@@ -142,10 +143,6 @@ export class OpenAIProvider extends BaseLLMProvider {
     this.validateMessages(messages);
     this.logRequest(messages, options);
 
-    const apiKey = this.config.apiKey;
-    if (!apiKey) {
-      throw new Error('OpenAI API key not configured');
-    }
 
     const model = options?.model || this.config.model;
     const openaiMessages = this.convertMessages(messages, options?.systemPrompt);
@@ -182,17 +179,14 @@ export class OpenAIProvider extends BaseLLMProvider {
     const timeoutMs = this.config.timeout || 120000;
     const requestStartedAt = Date.now();
     try {
-      const response = await fetchWithRetry(this.config.baseUrl || OPENAI_API_URL, {
+      const response = await fetchWithRetry(this.chatCompletionsUrl(), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          ...(this.config.organizationId && { 'OpenAI-Organization': this.config.organizationId }),
-        },
+        headers: await this.requestHeaders(),
         body: JSON.stringify(requestBody),
       }, { timeoutMs, signal: options?.signal });
 
       if (!response.ok) {
+        this.noteAuthFailure(response.status);
         const errorBody = await response.text();
         logger.error('OpenAI API error response', { status: response.status, body: errorBody });
         throw new Error(`OpenAI API error: ${response.status} - ${errorBody}`);
@@ -220,9 +214,8 @@ export class OpenAIProvider extends BaseLLMProvider {
     this.validateMessages(messages);
     this.logRequest(messages, options);
 
-    const apiKey = this.config.apiKey;
-    if (!apiKey) {
-      yield { type: 'error', error: 'OpenAI API key not configured' };
+    if (!this.isConfigured()) {
+      yield { type: 'error', error: 'OpenAI is not configured: set OPENAI_API_KEY, or a gateway (OPENAI_BASE_URL) with credentials' };
       return;
     }
 
@@ -250,17 +243,14 @@ export class OpenAIProvider extends BaseLLMProvider {
     }
 
     try {
-      const response = await fetchWithRetry(this.config.baseUrl || OPENAI_API_URL, {
+      const response = await fetchWithRetry(this.chatCompletionsUrl(), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          ...(this.config.organizationId && { 'OpenAI-Organization': this.config.organizationId }),
-        },
+        headers: await this.requestHeaders(),
         body: JSON.stringify(requestBody),
       }, { timeoutMs: this.config.timeout || 120000, signal: options?.signal });
 
       if (!response.ok) {
+        this.noteAuthFailure(response.status);
         const errorBody = await response.text();
         yield { type: 'error', error: `OpenAI API error: ${response.status} - ${errorBody}` };
         return;
@@ -335,6 +325,20 @@ export class OpenAIProvider extends BaseLLMProvider {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  /** OPENAI_BASE_URL is the API root, as in the OpenAI SDK (`https://gw.example.com/v1`). */
+  private chatCompletionsUrl(): string {
+    return this.config.baseUrl ? joinEndpoint(this.config.baseUrl, '/chat/completions') : OPENAI_API_URL;
+  }
+
+  private async requestHeaders(): Promise<Record<string, string>> {
+    const auth = await this.authHeaders(apiKey => ({ Authorization: `Bearer ${apiKey}` }));
+    return {
+      'Content-Type': 'application/json',
+      ...auth,
+      ...(this.config.organizationId && { 'OpenAI-Organization': this.config.organizationId }),
+    };
   }
 
   async validateApiKey(apiKey: string): Promise<ValidationResult> {

@@ -57,6 +57,8 @@ export interface ModelInfo {
   description?: string; // Human-readable description for UI
 }
 
+import type { CredentialSource, VertexTarget } from './enterprise-auth.js';
+
 // Provider types
 export type ProviderType = 'claude' | 'openai' | 'gemini' | 'ollama' | 'custom';
 
@@ -65,7 +67,14 @@ export interface ProviderConfig {
   provider: ProviderType;
   apiKey?: string;
   model: string;
-  baseUrl?: string; // For custom endpoints or proxies
+  baseUrl?: string; // API root of a gateway or proxy (ANTHROPIC_BASE_URL, OPENAI_BASE_URL)
+  /**
+   * Short-lived credentials used instead of an API key: an OAuth token, a
+   * token command, or Google ADC. See enterprise-auth.ts.
+   */
+  credentials?: CredentialSource;
+  /** Send requests to Vertex AI (Model Garden) in this project and location. */
+  vertex?: VertexTarget;
   organizationId?: string; // For OpenAI
   projectId?: string; // For GCP/Gemini
   timeout?: number; // Request timeout in ms

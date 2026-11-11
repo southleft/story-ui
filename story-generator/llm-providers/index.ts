@@ -9,6 +9,7 @@ export * from './types.js';
 
 // Base provider
 export { BaseLLMProvider } from './base-provider.js';
+export type { CredentialSource, VertexTarget } from './enterprise-auth.js';
 
 // Provider implementations
 export { ClaudeProvider, CLAUDE_MODELS } from './claude-provider.js';
@@ -47,6 +48,13 @@ import { ClaudeProvider } from './claude-provider.js';
 import { OpenAIProvider } from './openai-provider.js';
 import { GeminiProvider } from './gemini-provider.js';
 import { logger } from '../logger.js';
+import {
+  CredentialSource,
+  bearerSourceFromEnv,
+  googleAdcSource,
+  staticBearerSource,
+  vertexTargetFromEnv,
+} from './enterprise-auth.js';
 
 /**
  * Default Provider Registry Implementation
@@ -203,39 +211,69 @@ export function configureProvider(
 }
 
 /**
- * Initialize providers from environment variables
+ * Initialize providers from environment variables.
+ *
+ * Each provider is configured by an API key, or (for teams that do not issue
+ * keys) by enterprise credentials: Vertex AI with Google ADC, or a gateway
+ * base URL with an OAuth / token-command bearer. See enterprise-auth.ts for
+ * every variable.
  */
 export function initializeFromEnv(): void {
   const registry = getProviderRegistry();
+  const env = process.env;
+  // One bearer source shared by every gateway, so one token cache serves all.
+  const gatewayBearer = bearerSourceFromEnv(env);
+  const describe = (c?: CredentialSource) => (c ? ` with ${c.description}` : '');
 
-  // Configure Claude if API key is present
-  const claudeKey = process.env.CLAUDE_API_KEY || process.env.ANTHROPIC_API_KEY;
-  if (claudeKey) {
-    registry.configureProvider('claude', {
-      apiKey: claudeKey,
-      model: resolveModelAlias(process.env.CLAUDE_MODEL || 'claude-opus-5-5'),
-    });
-    logger.info('Claude provider configured from environment');
+  // Claude: Vertex AI, then a gateway, then the Claude API with a key.
+  const claudeKey = env.CLAUDE_API_KEY || env.ANTHROPIC_API_KEY;
+  const claudeModel = resolveModelAlias(env.CLAUDE_MODEL || 'claude-opus-5-5');
+  const claudeVertex = vertexTargetFromEnv('claude', env);
+  const anthropicBaseUrl = env.ANTHROPIC_BASE_URL?.trim() || undefined;
+  if (claudeVertex) {
+    const credentials = gatewayBearer || googleAdcSource();
+    registry.configureProvider('claude', { model: claudeModel, vertex: claudeVertex, credentials });
+    logger.info(`Claude provider configured for Vertex AI (${claudeVertex.project}, ${claudeVertex.location})${describe(credentials)}`);
+  } else {
+    const credentials = env.ANTHROPIC_AUTH_TOKEN?.trim()
+      ? staticBearerSource(env.ANTHROPIC_AUTH_TOKEN.trim(), 'ANTHROPIC_AUTH_TOKEN')
+      : anthropicBaseUrl && !claudeKey ? gatewayBearer : undefined;
+    if (claudeKey || credentials) {
+      registry.configureProvider('claude', { apiKey: claudeKey, model: claudeModel, baseUrl: anthropicBaseUrl, credentials });
+      logger.info(`Claude provider configured from environment${anthropicBaseUrl ? ` (gateway ${safeHost(anthropicBaseUrl)})` : ''}${describe(credentials)}`);
+    }
   }
 
-  // Configure OpenAI if API key is present
-  const openaiKey = process.env.OPENAI_API_KEY;
-  if (openaiKey) {
+  // OpenAI (and any OpenAI-compatible gateway).
+  const openaiKey = env.OPENAI_API_KEY;
+  const openaiBaseUrl = env.OPENAI_BASE_URL?.trim() || undefined;
+  const openaiCredentials = openaiBaseUrl && !openaiKey ? gatewayBearer : undefined;
+  if (openaiKey || openaiCredentials) {
     registry.configureProvider('openai', {
       apiKey: openaiKey,
-      model: resolveModelAlias(process.env.OPENAI_MODEL || 'gpt-5.6-sol'),
-      organizationId: process.env.OPENAI_ORG_ID,
+      model: resolveModelAlias(env.OPENAI_MODEL || 'gpt-5.6-sol'),
+      organizationId: env.OPENAI_ORG_ID,
+      baseUrl: openaiBaseUrl,
+      credentials: openaiCredentials,
     });
-    logger.info('OpenAI provider configured from environment');
+    logger.info(`OpenAI provider configured from environment${openaiBaseUrl ? ` (gateway ${safeHost(openaiBaseUrl)})` : ''}${describe(openaiCredentials)}`);
   }
 
-  // Configure Gemini if API key is present
-  const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-  if (geminiKey) {
-    registry.configureProvider('gemini', {
-      apiKey: geminiKey,
-      model: resolveModelAlias(process.env.GEMINI_MODEL || 'gemini-4-argon'),
-    });
+  // Gemini: Vertex AI, then the Gemini API with a key.
+  const geminiKey = env.GEMINI_API_KEY || env.GOOGLE_API_KEY;
+  const geminiModel = resolveModelAlias(env.GEMINI_MODEL || 'gemini-4-argon');
+  const geminiVertex = vertexTargetFromEnv('gemini', env);
+  if (geminiVertex) {
+    const credentials = gatewayBearer || googleAdcSource();
+    registry.configureProvider('gemini', { model: geminiModel, vertex: geminiVertex, credentials });
+    logger.info(`Gemini provider configured for Vertex AI (${geminiVertex.project}, ${geminiVertex.location})${describe(credentials)}`);
+  } else if (geminiKey) {
+    registry.configureProvider('gemini', { apiKey: geminiKey, model: geminiModel });
     logger.info('Gemini provider configured from environment');
   }
+}
+
+/** Host of a URL for logs; a base URL can carry a key in its query string. */
+function safeHost(url: string): string {
+  try { return new URL(url).host; } catch { return 'invalid URL'; }
 }
